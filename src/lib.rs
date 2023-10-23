@@ -1,14 +1,19 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+//! Selkie: pure-Rust supersingular isogeny cryptography.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// Projective coordinates traditionally use uppercase letters,
+// lowercase for affine coordinates, and uppercase for curve equation
+// coefficients.
+#![allow(non_snake_case)]
+// #![doc = include_str!("../README.md")]
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+// Used for isogenies, still requires nightly (as of 2023-04-02)
+#![feature(associated_type_defaults)]
+#![feature(fn_traits)]
+#![feature(generic_const_exprs)]
+#![feature(unboxed_closures)]
+
+// TODO: proptest correctness against crypto-bigint(P434), arkworks::ff
+
+pub mod curve;
+pub mod field;
+pub mod isogeny;
