@@ -2,6 +2,9 @@
 
 A compact post-quantum signature scheme from quaternions and isogenies, in Rust.
 
+<img width="27%" align="right" src="https://user-images.githubusercontent.com/552961/197638905-f5144be3-a2f2-48c2-9ecb-26e4e34d8d8a.svg#gh-light-mode-only"/>
+<img width="27%" align="right" src="https://user-images.githubusercontent.com/552961/197640007-f3f05dd1-c61c-4c16-bd04-d1813937ad47.svg#gh-dark-mode-only"/>
+
 Implements [SQIsign](https://sqisign.org/) as specified in the
 [v2.0.1 specification](https://sqisign.org/spec/sqisign-20250707.pdf),
 targeting the NIST-I parameter set (p = 5·2²⁴⁸ − 1).
@@ -9,7 +12,7 @@ targeting the NIST-I parameter set (p = 5·2²⁴⁸ − 1).
 ## Safety
 
 The sqisign-selkie types are designed to make illegal states
-unrepresentable. For example, any instance of a `ProjectivePoint` is
+unrepresentable. For example, any instance of a `MontgomeryPoint` is
 guaranteed to hold a point on the associated Montgomery curve, and any
 instance of an `Fp` is guaranteed to hold a canonical element of F_p.
 
@@ -41,3 +44,9 @@ code. The architecture-specific field arithmetic backends (aarch64,
 x86_64) use unsafe internally for inline assembly. These are marked
 unsafe only because they use `core::arch::asm!`, but each backend is
 only compiled when targeting the appropriate architecture.
+
+## About
+
+*"In very ancient times some of the Clan Coneely, one of the early septs of the county, were changed
+by "art magick" into seals; since then no Coneely can kill a seal without afterwards having bad
+luck." - Connemara Folk-Lore*
