@@ -1,0 +1,145 @@
+//! NIST-I parameter set constants for SQIsign-353.
+//!
+//! All scheme parameters are derived from the prime p and the security
+//! parameter λ. See [§4.2] (parameters) and [§5.2] (parameter sets).
+//!
+//! [§4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.2
+//! [§5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.5.2
+
+/// Security parameter λ = 128.
+pub const SECURITY_BITS: u32 = 128;
+
+/// The prime p = 5 · 2^248 − 1.
+///
+/// The cofactor c = 5 and the 2-valuation f = 248, so p = c · 2^f − 1.
+/// p ≡ 3 (mod 4), which gives us i² = −1 in F_{p²}.
+pub const COFACTOR: u64 = 5;
+
+/// The 2-valuation f of p + 1: the largest integer such that 2^f divides p + 1.
+///
+/// This is the exponent of the full even torsion subgroup E[2^f].
+/// f ≈ 2λ = 248 for NIST-I.
+pub const TORSION_EVEN_POWER: u32 = 248;
+
+/// e_rsp = ⌈log₂(√p)⌉, the bit-length of the response isogeny degree.
+///
+/// For NIST-I: ⌈251/2⌉ = 126. (SQIsign_response_length in the C reference.)
+pub const E_RSP: u32 = 126;
+
+/// e_chl = f − e_rsp, the bit-length of the challenge space.
+///
+/// For NIST-I: 248 − 126 = 122.
+pub const E_CHL: u32 = TORSION_EVEN_POWER - E_RSP;
+
+/// Number of iterations of SHAKE256 used to build the hash function HASH.
+///
+/// HASH = SHAKE256_{122} ∘ SHAKE256_{256}^{∘63} for NIST-I.
+pub const HASH_ITERATIONS: u32 = 64;
+
+/// Number of bytes to encode an element of F_p.
+pub const FP_ENCODED_BYTES: usize = 32;
+
+/// Number of bytes to encode an element of F_{p²}.
+pub const FP2_ENCODED_BYTES: usize = 2 * FP_ENCODED_BYTES;
+
+/// Number of bytes to encode a Montgomery curve coefficient A ∈ F_{p²}.
+pub const CURVE_ENCODED_BYTES: usize = FP2_ENCODED_BYTES;
+
+/// Number of bytes for each component of the change-of-basis matrix
+/// (integers mod 2^f).
+pub const TORSION_2POWER_BYTES: usize = 32;
+
+/// Public (verifying) key size in bytes.
+pub const VERIFYING_KEY_BYTES: usize = 65;
+
+/// Secret (signing) key size in bytes.
+pub const SIGNING_KEY_BYTES: usize = 353;
+
+/// Signature size in bytes.
+pub const SIGNATURE_BYTES: usize = 148;
+
+// ---------------------------------------------------------------------------
+// Precomputed E₀ basis points
+// ---------------------------------------------------------------------------
+
+use crate::fields::fp::Fp;
+use crate::fields::fp2::Fp2;
+
+/// x-coordinate of the first basis point P₀ of E₀\[2^f\],
+/// where f = [`TORSION_EVEN_POWER`].
+///
+/// (P₀, Q₀) generates E₀\[2^f\] on E₀ : y² = x³ + x.
+/// Stored in Montgomery form, radix-51 representation.
+///
+/// See [Appendix B].
+///
+/// [Appendix B]: https://sqisign.org/spec/sqisign-20250707.pdf#appendix.B
+pub const BASIS_E0_P_X: Fp2 = Fp2::new(
+    Fp::from_limbs([
+        0x0005bcab12000c08,
+        0x000452654b56d052,
+        0x00026f81b5190a0a,
+        0x00036cfd66a361eb,
+        0x000012726610d11b,
+    ]),
+    Fp::from_limbs([
+        0x0006b96065c83efc,
+        0x00029da1d4a82cd9,
+        0x000190797ab98bdf,
+        0x0006841aa6eeee05,
+        0x0001377c5431166,
+    ]),
+);
+
+/// x-coordinate of the second basis point Q₀ of E₀\[2^f\],
+/// where f = [`TORSION_EVEN_POWER`].
+///
+/// (P₀, Q₀) generates E₀\[2^f\] on E₀ : y² = x³ + x.
+/// Stored in Montgomery form, radix-51 representation.
+///
+/// See [Appendix B].
+///
+/// [Appendix B]: https://sqisign.org/spec/sqisign-20250707.pdf#appendix.B
+pub const BASIS_E0_Q_X: Fp2 = Fp2::new(
+    Fp::from_limbs([
+        0x00021dd55b97832f,
+        0x000210f2d30b26ad,
+        0x00000680bcfcf6396,
+        0x00027b318ec126a7,
+        0x000004ffba5956012,
+    ]),
+    Fp::from_limbs([
+        0x00074590149117e3,
+        0x0004982edefcc606,
+        0x0002ae3db0cc6884,
+        0x0007d0384872f5ec,
+        0x000004fbb0fcb5a52,
+    ]),
+);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Check that x³ + x is a square in F_{p²} (i.e., (x, ·) is on E₀).
+    fn is_on_e0(x: &Fp2) -> bool {
+        let x2 = x.square();
+        let rhs = &(&x2 + &Fp2::ONE) * x;
+        bool::from(rhs.is_square())
+    }
+
+    #[test]
+    fn basis_e0_p_is_on_curve() {
+        assert!(is_on_e0(&BASIS_E0_P_X), "P₀ x-coordinate is not on E₀");
+    }
+
+    #[test]
+    fn basis_e0_q_is_on_curve() {
+        assert!(is_on_e0(&BASIS_E0_Q_X), "Q₀ x-coordinate is not on E₀");
+    }
+
+    #[test]
+    fn basis_e0_points_are_distinct() {
+        assert_ne!(BASIS_E0_P_X, BASIS_E0_Q_X);
+    }
+}
