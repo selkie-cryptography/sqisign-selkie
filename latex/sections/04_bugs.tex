@@ -1,0 +1,227 @@
+\section{Bugs from Specification Ambiguity}
+\label{sec:bugs}
+
+During KAT verification testing against the C reference implementation,
+we discovered multiple bugs in our theta-coordinate $(2,2)$-isogeny
+chain.  Each bug originated from an ambiguity in the specification or
+an implicit convention in the reference code.  We catalog them here
+with their root causes.
+
+\subsection{ProductToTheta coordinate convention}
+\label{sec:bug-product-to-theta}
+
+The spec describes the product theta structure abstractly via
+level-2 theta functions.  The relationship between Montgomery
+projective coordinates $(X:Z)$ and the product theta representation
+is not stated explicitly.  Our initial implementation used
+$(X-Z, X+Z)$ as ``theta-like'' coordinates---natural for Montgomery
+differential addition---but the C reference's \texttt{base\_change()}
+uses raw $(X, Z)$ directly:
+\begin{lstlisting}[language=C]
+fp2_mul(&null.x, &T->P1.x, &T->P2.x); // X1 * X2
+fp2_mul(&null.y, &T->P1.x, &T->P2.z); // X1 * Z2
+fp2_mul(&null.z, &T->P2.x, &T->P1.z); // Z1 * X2
+fp2_mul(&null.t, &T->P1.z, &T->P2.z); // Z1 * Z2
+\end{lstlisting}
+
+\noindent
+\textbf{Lesson:} When the spec is abstract about coordinate
+representations, the C reference is the ground truth.
+
+\subsection{Squared theta means square then Hadamard}
+\label{sec:bug-squared-theta}
+
+In the SQIsign context, ``squared theta'' means component-wise
+squaring \emph{followed by a Hadamard transform}.  The C reference
+wraps this in \texttt{to\_squared\_theta()}, whose name does not
+reveal the Hadamard.  Our generic isogeny evaluation (Algorithm~8.34)
+computed $\mathcal{H}(\mathrm{inv} \cdot P^2)$ instead of
+$\mathcal{H}(\mathrm{inv} \cdot \mathcal{H}(P^2))$.
+
+\noindent
+\textbf{Lesson:} Read the body of helper functions in the C reference,
+not just their names.  ``Squared theta'' is not just squaring.
+
+\subsection{Cross-product index errors in GluingEval}
+\label{sec:bug-gluing-eval}
+
+Algorithm~8.39 computes \texttt{ADDComponents} on each curve
+component, producing $(u_1, v_1, w_1)$ from curve~1 and
+$(u_2, v_2, w_2)$ from curve~2.  The $U$ vector's second entry
+should be $u_1 \cdot w_2$ (cross-curve), but we wrote $u_1 \cdot w_1$
+(same-curve).
+
+\noindent
+\textbf{Lesson:} In product-curve formulas, every multiplication
+involves one factor from each curve.  Two factors with the same
+subscript are almost certainly wrong.
+
+\subsection{Projective inverse vs.\ field inversion}
+\label{sec:bug-projective-inverse}
+
+The gluing codomain needs the ``inverse'' of the dual theta null point
+$(\alpha, \beta, \gamma, 0)$.  In projective coordinates this is
+computed via cross-products---pure multiplications, no field inversion.
+Our code called \texttt{Fp2::invert()}, which is both wrong and
+expensive.
+
+\noindent
+\textbf{Lesson:} In projective or theta coordinates, ``inverse''
+almost always means projective inverse via cross-products.  Actual
+field inversion is a red flag.
+
+\subsection{Reusing generic types for special patterns}
+\label{sec:bug-imageK}
+
+The image of the kernel generator under gluing has the pattern
+$(x : x : y : y)$.  Storing this in a generic 4-coordinate
+\texttt{JacobianPoint} creates ambiguity: \texttt{J.y} equals $x$
+(the second copy), not $y$.  The scaling step used \texttt{J.x}
+and \texttt{J.y} for the two distinct values, but both hold $x$.
+
+\noindent
+\textbf{Lesson:} Do not reuse a generic $n$-coordinate type to store
+a value with a special pattern.  Use a dedicated type, or at minimum
+document which fields hold which logical values.
+
+\subsection{Torsion basis swap convention}
+\label{sec:from-hint}
+
+The C reference's \texttt{ec\_curve\_to\_basis\_2f\_from\_hint()}
+deliberately stores $P-Q$ in \texttt{B.Q} and $Q$ in
+\texttt{B.PmQ}:
+\begin{lstlisting}[language=C]
+difference_point(&PQ2->Q, &P, &Q, curve);  // B.Q = P - Q
+copy_point(&PQ2->P, &P);                    // B.P = P
+copy_point(&PQ2->PmQ, &Q);                  // B.PmQ = Q
+\end{lstlisting}
+This means the three-point ladder computes $P + [m](P-Q)$, not
+$P + [m]Q$.  The swap ensures the multiplied point avoids $(0,0)$
+for differential addition.  This is not documented in the spec.
+
+\noindent
+\textbf{Lesson:} Undocumented conventions in reference code can look
+like bugs in your own code.  Verify against the reference before
+``fixing'' something that isn't broken.
+
+
+\subsection{Different formulas for the last two chain steps}
+\label{sec:bug-hadamard-bool}
+
+The C reference uses three different formula variants across the
+$(2,2)$-isogeny chain, controlled by two boolean flags
+\texttt{hadamard\_bool\_1} and \texttt{hadamard\_bool\_2}:
+\begin{itemize}
+  \item \textbf{Normal steps} ($i < n-2$): \texttt{bool\_1=0, bool\_2=1}.
+    Codomain is Hadamard-transformed (standard form).
+    Eval computes $\mathcal{H}(\mathrm{precomp} \cdot \mathcal{H}(P^2))$.
+  \item \textbf{Penultimate step} ($i = n-2$): \texttt{bool\_1=0, bool\_2=0}.
+    Codomain stays in dual form (no Hadamard).
+    Eval computes $\mathrm{precomp} \cdot \mathcal{H}(P^2)$.
+  \item \textbf{Ultimate step} ($i = n-1$): \texttt{bool\_1=1, bool\_2=0}.
+    Input gets an extra Hadamard before squaring; codomain in dual form.
+    Eval computes $\mathrm{precomp} \cdot \mathcal{H}(\mathcal{H}(P)^2)$.
+\end{itemize}
+The splitting step expects its input in dual form---what
+\texttt{bool\_2=0} produces.  Our code used the normal-step formula
+(\texttt{bool\_2=1}) for all steps, feeding the splitting a
+Hadamard-transformed null point that has no zero $U_{i,j}(0)$ entry.
+The chain ran correctly for 125 steps and produced nonsense at the end.
+
+\noindent
+\textbf{Lesson:} The last few steps of an isogeny chain often need
+special handling.  The spec describes the generic step uniformly; the
+\texttt{hadamard\_bool} optimization is an implementation-level choice
+in the C reference that avoids redundant Hadamard transforms at the
+boundary between the chain and the splitting step.  Check the loop
+structure, not just the per-step formula.
+
+\subsection{\texorpdfstring{$\mathbb{F}_{p^2}$}{Fp2} square root canonicalization}
+\label{sec:bug-sqrt}
+
+This was the single most impactful bug we encountered, and we devote
+extra space to it because its consequences are subtle and far-reaching.
+
+Every nonzero square in $\mathbb{F}_{p^2}$ has exactly two roots,
+$r$ and $-r$.  The SQIsign specification (Algorithm~8.12, the
+\texttt{difference\_point} subroutine of \texttt{TorsionBasisFromHint})
+says ``compute a square root'' without specifying which one.  We
+initially returned whichever root the Tonelli--Shanks formula
+produced.
+
+The C reference's \texttt{fp2\_sqrt} (described in Aardal et
+al.~\cite{ABCDK24}, \S3.1) has a five-line canonicalization step at
+the end: it negates the output whenever the real part is odd (as an
+integer in $[0, p)$), or when the real part is zero and the imaginary
+part is odd.  This ensures a unique, deterministic ``even'' root for
+every input.
+
+Without this canonicalization, \texttt{projective\_difference}
+nondeterministically adds $+\sqrt{\Delta}$ or $-\sqrt{\Delta}$ to
+$B_{XZ}$, producing two affinely distinct candidates for
+$x(P-Q)$.  Only one matches the C reference's
+\texttt{difference\_point}.  The wrong choice propagates through
+\texttt{ladder3pt} (producing a different kernel generator), the
+challenge isogeny (landing on a different curve $E_{\text{chl}}$
+with a different $j$-invariant), and every subsequent step.  In our
+case, the challenge curve's $j$-invariant was $\mathtt{0x03007c\ldots}$
+instead of the correct $\mathtt{0x026558\ldots}$---completely unrelated
+values, not just a sign flip.
+
+The key insight is that the choice of square root is \emph{not absorbed
+by projective equivalence}.  The formula
+$x_{P-Q} = (\sqrt{\Delta} + B_{XZ} \;:\; B_{ZZ})$
+is not projectively equivalent to
+$(-\sqrt{\Delta} + B_{XZ} \;:\; B_{ZZ})$;
+these are genuinely different points.  Any implementation of SQIsign
+that computes torsion bases via \texttt{difference\_point} must
+canonicalize its $\mathbb{F}_{p^2}$ square root.
+
+\noindent
+\textbf{Lesson:}  Any time a specification says ``compute a square
+root'' in $\mathbb{F}_{p^2}$, the implementation \emph{must} specify
+and enforce a canonical choice.  The even-real-part convention used by
+the C reference is simple and should be the default for any SQIsign
+implementation.  This is not documented in the SQIsign specification
+as of v2.0.1.
+
+\subsection{Never recompute \texorpdfstring{$P{-}Q$}{P-Q} via
+  \texttt{DifferencePoint}}
+\label{sec:bug-pmq-recompute}
+
+A torsion basis $(P, Q, P{-}Q)$ is produced once by
+\texttt{TorsionBasisFromHint}.  The third component $P{-}Q$ is
+computed via \texttt{DifferencePoint}, which takes an
+$\mathbb{F}_{p^2}$ square root.  We discovered---after fixing the
+sqrt canonicalization---that $P{-}Q$ must \emph{never} be recomputed
+from $P$ and $Q$ in any subsequent operation.  Even with a canonical
+sqrt, the two roots of \texttt{DifferencePoint} yield the affinely
+distinct points $x(P{-}Q)$ and $x(2P{-}Q)$, and there is no guarantee
+that a fresh call returns the same one.
+
+We found three separate sites where recomputation caused failure:
+\begin{enumerate}
+  \item \textbf{After scaling.} We doubled $P$ and $Q$ to reduce
+    their order, then called \texttt{projective\_difference} on the
+    doubled points instead of doubling the original $P{-}Q$ alongside.
+  \item \textbf{In the matrix application.} $M_{\mathrm{chl}} \cdot
+    (P, Q)$ produced $P'$ and $Q'$ via two biladder calls.  We
+    computed $P'{-}Q'$ via \texttt{projective\_difference} instead of
+    a third biladder with scalars $(a{-}b, c{-}d)$, as the C reference
+    does in \texttt{matrix\_scalar\_application\_even\_basis}.
+  \item \textbf{Before the $(2,2)$-chain.} After the even response
+    isogeny, we recomputed $P{-}Q$ from the images instead of pushing
+    the original $P{-}Q$ through the isogeny as a third evaluation
+    point.
+\end{enumerate}
+Each fix was individually necessary; all three together were sufficient
+to make KAT vector~0 verify.
+
+\noindent
+\textbf{Lesson:} In $x$-only Montgomery arithmetic, $P{-}Q$ is a
+\emph{derived value} that cannot be reconstructed from $x(P)$ and
+$x(Q)$ alone (because $x(P{-}Q) = x(P{+}Q)$ on the Kummer line, and
+\texttt{DifferencePoint} resolves this ambiguity via a square root
+whose sign is fragile).  Treat $P{-}Q$ as a first-class member of the
+basis triple and propagate it through every transformation.
+

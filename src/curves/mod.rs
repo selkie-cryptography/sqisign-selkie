@@ -11,12 +11,16 @@
 //! [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
 //! [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 
-pub mod montgomery;
 pub mod isogeny;
+pub mod montgomery;
+pub(crate) mod pairing;
+pub mod scalar;
 
 use subtle::ConditionallySelectable;
 
-use crate::curves::montgomery::{Curve, MontgomeryPoint};
+use crate::curves::montgomery::{differential_add_and_double, Curve, ProjectiveXOnlyPoint};
+use crate::fields::fp::Fp;
+use crate::fields::fp2::Fp2;
 use crate::params::TORSION_EVEN_POWER;
 
 /// An exponent e such that 2^e divides the torsion group order.
@@ -32,7 +36,10 @@ impl TorsionExponent {
 
     /// Construct from a raw value, panicking if out of range.
     pub fn new(e: u32) -> TorsionExponent {
-        assert!(e <= TORSION_EVEN_POWER, "torsion exponent {e} exceeds f = {TORSION_EVEN_POWER}");
+        assert!(
+            e <= TORSION_EVEN_POWER,
+            "torsion exponent {e} exceeds f = {TORSION_EVEN_POWER}"
+        );
         TorsionExponent(e)
     }
 
@@ -133,27 +140,39 @@ pub struct AuxiliaryHint(BasisHint);
 pub struct ChallengeHint(BasisHint);
 
 impl From<u8> for VerifyingKeyHint {
-    fn from(b: u8) -> Self { VerifyingKeyHint(BasisHint::from_byte(b)) }
+    fn from(b: u8) -> Self {
+        VerifyingKeyHint(BasisHint::from_byte(b))
+    }
 }
 
 impl From<VerifyingKeyHint> for u8 {
-    fn from(h: VerifyingKeyHint) -> u8 { h.0.to_byte() }
+    fn from(h: VerifyingKeyHint) -> u8 {
+        h.0.to_byte()
+    }
 }
 
 impl From<u8> for AuxiliaryHint {
-    fn from(b: u8) -> Self { AuxiliaryHint(BasisHint::from_byte(b)) }
+    fn from(b: u8) -> Self {
+        AuxiliaryHint(BasisHint::from_byte(b))
+    }
 }
 
 impl From<AuxiliaryHint> for u8 {
-    fn from(h: AuxiliaryHint) -> u8 { h.0.to_byte() }
+    fn from(h: AuxiliaryHint) -> u8 {
+        h.0.to_byte()
+    }
 }
 
 impl From<u8> for ChallengeHint {
-    fn from(b: u8) -> Self { ChallengeHint(BasisHint::from_byte(b)) }
+    fn from(b: u8) -> Self {
+        ChallengeHint(BasisHint::from_byte(b))
+    }
 }
 
 impl From<ChallengeHint> for u8 {
-    fn from(h: ChallengeHint) -> u8 { h.0.to_byte() }
+    fn from(h: ChallengeHint) -> u8 {
+        h.0.to_byte()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -174,48 +193,211 @@ impl From<ChallengeHint> for u8 {
 #[derive(Copy, Clone, Debug)]
 pub struct TorsionBasis {
     /// First basis element R.
-    pub R: MontgomeryPoint,
+    pub R: ProjectiveXOnlyPoint,
     /// Second basis element S.
-    pub S: MontgomeryPoint,
+    pub S: ProjectiveXOnlyPoint,
     /// Difference R − S (needed for differential addition).
-    pub RS: MontgomeryPoint,
+    pub RS: ProjectiveXOnlyPoint,
+}
+
+/// Construct a [`TorsionBasis`] from two [`ProjectiveXOnlyPoint`]s,
+/// computing R − S via [`ProjectiveXOnlyPoint::projective_difference`].
+///
+/// # Security
+///
+/// This does **not** verify that R and S actually generate the full
+/// n-torsion subgroup E\[n\]. The caller must ensure the points are
+/// linearly independent and of the correct order. In SQIsign, this
+/// is guaranteed by construction from `TorsionBasisFromHint` or
+/// from the `ChallengeMatrix` transformation.
+impl From<(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> for TorsionBasis {
+    fn from((R, S): (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)) -> TorsionBasis {
+        let RS = R.projective_difference(&S);
+        TorsionBasis { R, S, RS }
+    }
 }
 
 impl TorsionBasis {
-    /// Construct a basis from its three components.
-    pub fn new(R: MontgomeryPoint, S: MontgomeryPoint, RS: MontgomeryPoint) -> TorsionBasis {
+    /// Construct a basis from its three components (R, S, R−S).
+    pub fn new(
+        R: ProjectiveXOnlyPoint,
+        S: ProjectiveXOnlyPoint,
+        RS: ProjectiveXOnlyPoint,
+    ) -> TorsionBasis {
         TorsionBasis { R, S, RS }
+    }
+
+    /// Convert kernel scalars on E₀\[2^f\] to the corresponding
+    /// left O₀-ideal.
+    ///
+    /// Given scalars (c₁, c₂) such that the kernel generator is
+    /// \[c₁\]P₀ + \[c₂\]Q₀ on E₀\[2^f\] (the canonical torsion
+    /// basis), computes I = O₀⟨α, 2^f⟩ where
+    /// α = a + b·(j + (1+k)/2) − i.
+    ///
+    /// Uses the precomputed E₀ action matrices (M_i, M_j, M_{gen4})
+    /// internally. Only valid for the NIST-I starting curve E₀ and
+    /// its canonical basis.
+    ///
+    /// Implements [KernelToIdeal][Alg. 3.17].
+    ///
+    /// [Alg. 3.17]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.17
+    // TODO: c1/c2 are BigInt<4> (signed) but semantically unsigned
+    // scalars mod 2^f. Investigating types beyond BigInt — we need
+    // unsigned modular arithmetic mod 2^k on Scalar, with add, sub,
+    // mul, and invert_mod. For now, convert at boundaries.
+    pub fn kernel_to_ideal(
+        c1: &crate::quaternions::bigint::BigInt<4>,
+        c2: &crate::quaternions::bigint::BigInt<4>,
+        f: TorsionExponent,
+    ) -> Option<crate::quaternions::lattice::LeftIdeal<4>> {
+        use crate::deuring::precomputed::ACTION_MATRICES;
+        use crate::quaternions::algebra::{Coordinate, Denominator, Element};
+        use crate::quaternions::bigint::BigInt;
+        use crate::quaternions::lattice::LeftIdeal;
+        use crate::quaternions::precomputed::EXTREMAL_ORDERS;
+
+        // Action matrices for E₀: [i, j, k, gen2, gen3, gen4].
+        let m_i = &ACTION_MATRICES[0][0];
+        let m_j = &ACTION_MATRICES[0][1];
+        let m_gen4 = &ACTION_MATRICES[0][5];
+
+        let modulus = BigInt::<4>::ONE.shl(f.value());
+
+        // Step 1: [d1, d2]^T = M_θ · [c1, c2]^T mod 2^f.
+        // θ = j + (1+k)/2, so M_θ = M_j + M_gen4.
+        let (jc1, jc2) = m_j.eval_mod(c1, c2, f.value());
+        let (gc1, gc2) = m_gen4.eval_mod(c1, c2, f.value());
+        let d1 = jc1.ct_add(&gc1).ct_mod(&modulus);
+        let d2 = jc2.ct_add(&gc2).ct_mod(&modulus);
+
+        // Step 2–3: [a, b]^T = M^{-1} · M_i · [c1, c2]^T mod 2^f.
+        let (e1, e2) = m_i.eval_mod(c1, c2, f.value());
+        let det = c1.ct_mul(&d2).ct_sub(&d1.ct_mul(c2)).ct_mod(&modulus);
+        let det_inv = det.invert_mod(&modulus)?;
+        let a = det_inv
+            .ct_mul(&d2.ct_mul(&e1).ct_sub(&d1.ct_mul(&e2)))
+            .ct_mod(&modulus);
+        let b = det_inv
+            .ct_mul(&c1.ct_mul(&e2).ct_sub(&c2.ct_mul(&e1)))
+            .ct_mod(&modulus);
+
+        // Step 4: α = a + b·(j + (1+k)/2) − i.
+        // In {1, i, j, k} with denom 2: (2a+b, −2, 2b, b)/2.
+        // Matches C ref `id2iso_kernel_dlogs_to_ideal_even` (id2iso.c:247-254).
+        let two_a = a.ct_add(&a);
+        let two_b = b.ct_add(&b);
+        let alpha = Element {
+            a: Coordinate::from(two_a.ct_add(&b)),
+            b: Coordinate::from(-2i64),
+            c: Coordinate::from(two_b),
+            d: Coordinate::from(b),
+            denom: Denominator::TWO,
+        };
+
+        Some(LeftIdeal::new(&alpha, &modulus, EXTREMAL_ORDERS[0].order()))
     }
 
     /// Compute R + \[m\]S from this basis.
     ///
-    /// Given the basis (R, S, R−S), uses the three-point Montgomery
-    /// ladder to compute R + \[m\]S. The scalar m is given as a
-    /// little-endian bit slice (LSB first). Constant-time in the value
-    /// of m.
+    /// The three-point Montgomery ladder takes (R, S, R−S) and computes
+    /// R + \[m\]S. The scalar m is given as a little-endian bit slice
+    /// (LSB first). Constant-time in the value of m.
     ///
-    /// This is the primary way to compute an isogeny kernel generator
-    /// from a torsion basis and a scalar.
+    /// # Convention
+    ///
+    /// Due to the `from_hint` convention (matching the C reference),
+    /// `S` is actually P−Q and `RS` is Q. So this computes
+    /// P + \[m\](P−Q), not P + \[m\]Q. See [`from_hint`](Self::from_hint).
+    ///
+    /// Implements `Ladder3pt` ([§8.2], [Algorithm 8.7][Alg. 8.7]).
+    ///
+    /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
+    /// [Alg. 8.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.7
+    /// Compute R + \[m\]S using the three-point Montgomery ladder.
+    ///
+    /// The scalar `m` is given as a little-endian byte slice. Each byte
+    /// is expanded to 8 bits internally. The ladder always processes
+    /// exactly 256 bits (padding with zeros if `m_bytes_le` has fewer
+    /// than 32 bytes) to match the C reference's `ec_ladder3pt`.
     ///
     /// Implements `Ladder3pt` ([§8.2], Algorithm 8.7).
     ///
     /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
-    pub fn ladder3pt(&self, m_bits_le: &[u8]) -> MontgomeryPoint {
-        use crate::curves::montgomery::differential_add_and_double;
+    pub fn ladder3pt(&self, m_bytes_le: &[u8]) -> ProjectiveXOnlyPoint {
+        // Three-point Montgomery ladder computing R + [m]S.
+        //
+        // Mirrors the C reference's `ec_ladder3pt` exactly:
+        //   X0 = S (multiplied by scalar)
+        //   X1 = R (accumulated result)
+        //   X2 = RS (difference R - S)
+        //
+        // The scalar m is given as little-endian bytes. We pad to 32
+        // bytes (256 bits) to match the C ref's NWORDS_ORDER=4 words.
+        let mut m = [0u8; 32];
+        let len = m_bytes_le.len().min(32);
+        m[..len].copy_from_slice(&m_bytes_le[..len]);
 
-        // Initialize: X₀ ← Q, X₁ ← P, X₂ ← P−Q
         let mut x0 = self.S;
         let mut x1 = self.R;
         let mut x2 = self.RS;
 
-        // Process bits from LSB to MSB.
-        for &bit in m_bits_le.iter() {
-            let swap = subtle::Choice::from(bit & 1);
-            MontgomeryPoint::conditional_swap(&mut x1, &mut x2, swap);
-            differential_add_and_double(&mut x0, &mut x1, &x2);
-            MontgomeryPoint::conditional_swap(&mut x1, &mut x2, swap);
+        // Process words from LSB to MSB, bits within each word from LSB.
+        // This matches the C ref's loop structure:
+        //   for (i = 0; i < NWORDS_ORDER; i++) {
+        //       t = 1;
+        //       for (j = 0; j < RADIX; j++) {
+        //           cswap(&X1, &X2, -((t & m[i]) == 0));
+        //           xDBLADD(&X0, &X1, ...);
+        //           cswap(&X1, &X2, -((t & m[i]) == 0));
+        //           t <<= 1;
+        //       }
+        //   }
+        // With NWORDS_ORDER=4 and RADIX=64, this is 256 bits.
+        // Our equivalent: 32 bytes × 8 bits = 256 bits.
+        for byte_idx in 0..32usize {
+            for bit_pos in 0..8u32 {
+                let bit = (m[byte_idx] >> bit_pos) & 1;
+                // C ref: cswap when bit == 0
+                let mask = subtle::Choice::from(bit ^ 1);
+                ProjectiveXOnlyPoint::conditional_swap(&mut x1, &mut x2, mask);
+                differential_add_and_double(&mut x0, &mut x1, &x2);
+                ProjectiveXOnlyPoint::conditional_swap(&mut x1, &mut x2, mask);
+            }
         }
         x1
+    }
+
+    /// Evaluate a [`KernelDecomposition`][crate::deuring::KernelDecomposition]
+    /// against this basis: computes [a]R + [b]S.
+    ///
+    /// Uses the three-point ladder internally. The scalars come from
+    /// the kernel decomposition produced by the Deuring correspondence.
+    pub fn eval_decomposition(
+        &self,
+        a: &scalar::Scalar,
+        b: &scalar::Scalar,
+    ) -> ProjectiveXOnlyPoint {
+        // [a]R + [b]S via the biscalar ladder.
+        // For now, use ladder3pt: compute [b]S + R, then subtract R
+        // and add [a]R... Actually the three-point ladder computes
+        // R + [m]S directly. For [a]R + [b]S we need the full
+        // biscalar ladder.
+        //
+        // TODO: implement using the Scalar-based biscalar ladder
+        // once we refactor ladder_biscalar to take Scalar.
+        // For now, convert to byte representation.
+        let a_bytes: Vec<u8> = a
+            .as_limbs()
+            .iter()
+            .flat_map(|limb| limb.to_le_bytes())
+            .collect();
+        let b_bytes: Vec<u8> = b
+            .as_limbs()
+            .iter()
+            .flat_map(|limb| limb.to_le_bytes())
+            .collect();
+        self.ladder_biscalar(&a_bytes, &b_bytes, scalar::Scalar::BITS as usize)
     }
 
     /// Compute \[m\]R + \[n\]S from this basis.
@@ -227,10 +409,7 @@ impl TorsionBasis {
     /// Implements `LadderBiscalar` ([§8.2], Algorithm 8.8).
     ///
     /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
-    pub fn ladder_biscalar(&self, m: &[u8], n: &[u8], kbits: usize) -> MontgomeryPoint {
-        use crate::curves::montgomery::differential_add_and_double;
-        use subtle::ConditionallySelectable;
-
+    pub fn ladder_biscalar(&self, m: &[u8], n: &[u8], kbits: usize) -> ProjectiveXOnlyPoint {
         let P = &self.R;
         let Q = &self.S;
         let PmQ = &self.RS;
@@ -293,10 +472,10 @@ impl TorsionBasis {
         }
 
         // --- Evaluation stage ---
-        let mut R0 = MontgomeryPoint::identity(curve);
+        let mut R0 = ProjectiveXOnlyPoint::identity(curve);
         let sigma0_choice = subtle::Choice::from(sigma0 & 1);
-        let mut R1 = MontgomeryPoint::conditional_select(P, Q, sigma0_choice);
-        let mut R2 = MontgomeryPoint::conditional_select(Q, P, sigma0_choice);
+        let mut R1 = ProjectiveXOnlyPoint::conditional_select(P, Q, sigma0_choice);
+        let mut R2 = ProjectiveXOnlyPoint::conditional_select(Q, P, sigma0_choice);
 
         let mut D1 = R1;
         let mut D2 = R2;
@@ -314,22 +493,22 @@ impl TorsionBasis {
             // T0 ← R_{⌊h/2⌋}, then double it.
             let h_bit0 = subtle::Choice::from(h & 1);
             let h_bit1 = subtle::Choice::from((h >> 1) & 1);
-            let mut T0 = MontgomeryPoint::conditional_select(&R0, &R1, h_bit0);
-            T0 = MontgomeryPoint::conditional_select(&T0, &R2, h_bit1);
+            let mut T0 = ProjectiveXOnlyPoint::conditional_select(&R0, &R1, h_bit0);
+            T0 = ProjectiveXOnlyPoint::conditional_select(&T0, &R2, h_bit1);
             T0 = T0.double();
 
             // T1 and T2 depend on r[2i+1].
             let r_bit = subtle::Choice::from(r[2 * i + 1] & 1);
-            let T1_a = MontgomeryPoint::conditional_select(&R0, &R1, r_bit);
-            let T1_b = MontgomeryPoint::conditional_select(&R1, &R2, r_bit);
+            let T1_a = ProjectiveXOnlyPoint::conditional_select(&R0, &R1, r_bit);
+            let T1_b = ProjectiveXOnlyPoint::conditional_select(&R1, &R2, r_bit);
 
             // Swap DIFF1a/DIFF1b based on r[2i+1].
-            MontgomeryPoint::conditional_swap(&mut D1, &mut D2, r_bit);
+            ProjectiveXOnlyPoint::conditional_swap(&mut D1, &mut D2, r_bit);
             let T1 = T1_a.differential_add(&T1_b, &D1);
             let T2 = R0.differential_add(&R2, &F1);
 
             // Swap DIFF2a/DIFF2b if h is odd.
-            MontgomeryPoint::conditional_swap(&mut F1, &mut F2, h_bit0);
+            ProjectiveXOnlyPoint::conditional_swap(&mut F1, &mut F2, h_bit0);
 
             R0 = T0;
             R1 = T1;
@@ -337,9 +516,10 @@ impl TorsionBasis {
         }
 
         // Output: select based on parity of original scalars.
-        let mut result = MontgomeryPoint::conditional_select(&R0, &R1, subtle::Choice::from(m_evens & 1));
+        let mut result =
+            ProjectiveXOnlyPoint::conditional_select(&R0, &R1, subtle::Choice::from(m_evens & 1));
         let both_odd = subtle::Choice::from(bit_m0 & bit_n0);
-        result = MontgomeryPoint::conditional_select(&result, &R2, both_odd);
+        result = ProjectiveXOnlyPoint::conditional_select(&result, &R2, both_odd);
 
         result
     }
@@ -356,19 +536,26 @@ impl TorsionBasis {
     /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
     pub(crate) fn from_hint(curve: &Curve, hint: BasisHint) -> TorsionBasis {
-        use crate::fields::fp::Fp;
-        use crate::fields::fp2::Fp2;
-
-        let e = crate::params::TORSION_EVEN_POWER;
+        let _e = TORSION_EVEN_POWER;
+        // Normalize the curve's A24/C24 constants so the Montgomery
+        // ladder produces the same projective representative as the
+        // C reference (which calls ec_normalize_curve_and_A24 here).
+        let mut curve = *curve;
+        curve.normalize();
+        let curve = &curve;
         let A = Fp2::from(*curve.coefficient().as_fp2());
 
         // Special case: A = 0 (the starting curve E₀).
         // Use precomputed basis points and compute the difference.
         if A == Fp2::ZERO {
-            let P = MontgomeryPoint::from_affine_x(crate::params::BASIS_E0_P_X, curve);
-            let Q = MontgomeryPoint::from_affine_x(crate::params::BASIS_E0_Q_X, curve);
+            let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, curve);
+            let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, curve);
             let PmQ = P.projective_difference(&Q);
-            return TorsionBasis { R: P, S: PmQ, RS: Q };
+            return TorsionBasis {
+                R: P,
+                S: PmQ,
+                RS: Q,
+            };
         }
 
         let h_A = hint.h_A();
@@ -396,19 +583,85 @@ impl TorsionBasis {
 
         let x_Q = -&(&A + &x_P); // x(Q) = -x(P) - A
 
-        let mut P = MontgomeryPoint::from_affine_x(x_P, curve);
-        let mut Q = MontgomeryPoint::from_affine_x(x_Q, curve);
+        let mut P = ProjectiveXOnlyPoint::from_affine_x(x_P, curve);
+        let mut Q = ProjectiveXOnlyPoint::from_affine_x(x_Q, curve);
+
+        #[cfg(test)]
+        {
+            let fp2_hex = |fp2val: &Fp2| {
+                let bytes = fp2val.to_bytes();
+                let re: String = bytes[..32]
+                    .iter()
+                    .rev()
+                    .map(|b| format!("{:02x}", b))
+                    .collect();
+                let im: String = bytes[32..]
+                    .iter()
+                    .rev()
+                    .map(|b| format!("{:02x}", b))
+                    .collect();
+                format!("0x{re}+i*0x{im}")
+            };
+            eprintln!("FROM_HINT: h_A={h_A} h={h} x_P={}", fp2_hex(&x_P));
+            eprintln!("FROM_HINT: curve_normalized={}", curve.is_normalized());
+        }
 
         // Clear odd cofactor to get points of order 2^e.
         // Multiply by (p+1)/2^e = cofactor.
-        P = clear_cofactor(&P);
-        Q = clear_cofactor(&Q);
+        P = P.clear_cofactor();
+        Q = Q.clear_cofactor();
 
-        // Compute P−Q and arrange so Q is above (0,0).
+        #[cfg(test)]
+        {
+            let fp2_hex = |fp2val: &Fp2| {
+                let bytes = fp2val.to_bytes();
+                let re: String = bytes[..32]
+                    .iter()
+                    .rev()
+                    .map(|b| format!("{:02x}", b))
+                    .collect();
+                let im: String = bytes[32..]
+                    .iter()
+                    .rev()
+                    .map(|b| format!("{:02x}", b))
+                    .collect();
+                format!("0x{re}+i*0x{im}")
+            };
+            eprintln!("FROM_HINT: P_after_cofactor X={}", fp2_hex(&P.X));
+            eprintln!("FROM_HINT: P_after_cofactor Z={}", fp2_hex(&P.Z));
+            // Cross-check: compute [5]P using scalar_mul
+            let five = crate::curves::scalar::Scalar::from_u64(5);
+            let P_orig = ProjectiveXOnlyPoint::from_affine_x(x_P, curve);
+            let P_5_ladder = P_orig.scalar_mul(&five);
+            eprintln!("FROM_HINT: P_5_ladder X={}", fp2_hex(&P_5_ladder.X));
+            eprintln!("FROM_HINT: P_5_ladder Z={}", fp2_hex(&P_5_ladder.Z));
+            // Affine comparison
+            let p_aff = &P.X * &P.Z.invert();
+            let p5_aff = &P_5_ladder.X * &P_5_ladder.Z.invert();
+            eprintln!("FROM_HINT: P affine x={}", fp2_hex(&p_aff));
+            eprintln!("FROM_HINT: P_5_ladder affine x={}", fp2_hex(&p5_aff));
+            eprintln!("FROM_HINT: affine match={}", p_aff == p5_aff);
+        }
+
         let PmQ = P.projective_difference(&Q);
 
-        // The C reference swaps: basis = (P, PmQ, Q) so that
-        // the second generator is above (0,0).
+        // WARNING: The C reference (`ec_curve_to_basis_2f_from_hint` in
+        // `basis.c:403-406`) deliberately stores P−Q in the `B.Q` slot
+        // and Q in the `B.PmQ` slot:
+        //
+        //   difference_point(&PQ2->Q, &P, &Q, curve);  // B.Q = P − Q
+        //   copy_point(&PQ2->P, &P);                    // B.P = P
+        //   copy_point(&PQ2->PmQ, &Q);                  // B.PmQ = Q
+        //
+        // The comment in the C ref says "set PmQ to Q to ensure Q
+        // above (0,0)." This swap means `ec_ladder3pt(R, m, B.P, B.Q,
+        // B.PmQ, E)` computes `P + [m](P−Q)`, not `P + [m]Q`.
+        //
+        // We follow the same convention: R = P, S = P−Q, RS = Q.
+        // The spec's Algorithm 4.9 line 9 says the challenge kernel is
+        // ⟨[2^n_bt](P_pk + [chl]Q_pk)⟩, but with this convention the
+        // ladder computes P + [chl](P−Q) = (1−chl)P + chl·Q, which
+        // generates the same cyclic subgroup for any nonzero chl.
         TorsionBasis {
             R: P,
             S: PmQ,
@@ -424,17 +677,19 @@ impl TorsionBasis {
     /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
     pub(crate) fn to_hint(curve: &Curve) -> (TorsionBasis, BasisHint) {
-        use crate::fields::fp2::Fp2;
-
-        let e = crate::params::TORSION_EVEN_POWER;
+        let _e = TORSION_EVEN_POWER;
         let A = Fp2::from(*curve.coefficient().as_fp2());
 
         if A == Fp2::ZERO {
             // E₀ has no hint — the basis is precomputed.
-            let P = MontgomeryPoint::from_affine_x(crate::params::BASIS_E0_P_X, curve);
-            let Q = MontgomeryPoint::from_affine_x(crate::params::BASIS_E0_Q_X, curve);
+            let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, curve);
+            let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, curve);
             let PmQ = P.projective_difference(&Q);
-            let basis = TorsionBasis { R: P, S: PmQ, RS: Q };
+            let basis = TorsionBasis {
+                R: P,
+                S: PmQ,
+                RS: Q,
+            };
             return (basis, BasisHint::from_byte(0));
         }
 
@@ -452,11 +707,11 @@ impl TorsionBasis {
 
         let x_Q = -&(&A + &x_P);
 
-        let mut P = MontgomeryPoint::from_affine_x(x_P, curve);
-        let mut Q = MontgomeryPoint::from_affine_x(x_Q, curve);
+        let mut P = ProjectiveXOnlyPoint::from_affine_x(x_P, curve);
+        let mut Q = ProjectiveXOnlyPoint::from_affine_x(x_Q, curve);
 
-        P = clear_cofactor(&P);
-        Q = clear_cofactor(&Q);
+        P = P.clear_cofactor();
+        Q = Q.clear_cofactor();
 
         let PmQ = P.projective_difference(&Q);
 
@@ -507,32 +762,25 @@ fn swap_bytes_ct(a: &mut [u8], b: &mut [u8], mask: u8) {
 }
 
 /// Check if x³ + Ax² + x is a square in F_{p²} (i.e., (x, ·) is on E_A).
-fn is_on_curve(x: &crate::fields::fp2::Fp2, A: &crate::fields::fp2::Fp2) -> bool {
+fn is_on_curve(x: &Fp2, A: &Fp2) -> bool {
     let t = &(x + A) * x; // x² + Ax
-    let t = &(&t + &crate::fields::fp2::Fp2::ONE) * x; // x³ + Ax² + x
+    let t = &(&t + &Fp2::ONE) * x; // x³ + Ax² + x
     bool::from(t.is_square())
 }
 
 /// Find n such that n*A is a valid x-coordinate on E_A. Returns x(P).
-fn find_na_x_coord(
-    A: &crate::fields::fp2::Fp2,
-    _curve: &Curve,
-    start: u8,
-) -> crate::fields::fp2::Fp2 {
-    let mut x = &crate::fields::fp2::Fp2::from_fp(crate::fields::fp::Fp::from_small(start as u32)) * A;
-    let mut n = start;
+fn find_na_x_coord(A: &Fp2, _curve: &Curve, start: u8) -> Fp2 {
+    let mut x = &Fp2::from_fp(Fp::from_small(start as u32)) * A;
+    let mut _n = start;
     while !is_on_curve(&x, A) || bool::from(x.is_square()) {
         x = &x + A;
-        n += 1;
+        _n += 1;
     }
     x
 }
 
 /// Find n*A and return (x, hint).
-fn find_na_x_coord_with_hint(
-    A: &crate::fields::fp2::Fp2,
-    _curve: &Curve,
-) -> (crate::fields::fp2::Fp2, u8) {
+fn find_na_x_coord_with_hint(A: &Fp2, _curve: &Curve) -> (Fp2, u8) {
     let mut x = *A;
     let mut n: u8 = 1;
     while !is_on_curve(&x, A) || bool::from(x.is_square()) {
@@ -544,14 +792,7 @@ fn find_na_x_coord_with_hint(
 }
 
 /// Find b such that -A/(1+i*b) is a valid NQR x-coordinate on E_A.
-fn find_nqr_factor(
-    A: &crate::fields::fp2::Fp2,
-    _curve: &Curve,
-    start: u8,
-) -> crate::fields::fp2::Fp2 {
-    use crate::fields::fp::Fp;
-    use crate::fields::fp2::Fp2;
-
+fn find_nqr_factor(A: &Fp2, _curve: &Curve, start: u8) -> Fp2 {
     let mut n = start;
     loop {
         let z = Fp2::new(Fp::ONE, Fp::from_small(n as u32));
@@ -564,13 +805,7 @@ fn find_nqr_factor(
 }
 
 /// Find -A/(1+i*b) and return (x, hint).
-fn find_nqr_factor_with_hint(
-    A: &crate::fields::fp2::Fp2,
-    _curve: &Curve,
-) -> (crate::fields::fp2::Fp2, u8) {
-    use crate::fields::fp::Fp;
-    use crate::fields::fp2::Fp2;
-
+fn find_nqr_factor_with_hint(A: &Fp2, _curve: &Curve) -> (Fp2, u8) {
     let mut n: u8 = 1;
     loop {
         let z = Fp2::new(Fp::ONE, Fp::from_small(n as u32));
@@ -582,12 +817,3 @@ fn find_nqr_factor_with_hint(
         n += 1;
     }
 }
-
-/// Clear the odd cofactor: multiply P by (p+1)/2^f to get a point of
-/// order dividing 2^f, then double (TORSION_EVEN_POWER − e) times.
-fn clear_cofactor(P: &MontgomeryPoint) -> MontgomeryPoint {
-    // (p+1)/2^f = c = 5 for NIST-I.
-    // This is a public, small scalar multiplication.
-    P * crate::params::COFACTOR
-}
-

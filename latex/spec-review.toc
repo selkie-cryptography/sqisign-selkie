@@ -1,0 +1,11 @@
+\contentsline {section}{\numberline {1}Severity scale}{2}{section.1}%
+\contentsline {section}{\numberline {2}$\mathbb {F}_{p^2}$ square root canonicalization}{2}{section.2}%
+\contentsline {section}{\numberline {3}ProductToTheta coordinate convention}{2}{section.3}%
+\contentsline {section}{\numberline {4}``Squared theta'' definition}{2}{section.4}%
+\contentsline {section}{\numberline {5}\texttt {hadamard\_bool} in the $(2,2)$-chain}{3}{section.5}%
+\contentsline {section}{\numberline {6}Torsion basis slot convention}{3}{section.6}%
+\contentsline {section}{\numberline {7}Normalization of $(A_{24} : C_{24})$}{3}{section.7}%
+\contentsline {section}{\numberline {8}Gluing requires Jacobian $y$-coordinates}{3}{section.8}%
+\contentsline {section}{\numberline {9}Jacobian doubling for balanced strategy}{4}{section.9}%
+\contentsline {section}{\numberline {10}\textsc {DifferencePoint} normalization factor}{4}{section.10}%
+\contentsline {section}{\numberline {A}Never recompute $P{-}Q$ via \textsc {DifferencePoint}}{5}{appendix.A}%

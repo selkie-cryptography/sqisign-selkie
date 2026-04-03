@@ -1,0 +1,260 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Restrict default permissions to read-only. Jobs that need more
+# must declare their own permissions block.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.target }}, ${{ matrix.bits }}-bit)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Rust Tier 1 targets. 64-bit targets run on native runners;
+          # 32-bit targets cross-compile on 64-bit runners (the test
+          # binaries run natively since x86_64 CPUs support i686).
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            bits: 64
+          - os: ubuntu-24.04
+            target: i686-unknown-linux-gnu
+            bits: 32
+            multilib: true
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bits: 64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bits: 64
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            bits: 32
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            bits: 64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install 32-bit multilib (Linux i686)
+        if: matrix.multilib
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      # dtolnay/rust-toolchain uses branch refs (stable/nightly) by
+      # design so the Rust version tracks upstream releases.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo test --target ${{ matrix.target }}
+
+  msrv:
+    name: MSRV (1.81.0)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.81.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - run: cargo check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: reviewdog/action-setup@19eab14c39ff4e8b0db556d2acab0ad43e0ea85c
+      - name: Run clippy with reviewdog
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo clippy --all-targets --message-format=short 2>&1 |
+            reviewdog -f=clippy -reporter=github-check -fail-level=any
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: reviewdog/action-setup@19eab14c39ff4e8b0db556d2acab0ad43e0ea85c
+      - name: Run rustfmt with reviewdog
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo fmt -- --check 2>&1 |
+            reviewdog -f=rustfmt -reporter=github-check -fail-level=any
+
+  doc:
+    name: Documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - run: cargo doc --no-deps
+
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # TODO: When the repo goes public, set up Codecov or Coveralls for
+    # PR-level coverage reporting and upload lcov.info there.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+        with:
+          tool: cargo-llvm-cov
+      - name: Generate coverage report
+        run: |
+          echo '## Code Coverage' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov --fail-under-lines 50 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      # cargo-deny only reads Cargo.toml/lock, no compilation needed.
+      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+        with:
+          tool: cargo-deny
+      - run: cargo deny check advisories bans
+
+  mutants:
+    name: Mutation testing (preliminary)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+        with:
+          tool: cargo-mutants
+      - run: cargo mutants --timeout=60 -- --lib
+        # TODO: As the test suite grows, restrict to specific modules
+        # or use --in-diff to only mutate changed code.
+
+  sage-precompute-check:
+    name: Sage precompute cross-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Cache SageMath apt packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            /var/cache/apt/archives
+          key: sage-apt-${{ runner.os }}
+
+      - name: Install SageMath
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sagemath
+
+      - name: Verify Sage >= 10.5
+        run: |
+          sage --version
+          sage -c "from sage.misc.banner import require_version; assert require_version(10, 5), 'SageMath >= 10.5 required (ref impl minimum for maxorders.py)'"
+
+      - name: Run Sage cross-check test
+        run: cargo test sage_cross_check -- --ignored
+
+  c-ref-cross-check:
+    name: C reference cross-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Run C ref basis cross-check
+        run: cargo test c_ref_basis_cross_check -- --ignored
+
+      - name: Run C ref KAT verification cross-check
+        run: cargo test c_ref_kat_cross_check -- --ignored
+
+  paper:
+    name: Build paper
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container: ghcr.io/xu-cheng/texlive-full:latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: true
+
+      - name: Build PDF
+        working-directory: latex
+        run: latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
+
+      - name: Check PDF is up to date
+        working-directory: latex
+        run: |
+          git diff --exit-code main.pdf || {
+            echo "::error::latex/main.pdf is out of date. Rebuild with 'cd latex && latexmk -pdf main.tex' and commit."
+            exit 1
+          }

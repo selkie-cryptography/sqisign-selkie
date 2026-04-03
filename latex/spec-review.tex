@@ -1,0 +1,324 @@
+% Specification review / feedback for SQIsign authors
+% Derived from implementing sqisign-selkie (Rust, NIST-I)
+\documentclass[a4paper,11pt]{article}
+
+\usepackage{amsfonts,amsmath,amssymb}
+\usepackage[T1]{fontenc}
+\usepackage{libertinus}
+\usepackage[libertine]{newtxmath}
+\usepackage{microtype}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage[colorlinks=true, urlcolor=BrickRed, linkcolor=BrickRed,
+            citecolor=BrickRed]{hyperref}
+\usepackage{xurl}
+\usepackage{geometry}
+\geometry{margin=28mm, marginparwidth=0pt}
+
+\newcommand{\algo}[1]{Algorithm~#1}
+\newcommand{\Fp}{\mathbb{F}_p}
+\newcommand{\Fpii}{\mathbb{F}_{p^2}}
+
+% Severity badges — inline colored small-caps
+\newcommand{\critical}{\textsc{\color{BrickRed}Critical}}
+\newcommand{\high}{\textsc{\color{BurntOrange}High}}
+\newcommand{\medium}{\textsc{\color{RoyalBlue}Medium}}
+\newcommand{\low}{\textsc{\color{OliveGreen}Low}}
+
+% Finding header: severity + affected algorithms on one line
+\newcommand{\finding}[2]{\noindent\textit{#1}\hfill#2\par\smallskip}
+
+\title{SQIsign v2 Specification Review\\[0.3em]
+  {\large Feedback from an Independent Rust Implementation}}
+\author{Deirdre Connolly\\[0.2em]
+  \small Selkie Cryptography\\
+  \small\texttt{durumcrustulum@gmail.com}}
+\date{\today\enspace{\small(living document)}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Each item below describes something that the SQIsign
+specification~\cite{sqisign-spec} (version 2025-07-07) leaves unstated,
+ambiguous, or implicit, and that we could only resolve by inspecting the
+C reference implementation.  We file these as constructive suggestions so
+that future implementors can achieve interoperability from the spec
+alone.
+\end{abstract}
+
+\tableofcontents
+
+% =====================================================================
+\section{Severity scale}
+
+\smallskip
+\begin{tabular}{@{}lp{0.86\textwidth}@{}}
+\toprule
+\critical & The spec as written produces a non-interoperable
+    implementation: verification rejects valid signatures, or signing
+    produces unverifiable ones.  The spec must be amended. \\[0.4em]
+\high & An implementor will almost certainly write a bug that passes
+    unit tests but fails KAT or cross-implementation testing.
+    Debugging requires reading the C reference source. \\[0.4em]
+\medium & An implementor may write a bug depending on reasonable but
+    wrong assumptions about conventions.  A short note eliminates the
+    ambiguity. \\[0.4em]
+\low & The spec is correct but incomplete.  A remark or forward pointer
+    would help. \\
+\bottomrule
+\end{tabular}
+
+% =====================================================================
+\section{$\Fpii$ square root canonicalization}
+\label{sec:sqrt}
+
+\finding{Affects \algo{8.12} (\textsc{DifferencePoint}), and
+transitively every algorithm that consumes a torsion basis.}{\critical}
+
+\algo{8.12} says ``compute $\delta = \sqrt{B_{XZ}^2 - B_{XX} B_{ZZ}}$''
+without specifying which of the two square roots in $\Fpii$ to use.
+The two roots $\delta$ and $-\delta$ produce two \emph{affinely distinct}
+points $x_{P-Q}$.  These are not projectively equivalent; they are
+genuinely different points.  The wrong choice cascades through
+\textsc{Ladder3pt} (wrong kernel generator), the challenge isogeny
+(different curve $E_{\text{chl}}$), and every subsequent verification
+step.  In our implementation the $j$-invariant of $E_{\text{chl}}$ was
+completely wrong until we matched the C reference's canonicalization.
+
+The spec should define a canonical $\Fpii$ square root.  The C reference
+uses the convention from Aardal et al.~\cite{ABCDK24}: negate the
+output so that the real part (as an integer in $[0, p)$) is even; if the
+real part is zero, negate so the imaginary part is even.  This should be
+stated in \S8.1 (field arithmetic) as a normative requirement.  A note
+of the form
+\begin{quote}
+  \itshape Throughout this document, ``compute $\sqrt{a}$'' for
+  $a \in \Fpii$ means the unique root $r$ such that $r^2 = a$ and
+  $\operatorname{Re}(r) \bmod 2 = 0$ (or, if $\operatorname{Re}(r)=0$,
+  $\operatorname{Im}(r) \bmod 2 = 0$).
+\end{quote}
+would suffice.
+
+% =====================================================================
+\section{ProductToTheta coordinate convention}
+\label{sec:product-to-theta}
+
+\finding{Affects \algo{8.37} (\textsc{ProductToTheta}).}{\high}
+
+The product theta coordinates are described abstractly via level-2 theta
+functions.  The mapping from Montgomery projective coordinates $(X:Z)$ to
+product theta coordinates is not stated explicitly.  The natural
+``theta-like'' representation for Montgomery arithmetic is $(X-Z,\,X+Z)$,
+which appears throughout the isogeny literature.  The C reference uses
+raw $(X, Z)$ directly.  Using $(X-Z, X+Z)$ produces a completely wrong
+change-of-basis matrix~$N$.
+
+\algo{8.37} should state explicitly that the product theta coordinates
+are formed as
+\[
+  (a, b, c, d) = (X_1 X_2,\; X_1 Z_2,\; Z_1 X_2,\; Z_1 Z_2)
+\]
+from Montgomery projective pairs $(X_1 : Z_1)$, $(X_2 : Z_2)$.
+
+% =====================================================================
+\section{``Squared theta'' definition}
+\label{sec:squared-theta}
+
+\finding{Affects \algo{8.29}, \algo{8.34}, \algo{8.38}.}{\high}
+
+Several algorithms refer to ``squared theta coordinates'' without a
+centralized definition.  In the C reference,
+\texttt{to\_squared\_theta(P)} computes component-wise squaring
+\emph{followed by a Hadamard transform}: $\tilde{P} =
+\mathcal{H}(P^2)$.  The name suggests only squaring.  We omitted the
+inner Hadamard in the generic isogeny evaluation, computing
+$\mathcal{H}(\mathrm{inv} \cdot P^2)$ instead of the correct
+$\mathcal{H}(\mathrm{inv} \cdot \mathcal{H}(P^2))$.
+
+Add a definition early in \S8.5:
+\begin{quote}
+  \itshape The \textbf{squared theta} of a point $P = (a:b:c:d)$ is
+  $\tilde{P} = \mathcal{H}(a^2, b^2, c^2, d^2)$, i.e.\ component-wise
+  squaring followed by the Hadamard transform.
+\end{quote}
+
+% =====================================================================
+\section{\texttt{hadamard\_bool} in the $(2,2)$-chain}
+\label{sec:hadamard-bool}
+
+\finding{Affects \algo{8.47}
+(\textsc{Isogeny22ChainWithTorsion}).}{\high}
+
+The algorithm describes each generic step uniformly.  The C reference
+uses three formula variants controlled by boolean flags:
+\begin{itemize}[nosep]
+  \item Normal ($i < n{-}2$): codomain Hadamard-transformed;
+        eval~$= \mathcal{H}(\mathrm{precomp} \cdot \mathcal{H}(P^2))$.
+  \item Penultimate ($i = n{-}2$): codomain in dual form;
+        eval~$= \mathrm{precomp} \cdot \mathcal{H}(P^2)$.
+  \item Ultimate ($i = n{-}1$): extra input Hadamard, codomain dual;
+        eval~$= \mathrm{precomp} \cdot \mathcal{H}(\mathcal{H}(P)^2)$.
+\end{itemize}
+The splitting step expects dual form.  Using the normal formula for all
+steps feeds the splitter a Hadamard-transformed null point with no zero
+$U_{i,j}(0)$ entry, causing verification to fail after an otherwise
+correct 125-step chain.
+
+A short remark in \algo{8.47} noting that the last two steps omit the
+final Hadamard (and the ultimate step pre-Hadamards the input) would
+prevent this.
+
+% =====================================================================
+\section{Torsion basis slot convention}
+\label{sec:basis-swap}
+
+\finding{Affects \algo{2.2}
+(\textsc{TorsionBasisFromHint}).}{\medium}
+
+The spec says the algorithm returns $(P, Q, P{-}Q)$.  The C reference
+stores $P{-}Q$ in the \texttt{Q} slot and $Q$ in \texttt{PmQ}, so
+\textsc{Ladder3pt} computes $P + [m](P{-}Q)$, not $P + [m]Q$.  The swap
+ensures the multiplied point avoids $(0,0)$ but is not documented.
+
+State the output convention explicitly, or note that \textsc{Ladder3pt}
+is called with the difference in the $Q$ position.
+
+% =====================================================================
+\section{Normalization of $(A_{24} : C_{24})$}
+\label{sec:normalize-a24}
+
+\finding{Affects \algo{2.2}
+(\textsc{TorsionBasisFromHint}).}{\medium}
+
+The C reference normalizes to $((A{+}2)/4 : 1)$ before basis generation.
+If the curve arrives from an isogeny codomain with $C_{24} \neq 1$, the
+Montgomery ladder produces a different projective representative, which
+propagates through \textsc{DifferencePoint} and \textsc{Ladder3pt}.
+
+Note in \algo{2.2} that the curve must be in normalized form before
+computing the basis.
+
+% =====================================================================
+\section{Gluing requires Jacobian $y$-coordinates}
+\label{sec:gluing-jacobian}
+
+\finding{Affects \algo{8.39} (\textsc{GluingEval}).}{\low}
+
+Montgomery $x$-only arithmetic cannot distinguish $P+Q$ from $P-Q$.  The
+gluing evaluation needs this distinction.  The C reference lifts to
+Jacobian $(x,y,z)$ via Okeya--Sakurai for this step---the only place in
+verification that needs $y$-coordinates.  Note this in \algo{8.39}.
+
+% =====================================================================
+\section{Jacobian doubling for balanced strategy}
+\label{sec:jacobian-doubling}
+
+\finding{Affects \algo{8.47}, Phase~1.}{\low}
+
+The spec does not specify whether Phase~1 doublings use Montgomery or
+Jacobian coordinates.  The C reference doubles in Jacobian, then converts
+via $\texttt{jac\_to\_xz}{:}\; (x,y,z) \mapsto (x, z^2)$.  The theta
+coordinate computations are sensitive to the projective representative.
+Note this, or at minimum state that the representative matters.
+
+% =====================================================================
+\section{\textsc{DifferencePoint} normalization factor}
+\label{sec:difference-normalization}
+
+\finding{Affects \algo{8.12} (\textsc{DifferencePoint}).}{\low}
+
+The C reference multiplies $B_{XX}$, $B_{XZ}$, $B_{ZZ}$ by
+$C \cdot \overline{C}^{\,2} \cdot \overline{Z_P}^{\,2} \cdot
+\overline{Z_Q}^{\,2}$ (Galois conjugation) before the quadratic solve.
+This makes the discriminant a fourth power in~$\Fp$, reducing the
+$\Fpii$ sqrt to an $\Fp$ sqrt.  We initially used $(Z_P Z_Q)^2$, which
+lacks this property since $\overline{z}^{\,2} \neq z^2$ in general.
+State the normalization factor and its purpose in \algo{8.12}.
+
+% =====================================================================
+
+\begin{thebibliography}{9}
+
+\bibitem{sqisign-spec}
+{SQIsign team},
+\textit{SQIsign: Compact Post-Quantum Signatures from Quaternions and Isogenies},
+Specification version 2025-07-07,
+\url{https://sqisign.org/spec/sqisign-20250707.pdf}.
+
+\bibitem{ABCDK24}
+M.~N.~H.~Aardal, M.~P.~Azimova, E.~L.~Carri\'{o}n, L.~Dillinger, and
+M.~J.~Kannwischer,
+\textit{Optimized One-Dimensional SQIsign Verification on Intel and Cortex-M4},
+Cryptology ePrint Archive, Paper 2024/1563,
+\url{https://eprint.iacr.org/2024/1563}.
+
+\bibitem{CHR17}
+C.~Costello, H.~Hisil, and B.~Smith,
+\textit{Faster Compact Diffie--Hellman: Endomorphisms on the $x$-line},
+ASIACRYPT 2017,
+\url{https://eprint.iacr.org/2017/518}.
+
+\end{thebibliography}
+
+\clearpage
+\appendix
+
+% =====================================================================
+\section{Never recompute $P{-}Q$ via \textsc{DifferencePoint}}
+\label{sec:pmq-recompute}
+
+\finding{Affects \algo{4.9} (verification), lines 11--26,
+and transitively the $(2,2)$-isogeny chain.}{\critical}
+
+A torsion basis $(P,\, Q,\, P{-}Q)$ is produced by
+\textsc{TorsionBasisFromHint} (\algo{2.2}).  The third component
+$P{-}Q$ is computed once, via \textsc{DifferencePoint}, which
+internally takes an $\Fpii$ square root.  Subsequent operations---scaling
+(repeated doubling), matrix application (\algo{4.9} line~14), and the
+even response isogeny (line~17)---must propagate all three points
+together.  If at any point $P{-}Q$ is recomputed from $P$ and $Q$ via
+\textsc{DifferencePoint}, the fresh square root may pick the opposite
+branch, producing a point that is \emph{affinely distinct} from the
+original $P{-}Q$.
+
+Concretely, the two branches of \textsc{DifferencePoint} yield $x(P-Q)$
+and $x(P+Q) = x(2P-Q)$; these are different points.  All subsequent
+differential additions (the three-point ladder, the biladder for matrix
+application, and the $(2,2)$-isogeny chain's \textsc{Ladder3pt} and
+\textsc{lift\_basis}) consume $P{-}Q$ as a third input and produce wrong
+results if it is silently replaced by $2P{-}Q$.
+
+In our implementation, three separate recomputations caused failures:
+\begin{enumerate}[nosep]
+  \item After scaling the basis by repeated doubling, we reconstructed
+        $P{-}Q$ from the doubled $P$ and $Q$ instead of doubling $P{-}Q$
+        alongside them.
+  \item The matrix application $M_{\mathrm{chl}} \cdot (P, Q)$ computed
+        $P' - Q'$ via \textsc{DifferencePoint}$(P', Q')$ instead of a
+        third biladder call $[(a{-}b)]P + [(c{-}d)]Q$.
+  \item Before entering the $(2,2)$-chain, we recomputed
+        $P{-}Q$ from the post-isogeny images instead of pushing the
+        original $P{-}Q$ through the isogeny as a third evaluation point.
+\end{enumerate}
+Each of these independently caused KAT verification failure.  Fixing all
+three was necessary and sufficient to make KAT vector~0 pass.
+
+\textbf{Current spec text.} The spec does not warn against recomputing
+$P{-}Q$.  Algorithms that scale or transform a basis mention only $P$
+and $Q$; the third point $P{-}Q$ is not discussed.
+
+\medskip\noindent\textbf{Recommendation.}  Add a normative note in \S2.2 or \S8.2:
+\begin{quote}
+  \itshape Once a basis $(P, Q, P{-}Q)$ has been produced by
+  \textsc{TorsionBasisFromHint}, the third point $P{-}Q$ must be
+  propagated through every subsequent operation (doubling, matrix
+  application, isogeny evaluation) alongside $P$ and~$Q$.
+  Recomputing $P{-}Q$ via \textsc{DifferencePoint} is not permitted:
+  the square root may select a different branch, yielding an affinely
+  distinct point that silently corrupts all downstream differential
+  additions.
+\end{quote}
+
+\end{document}

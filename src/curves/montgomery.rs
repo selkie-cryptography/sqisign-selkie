@@ -20,10 +20,11 @@
 //! [§2.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
 //! [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 
-use core::ops::{Mul, MulAssign};
+use core::ops::Mul;
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
+use super::scalar::Scalar;
 use crate::fields::fp::Fp;
 use crate::fields::fp2::Fp2;
 
@@ -38,11 +39,28 @@ use crate::fields::fp2::Fp2;
 /// [§2.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
 /// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct MontgomeryCoefficient(Fp2);
+pub struct Coefficient(Fp2);
 
-impl MontgomeryCoefficient {
+/// An affine x-coordinate on a Montgomery curve, i.e. x = X/Z ∈ F_{p²}.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct AffineX(Fp2);
+
+impl AffineX {
+    /// The underlying F_{p²} element.
+    pub fn as_fp2(&self) -> &Fp2 {
+        &self.0
+    }
+}
+
+impl From<Fp2> for AffineX {
+    fn from(x: Fp2) -> Self {
+        Self(x)
+    }
+}
+
+impl Coefficient {
     /// A = 0, the coefficient of the starting curve E₀.
-    pub const ZERO: MontgomeryCoefficient = MontgomeryCoefficient(Fp2::ZERO);
+    pub const ZERO: Coefficient = Coefficient(Fp2::ZERO);
 
     /// The underlying F_{p²} element.
     pub fn as_fp2(&self) -> &Fp2 {
@@ -55,30 +73,30 @@ impl MontgomeryCoefficient {
     }
 
     /// Decode from bytes.
-    pub fn from_bytes(bytes: &[u8; crate::params::CURVE_ENCODED_BYTES]) -> MontgomeryCoefficient {
-        MontgomeryCoefficient(Fp2::from_bytes(bytes))
+    pub fn from_bytes(bytes: &[u8; crate::params::CURVE_ENCODED_BYTES]) -> Coefficient {
+        Coefficient(Fp2::from_bytes(bytes))
     }
 }
 
-impl From<Fp2> for MontgomeryCoefficient {
+impl From<Fp2> for Coefficient {
     fn from(a: Fp2) -> Self {
-        MontgomeryCoefficient(a)
+        Coefficient(a)
     }
 }
 
-impl From<MontgomeryCoefficient> for Fp2 {
-    fn from(a: MontgomeryCoefficient) -> Fp2 {
+impl From<Coefficient> for Fp2 {
+    fn from(a: Coefficient) -> Fp2 {
         a.0
     }
 }
 
 /// A Montgomery curve E_A : y² = x³ + Ax² + x over F_{p²}.
 ///
-/// Stores the [`MontgomeryCoefficient`] A together with precomputed
+/// Stores the [`Coefficient`] A together with precomputed
 /// projective doubling constants (A₂₄, C₂₄) = (A + 2, 4).
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Curve {
-    A: MontgomeryCoefficient,
+    A: Coefficient,
     A24: Fp2,
     C24: Fp2,
 }
@@ -88,13 +106,13 @@ impl Curve {
     ///
     /// This is the supersingular curve used as the base in SQIsign.
     pub const E0: Curve = Curve {
-        A: MontgomeryCoefficient::ZERO,
+        A: Coefficient::ZERO,
         A24: Fp2::new(Fp::TWO, Fp::ZERO),
         C24: Fp2::new(Fp::FOUR, Fp::ZERO),
     };
 
     /// Construct a curve from its Montgomery coefficient.
-    pub fn new(A: MontgomeryCoefficient) -> Curve {
+    pub fn new(A: Coefficient) -> Curve {
         let a = A.as_fp2();
         let two = Fp2::from_fp(Fp::from_small(2));
         let four = Fp2::from_fp(Fp::from_small(4));
@@ -116,14 +134,34 @@ impl Curve {
         let four = Fp2::from_fp(Fp::from_small(4));
         let A = &(&(&four * &A24) * &C24.invert()) - &two;
         Curve {
-            A: MontgomeryCoefficient(A),
+            A: Coefficient(A),
             A24,
             C24,
         }
     }
 
+    /// Normalize the doubling constants to (A₂₄/C₂₄ : 1).
+    ///
+    /// The C reference (`ec_normalize_curve_and_A24`) normalizes
+    /// the projective constants before torsion basis generation.
+    /// This ensures that the Montgomery ladder produces the same
+    /// projective representative as the C reference, which matters
+    /// for differential addition consistency in subsequent operations.
+    pub fn normalize(&mut self) {
+        if self.C24 != Fp2::ONE {
+            let inv = self.C24.invert();
+            self.A24 = &self.A24 * &inv;
+            self.C24 = Fp2::ONE;
+        }
+    }
+
+    /// Check if the doubling constants are normalized (C₂₄ = 1).
+    pub fn is_normalized(&self) -> bool {
+        self.C24 == Fp2::ONE
+    }
+
     /// The Montgomery coefficient A.
-    pub fn coefficient(&self) -> &MontgomeryCoefficient {
+    pub fn coefficient(&self) -> &Coefficient {
         &self.A
     }
 
@@ -165,7 +203,7 @@ impl Curve {
 ///
 /// [§8.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 #[derive(Copy, Clone, Debug)]
-pub struct MontgomeryPoint {
+pub struct ProjectiveXOnlyPoint {
     /// Projective X coordinate.
     pub X: Fp2,
     /// Projective Z coordinate (Z = 0 for the point at infinity).
@@ -174,10 +212,10 @@ pub struct MontgomeryPoint {
     curve: Curve,
 }
 
-impl MontgomeryPoint {
+impl ProjectiveXOnlyPoint {
     /// Construct the identity (point at infinity) on the given curve.
-    pub fn identity(curve: &Curve) -> MontgomeryPoint {
-        MontgomeryPoint {
+    pub fn identity(curve: &Curve) -> ProjectiveXOnlyPoint {
+        ProjectiveXOnlyPoint {
             X: Fp2::ONE,
             Z: Fp2::ZERO,
             curve: *curve,
@@ -185,17 +223,23 @@ impl MontgomeryPoint {
     }
 
     /// Construct from projective coordinates on the given curve.
-    pub fn from_XZ(X: Fp2, Z: Fp2, curve: &Curve) -> MontgomeryPoint {
-        MontgomeryPoint {
+    pub fn from_XZ(X: Fp2, Z: Fp2, curve: &Curve) -> ProjectiveXOnlyPoint {
+        ProjectiveXOnlyPoint {
             X,
             Z,
             curve: *curve,
         }
     }
 
+    /// Compute the affine x-coordinate x = X/Z.
+    #[must_use]
+    pub fn to_affine_x(&self) -> AffineX {
+        AffineX::from(&self.X * &self.Z.invert())
+    }
+
     /// Construct from an affine x-coordinate on the given curve.
-    pub fn from_affine_x(x: Fp2, curve: &Curve) -> MontgomeryPoint {
-        MontgomeryPoint {
+    pub fn from_affine_x(x: Fp2, curve: &Curve) -> ProjectiveXOnlyPoint {
+        ProjectiveXOnlyPoint {
             X: x,
             Z: Fp2::ONE,
             curve: *curve,
@@ -218,14 +262,18 @@ impl MontgomeryPoint {
     ///
     /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
     #[must_use]
-    pub fn double(&self) -> MontgomeryPoint {
+    pub fn double(&self) -> ProjectiveXOnlyPoint {
         let t0 = (&self.X + &self.Z).square();
         let t1 = (&self.X - &self.Z).square();
         let t2 = &t0 - &t1;
         let t1_c24 = &t1 * &self.curve.C24;
         let X2 = &t0 * &t1_c24;
         let Z2 = &t2 * &(&(&t2 * &self.curve.A24) + &t1_c24);
-        MontgomeryPoint { X: X2, Z: Z2, curve: self.curve }
+        ProjectiveXOnlyPoint {
+            X: X2,
+            Z: Z2,
+            curve: self.curve,
+        }
     }
 
     /// Compute self + other, given self − other.
@@ -234,12 +282,16 @@ impl MontgomeryPoint {
     ///
     /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
     #[must_use]
-    pub fn differential_add(&self, other: &MontgomeryPoint, difference: &MontgomeryPoint) -> MontgomeryPoint {
+    pub fn differential_add(
+        &self,
+        other: &ProjectiveXOnlyPoint,
+        difference: &ProjectiveXOnlyPoint,
+    ) -> ProjectiveXOnlyPoint {
         let t0 = &(&self.X + &self.Z) * &(&other.X - &other.Z);
         let t1 = &(&self.X - &self.Z) * &(&other.X + &other.Z);
         let sum = (&t0 + &t1).square();
         let diff = (&t0 - &t1).square();
-        MontgomeryPoint {
+        ProjectiveXOnlyPoint {
             X: &difference.Z * &sum,
             Z: &difference.X * &diff,
             curve: self.curve,
@@ -262,7 +314,7 @@ impl MontgomeryPoint {
     ///
     /// [§8.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
     #[must_use]
-    pub fn projective_difference(&self, other: &MontgomeryPoint) -> MontgomeryPoint {
+    pub fn projective_difference(&self, other: &ProjectiveXOnlyPoint) -> ProjectiveXOnlyPoint {
         let (X_P, Z_P) = (&self.X, &self.Z);
         let (X_Q, Z_Q) = (&other.X, &other.Z);
         let A = self.curve.coefficient().as_fp2();
@@ -279,14 +331,22 @@ impl MontgomeryPoint {
         let zpzq = Z_P * Z_Q;
         let xpzq = X_P * Z_Q;
         let zpxq = Z_P * X_Q;
-        let B_XZ = &(&(&xpxq + &zpzq) * &(&xpzq + &zpxq))
-            + &(&(A + A) * &(&xpxq * &zpzq));
+        let B_XZ = &(&(&xpxq + &zpzq) * &(&xpzq + &zpxq)) + &(&(A + A) * &(&xpxq * &zpzq));
 
         // B_ZZ = (X_P · Z_Q − Z_P · X_Q)²
         let B_ZZ = (&xpzq - &zpxq).square();
 
-        // γ = (Z_P · Z_Q)²  (projective normalization factor)
-        let gamma = zpzq.square();
+        // Normalize so the discriminant is a fourth power in Fp,
+        // making the Fp2 square root deterministic. The C reference
+        // (`difference_point`, basis.c:48-64) uses the factor
+        // C · conj(C)² · conj(Z_P)² · conj(Z_Q)². With C = 1 this
+        // reduces to conj(Z_P)² · conj(Z_Q)².
+        //
+        // NOTE: We previously used γ = (Z_P · Z_Q)², which is WRONG
+        // because conj(z)² ≠ z² for complex z. The conjugate
+        // normalization ensures B_XZ² − B_XX·B_ZZ lies in Fp (up to
+        // a fourth-power factor), so the square root is well-defined.
+        let gamma = &Z_P.conjugate().square() * &Z_Q.conjugate().square();
 
         // Scale: B_XX *= γ, B_XZ *= γ, B_ZZ *= γ
         let B_XX = &gamma * &B_XX;
@@ -298,34 +358,68 @@ impl MontgomeryPoint {
         let delta = discriminant.sqrt();
 
         // x_{PQ} = (δ + B_XZ : B_ZZ)
-        MontgomeryPoint {
+        ProjectiveXOnlyPoint {
             X: &delta + &B_XZ,
             Z: B_ZZ,
             curve: self.curve,
         }
     }
 
+    /// Clear the odd cofactor: computes [c]P where c = 5 = (p+1)/2^f.
+    ///
+    /// Projects a point onto the 2^f-torsion subgroup. Uses two
+    /// doublings and one differential addition (much cheaper than
+    /// a full scalar multiplication).
+    pub fn clear_cofactor(&self) -> ProjectiveXOnlyPoint {
+        // Multiply by 5 (the odd cofactor for p = 5·2^248 − 1) using
+        // a 3-bit Montgomery ladder matching the C reference's
+        // `xMUL(P, 5, 3, curve)`.
+        //
+        // This produces the same projective representative as the
+        // C ref, which is critical: subsequent operations (ladder3pt,
+        // difference_point) are sensitive to the projective
+        // representative, not just the affine x-coordinate.
+        //
+        // The cofactor 5 is public data, so variable-time is fine.
+        let mut r0 = ProjectiveXOnlyPoint::identity(&self.curve);
+        let mut r1 = *self;
+
+        // 5 = 0b101, kbits = 3. Process MSB to LSB with differential swap.
+        let bits = [1u8, 0, 1]; // bits[0] = MSB (bit 2), bits[2] = LSB (bit 0)
+        let mut prev_bit = 0u8;
+        for &bit in &bits {
+            let swap = Choice::from((bit ^ prev_bit) & 1);
+            prev_bit = bit;
+            ProjectiveXOnlyPoint::conditional_swap(&mut r0, &mut r1, swap);
+            differential_add_and_double(&mut r0, &mut r1, self);
+        }
+        // Final swap
+        let swap = Choice::from(prev_bit & 1);
+        ProjectiveXOnlyPoint::conditional_swap(&mut r0, &mut r1, swap);
+        r0
+    }
+
     /// Scalar multiplication via the Montgomery ladder.
     ///
-    /// Given a big-endian bit iterator for scalar n, computes \[n\]self.
-    /// Constant-time in the value of n (the number of iterations is
-    /// determined by the iterator length, which must be fixed and public).
+    /// Computes \[n\]self, constant-time in the scalar value.
+    /// Always performs 256 ladder steps regardless of the scalar's
+    /// magnitude to prevent timing side channels.
     ///
     /// Implements `Ladder` ([§8.2], Algorithm 8.6).
     ///
     /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
-    fn scalar_mul(&self, bits: impl Iterator<Item = bool>) -> MontgomeryPoint {
-        let mut x0 = MontgomeryPoint::identity(&self.curve);
+    pub fn scalar_mul(&self, n: &Scalar) -> ProjectiveXOnlyPoint {
+        let mut x0 = ProjectiveXOnlyPoint::identity(&self.curve);
         let mut x1 = *self;
 
         let mut prev_bit = false;
-        for cur_bit in bits {
+        for cur_bit in n.bits_be(Scalar::BITS) {
             let swap: u8 = (prev_bit ^ cur_bit) as u8;
-            MontgomeryPoint::conditional_swap(&mut x0, &mut x1, swap.into());
+            ProjectiveXOnlyPoint::conditional_swap(&mut x0, &mut x1, swap.into());
             differential_add_and_double(&mut x0, &mut x1, self);
             prev_bit = cur_bit;
         }
-        MontgomeryPoint::conditional_swap(&mut x0, &mut x1, Choice::from(prev_bit as u8));
+        ProjectiveXOnlyPoint::conditional_swap(&mut x0, &mut x1, Choice::from(prev_bit as u8));
         x0
     }
 }
@@ -339,9 +433,9 @@ impl MontgomeryPoint {
 /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 #[rustfmt::skip]
 pub(crate) fn differential_add_and_double(
-    P: &mut MontgomeryPoint,
-    Q: &mut MontgomeryPoint,
-    PmQ: &MontgomeryPoint,
+    P: &mut ProjectiveXOnlyPoint,
+    Q: &mut ProjectiveXOnlyPoint,
+    PmQ: &ProjectiveXOnlyPoint,
 ) {
     let sum_P  = &P.X + &P.Z;
     let diff_P = &P.X - &P.Z;
@@ -370,27 +464,12 @@ pub(crate) fn differential_add_and_double(
 // Scalar multiplication via Mul trait
 // ---------------------------------------------------------------------------
 
-/// Multiply a point by a `u64` scalar. Constant-time in the scalar value.
-impl Mul<u64> for &MontgomeryPoint {
-    type Output = MontgomeryPoint;
+/// Multiply a point by a [`Scalar`]. Constant-time in the scalar value.
+impl Mul<&Scalar> for &ProjectiveXOnlyPoint {
+    type Output = ProjectiveXOnlyPoint;
 
-    fn mul(self, scalar: u64) -> MontgomeryPoint {
-        // Always iterate over all 64 bits for constant-time behavior.
-        self.scalar_mul((0..64u32).rev().map(|i| (scalar >> i) & 1 == 1))
-    }
-}
-
-impl Mul<u64> for MontgomeryPoint {
-    type Output = MontgomeryPoint;
-
-    fn mul(self, scalar: u64) -> MontgomeryPoint {
-        &self * scalar
-    }
-}
-
-impl MulAssign<u64> for MontgomeryPoint {
-    fn mul_assign(&mut self, scalar: u64) {
-        *self = &*self * scalar;
+    fn mul(self, scalar: &Scalar) -> ProjectiveXOnlyPoint {
+        self.scalar_mul(scalar)
     }
 }
 
@@ -398,9 +477,13 @@ impl MulAssign<u64> for MontgomeryPoint {
 // Constant-time traits
 // ---------------------------------------------------------------------------
 
-impl ConditionallySelectable for MontgomeryPoint {
-    fn conditional_select(a: &MontgomeryPoint, b: &MontgomeryPoint, choice: Choice) -> MontgomeryPoint {
-        MontgomeryPoint {
+impl ConditionallySelectable for ProjectiveXOnlyPoint {
+    fn conditional_select(
+        a: &ProjectiveXOnlyPoint,
+        b: &ProjectiveXOnlyPoint,
+        choice: Choice,
+    ) -> ProjectiveXOnlyPoint {
+        ProjectiveXOnlyPoint {
             X: Fp2::conditional_select(&a.X, &b.X, choice),
             Z: Fp2::conditional_select(&a.Z, &b.Z, choice),
             curve: a.curve, // assumed to be on the same curve
@@ -408,20 +491,20 @@ impl ConditionallySelectable for MontgomeryPoint {
     }
 }
 
-impl ConstantTimeEq for MontgomeryPoint {
+impl ConstantTimeEq for ProjectiveXOnlyPoint {
     /// Two projective points are equal iff X₁Z₂ = X₂Z₁.
-    fn ct_eq(&self, other: &MontgomeryPoint) -> Choice {
+    fn ct_eq(&self, other: &ProjectiveXOnlyPoint) -> Choice {
         (&self.X * &other.Z).ct_eq(&(&other.X * &self.Z))
     }
 }
 
-impl PartialEq for MontgomeryPoint {
-    fn eq(&self, other: &MontgomeryPoint) -> bool {
+impl PartialEq for ProjectiveXOnlyPoint {
+    fn eq(&self, other: &ProjectiveXOnlyPoint) -> bool {
         self.ct_eq(other).into()
     }
 }
 
-impl Eq for MontgomeryPoint {}
+impl Eq for ProjectiveXOnlyPoint {}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -433,27 +516,27 @@ mod tests {
 
     #[test]
     fn doubling_identity_is_identity() {
-        let id = MontgomeryPoint::identity(&Curve::E0);
+        let id = ProjectiveXOnlyPoint::identity(&Curve::E0);
         let dbl = id.double();
         assert!(bool::from(dbl.is_identity()));
     }
 
     #[test]
     fn mul_by_one() {
-        let P = MontgomeryPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &Curve::E0);
-        assert_eq!(&P * 1u64, P);
+        let P = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &Curve::E0);
+        assert_eq!(P.scalar_mul(&Scalar::from_u64(1)), P);
     }
 
     #[test]
     fn mul_by_two_equals_doubling() {
-        let P = MontgomeryPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &Curve::E0);
-        assert_eq!(&P * 2u64, P.double());
+        let P = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &Curve::E0);
+        assert_eq!(P.scalar_mul(&Scalar::from_u64(2)), P.double());
     }
 
     #[test]
     fn mul_by_three_equals_double_plus_add() {
-        let P = MontgomeryPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &Curve::E0);
-        let triple = &P * 3u64;
+        let P = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &Curve::E0);
+        let triple = P.scalar_mul(&Scalar::from_u64(3));
         let dbl = P.double();
         let triple_add = dbl.differential_add(&P, &P);
         assert_eq!(triple, triple_add);
@@ -461,8 +544,8 @@ mod tests {
 
     #[test]
     fn mul_by_zero_is_identity() {
-        let P = MontgomeryPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &Curve::E0);
-        assert!(bool::from((&P * 0u64).is_identity()));
+        let P = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &Curve::E0);
+        assert!(bool::from(P.scalar_mul(&Scalar::from_u64(0)).is_identity()));
     }
 
     #[test]
@@ -477,13 +560,341 @@ mod tests {
         use crate::curves::TorsionBasis;
 
         let curve = Curve::E0;
-        let R = MontgomeryPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &curve);
-        let S = MontgomeryPoint::from_affine_x(Fp2::from_fp(Fp::from_small(7)), &curve);
-        let RS = MontgomeryPoint::from_affine_x(Fp2::from_fp(Fp::from_small(11)), &curve);
+        let R = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(3)), &curve);
+        let S = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(7)), &curve);
+        let RS = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(11)), &curve);
 
         let basis = TorsionBasis::new(R, S, RS);
         assert_eq!(basis.R, R);
         assert_eq!(basis.S, S);
         assert_eq!(basis.RS, RS);
     }
+
+    /// Verify that Jacobian doubling produces the same affine x
+    /// as Montgomery x-only doubling.
+    #[test]
+    fn jacobian_double_matches_montgomery() {
+        let curve = Curve::E0;
+        let p = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, &curve);
+
+        // Montgomery double.
+        let p2_mont = p.double();
+        let p2_x_mont = &p2_mont.X * &p2_mont.Z.invert();
+
+        // Jacobian: lift, double, convert, check.
+        let A = Fp2::from(*curve.coefficient().as_fp2());
+        let y = recover_y(&(&p.X * &p.Z.invert()), &A).expect("P₀ should be on E₀");
+        let p_jac = JacobianPoint::new(&p.X * &p.Z.invert(), y, Fp2::ONE, &curve);
+        let p2_jac = p_jac.double();
+
+        // Convert Jacobian to affine: x_aff = x / z².
+        let z2_inv = p2_jac.z.square().invert();
+        let p2_x_jac = &p2_jac.x * &z2_inv;
+
+        assert_eq!(
+            p2_x_mont, p2_x_jac,
+            "Jacobian double should match Montgomery double (affine x)"
+        );
+    }
+
+    /// Verify that lift_basis produces valid Jacobian points that
+    /// convert back to the correct Montgomery x-coordinates.
+    #[test]
+    fn lift_basis_round_trip() {
+        let curve = Curve::E0;
+        let p = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, &curve);
+        let q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, &curve);
+        let pmq = p.projective_difference(&q);
+
+        let (p_jac, q_jac) =
+            lift_basis(&p, &q, &pmq, &curve).expect("lift_basis should succeed on E₀");
+
+        // Check P: jac_to_xz(P_jac) should have same affine x as P.
+        let p_back: ProjectiveXOnlyPoint = p_jac.into();
+        let p_x = &p_back.X * &p_back.Z.invert();
+        let p_orig_x = &p.X * &p.Z.invert();
+        assert_eq!(
+            p_x, p_orig_x,
+            "P: lift + jac_to_xz should preserve affine x"
+        );
+
+        // Check Q: jac_to_xz(Q_jac) should have same affine x as Q.
+        let q_back: ProjectiveXOnlyPoint = q_jac.into();
+        let q_x = &q_back.X * &q_back.Z.invert();
+        let q_orig_x = &q.X * &q.Z.invert();
+        assert_eq!(
+            q_x, q_orig_x,
+            "Q: lift + jac_to_xz should preserve affine x"
+        );
+
+        // Check P_jac is on curve.
+        let A = Fp2::from(*curve.coefficient().as_fp2());
+        let z_inv = p_jac.z.invert();
+        let xa = &p_jac.x * &z_inv.square();
+        let ya = &p_jac.y * &(&z_inv.square() * &z_inv);
+        let lhs = ya.square();
+        let xa2 = xa.square();
+        let rhs = &(&(&xa2 * &xa) + &(&A * &xa2)) + &xa;
+        assert_eq!(lhs, rhs, "P_jac should be on curve");
+
+        // Check Q_jac is on curve.
+        let z_inv = q_jac.z.invert();
+        let xa = &q_jac.x * &z_inv.square();
+        let ya = &q_jac.y * &(&z_inv.square() * &z_inv);
+        let lhs = ya.square();
+        let xa2 = xa.square();
+        let rhs = &(&(&xa2 * &xa) + &(&A * &xa2)) + &xa;
+        assert_eq!(lhs, rhs, "Q_jac should be on curve");
+    }
+
+    /// Verify that jac_to_xz (From<JacobianPoint>) round-trips correctly.
+    #[test]
+    fn jac_to_xz_round_trip() {
+        let curve = Curve::E0;
+        let p = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, &curve);
+
+        let A = Fp2::from(*curve.coefficient().as_fp2());
+        let y = recover_y(&(&p.X * &p.Z.invert()), &A).expect("P₀ should be on E₀");
+        let p_jac = JacobianPoint::new(&p.X * &p.Z.invert(), y, Fp2::ONE, &curve);
+
+        // jac_to_xz: (x, z) → (x, z²). For z=1, this is (x, 1).
+        let p_mont: ProjectiveXOnlyPoint = p_jac.into();
+        let p_x = &p_mont.X * &p_mont.Z.invert();
+        let orig_x = &p.X * &p.Z.invert();
+        assert_eq!(p_x, orig_x, "jac_to_xz should preserve affine x");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Jacobian points (for the (2,2)-isogeny gluing step)
+// ---------------------------------------------------------------------------
+
+/// A point on a Montgomery curve in Jacobian coordinates (x, y, z).
+///
+/// Represents the affine point (x/z², y/z³) on E_A : y² = x³ + Ax² + x.
+///
+/// Jacobian coordinates are needed for the gluing step of the
+/// (2,2)-isogeny chain, where the y-coordinate is required to
+/// compute the cross-addition components ([`jac_to_xz_add_components`]
+/// in the C reference). Montgomery x-only arithmetic is insufficient
+/// because it cannot distinguish P+Q from P−Q.
+///
+/// **Naming:** This is a dim-1 elliptic curve point, NOT the dim-2
+/// theta-coordinate `JacobianPoint` in [`crate::surfaces`]. The name
+/// collision is unfortunate; we keep both because they serve different
+/// layers (curves vs surfaces).
+///
+/// # Coordinate representation TODOs
+///
+/// TODO: The `x`, `y` fields are bare `Fp2` — they should eventually
+/// be newtypes (`AffineX`, `AffineY`) to prevent mixing with the
+/// Montgomery coefficient `A` or other `Fp2` values. Similarly, the
+/// Montgomery coefficient `A` should be a newtype distinct from field
+/// elements. This is tracked as a future type-safety improvement.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct JacobianPoint {
+    pub(crate) x: Fp2,
+    pub(crate) y: Fp2,
+    pub(crate) z: Fp2,
+    curve: Curve,
+}
+
+impl JacobianPoint {
+    /// Create from coordinates and a curve.
+    pub fn new(x: Fp2, y: Fp2, z: Fp2, curve: &Curve) -> Self {
+        Self {
+            x,
+            y,
+            z,
+            curve: *curve,
+        }
+    }
+
+    /// The curve this point lives on.
+    pub fn curve(&self) -> &Curve {
+        &self.curve
+    }
+
+    /// Double this Jacobian point on y² = x³ + Ax² + x.
+    ///
+    /// **IMPORTANT:** This uses the C reference's unified add-or-double
+    /// formula (`ec_add_jac_v2` in ec_jac.c:228-297), NOT standard
+    /// Jacobian doubling. The C ref's formula produces z₃ = 2y·z²
+    /// (instead of standard z₃ = 2y·z), giving a different projective
+    /// representative after `jac_to_xz`. This matters because the
+    /// gluing's `product_to_theta` is sensitive to the projective
+    /// representative, not just the affine ratio.
+    ///
+    /// The SQIsign spec does NOT describe Jacobian doubling — only
+    /// x-only Montgomery arithmetic (§8.2). These formulas come
+    /// entirely from the C reference.
+    ///
+    /// The C ref computes for P = Q (doubling case):
+    /// ```text
+    /// dx = 2y₁           (tangent denominator)
+    /// dy = z₁·M           (tangent numerator, M = 3x₁² + z₁²(2Ax₁ + z₁²))
+    /// u₁ = x₁·z₁²         (= u₂ since P = Q)
+    /// v₁ = y₁·z₁³
+    /// t0 = z₁²            (= z₁·z₂ since P = Q)
+    ///
+    /// x₃ = dy² − dx²·(A·z₁⁴ + 2·x₁·z₁²)
+    /// y₃ = dy·(u₁·dx² − x₃) − v₁·dx³
+    /// z₃ = dx·z₁² = 2y₁·z₁²
+    /// ```
+    #[must_use]
+    pub fn double(&self) -> JacobianPoint {
+        let A = Fp2::from(*self.curve.coefficient().as_fp2());
+
+        let zz = self.z.square(); // z₁²
+        let zzzz = zz.square(); // z₁⁴
+        let xx = self.x.square(); // x₁²
+
+        // M = 3x₁² + z₁²·(2A·x₁ + z₁²)
+        let two_a = &A + &A;
+        let two_a_x = &two_a * &self.x;
+        let inner = &two_a_x + &zz;
+        let m_term = &inner * &zz; // z₁²·(2Ax₁ + z₁²)
+        let three_xx = &(&xx + &xx) + &xx;
+        let m = &three_xx + &m_term; // M = 3x₁² + z₁²(2Ax₁ + z₁²)
+
+        // dx = 2y₁, dy = z₁·M
+        let dx = &self.y + &self.y; // 2y₁
+        let dy = &self.z * &m; // z₁·M
+
+        // Precomputations
+        let dx_sq = dx.square(); // 4y₁²
+        let dy_sq = dy.square(); // z₁²·M²
+        let u1 = &self.x * &zz; // x₁·z₁²
+        let v1 = &self.y * &(&zz * &self.z); // y₁·z₁³
+
+        // x₃ = dy² − dx²·(A·z₁⁴ + u₁ + u₁)
+        let x3 = {
+            let a_zzzz = &A * &zzzz; // A·z₁⁴
+            let sum = &(&a_zzzz + &u1) + &u1; // A·z₁⁴ + 2·x₁·z₁²
+            &dy_sq - &(&dx_sq * &sum)
+        };
+
+        // y₃ = dy·(u₁·dx² − x₃) − v₁·dx³
+        let y3 = {
+            let u1_dx_sq = &u1 * &dx_sq;
+            let dx_cubed = &dx_sq * &dx;
+            &(&dy * &(&u1_dx_sq - &x3)) - &(&v1 * &dx_cubed)
+        };
+
+        // z₃ = dx·z₁² = 2y₁·z₁²  (NOT 2y₁·z₁ like standard Jacobian!)
+        let z3 = &dx * &zz;
+
+        JacobianPoint {
+            x: x3,
+            y: y3,
+            z: z3,
+            curve: self.curve,
+        }
+    }
+}
+
+/// Convert a Jacobian point to Montgomery projective (X:Z) = (x : z²).
+///
+/// This is the C reference's `jac_to_xz` (`ec_jac.c:34`). The
+/// projective representative `(x, z²)` is NOT the same as `(X, Z)`
+/// from Montgomery doubling — the balanced strategy must use Jacobian
+/// doubling to produce the correct representative for the gluing's
+/// `product_to_theta` computation.
+impl From<JacobianPoint> for ProjectiveXOnlyPoint {
+    fn from(jac: JacobianPoint) -> ProjectiveXOnlyPoint {
+        let z_sq = jac.z.square();
+        ProjectiveXOnlyPoint::from_XZ(jac.x, z_sq, &jac.curve)
+    }
+}
+
+impl From<&JacobianPoint> for ProjectiveXOnlyPoint {
+    fn from(jac: &JacobianPoint) -> ProjectiveXOnlyPoint {
+        let z_sq = jac.z.square();
+        ProjectiveXOnlyPoint::from_XZ(jac.x, z_sq, &jac.curve)
+    }
+}
+
+/// Recover the y-coordinate of a point on E_A : y² = x³ + Ax² + x.
+///
+/// Given the affine x-coordinate, computes y = √(x³ + Ax² + x).
+/// Returns `None` if x³ + Ax² + x is not a square in Fp2.
+///
+/// Corresponds to `ec_recover_y` in the C reference (`basis.c:7`).
+pub fn recover_y(x: &Fp2, A: &Fp2) -> Option<Fp2> {
+    let x2 = x.square();
+    let rhs = &(&(&x2 * x) + &(&x2 * A)) + x; // x³ + Ax² + x
+    if bool::from(rhs.is_square()) {
+        Some(rhs.sqrt())
+    } else {
+        None
+    }
+}
+
+/// Lift a Montgomery basis (P, Q, P−Q) to Jacobian coordinates.
+///
+/// Given P = (X_P : Z_P), Q = (X_Q : Z_Q), and PmQ = (X_{P-Q} : Z_{P-Q})
+/// on a Montgomery curve E_A, computes (P_jac, Q_jac) with full (x,y,z)
+/// coordinates.
+///
+/// P is normalized internally. Uses the Okeya-Sakurai algorithm
+/// to recover Q's y-coordinate from P's y-coordinate and the difference
+/// point.
+///
+/// Corresponds to `lift_basis_normalized` in the C reference (`basis.c:79`).
+///
+/// Returns `None` if y-recovery fails (x not on curve).
+pub fn lift_basis(
+    P: &ProjectiveXOnlyPoint,
+    Q: &ProjectiveXOnlyPoint,
+    PmQ: &ProjectiveXOnlyPoint,
+    curve: &Curve,
+) -> Option<(JacobianPoint, JacobianPoint)> {
+    let A = Fp2::from(*curve.coefficient().as_fp2());
+
+    // Normalize P: compute affine x_P = X_P / Z_P.
+    let z_inv = P.Z.invert();
+    let x_P = &P.X * &z_inv;
+
+    // Recover y_P = sqrt(x_P³ + A·x_P² + x_P).
+    let y_P = recover_y(&x_P, &A)?;
+
+    let P_jac = JacobianPoint::new(x_P, y_P, Fp2::ONE, curve);
+
+    // Okeya-Sakurai: recover y_Q from x_P, y_P, x_Q, z_Q, x_{P-Q}, z_{P-Q}.
+    // C reference: basis.c:91-116.
+    let v1 = &x_P * &Q.Z;
+    let v2 = &Q.X + &v1;
+    let v3 = {
+        let diff = &Q.X - &v1;
+        let diff_sq = diff.square();
+        &diff_sq * &PmQ.X
+    };
+    let two_A = &A + &A;
+    let v1_new = &two_A * &Q.Z;
+    let v2 = &v2 + &v1_new;
+    let v4 = &(&x_P * &Q.X) + &Q.Z;
+    let v2 = &v2 * &v4;
+    let v1_new = &v1_new * &Q.Z;
+    let v2 = &v2 - &v1_new;
+    let v2 = &v2 * &PmQ.Z;
+    let y_Q_num = &v3 - &v2;
+    let two_yP = &y_P + &y_P;
+    let v1 = &(&two_yP * &Q.Z) * &PmQ.Z;
+
+    // Q in Jacobian: (x_Q·v1·z_Q : y_Q_num·(z_Q·v1)² : z_Q·v1)
+    //
+    // The C reference (basis.c:110-116) squares Q->z (= Z_Q·v1)
+    // to compute y, NOT the original v1. This gives:
+    //   z = Z_Q · v1
+    //   y = y_num · z²  (where z = Z_Q · v1)
+    //   x = (X_Q · v1) · z
+    let x_Q_tmp = &Q.X * &v1;
+    let z_Q_jac = &Q.Z * &v1;
+    let z_Q_jac_sq = z_Q_jac.square();
+    let y_Q_jac = &y_Q_num * &z_Q_jac_sq;
+    let x_Q_jac = &x_Q_tmp * &z_Q_jac;
+
+    let Q_jac = JacobianPoint::new(x_Q_jac, y_Q_jac, z_Q_jac, curve);
+
+    Some((P_jac, Q_jac))
 }

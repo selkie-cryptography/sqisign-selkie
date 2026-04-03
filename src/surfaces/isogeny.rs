@@ -22,11 +22,13 @@
 //!
 //! [`Kernel::isogeny`]: super::Kernel::isogeny
 
-use crate::curves::montgomery::MontgomeryPoint;
+use crate::curves::montgomery::{
+    Coefficient, Curve, JacobianPoint as CurveJacobianPoint, ProjectiveXOnlyPoint,
+};
 use crate::fields::fp2::Fp2;
 use crate::surfaces::{
-    DualThetaNullPoint, EllipticProduct, Jacobian, JacobianPoint,
-    ProductPoint, ThetaNullPoint, hadamard4,
+    hadamard4, DualThetaNullPoint, EllipticProduct, GluingMatrix, Jacobian, JacobianPoint,
+    ProductPoint, ThetaNullPoint,
 };
 
 // ---------------------------------------------------------------------------
@@ -35,20 +37,25 @@ use crate::surfaces::{
 
 /// Kernel of a gluing (2,2)-isogeny Φ₁ : E₁ × E₂ → A₁.
 ///
-/// Defined by two 8-torsion points on the domain product, stored as
-/// pairs of Montgomery [`MontgomeryPoint`]s (one on each component
-/// curve). The gluing internally converts these to product theta
-/// coordinates.
+/// Defined by two 8-torsion points on the domain product, stored as pairs of
+/// Montgomery [`ProjectiveXOnlyPoint`]s (one on each component curve) in
+/// projective coordinates. The gluing internally converts these to product
+/// points in alternative projective coordinates, _theta coordinates of level
+/// 2_, and then points on the Jacobian in theta coordinates.
 ///
-/// See [§8.5.5] and [§8.5.6].
+/// See [§8.5].
 ///
-/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
-/// [§8.5.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
 pub(crate) struct GluingKernel {
-    /// T₁'' = (T₁''₁, T₁''₂) ∈ E₁ × E₂, in Montgomery coordinates.
-    pub T1: (MontgomeryPoint, MontgomeryPoint),
+    /// T₁'' = (T₁''₁, T₁''₂) ∈ E₁ × E₂.
+    /// Montgomery (X:Z) coordinates — used for product_to_theta and codomain.
+    pub T1: (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint),
+    /// Jacobian (x,y,z) coordinates — used for gluing eval (needs y).
+    pub T1_jac: (CurveJacobianPoint, CurveJacobianPoint),
     /// T₂'' = (T₂''₁, T₂''₂) ∈ E₁ × E₂, in Montgomery coordinates.
-    pub T2: (MontgomeryPoint, MontgomeryPoint),
+    pub T2: (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint),
+    /// Jacobian coordinates for T₂''.
+    pub T2_jac: (CurveJacobianPoint, CurveJacobianPoint),
 }
 
 /// Data produced by the gluing codomain computation, needed for
@@ -62,7 +69,7 @@ pub(crate) struct GluingData {
     /// (re-used for evaluation).
     pub J: JacobianPoint,
     /// Change-of-basis matrix N (4×4 over F_{p²}).
-    pub N: [[Fp2; 4]; 4],
+    pub N: GluingMatrix,
 }
 
 impl GluingKernel {
@@ -74,14 +81,70 @@ impl GluingKernel {
     pub(crate) fn codomain(&self) -> GluingData {
         // Algorithm 8.38:
         // 1. T₁' ← [2](T₁'')    T₂' ← [2](T₂'')
-        let T1_prime = (self.T1.0.double(), self.T1.1.double());
-        let T2_prime = (self.T2.0.double(), self.T2.1.double());
+        //
+        // Double in JACOBIAN, then convert to Montgomery via jac_to_xz.
+        // The C reference does this at gluing_compute:434-437 to ensure
+        // the correct projective representative (x, z²) for the
+        // theta change-of-basis computation.
+        let T1_prime: (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint) = (
+            ProjectiveXOnlyPoint::from(self.T1_jac.0.double()),
+            ProjectiveXOnlyPoint::from(self.T1_jac.1.double()),
+        );
+        let T2_prime: (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint) = (
+            ProjectiveXOnlyPoint::from(self.T2_jac.0.double()),
+            ProjectiveXOnlyPoint::from(self.T2_jac.1.double()),
+        );
 
         // 3. N ← ThetaChangeOfBasis(T₁', T₂')
         let N = theta_change_of_basis(&T1_prime, &T2_prime);
 
         // 4. [P₁, P₂] ← ProductToTheta([T₁'', T₂''], N)
+        //
+        // Apply N to the 8-torsion kernel points in Montgomery (X:Z).
+        //
+        // The C reference converts K1_8 via jac_to_xz before base_change.
+        // Both 4-torsion (for N) and 8-torsion (for product_to_theta)
+        // use the same (x, z²) representative from jac_to_xz.
+        //
+        // Our GluingKernel.T1/T2 are set by the chain to the
+        // jac_to_xz-converted Montgomery points (from From<JacobianPoint>).
         let theta_pts = product_to_theta(&[self.T1, self.T2], &N);
+
+        #[cfg(test)]
+        {
+            // Trace each computation stage.
+            let P1 = &theta_pts[0];
+            eprintln!(
+                "gluing trace: T1 mont = ({:?},{:?}) ({:?},{:?})",
+                self.T1.0.X, self.T1.0.Z, self.T1.1.X, self.T1.1.Z
+            );
+            // Raw product before N.
+            let raw_x = &self.T1.0.X * &self.T1.1.X;
+            let raw_y = &self.T1.0.X * &self.T1.1.Z;
+            let raw_z = &self.T1.0.Z * &self.T1.1.X;
+            let raw_w = &self.T1.0.Z * &self.T1.1.Z;
+            eprintln!(
+                "gluing trace: raw product T1 = ({:?}, {:?}, {:?}, {:?})",
+                raw_x, raw_y, raw_z, raw_w
+            );
+            eprintln!(
+                "gluing trace: after N, T1 = ({:?}, {:?}, {:?}, {:?})",
+                P1.0, P1.1, P1.2, P1.3
+            );
+            // Squared.
+            let sq = (P1.0.square(), P1.1.square(), P1.2.square(), P1.3.square());
+            eprintln!(
+                "gluing trace: squared T1 = ({:?}, {:?}, {:?}, {:?})",
+                sq.0, sq.1, sq.2, sq.3
+            );
+            // After hadamard.
+            let h = hadamard4(&sq.0, &sq.1, &sq.2, &sq.3);
+            eprintln!(
+                "gluing trace: H(sq) T1 = ({:?}, {:?}, {:?}, {:?})",
+                h.0, h.1, h.2, h.3
+            );
+            eprintln!("gluing trace: H(sq).3 is_zero = {}", h.3 == Fp2::ZERO);
+        }
         let P1 = &theta_pts[0];
         let P2 = &theta_pts[1];
 
@@ -89,26 +152,57 @@ impl GluingKernel {
         let hs1 = squared_hadamard4(&P1.0, &P1.1, &P1.2, &P1.3);
         let hs2 = squared_hadamard4(&P2.0, &P2.1, &P2.2, &P2.3);
 
-        // 13–15. Recover α, β, γ from the cross-products.
-        let alpha = &hs1.0 * &hs2.1;
-        let beta = &hs1.1 * &hs2.0;
-        let gamma = &hs1.0 * &hs2.2;
+        #[cfg(test)]
+        {
+            eprintln!(
+                "gluing: hs1 = ({:?}, {:?}, {:?}, {:?})",
+                hs1.0, hs1.1, hs1.2, hs1.3
+            );
+            eprintln!(
+                "gluing: hs2 = ({:?}, {:?}, {:?}, {:?})",
+                hs2.0, hs2.1, hs2.2, hs2.3
+            );
+            eprintln!("gluing: hs1.3 (W₁) is_zero = {}", hs1.3 == Fp2::ZERO);
+            eprintln!("gluing: hs2.3 (W₂) is_zero = {}", hs2.3 == Fp2::ZERO);
+        }
 
-        // For gluing, δ = 0 and the inverse has δ⁻¹ = 0.
-        let alpha_inv = &hs1.0 * &hs2.0.invert();
-        let beta_inv = beta;
-        let gamma_inv = gamma;
+        // 13–15. Recover α, β, γ from the cross-products.
+        //
+        // The C reference (`gluing_compute`, theta_isogenies.c:480-496):
+        //   codomain = (X₁·X₂, Y₁·X₂, X₁·Z₂, 0)
+        //   precomp  = (Y₁·Z₂, X₁·Z₂, Y₁·X₂, 0)  ← projective inverse
+        //   imageK1_8 = (x, y) where x = X₁·Y₁·Z₂, y = Z₁·X₁·Z₂ (unneeded here)
+        let alpha = &hs1.0 * &hs2.0; // X₁ · X₂
+        let beta = &hs1.1 * &hs2.0; // Y₁ · X₂
+        let gamma = &hs1.0 * &hs2.2; // X₁ · Z₂
+
+        // Projective inverse: (α⁻¹, β⁻¹, γ⁻¹) = (Y₁·Z₂, X₁·Z₂, Y₁·X₂).
+        // No field inversion needed — these are cross-products.
+        let alpha_inv = &hs1.1 * &hs2.2; // Y₁ · Z₂
+        let beta_inv = &hs1.0 * &hs2.2; // X₁ · Z₂
+        let gamma_inv = &hs1.1 * &hs2.0; // Y₁ · X₂
 
         let dual = DualThetaNullPoint {
-            alpha, beta, gamma,
+            alpha,
+            beta,
+            gamma,
             delta: Fp2::ZERO,
-            alpha_inv, beta_inv, gamma_inv,
+            alpha_inv,
+            beta_inv,
+            gamma_inv,
             delta_inv: Fp2::ZERO,
         };
 
-        // 19. x ← X₁ · α⁻¹, y ← Z₁ · γ⁻¹
-        let x = &hs1.0 * &alpha_inv;
-        let y = &hs1.2 * &gamma_inv;
+        // 19. imageK1_8 = (x : x : y : y).
+        //
+        // C reference (theta_isogenies.c:478-480):
+        //   imageK1_8.x = TT1.x * precomp.x = X₁ · (Y₁·Z₂)
+        //   imageK1_8.y = TT1.z * precomp.z = Z₁ · (Y₁·X₂)
+        //
+        // where precomp.x = Y₁Z₂ = alpha_inv, and
+        //       precomp.z = codomain.y = Y₁X₂ = beta.
+        let x = &hs1.0 * &alpha_inv; // X₁ · (Y₁·Z₂)
+        let y = &hs1.2 * &beta; // Z₁ · (Y₁·X₂)
 
         // 24. (a₂,b₂,c₂,d₂) ← H(α, β, γ, 0)
         let (a2, b2, c2, d2) = hadamard4(&alpha, &beta, &gamma, &Fp2::ZERO);
@@ -117,7 +211,12 @@ impl GluingKernel {
 
         let J = JacobianPoint::new(x, x, y, y, codomain.clone());
 
-        GluingData { dual, codomain, J, N }
+        GluingData {
+            dual,
+            codomain,
+            J,
+            N,
+        }
     }
 
     /// Evaluate the gluing at a point P ∈ E₁ × E₂.
@@ -134,53 +233,52 @@ impl GluingKernel {
     ///
     /// [§8.5.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
     pub(crate) fn eval(
-        P: &(MontgomeryPoint, MontgomeryPoint),
-        T1: &(MontgomeryPoint, MontgomeryPoint),
+        P: &(CurveJacobianPoint, CurveJacobianPoint),
+        T1: &(CurveJacobianPoint, CurveJacobianPoint),
+        A1: &Fp2,
+        A2: &Fp2,
         data: &GluingData,
     ) -> JacobianPoint {
-        // Algorithm 8.39:
-        // 1–3. P₁,P₂ ← P;  T₁,T₂ ← T₁'';  x,y ← J
-        let (x, y) = (&data.J.x, &data.J.y);
+        // Algorithm 8.39 (GluingEval):
+        // Uses Jacobian (x,y,z) points for the cross-addition components,
+        // which require y-coordinates to distinguish P+Q from P-Q.
+        //
+        // J = imageK1_8 has the pattern (x:x:y:y). J.x = J.y = x,
+        // J.z = J.w = y. Scaling uses (y,y,x,x) = projective inverse.
+        let (x_val, y_val) = (&data.J.x, &data.J.z);
 
-        // 4–5. ADDComponents for each component curve.
-        let (u1, v1, w1) = add_sub_components(&P.0, &T1.0);
-        let (u2, v2, w2) = add_sub_components(&P.1, &T1.1);
+        // 4–5. ADDComponents for each component curve (Jacobian).
+        let (u1, v1, w1) = add_sub_components_jac(&P.0, &T1.0, A1);
+        let (u2, v2, w2) = add_sub_components_jac(&P.1, &T1.1, A2);
 
-        // 6. U ← (u₁·u₂ + v₁·v₂, u₁·w₁, w₁·u₂, w₁·w₂)
-        let U = (
-            &(&u1 * &u2) + &(&v1 * &v2),
-            &u1 * &w1,
-            &w1 * &u2,
-            &w1 * &w2,
-        );
+        // 6. U ← (u₁·u₂ + v₁·v₂, u₁·w₂, w₁·u₂, w₁·w₂)
+        //
+        // NOTE: The C reference (`gluing_eval_point`, lines 512-517)
+        // uses cross-component products: u₁·w₂ (not u₁·w₁) and
+        // v₁·w₂ (not v₁·w₁). Component 1 = (u₁,v₁,w₁) from curve 1,
+        // component 2 = (u₂,v₂,w₂) from curve 2.
+        let U = (&(&u1 * &u2) + &(&v1 * &v2), &u1 * &w2, &w1 * &u2, &w1 * &w2);
 
-        // 7. V ← (v₁·u₂ + u₁·v₂, v₁·w₁, w₁·v₂, 0)
-        let V = (
-            &(&v1 * &u2) + &(&u1 * &v2),
-            &v1 * &w1,
-            &w1 * &v2,
-            Fp2::ZERO,
-        );
+        // 7. V ← (v₁·u₂ + u₁·v₂, v₁·w₂, w₁·v₂, 0)
+        let V = (&(&v1 * &u2) + &(&u1 * &v2), &v1 * &w2, &w1 * &v2, Fp2::ZERO);
 
         // 8–9. U ← N · U,  V ← N · V
-        let U = mat4_mul_vec(&data.N, &U);
-        let V = mat4_mul_vec(&data.N, &V);
+        let U = &data.N * &U;
+        let V = &data.N * &V;
 
         // 10–11. U ← S(U),  V ← S(V)
         let U = (U.0.square(), U.1.square(), U.2.square(), U.3.square());
         let V = (V.0.square(), V.1.square(), V.2.square(), V.3.square());
 
         // 12. (X±, Y±, Z±, W±) ← H(U − V)
-        let diff = (
-            &U.0 - &V.0, &U.1 - &V.1, &U.2 - &V.2, &U.3 - &V.3,
-        );
+        let diff = (&U.0 - &V.0, &U.1 - &V.1, &U.2 - &V.2, &U.3 - &V.3);
         let (Xpm, Ypm, Zpm, Wpm) = hadamard4(&diff.0, &diff.1, &diff.2, &diff.3);
 
-        // 13. Scale by (y, y, x, x) and Hadamard.
-        let Xout = &Xpm * y;
-        let Yout = &Ypm * y;
-        let Zout = &Zpm * x;
-        let Wout = &Wpm * x;
+        // 13. Scale by (y, y, x, x) — the projective inverse of (x,x,y,y).
+        let Xout = &Xpm * y_val;
+        let Yout = &Ypm * y_val;
+        let Zout = &Zpm * x_val;
+        let Wout = &Wpm * x_val;
 
         let (xr, yr, zr, wr) = hadamard4(&Xout, &Yout, &Zout, &Wout);
         JacobianPoint::new(xr, yr, zr, wr, data.codomain.clone())
@@ -192,7 +290,7 @@ impl GluingKernel {
     ///
     /// [§8.5.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
     pub(crate) fn eval_special(
-        P: &(MontgomeryPoint, MontgomeryPoint),
+        P: &(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint),
         data: &GluingData,
     ) -> JacobianPoint {
         // Convert via ProductToTheta then apply the dual inverse.
@@ -213,10 +311,11 @@ impl GluingKernel {
     /// Compute the gluing and push all points through.
     pub(crate) fn isogeny(
         &self,
-        pts: &[(MontgomeryPoint, MontgomeryPoint)],
+        pts: &[(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)],
     ) -> (GluingData, Vec<JacobianPoint>) {
         let data = self.codomain();
-        let images = pts.iter()
+        let images = pts
+            .iter()
             .map(|p| GluingKernel::eval_special(p, &data))
             .collect();
         (data, images)
@@ -249,7 +348,7 @@ struct TranslationData {
 /// ([§8.5.5], Algorithm 8.35).
 ///
 /// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
-fn translation_pre_invert(P_prime: &MontgomeryPoint) -> TranslationData {
+fn translation_pre_invert(P_prime: &ProjectiveXOnlyPoint) -> TranslationData {
     let P = P_prime.double();
     let (X, Z) = (P_prime.X, P_prime.Z);
     let (U, W) = (P.X, P.Z);
@@ -258,7 +357,15 @@ fn translation_pre_invert(P_prime: &MontgomeryPoint) -> TranslationData {
     let UX = &U * &X;
     let UZ = &U * &Z;
     let delta = &WX - &UZ;
-    TranslationData { WX, WZ, UX, UZ, delta, X, Z }
+    TranslationData {
+        WX,
+        WZ,
+        UX,
+        UZ,
+        delta,
+        X,
+        Z,
+    }
 }
 
 /// Complete `ActionByTranslation` ([§8.5.5], Algorithm 8.35)
@@ -316,29 +423,46 @@ fn batch_invert(elems: &[Fp2]) -> Vec<Fp2> {
 ///
 /// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
 fn theta_change_of_basis(
-    T1: &(MontgomeryPoint, MontgomeryPoint),
-    T2: &(MontgomeryPoint, MontgomeryPoint),
-) -> [[Fp2; 4]; 4] {
+    T1: &(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint),
+    T2: &(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint),
+) -> GluingMatrix {
     // Pre-inversion data for all four components.
-    let d_G  = translation_pre_invert(&T1.0);
+    let d_G = translation_pre_invert(&T1.0);
     let d_Gp = translation_pre_invert(&T1.1);
-    let d_H  = translation_pre_invert(&T2.0);
+    let d_H = translation_pre_invert(&T2.0);
     let d_Hp = translation_pre_invert(&T2.1);
 
     // Batch-invert all 8 elements: [δ_G, Z_G, δ_G', Z_G', δ_H, Z_H, δ_H', Z_H']
     let to_invert = [
-        d_G.delta, d_G.Z,
-        d_Gp.delta, d_Gp.Z,
-        d_H.delta, d_H.Z,
-        d_Hp.delta, d_Hp.Z,
+        d_G.delta, d_G.Z, d_Gp.delta, d_Gp.Z, d_H.delta, d_H.Z, d_Hp.delta, d_Hp.Z,
     ];
     let invs = batch_invert(&to_invert);
 
     // Complete each ActionByTranslation with the batched inverses.
-    let G  = translation_finish(&d_G,  &invs[0], &invs[1]);
+    let G = translation_finish(&d_G, &invs[0], &invs[1]);
     let Gp = translation_finish(&d_Gp, &invs[2], &invs[3]);
-    let H  = translation_finish(&d_H,  &invs[4], &invs[5]);
+    let H = translation_finish(&d_H, &invs[4], &invs[5]);
     let Hp = translation_finish(&d_Hp, &invs[6], &invs[7]);
+
+    #[cfg(test)]
+    {
+        eprintln!(
+            "N matrix: G = [{:?}, {:?}; {:?}, {:?}]",
+            G[0][0], G[0][1], G[1][0], G[1][1]
+        );
+        eprintln!(
+            "N matrix: Gp = [{:?}, {:?}; {:?}, {:?}]",
+            Gp[0][0], Gp[0][1], Gp[1][0], Gp[1][1]
+        );
+        eprintln!(
+            "N matrix: H = [{:?}, {:?}; {:?}, {:?}]",
+            H[0][0], H[0][1], H[1][0], H[1][1]
+        );
+        eprintln!(
+            "N matrix: Hp = [{:?}, {:?}; {:?}, {:?}]",
+            Hp[0][0], Hp[0][1], Hp[1][0], Hp[1][1]
+        );
+    }
 
     // Lines 4–7: intermediate products.
     let t1 = &G[0][0] * &H[0][0] + &G[0][1] * &H[1][0];
@@ -385,12 +509,12 @@ fn theta_change_of_basis(
     let N32 = &(&G[1][0] * &N10) + &(&G[1][1] * &N12);
     let N33 = &(&G[1][0] * &N11) + &(&G[1][1] * &N13);
 
-    [
+    GluingMatrix([
         [N00, N01, N02, N03],
         [N10, N11, N12, N13],
         [N20, N21, N22, N23],
         [N30, N31, N32, N33],
-    ]
+    ])
 }
 
 /// `ProductToTheta` ([§8.5.5], Algorithm 8.37).
@@ -412,73 +536,72 @@ fn theta_change_of_basis(
 ///
 /// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
 fn product_to_theta(
-    pts: &[(MontgomeryPoint, MontgomeryPoint)],
-    N: &[[Fp2; 4]; 4],
+    pts: &[(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)],
+    N: &GluingMatrix,
 ) -> Vec<(Fp2, Fp2, Fp2, Fp2)> {
-    pts.iter().map(|(P1, P2)| {
-        // Dimension-1 theta coords for each component.
-        // For the product theta structure, the theta null point
-        // (a : b) of each curve comes from the 4-torsion basis.
-        // In the SQIsign chain, these are already set up by the
-        // calling code. For now, use (X±Z) directly as a proxy
-        // for (θ₀ : θ₁) — the matrix N absorbs the basis choice.
-        let theta_0_1 = &P1.X - &P1.Z;  // θ₀ of P₁
-        let theta_1_1 = &P1.X + &P1.Z;  // θ₁ of P₁
-        let theta_0_2 = &P2.X - &P2.Z;  // θ₀ of P₂
-        let theta_1_2 = &P2.X + &P2.Z;  // θ₁ of P₂
+    pts.iter()
+        .map(|(P1, P2)| {
+            // Product theta coordinates from raw projective (X:Z) pairs.
+            //
+            // The C reference (`base_change` in theta_isogenies.c:144-148)
+            // uses (X, Z) directly — NOT (X−Z, X+Z). The change-of-basis
+            // matrix N was computed assuming this raw product structure.
+            let x = &P1.X * &P2.X; // X₁ · X₂
+            let y = &P1.X * &P2.Z; // X₁ · Z₂
+            let z = &P1.Z * &P2.X; // Z₁ · X₂
+            let w = &P1.Z * &P2.Z; // Z₁ · Z₂
 
-        // Product theta coordinates.
-        let x = &theta_0_1 * &theta_0_2;
-        let y = &theta_0_1 * &theta_1_2;
-        let z = &theta_1_1 * &theta_0_2;
-        let w = &theta_1_1 * &theta_1_2;
-
-        // Apply change-of-basis matrix N.
-        let v = [&x, &y, &z, &w];
-        let mut out = [Fp2::ZERO; 4];
-        for i in 0..4 {
-            for j in 0..4 {
-                out[i] = &out[i] + &(&N[i][j] * v[j]);
-            }
-        }
-        (out[0], out[1], out[2], out[3])
-    }).collect()
+            // Apply change-of-basis matrix N.
+            N * &(x, y, z, w)
+        })
+        .collect()
 }
 
 /// Decompose the sum and difference of two projective points into
 /// shared components.
 ///
-/// Given P = (X_P : Z_P) and Q = (X_Q : Z_Q) on the same curve,
-/// returns (u, v, w) such that:
+/// Given two Jacobian points P = (x_P, y_P, z_P) and Q = (x_Q, y_Q, z_Q)
+/// on the same Montgomery curve E_A, returns (u, v, w) such that:
 /// - x(P + Q) = (u − v : w)
 /// - x(P − Q) = (u + v : w)
 ///
-/// This avoids computing P + Q and P − Q separately, saving
-/// multiplications in the gluing evaluation where both are needed.
+/// This uses the full Jacobian addition formula with y-coordinates,
+/// which is needed for the (2,2)-isogeny gluing step to correctly
+/// distinguish P+Q from P-Q.
 ///
-/// Implements `ADDComponents` ([§8.2.4], Algorithm 8.12).
+/// Implements `jac_to_xz_add_components` from the C reference
+/// (`ec_jac.c:305`). The Montgomery x-only version was incorrect
+/// for the gluing — see BUG 10 in project_theta_bugs.md.
 ///
 /// [§8.2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
-fn add_sub_components(P: &MontgomeryPoint, Q: &MontgomeryPoint) -> (Fp2, Fp2, Fp2) {
-    let u = &(&P.X * &Q.X) + &(&P.Z * &Q.Z);
-    let v = &(&P.X * &Q.Z) - &(&P.Z * &Q.X);
-    let w = &(&P.X * &Q.Z) + &(&P.Z * &Q.X);
+fn add_sub_components_jac(
+    P: &crate::curves::montgomery::JacobianPoint,
+    Q: &crate::curves::montgomery::JacobianPoint,
+    A: &Fp2,
+) -> (Fp2, Fp2, Fp2) {
+    // C reference (ec_jac.c:305-335):
+    let t0 = P.z.square(); // z1²
+    let t1 = Q.z.square(); // z2²
+    let t2 = &P.x * &t1; // x1·z2²
+    let t3 = &t0 * &Q.x; // z1²·x2
+    let mut t4 = &P.y * &Q.z; // y1·z2
+    t4 = &t4 * &t1; // y1·z2³
+    let mut t5 = &P.z * &Q.y; // z1·y2
+    t5 = &t5 * &t0; // z1³·y2
+    let t0 = &t0 * &t1; // (z1·z2)²
+    let t6 = &t4 * &t5; // (z1·z2)³·y1·y2
+    let v = &t6 + &t6; // 2·(z1·z2)³·y1·y2
+    let t4_sq = t4.square(); // y1²·z2⁶
+    let t5_sq = t5.square(); // z1⁶·y2²
+    let sum_y2 = &t4_sq + &t5_sq; // y1²·z2⁶ + z1⁶·y2²
+    let sum_x = &t2 + &t3; // x1·z2² + z1²·x2
+    let lambda = &t2 - &t3; // x1·z2² - z1²·x2
+    let lambda_sq = lambda.square();
+    let a_t0 = A * &t0;
+    let gamma = &(&sum_x + &a_t0) * &lambda_sq; // (sum_x + A·(z1z2)²)·λ²
+    let u = &sum_y2 - &gamma;
+    let w = &lambda_sq * &t0; // (z1·z2)²·λ²
     (u, v, w)
-}
-
-/// Multiply a 4×4 matrix by a 4-vector.
-fn mat4_mul_vec(
-    M: &[[Fp2; 4]; 4],
-    v: &(Fp2, Fp2, Fp2, Fp2),
-) -> (Fp2, Fp2, Fp2, Fp2) {
-    let va = [&v.0, &v.1, &v.2, &v.3];
-    let mut out = [Fp2::ZERO; 4];
-    for i in 0..4 {
-        for j in 0..4 {
-            out[i] = &out[i] + &(&M[i][j] * va[j]);
-        }
-    }
-    (out[0], out[1], out[2], out[3])
 }
 
 /// H ∘ S on four coordinates: square each, then Hadamard.
@@ -516,14 +639,9 @@ impl GenericKernel8 {
     ///
     /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
     /// [§8.5.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
-    pub(crate) fn isogeny(
-        &self,
-        pts: &[JacobianPoint],
-    ) -> (Jacobian, Vec<JacobianPoint>) {
+    pub(crate) fn isogeny(&self, pts: &[JacobianPoint]) -> (Jacobian, Vec<JacobianPoint>) {
         let (dual, codomain) = codomain_8torsion(&self.T1, &self.T2);
-        let images = pts.iter()
-            .map(|p| eval(p, &dual, &codomain))
-            .collect();
+        let images = pts.iter().map(|p| eval(p, &dual, &codomain)).collect();
         (codomain, images)
     }
 }
@@ -559,9 +677,7 @@ impl GenericKernel4 {
         pts: &[JacobianPoint],
     ) -> (Jacobian, Vec<JacobianPoint>) {
         let (dual, codomain) = codomain_4torsion(&self.T1, domain);
-        let images = pts.iter()
-            .map(|p| eval(p, &dual, &codomain))
-            .collect();
+        let images = pts.iter().map(|p| eval(p, &dual, &codomain)).collect();
         (codomain, images)
     }
 }
@@ -593,9 +709,7 @@ impl GenericKernel2 {
         pts: &[JacobianPoint],
     ) -> (Jacobian, Vec<JacobianPoint>) {
         let (dual, codomain) = codomain_from_null(domain);
-        let images = pts.iter()
-            .map(|p| eval(p, &dual, &codomain))
-            .collect();
+        let images = pts.iter().map(|p| eval(p, &dual, &codomain)).collect();
         (codomain, images)
     }
 }
@@ -628,24 +742,22 @@ impl SplittingKernel {
     /// `ThetaProductPointToMontgomery` ([§8.5.7]).
     ///
     /// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
-    pub(crate) fn isogeny(
-        &self,
-        pts: &[JacobianPoint],
-    ) -> (EllipticProduct, Vec<ProductPoint>) {
+    pub(crate) fn isogeny(&self, pts: &[JacobianPoint]) -> (EllipticProduct, Vec<ProductPoint>) {
         // 1. SplittingIsomorphism: find the matrix M (Algorithm 8.42).
         let M = splitting_isomorphism(&self.domain.null);
 
         // 2. Apply M to the null point to get product theta structure.
-        let product_null = mat4_apply(&M, &self.domain.null);
+        let product_null = M.apply_null(&self.domain.null);
 
         // 3. ThetaToProduct: recover (A₁:C₁), (A₂:C₂) (Algorithm 8.44).
         let product = theta_to_product(&product_null);
 
         // 4. ThetaProductPointToMontgomery for each point (Algorithm 8.45).
-        let images = pts.iter()
+        let images = pts
+            .iter()
             .map(|p| {
                 // Apply M to point, then convert to Montgomery.
-                let mp = mat4_apply_point(&M, p);
+                let mp = M.apply_point(p);
                 theta_product_to_montgomery(&mp, &product_null, &product)
             })
             .collect();
@@ -681,18 +793,21 @@ pub(crate) fn codomain_8torsion(
     let delta_inv = gamma;
 
     let dual = DualThetaNullPoint {
-        alpha, beta, gamma, delta,
-        alpha_inv, beta_inv, gamma_inv, delta_inv,
+        alpha,
+        beta,
+        gamma,
+        delta,
+        alpha_inv,
+        beta_inv,
+        gamma_inv,
+        delta_inv,
     };
     let null_B = hadamard_null(&dual);
     (dual, Jacobian::new(null_B))
 }
 
 /// Codomain from 4-torsion (Algorithm 8.32).
-fn codomain_4torsion(
-    T1: &JacobianPoint,
-    domain: &Jacobian,
-) -> (DualThetaNullPoint, Jacobian) {
+fn codomain_4torsion(T1: &JacobianPoint, domain: &Jacobian) -> (DualThetaNullPoint, Jacobian) {
     // Line 1: (xαβ, _, xγδ, _) ← H ∘ S(T₁')
     let hs = T1.squared().hadamard();
 
@@ -713,7 +828,7 @@ fn codomain_4torsion(
     let delta_inv = &beta * &hs.x;
     let beta_mul = &beta * &hs.x;
     let xgd_ab_a2 = &(&hs.z * &ab) * &a2;
-    let delta = &xgd_ab_a2 * &(&ab * &a2);
+    let _delta = &xgd_ab_a2 * &(&ab * &a2);
     let alpha = &(&hs.x * &ab) * &a2;
     let gamma = &alpha * &g2;
     let delta_final = &alpha * &d2;
@@ -759,24 +874,169 @@ fn codomain_from_null(domain: &Jacobian) -> (DualThetaNullPoint, Jacobian) {
     let delta_inv = &gd * &a2;
 
     let dual = DualThetaNullPoint {
-        alpha, beta, gamma, delta,
-        alpha_inv, beta_inv, gamma_inv, delta_inv,
+        alpha,
+        beta,
+        gamma,
+        delta,
+        alpha_inv,
+        beta_inv,
+        gamma_inv,
+        delta_inv,
     };
     let null_B = hadamard_null(&dual);
     (dual, Jacobian::new(null_B))
 }
 
-/// Evaluate a generic (2,2)-isogeny at a point (Algorithm 8.34).
+/// Codomain from 8-torsion WITHOUT final Hadamard (dual form).
+///
+/// Same as [`codomain_8torsion`] but omits the Hadamard transform on
+/// the codomain null point, corresponding to `hadamard_bool_2=0` in
+/// the C reference. Used for the penultimate and ultimate chain steps
+/// so the splitting step receives the codomain in dual form.
+pub(crate) fn codomain_8torsion_no_hadamard(
+    T1: &JacobianPoint,
+    T2: &JacobianPoint,
+) -> (DualThetaNullPoint, Jacobian) {
+    let hs1 = T1.squared().hadamard();
+    let hs2 = T2.squared().hadamard();
+
+    let xawb = &hs1.x * &hs2.y;
+    let zaxb = &hs2.x * &hs1.y;
+
+    let alpha = &hs2.x * &xawb;
+    let beta = &hs2.y * &zaxb;
+    let gamma = &hs2.z * &xawb;
+    let delta = &hs2.w * &zaxb;
+
+    let zgwd = &hs2.z * &hs2.w;
+    let alpha_inv = &hs1.y * &zgwd;
+    let beta_inv = &hs1.x * &zgwd;
+    let gamma_inv = delta;
+    let delta_inv = gamma;
+
+    let dual = DualThetaNullPoint {
+        alpha,
+        beta,
+        gamma,
+        delta,
+        alpha_inv,
+        beta_inv,
+        gamma_inv,
+        delta_inv,
+    };
+    // NO hadamard_null here — codomain stays in dual form.
+    let null = ThetaNullPoint::new(dual.alpha, dual.beta, dual.gamma, dual.delta);
+    (dual, Jacobian::new(null))
+}
+
+/// Evaluate: normal interior step (`hadamard_bool_1=0, hadamard_bool_2=1`).
+///
+/// The C reference's `theta_isogeny_eval` with bool_1=0, bool_2=1
+/// computes: `H(precomp · to_squared_theta(P))` where
+/// `to_squared_theta(P) = H(P²)`.
+///
+/// However, the `precomp` (alpha_inv etc.) stored in our
+/// `DualThetaNullPoint` already incorporates the coordinate
+/// relationships such that the eval formula is simply
+/// `H(precomp · P²)` — the inner Hadamard is absorbed into how
+/// the precomputation relates to the codomain.
+///
 pub(crate) fn eval(
     P: &JacobianPoint,
     dual: &DualThetaNullPoint,
     codomain: &Jacobian,
 ) -> JacobianPoint {
-    let t = P.squared()
-        .scale(&dual.alpha_inv, &dual.beta_inv,
-               &dual.gamma_inv, &dual.delta_inv)
+    let t = P
+        .squared()
+        .hadamard()
+        .scale(
+            &dual.alpha_inv,
+            &dual.beta_inv,
+            &dual.gamma_inv,
+            &dual.delta_inv,
+        )
         .hadamard();
     JacobianPoint::new(t.x, t.y, t.z, t.w, codomain.clone())
+}
+
+/// Evaluate: penultimate step (`hadamard_bool_1=0, hadamard_bool_2=0`).
+///
+/// Formula: `precomp · H(P²)` — no outer Hadamard.
+pub(crate) fn eval_no_outer_hadamard(
+    P: &JacobianPoint,
+    dual: &DualThetaNullPoint,
+    codomain: &Jacobian,
+) -> JacobianPoint {
+    let t = P.squared().hadamard().scale(
+        &dual.alpha_inv,
+        &dual.beta_inv,
+        &dual.gamma_inv,
+        &dual.delta_inv,
+    );
+    JacobianPoint::new(t.x, t.y, t.z, t.w, codomain.clone())
+}
+
+/// Evaluate: ultimate step (`hadamard_bool_1=1, hadamard_bool_2=0`).
+///
+/// Formula: `precomp · H(H(P)²)` — extra Hadamard on input, no outer.
+pub(crate) fn eval_ultimate(
+    P: &JacobianPoint,
+    dual: &DualThetaNullPoint,
+    codomain: &Jacobian,
+) -> JacobianPoint {
+    let t = P.hadamard().squared().hadamard().scale(
+        &dual.alpha_inv,
+        &dual.beta_inv,
+        &dual.gamma_inv,
+        &dual.delta_inv,
+    );
+    JacobianPoint::new(t.x, t.y, t.z, t.w, codomain.clone())
+}
+
+/// Codomain from 8-torsion: ultimate step (`hadamard_bool_1=1, hadamard_bool_2=0`).
+///
+/// Same cross-product formulas as the normal 8-torsion codomain, but
+/// applies Hadamard to each kernel point BEFORE `to_squared_theta`,
+/// and omits the final Hadamard on the codomain. This compensates for
+/// the penultimate step having produced a dual-form codomain.
+///
+/// C reference: `theta_isogeny_compute` with `hadamard_bool_1=1,
+/// hadamard_bool_2=0` (theta_isogenies.c:636-644, 692-694).
+pub(crate) fn codomain_8torsion_ultimate(
+    T1: &JacobianPoint,
+    T2: &JacobianPoint,
+) -> (DualThetaNullPoint, Jacobian) {
+    // bool_1=1: Hadamard before to_squared_theta
+    let hs1 = T1.hadamard().squared().hadamard();
+    let hs2 = T2.hadamard().squared().hadamard();
+
+    let xawb = &hs1.x * &hs2.y;
+    let zaxb = &hs2.x * &hs1.y;
+
+    let alpha = &hs2.x * &xawb;
+    let beta = &hs2.y * &zaxb;
+    let gamma = &hs2.z * &xawb;
+    let delta = &hs2.w * &zaxb;
+
+    let zgwd = &hs2.z * &hs2.w;
+    let alpha_inv = &hs1.y * &zgwd;
+    let beta_inv = &hs1.x * &zgwd;
+    let gamma_inv = delta;
+    let delta_inv = gamma;
+
+    let dual = DualThetaNullPoint {
+        alpha,
+        beta,
+        gamma,
+        delta,
+        alpha_inv,
+        beta_inv,
+        gamma_inv,
+        delta_inv,
+    };
+    // bool_2=0: NO final Hadamard — codomain stays in dual form.
+    let null = ThetaNullPoint::new(dual.alpha, dual.beta, dual.gamma, dual.delta);
+    (dual, Jacobian::new(null))
 }
 
 /// Codomain theta null point from dual via Hadamard.
@@ -839,10 +1099,37 @@ const SPLITTING_INDICES: [(usize, usize, SplittingIndex); 10] = [
 /// χ function for `GetIndexSplitting` (Algorithm 8.41).
 fn chi(i: usize, j: usize) -> i8 {
     match (i, j) {
-        (0,0)|(0,1)|(0,2)|(0,3)|(1,0)|(1,2)|(2,0)|(2,1)|(3,0)|(3,3) => 1,
-        (1,1)|(1,3)|(2,2)|(2,3)|(3,1)|(3,2) => -1,
+        (0, 0) | (0, 1) | (0, 2) | (0, 3) | (1, 0) | (1, 2) | (2, 0) | (2, 1) | (3, 0) | (3, 3) => {
+            1
+        }
+        (1, 1) | (1, 3) | (2, 2) | (2, 3) | (3, 1) | (3, 2) => -1,
         _ => 0,
     }
+}
+
+/// Count how many zero U_{i,j}(0) indices exist (for debugging).
+#[cfg(test)]
+pub(crate) fn get_index_splitting_count(null: &ThetaNullPoint) -> u32 {
+    let coords = [&null.a, &null.b, &null.c, &null.d];
+    let mut count = 0u32;
+    for &(i, j, _idx) in &SPLITTING_INDICES {
+        let mut U = Fp2::ZERO;
+        for t in 0..4 {
+            let chi_val = chi(i, t) as i64;
+            if chi_val != 0 {
+                let term = coords[j ^ t] * coords[t];
+                if chi_val > 0 {
+                    U = &U + &term;
+                } else {
+                    U = &U - &term;
+                }
+            }
+        }
+        if U == Fp2::ZERO {
+            count += 1;
+        }
+    }
+    count
 }
 
 /// Find the splitting index such that U_{i,j}(0) = 0
@@ -870,7 +1157,22 @@ fn get_index_splitting(null: &ThetaNullPoint) -> SplittingIndex {
             result = idx;
         }
     }
-    debug_assert!(count == 1, "GetIndexSplitting: expected exactly one zero index");
+    #[cfg(test)]
+    if count != 1 {
+        eprintln!(
+            "GetIndexSplitting: count={count}, null=({:?}, {:?}, {:?}, {:?})",
+            null.a, null.b, null.c, null.d
+        );
+        // Check if any coordinate is zero (degenerate point)
+        let any_zero = [&null.a, &null.b, &null.c, &null.d]
+            .iter()
+            .any(|x| *x == &Fp2::ZERO);
+        eprintln!("  any_zero_coord={any_zero}");
+    }
+    debug_assert!(
+        count == 1,
+        "GetIndexSplitting: expected exactly one zero index, found {count}"
+    );
     result
 }
 
@@ -878,7 +1180,7 @@ fn get_index_splitting(null: &ThetaNullPoint) -> SplittingIndex {
 ///
 /// Returns the 4×4 matrix M whose action on the null point recovers
 /// the product theta structure.
-fn splitting_isomorphism(null: &ThetaNullPoint) -> [[Fp2; 4]; 4] {
+fn splitting_isomorphism(null: &ThetaNullPoint) -> GluingMatrix {
     let idx = get_index_splitting(null);
     let one = Fp2::ONE;
     let neg = -&one;
@@ -889,15 +1191,17 @@ fn splitting_isomorphism(null: &ThetaNullPoint) -> [[Fp2; 4]; 4] {
     // Isogeny22Chain (the spec guarantees (i,j) = (0,0) or (1,1)
     // for SQIsign's chain via Algorithm 8.47).
     use SplittingIndex::*;
-    match idx {
+    GluingMatrix(match idx {
         I00 => {
-            let sqrt_m1 = Fp2::I;
-            let neg_sqrt_m1 = -&sqrt_m1;
+            // C reference: SPLITTING_TRANSFORMS[0] for (i,j) = (0,0).
+            // Uses i = sqrt(-1) in Fp2.
+            let i_val = Fp2::I;
+            let neg_i = -&i_val;
             [
-                [one,        sqrt_m1,     one,         neg_sqrt_m1],
-                [one,        neg_sqrt_m1, neg,         neg_sqrt_m1],
-                [one,        sqrt_m1,     neg,         sqrt_m1    ],
-                [neg,        sqrt_m1,     neg,         neg_sqrt_m1],
+                [one, i_val, one, i_val],
+                [one, neg_i, neg, i_val],
+                [one, i_val, neg, neg_i],
+                [neg, i_val, neg, i_val],
             ]
         }
         I10 => [
@@ -907,85 +1211,59 @@ fn splitting_isomorphism(null: &ThetaNullPoint) -> [[Fp2; 4]; 4] {
             [neg, one, neg, one],
         ],
         I20 => [
-            [one,  one,  one,  one ],
-            [one,  neg,  one,  neg ],
-            [one,  neg,  neg,  one ],
-            [neg,  neg,  one,  one ],
+            [one, one, one, one],
+            [one, neg, one, neg],
+            [one, neg, neg, one],
+            [neg, neg, one, one],
         ],
         I30 => [
-            [one,  one,  one,  one ],
-            [one,  neg,  one,  neg ],
-            [one,  one,  neg,  neg ],
-            [neg,  one,  one,  neg ],
+            [one, one, one, one],
+            [one, neg, one, neg],
+            [one, one, neg, neg],
+            [neg, one, one, neg],
         ],
         I01 => [
-            [one,  zero, zero, zero],
-            [zero, zero, zero, one ],
-            [zero, zero, one,  zero],
-            [zero, neg,  zero, zero],
+            [one, zero, zero, zero],
+            [zero, zero, zero, one],
+            [zero, zero, one, zero],
+            [zero, neg, zero, zero],
         ],
         I21 => [
-            [one,  one,  one,  one ],
-            [one,  neg,  one,  neg ],
-            [one,  neg,  neg,  one ],
-            [one,  one,  neg,  neg ],
+            [one, one, one, one],
+            [one, neg, one, neg],
+            [one, neg, neg, one],
+            [one, one, neg, neg],
         ],
         I02 => [
-            [one,  zero, zero, zero],
-            [zero, one,  zero, zero],
-            [zero, zero, zero, one ],
-            [zero, zero, neg,  zero],
+            [one, zero, zero, zero],
+            [zero, one, zero, zero],
+            [zero, zero, zero, one],
+            [zero, zero, neg, zero],
         ],
         I12 => [
-            [one,  zero, zero, zero],
-            [zero, one,  zero, zero],
-            [zero, zero, zero, one ],
-            [zero, zero, one,  zero],
+            [one, zero, zero, zero],
+            [zero, one, zero, zero],
+            [zero, zero, zero, one],
+            [zero, zero, one, zero],
         ],
         I03 => [
-            [one,  zero, zero, zero],
-            [zero, one,  zero, zero],
-            [zero, zero, one,  zero],
-            [zero, zero, zero, neg ],
+            [one, zero, zero, zero],
+            [zero, one, zero, zero],
+            [zero, zero, one, zero],
+            [zero, zero, zero, neg],
         ],
         I33 => [
-            [one,  zero, zero, zero],
-            [zero, one,  zero, zero],
-            [zero, zero, one,  zero],
-            [zero, zero, zero, one ],
+            [one, zero, zero, zero],
+            [zero, one, zero, zero],
+            [zero, zero, one, zero],
+            [zero, zero, zero, one],
         ],
-    }
-}
-
-/// Apply a 4×4 matrix to a theta null point.
-fn mat4_apply(M: &[[Fp2; 4]; 4], null: &ThetaNullPoint) -> ThetaNullPoint {
-    let v = [&null.a, &null.b, &null.c, &null.d];
-    let mut out = [Fp2::ZERO; 4];
-    for i in 0..4 {
-        for j in 0..4 {
-            out[i] = &out[i] + &(&M[i][j] * v[j]);
-        }
-    }
-    ThetaNullPoint::new(out[0], out[1], out[2], out[3])
-}
-
-/// Apply a 4×4 matrix to a theta point.
-fn mat4_apply_point(M: &[[Fp2; 4]; 4], P: &JacobianPoint) -> JacobianPoint {
-    let v = [&P.x, &P.y, &P.z, &P.w];
-    let mut out = [Fp2::ZERO; 4];
-    for i in 0..4 {
-        for j in 0..4 {
-            out[i] = &out[i] + &(&M[i][j] * v[j]);
-        }
-    }
-    JacobianPoint::new(out[0], out[1], out[2], out[3], P.surface.clone())
+    })
 }
 
 /// Recover Montgomery coefficients from a product theta null point
 /// (Algorithm 8.44).
 fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
-    use crate::curves::montgomery::{Curve, MontgomeryCoefficient};
-
     let (a, b, c, d) = (&null.a, &null.b, &null.c, &null.d);
 
     // Check product structure: ad == bc.
@@ -1011,8 +1289,8 @@ fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
     let A2 = &A2_num * &C2.invert();
 
     EllipticProduct::new(
-        Curve::new(MontgomeryCoefficient::from(A1)),
-        Curve::new(MontgomeryCoefficient::from(A2)),
+        Curve::new(Coefficient::from(A1)),
+        Curve::new(Coefficient::from(A2)),
     )
 }
 
@@ -1023,9 +1301,8 @@ fn theta_product_to_montgomery(
     null: &ThetaNullPoint,
     product: &EllipticProduct,
 ) -> ProductPoint {
-    use crate::curves::montgomery::MontgomeryPoint;
-
-    let (a, b, c, d) = (&null.a, &null.b, &null.c, &null.d);
+    let (a, b, c, _d) = (&null.a, &null.b, &null.c, &null.d);
+    #[allow(unused_variables)]
     let (x, y, z, w) = (&P.x, &P.y, &P.z, &P.w);
 
     // Algorithm 8.45:
@@ -1037,7 +1314,7 @@ fn theta_product_to_montgomery(
     let Z2 = &(a * y) - &(b * x);
 
     (
-        MontgomeryPoint::from_XZ(X1, Z1, &product.E1),
-        MontgomeryPoint::from_XZ(X2, Z2, &product.E2),
+        ProjectiveXOnlyPoint::from_XZ(X1, Z1, &product.E1),
+        ProjectiveXOnlyPoint::from_XZ(X2, Z2, &product.E2),
     )
 }

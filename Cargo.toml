@@ -2,6 +2,7 @@
 name = "sqisign-selkie"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.81.0"
 authors = ["Deirdre Connolly <durumcrustulum@gmail.com>"]
 description = "Compact post-quantum signatures from quaternions and isogenies."
 license = "MIT OR Apache-2.0"
@@ -16,13 +17,16 @@ exclude = [
 [features]
 default = ["zeroize"]
 zeroize = ["dep:zeroize"]
-rand_core = ["dep:rand_core"]
 
 [dependencies]
+# TODO: replace with our own SHAKE256 implementation to minimize trusted dependencies.
 libcrux-sha3 = "0.0.8"
-rand_core = { version = "0.6", optional = true }
+rand_core = { version = "0.6", features = ["getrandom"] }
 subtle = "2.6"
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"], optional = true }
 
 [dev-dependencies]
 hex = "0.4"
+regex = "1"
+reqwest = { version = "0.12", features = ["blocking"] }
+serde_json = "1"
