@@ -1,0 +1,36 @@
+% sqisign-selkie implementation paper
+\documentclass{iacrcc}
+
+\input{prelude}
+
+\title[running   = {\texttt{sqisign-selkie}},
+       plaintext = {sqisign-selkie: Implementing SQIsign v2 NIST-I in Rust}
+      ]{\texttt{sqisign-selkie}: Implementing SQIsign v2 NIST-I in Rust}
+
+\addauthor[inst    = {1},
+           email   = {durumcrustulum@gmail.com},
+           orcid   = {0009-0005-9052-4018},
+          ]{Deirdre Connolly}
+
+\addaffiliation[country = {USA}]{Selkie Cryptography}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\keywords{SQIsign, isogeny-based cryptography, Rust, constant-time, post-quantum signatures}
+
+\input{sections/00_abstract}
+\input{sections/01_intro}
+\input{sections/02_background}
+\input{sections/03_architecture}
+\input{sections/04_bugs}
+\input{sections/05_types}
+\input{sections/06_ct}
+\input{sections/07_status}
+
+\bibliography{local,cryptobib/abbrev3,cryptobib/crypto}
+
+\end{document}

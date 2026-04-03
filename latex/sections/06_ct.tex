@@ -1,0 +1,36 @@
+\section{Constant-Time Considerations}
+\label{sec:ct}
+
+\subsection{The spec's silence on side channels}
+
+The SQIsign specification analyzes \texttt{SuitableIdeals} only in
+terms of failure probability (\S9.3.2), not side-channel resistance.
+By tracing Algorithm~4.2 (signing), we confirmed that the quaternion
+algorithms operate on data derived from the secret key
+$I_{\mathrm{sk}}$ (lines~13--19).  The variable-time behavior of the
+C reference is a pragmatic gap, not a deliberate security argument.
+
+\subsection{Published CT techniques}
+
+Seven papers form a complete constant-time stack for SQIsign~v2:
+\begin{itemize}
+  \item Kouider et al.~\cite{kouider2025} provide constant-time big
+    integer arithmetic (division, exponentiation, square root) up to
+    ${\sim}12{,}000$~bits.
+  \item Hanyecz et al.~\cite{hanyecz2025} give the first constant-time
+    LLL-like lattice reduction for dimension~4, replacing the
+    variable-time L2 algorithm used in \texttt{SuitableIdeals}.
+  \item Basso et al.~\cite{basso2025} cover CT~HNF, CT
+    \texttt{IdealGenerator}, and CT \texttt{RepresentInteger}---the
+    three core quaternion subroutines.
+  \item Kim et al.~\cite{kim2025} prove explicit worst-case size
+    bounds for all quaternion intermediates in Round-2 SQIsign,
+    enabling fixed-precision (no multi-precision) arithmetic.
+  \item Mukherjee et al.~\cite{mukherjee2025attack} and Jacquemin et
+    al.~\cite{jacquemin2023} demonstrate and propose mitigations for
+    SPA attacks on Cornacchia's algorithm---the most urgent
+    constant-time target.
+\end{itemize}
+
+We plan a six-phase CT hardening immediately after achieving
+end-to-end interoperability.

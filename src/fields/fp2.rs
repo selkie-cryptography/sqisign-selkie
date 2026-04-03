@@ -114,31 +114,79 @@ impl Fp2 {
     /// Uses the algorithm from [SQIsign spec, §2.1.2, Algorithm 8.2].
     /// The result is only meaningful when `self.is_square()` is true.
     #[must_use]
+    /// Compute a canonical square root in F_{p²}.
+    ///
+    /// Given `a = a₀ + a₁·i`, returns the unique `r` such that `r² = a`
+    /// and `r` is _even_: its real part is even (as an integer in
+    /// `[0, p)`), or if the real part is zero, its imaginary part is
+    /// even. The other root is `−r`, which is odd.
+    ///
+    /// # Why canonicalization matters
+    ///
+    /// Every nonzero square in F_{p²} has two roots, `r` and `−r`.
+    /// Without a canonical choice, any function that branches on a
+    /// square root — such as `projective_difference` (Proposition 3
+    /// of [Costello–Hisil–Renes 2017][CHR17]) — becomes
+    /// nondeterministic: the two roots yield two distinct projective
+    /// points that are NOT projectively equivalent.
+    ///
+    /// For SQIsign verification the consequences cascade: a wrong
+    /// root in `projective_difference` produces the wrong third point
+    /// of the torsion basis `(P, P−Q, Q)`, which makes `ladder3pt`
+    /// compute the wrong challenge kernel, which makes the challenge
+    /// isogeny land on the wrong curve, making every subsequent step
+    /// diverge.
+    ///
+    /// The canonical-even convention matches the C reference's
+    /// `fp2_sqrt` ([Aardal et al. 2024][ABCDK24], §3.1).
+    ///
+    /// # Algorithm
+    ///
+    /// Uses the Tonelli–Shanks-style formula from [ABCDK24]:
+    ///
+    /// 1. δ ← √(a₀² + a₁²) ∈ F_p  (the Fp norm's square root)
+    /// 2. x₀ ← a₀ + δ,  t₀ ← 2·x₀
+    /// 3. x₁ ← t₀^{(p−3)/4}
+    /// 4. x₀ ← x₀·x₁,  x₁ ← a₁·x₁
+    /// 5. If (2·x₀)² = t₀: r ← x₀ + x₁·i
+    ///    else:              r ← x₁ − x₀·i
+    /// 6. If re(r) is odd, or re(r) = 0 and im(r) is odd: r ← −r
+    ///
+    /// Step 6 is the canonicalization.
+    ///
+    /// [CHR17]: https://eprint.iacr.org/2017/518
+    /// [ABCDK24]: https://eprint.iacr.org/2024/1563
     pub fn sqrt(&self) -> Fp2 {
-        // For a = a0 + a1·i:
-        // δ = (a0² + a1²)^((p+1)/4)
-        // x0 = a0 + δ
-        // t0 = 2·x0
-        // x1 = t0^((p-3)/4)
-        // x0 = x0 · x1
-        // x1 = a1 · x1
-        // t1 = (2·x0)²
-        // if t1 == t0: return x0 + x1·i
-        // else:        return x1 − x0·i
+        // Steps 1–5: compute a square root (either r or −r).
         let delta = self.norm().sqrt();
         let x0 = &self.a + &delta;
         let t0 = &x0 + &x0;
-        // t0^((p-3)/4)
         let x1 = t0.pow_p3div4();
         let x0 = &x0 * &x1;
         let x1 = &self.b * &x1;
         let t1 = (&x0 + &x0).square();
 
-        // Constant-time select
         let is_eq = t1.ct_eq(&t0);
+        let re = Fp::conditional_select(&x1, &x0, is_eq);
+        let im = Fp::conditional_select(&(-&x0), &x1, is_eq);
+
+        // Step 6: canonicalize to the even root.
+        //
+        // "Even" means the least-significant bit of the canonical
+        // encoding of re(r) is 0. If re(r) = 0, we check im(r)
+        // instead. This is the lexicographic tie-breaking used by the
+        // C reference (`fp2_sqrt` in `fp2.c`).
+        let re_bytes = re.to_bytes();
+        let im_bytes = im.to_bytes();
+        let re_is_odd = Choice::from(re_bytes[0] & 1);
+        let re_is_zero = re.ct_eq(&Fp::ZERO);
+        let im_is_odd = Choice::from(im_bytes[0] & 1);
+        let negate = re_is_odd | (re_is_zero & im_is_odd);
+        let neg_re = -&re;
+        let neg_im = -&im;
         Fp2 {
-            a: Fp::conditional_select(&x1, &x0, is_eq),
-            b: Fp::conditional_select(&(-&x0), &x1, is_eq),
+            a: Fp::conditional_select(&re, &neg_re, negate),
+            b: Fp::conditional_select(&im, &neg_im, negate),
         }
     }
 
@@ -157,7 +205,6 @@ impl Fp2 {
         Fp2 { a, b }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Operators
@@ -222,46 +269,66 @@ impl<'a, 'b> Mul<&'b Fp> for &'a Fp2 {
 
 impl Add for Fp2 {
     type Output = Fp2;
-    fn add(self, rhs: Fp2) -> Fp2 { &self + &rhs }
+    fn add(self, rhs: Fp2) -> Fp2 {
+        &self + &rhs
+    }
 }
 
 impl Sub for Fp2 {
     type Output = Fp2;
-    fn sub(self, rhs: Fp2) -> Fp2 { &self - &rhs }
+    fn sub(self, rhs: Fp2) -> Fp2 {
+        &self - &rhs
+    }
 }
 
 impl Mul for Fp2 {
     type Output = Fp2;
-    fn mul(self, rhs: Fp2) -> Fp2 { &self * &rhs }
+    fn mul(self, rhs: Fp2) -> Fp2 {
+        &self * &rhs
+    }
 }
 
 impl Neg for Fp2 {
     type Output = Fp2;
-    fn neg(self) -> Fp2 { -&self }
+    fn neg(self) -> Fp2 {
+        -&self
+    }
 }
 
 impl AddAssign<&Fp2> for Fp2 {
-    fn add_assign(&mut self, rhs: &Fp2) { *self = &*self + rhs; }
+    fn add_assign(&mut self, rhs: &Fp2) {
+        *self = &*self + rhs;
+    }
 }
 
 impl SubAssign<&Fp2> for Fp2 {
-    fn sub_assign(&mut self, rhs: &Fp2) { *self = &*self - rhs; }
+    fn sub_assign(&mut self, rhs: &Fp2) {
+        *self = &*self - rhs;
+    }
 }
 
 impl MulAssign<&Fp2> for Fp2 {
-    fn mul_assign(&mut self, rhs: &Fp2) { *self = &*self * rhs; }
+    fn mul_assign(&mut self, rhs: &Fp2) {
+        *self = &*self * rhs;
+    }
 }
 
 impl AddAssign for Fp2 {
-    fn add_assign(&mut self, rhs: Fp2) { *self += &rhs; }
+    fn add_assign(&mut self, rhs: Fp2) {
+        *self += &rhs;
+    }
 }
 
 impl SubAssign for Fp2 {
-    fn sub_assign(&mut self, rhs: Fp2) { *self -= &rhs; }
+    fn sub_assign(&mut self, rhs: Fp2) {
+        *self -= &rhs;
+    }
 }
 
 impl MulAssign for Fp2 {
-    fn mul_assign(&mut self, rhs: Fp2) { *self *= &rhs; }
+    fn mul_assign(&mut self, rhs: Fp2) {
+        *self *= &rhs;
+    }
 }
 
 // ---------------------------------------------------------------------------

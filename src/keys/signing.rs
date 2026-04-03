@@ -10,15 +10,16 @@
 //! [§4.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
 //! [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
 
-use subtle::ConstantTimeEq;
-
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::keys::verifying::VerifyingKey;
-use crate::keys::{
-    Signature, SignatureError, SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES,
-};
+use crate::keys::{Signature, SignatureError, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};
+use crate::params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES};
+use crate::quaternions::algebra::{Coordinate, Denominator, Element};
+use crate::quaternions::bigint::BigInt;
+use crate::quaternions::lattice::LeftIdeal;
+use crate::quaternions::precomputed::EXTREMAL_ORDERS;
 
 /// An SQIsign signing (secret) key.
 ///
@@ -30,8 +31,12 @@ use crate::keys::{
 /// # Wire format (353 bytes, NIST-I)
 ///
 /// ```text
-/// [  pk (65 B) | I_sk (160 B) | M_sk (128 B)  ]
+/// [  pk (65 B) | norm (32 B) | gen[0..3] (4×32 B) | M_sk (4×32 B) ]
 /// ```
+///
+/// `norm` and `gen[0..3]` define the secret ideal I_sk = O₀⟨gen, norm⟩.
+/// `gen[i]` are signed (two's complement LE); `norm` and M_sk entries
+/// are unsigned LE.
 ///
 /// See [§4.6] for full encoding details.
 ///
@@ -39,10 +44,13 @@ use crate::keys::{
 /// [MystenLabs/ed25519-unsafe-libs]: https://github.com/MystenLabs/ed25519-unsafe-libs
 #[derive(Clone)]
 pub struct SigningKey {
-    /// The raw secret key bytes.
-    secret_key: [u8; SIGNING_KEY_BYTES],
     /// The corresponding verifying (public) key, cached for safety.
     verifying_key: VerifyingKey,
+    /// The secret ideal I_sk (left O₀-ideal).
+    ideal: LeftIdeal<4>,
+    /// Change-of-basis matrix M_sk: 2×2 over Z, stored as
+    /// \[\[m00, m01\], \[m10, m11\]\] with entries mod 2^f.
+    mat_sk: [[BigInt<4>; 2]; 2],
 }
 
 impl SigningKey {
@@ -71,8 +79,9 @@ impl SigningKey {
     /// [§3.1.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.1
     /// [§3.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.2
     /// [§4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.3
-    #[cfg(feature = "rand_core")]
-    pub fn generate(_rng: &mut impl rand_core::CryptoRngCore) -> Result<SigningKey, SignatureError> {
+    pub fn generate(
+        _rng: &mut impl rand_core::CryptoRngCore,
+    ) -> Result<SigningKey, SignatureError> {
         // Requires: quaternion algebra, id2iso, pairings.
         todo!()
     }
@@ -88,17 +97,57 @@ impl SigningKey {
             .map_err(|_| SignatureError::NonCanonical)?;
         let verifying_key = VerifyingKey::from_bytes(vk_bytes)?;
 
-        // TODO: parse and validate I_sk and M_sk from remaining bytes.
+        let mut pos = VERIFYING_KEY_BYTES;
+
+        // Parse I_sk: norm (32 bytes unsigned) + generator coords (4 × 32 bytes signed).
+        let norm = BigInt::<4>::from_bytes_le_unsigned(
+            bytes[pos..pos + FP_ENCODED_BYTES].try_into().unwrap(),
+        );
+        pos += FP_ENCODED_BYTES;
+
+        let mut gen_coords = [BigInt::<4>::ZERO; 4];
+        for coord in &mut gen_coords {
+            *coord = BigInt::<4>::from_bytes_le_signed(
+                bytes[pos..pos + FP_ENCODED_BYTES].try_into().unwrap(),
+            );
+            pos += FP_ENCODED_BYTES;
+        }
+
+        // Reconstruct I_sk = O₀⟨gen, norm⟩.
+        // The C ref skips the denominator in encoding (it's coprime to
+        // norm, so the ideal is the same). Denominator = 1.
+        let gen = Element {
+            a: Coordinate::from(gen_coords[0]),
+            b: Coordinate::from(gen_coords[1]),
+            c: Coordinate::from(gen_coords[2]),
+            d: Coordinate::from(gen_coords[3]),
+            denom: Denominator::ONE,
+        };
+        let ideal = LeftIdeal::new(&gen, &norm, EXTREMAL_ORDERS[0].order());
+
+        // Parse M_sk: 4 × 32 bytes unsigned, row-major [[m00, m01], [m10, m11]].
+        let mut mat_sk = [[BigInt::<4>::ZERO; 2]; 2];
+        for row in &mut mat_sk {
+            for entry in row.iter_mut() {
+                *entry = BigInt::<4>::from_bytes_le_unsigned(
+                    bytes[pos..pos + TORSION_2POWER_BYTES].try_into().unwrap(),
+                );
+                pos += TORSION_2POWER_BYTES;
+            }
+        }
+        debug_assert_eq!(pos, SIGNING_KEY_BYTES);
 
         Ok(SigningKey {
-            secret_key: *bytes,
             verifying_key,
+            ideal,
+            mat_sk,
         })
     }
 
     /// Serialize this signing key to bytes.
     pub fn to_bytes(&self) -> [u8; SIGNING_KEY_BYTES] {
-        self.secret_key
+        // TODO: encode from parsed fields (ideal + mat_sk + vk).
+        todo!("SigningKey::to_bytes")
     }
 
     /// Get the verifying key corresponding to this signing key.
@@ -152,23 +201,27 @@ impl From<&SigningKey> for VerifyingKey {
     }
 }
 
+impl TryFrom<&[u8; SIGNING_KEY_BYTES]> for SigningKey {
+    type Error = SignatureError;
+
+    fn try_from(bytes: &[u8; SIGNING_KEY_BYTES]) -> Result<Self, Self::Error> {
+        SigningKey::from_bytes(bytes)
+    }
+}
+
 impl TryFrom<&[u8]> for SigningKey {
     type Error = SignatureError;
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         let bytes: &[u8; SIGNING_KEY_BYTES] =
-            bytes.try_into().map_err(|_| SignatureError::InvalidLength {
-                name: "SigningKey",
-                expected: SIGNING_KEY_BYTES,
-                actual: bytes.len(),
-            })?;
+            bytes
+                .try_into()
+                .map_err(|_| SignatureError::InvalidLength {
+                    name: "SigningKey",
+                    expected: SIGNING_KEY_BYTES,
+                    actual: bytes.len(),
+                })?;
         SigningKey::from_bytes(bytes)
-    }
-}
-
-impl ConstantTimeEq for SigningKey {
-    fn ct_eq(&self, other: &SigningKey) -> subtle::Choice {
-        self.secret_key.ct_eq(&other.secret_key)
     }
 }
 
@@ -183,7 +236,7 @@ impl core::fmt::Debug for SigningKey {
 #[cfg(feature = "zeroize")]
 impl Drop for SigningKey {
     fn drop(&mut self) {
-        self.secret_key.zeroize();
+        // TODO: zeroize ideal and mat_sk fields.
     }
 }
 

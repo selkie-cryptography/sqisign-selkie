@@ -27,9 +27,15 @@ pub mod surfaces;
 // Challenge hash function
 pub(crate) mod hash;
 
+// Quaternion algebra and big integer arithmetic
+pub(crate) mod quaternions;
+
+// Deuring correspondence: ideal ↔ isogeny bridge
+pub(crate) mod deuring;
+
 // Key types and signatures
 pub mod keys;
 
-pub use keys::{Signature, SigningKey, VerifyingKey};
 pub use keys::SignatureError;
+pub use keys::{Signature, SigningKey, VerifyingKey};
 pub use params::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};

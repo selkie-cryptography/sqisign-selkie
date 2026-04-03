@@ -1,0 +1,59 @@
+\section{Type Safety for Cryptographic Invariants}
+\label{sec:types}
+
+Rust's type system lets us make illegal states unrepresentable.  Each
+of the following types prevents a class of bug that would compile
+silently in C.
+
+\subsection{IsogenyDegree}
+
+Isogeny degrees in SQIsign are always positive odd integers bounded
+by $2^{f-2}$ (246~bits for NIST-I).  In the C reference, they are
+bare \texttt{ibz\_t} values---the same type used for everything else.
+Nothing prevents passing an even number or a negative value.
+
+We represent degrees as \texttt{IsogenyDegree([u64; 4])}---unsigned,
+positive by construction, oddness enforced by the only constructor:
+\begin{lstlisting}[language=Rust]
+pub fn new_odd(limbs: [u64; 4]) -> Option<Self> {
+    if limbs[0] & 1 == 0 { return None; }
+    Some(Self(limbs))
+}
+\end{lstlisting}
+Passing an even number to \texttt{FixedDegreeIsogeny} is a type error.
+
+\subsection{TorsionExponent}
+
+Torsion exponents ($e$ such that $2^e$ divides the group order) are
+bounded by $f = 248$.  A bare \texttt{u32} allows 4 billion values;
+only 249 are valid.  \texttt{TorsionExponent(u32)} with a range check
+in the constructor catches this at the API boundary.  Every function
+that takes a torsion exponent---\texttt{action\_matrix},
+\texttt{to\_kernel}, \texttt{fixed\_degree\_isogeny}---uses this type,
+not \texttt{u32}.
+
+\subsection{HnfLattice vs.\ Lattice}
+
+Lattice containment checking requires Hermite Normal Form.  Calling
+it on a non-HNF lattice silently produces wrong answers.  We use two
+types: \texttt{Lattice<N>} (arbitrary basis) and \texttt{HnfLattice<N>}
+(guaranteed HNF, constructed only via \texttt{From<Lattice>}).  The
+\texttt{contains()} method exists only on \texttt{HnfLattice}.  You
+cannot call it on the wrong type.
+
+\subsection{IdealFactor}
+
+\texttt{SuitableIdeals} returns two factors, each with an element
+$\beta$, a degree $d$, and a parent order.  In the C reference, these
+are six separate variables.  Accidentally pairing one factor's degree
+with the other's element is a plausible mistake---the types are the
+same.  Our \texttt{IdealFactor} struct bundles them:
+\begin{lstlisting}[language=Rust]
+pub struct IdealFactor {
+    pub order: &'static ExtremalOrder<4>,
+    pub beta: Element,
+    pub degree: IsogenyDegree,
+}
+\end{lstlisting}
+Cross-wiring requires reaching into both structs and swapping fields
+deliberately---not something you do by accident.

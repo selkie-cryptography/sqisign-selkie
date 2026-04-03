@@ -1,0 +1,13 @@
+\section{Current Status and Future Work}
+\label{sec:status}
+
+As of writing, 157~unit tests pass.  The full \texttt{IdealToIsogeny}
+pipeline is wired end-to-end.  KAT verification runs to completion but
+fails at the $(2,2)$-chain splitting step due to remaining
+theta-coordinate bugs.  The immediate next steps are:
+\begin{enumerate}
+  \item Fix remaining theta bugs and achieve KAT verification;
+  \item Wire \texttt{SigningKey::sign()} and \texttt{generate()};
+  \item Achieve full KAT interoperability;
+  \item Execute the six-phase CT hardening plan.
+\end{enumerate}

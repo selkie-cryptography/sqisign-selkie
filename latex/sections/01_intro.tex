@@ -1,0 +1,66 @@
+\section{Introduction}
+\label{sec:intro}
+
+SQIsign~\cite{sqisign-spec} is the only isogeny-based signature scheme
+in Round~2 of NIST's additional signature standardization process.
+Its 148-byte signatures and 65-byte public keys at NIST-I are smaller
+than any other post-quantum scheme under consideration.  But that
+compactness comes at a cost: implementing SQIsign requires quaternion
+algebras, the Deuring correspondence, dimension-2 theta-coordinate
+isogenies, and a signing algorithm that touches all of them.
+
+The specification~\cite{sqisign-spec} is mathematically precise but
+leaves many implementation choices unstated.  The C reference
+implementation fills in those choices---but they are embedded in code,
+not documented.  An implementor working from the spec alone will make
+wrong guesses.  We know because we did.
+
+This paper documents \texttt{sqisign-selkie}, a Rust library for the
+NIST-I parameter set ($p = 5 \cdot 2^{248} - 1$) only.  By fixing
+the parameter set at compile time, we specialize aggressively: field
+arithmetic uses a radix-51 Montgomery representation tuned to this
+prime, integer widths match proven worst-case bounds for NIST-I
+quaternion intermediates~\cite{kim2025}, and isogeny degree types are
+sized to the 246-bit maximum that NIST-I permits.  We do not attempt
+to be generic over parameter sets.
+
+We target four goals:
+
+\begin{enumerate}
+  \item \textbf{Interoperability.}  Verify and produce signatures that
+    the C reference implementation accepts, byte-for-byte, against the
+    NIST KAT vectors.
+
+  \item \textbf{Misuse resistance.}  If a value is always positive and
+    odd, it should be impossible to construct one that isn't.  If a
+    lattice operation requires Hermite Normal Form, the compiler should
+    reject non-HNF input.  This protects not just end-users of the
+    public API, but us writing the internals, and anyone who maintains
+    this code after us.
+
+  \item \textbf{Constant-time signing.}  The specification does not
+    discuss side channels.  The C reference is variable-time for the
+    entire quaternion layer.  We traced the signing algorithm and
+    confirmed that the quaternion operations compute over
+    secret-key-derived data.  Published
+    attacks~\cite{mukherjee2025attack} demonstrate practical SPA on
+    Cornacchia's algorithm.  Constant-time execution is not a
+    nice-to-have; it is a requirement.
+
+  \item \textbf{Idiomatic Rust.}  Methods on types over free functions.
+    Invariants via distinct types, not runtime checks.  Code that a
+    Rust developer would recognize as
+    natural~\cite{rust-api-guidelines}.
+\end{enumerate}
+
+This paper is a living document, updated as the implementation progresses.
+
+\paragraph{Contributions.}
+\begin{itemize}
+  \item A catalog of eight theta-coordinate bugs (\S\ref{sec:bugs})
+    with root causes and lessons.
+  \item Compile-time invariant enforcement via Rust's type system
+    (\S\ref{sec:types}).
+  \item A survey of constant-time SQIsign techniques and a concrete
+    hardening plan (\S\ref{sec:ct}).
+\end{itemize}

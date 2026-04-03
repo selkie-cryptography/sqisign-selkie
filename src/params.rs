@@ -59,6 +59,26 @@ pub const SIGNING_KEY_BYTES: usize = 353;
 pub const SIGNATURE_BYTES: usize = 148;
 
 // ---------------------------------------------------------------------------
+// SuitableIdeals / id2iso parameters
+// ---------------------------------------------------------------------------
+
+/// Half-width of the enumeration box in [Algorithm 3.16][Alg. 3.16] (SuitableIdeals).
+///
+/// For NIST-I: m = 2 + ⌊(⌈log₂ p⌉ − f) / 4⌋ = 2 + ⌊3/4⌋ = 2.
+/// The algorithm enumerates (2m+1)⁴ − 1 = 624 non-zero vectors per order.
+///
+/// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
+pub const FINDUV_BOX_SIZE: i64 = 2;
+
+/// Bound on the RepresentInteger search window.
+///
+/// Controls the dimension of the isogeny kernel needed for
+/// [Algorithm 3.15][Alg. 3.15] (FixedDegreeIsogeny) to succeed.
+///
+/// [Alg. 3.15]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
+pub const QUAT_REPRES_BOUND_INPUT: u32 = 20;
+
+// ---------------------------------------------------------------------------
 // Precomputed E₀ basis points
 // ---------------------------------------------------------------------------
 

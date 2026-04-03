@@ -1,0 +1,19 @@
+\section{Architecture}
+\label{sec:architecture}
+
+The implementation is organized into five layers:
+
+\begin{description}
+  \item[\texttt{fields/}] Prime field $\mathbb{F}_p$ (radix-51
+    Montgomery form) and quadratic extension $\mathbb{F}_{p^2}$.
+  \item[\texttt{curves/}] Montgomery curves, $x$-only projective
+    arithmetic, torsion bases, $2^e$-isogeny chains, and the
+    \texttt{IsogenyDegree} newtype.
+  \item[\texttt{surfaces/}] Abelian surfaces in theta coordinates,
+    $(2,2)$-isogeny chains (Algorithm~8.47), gluing, and splitting.
+  \item[\texttt{quaternions/}] Quaternion algebra $B_{p,\infty}$,
+    lattices, ideals, HNF, L2 reduction, and \texttt{RepresentInteger}.
+  \item[\texttt{deuring/}] The Deuring correspondence bridge:
+    \texttt{IdealToIsogeny}, \texttt{FixedDegreeIsogeny},
+    \texttt{SuitableIdeals}, action matrices.
+\end{description}

@@ -40,7 +40,11 @@ pub(crate) const CHALLENGE_BYTES: usize = (E_CHL as usize + 7) / 8;
 /// For NIST-I: e_chl = 122, 122 % 8 = 2, so mask = 0b11 = 0x03.
 const CHALLENGE_TOP_MASK: u8 = {
     let bits = E_CHL as usize % 8;
-    if bits == 0 { 0xff } else { (1u8 << bits) - 1 }
+    if bits == 0 {
+        0xff
+    } else {
+        (1u8 << bits) - 1
+    }
 };
 
 // Compile-time check: intermediate output is byte-aligned for NIST-I,
@@ -86,11 +90,7 @@ const _: () = assert!(
 /// [§4.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.2
 /// [§4.4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
 /// [`E_CHL`]: crate::params::E_CHL
-pub(crate) fn hash(
-    pk: &VerifyingKey,
-    j: &Fp2,
-    msg: &[u8],
-) -> [u8; CHALLENGE_BYTES] {
+pub(crate) fn hash(pk: &VerifyingKey, j: &Fp2, msg: &[u8]) -> [u8; CHALLENGE_BYTES] {
     // Serialize: j(pk) ‖ j(E) ‖ msg
     // https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
     let j_pk = pk.curve().j_invariant();
