@@ -43,15 +43,6 @@ impl TorsionExponent {
         TorsionExponent(e)
     }
 
-    /// Construct from a raw value, returning `None` if out of range.
-    pub fn try_new(e: u32) -> Option<TorsionExponent> {
-        if e <= TORSION_EVEN_POWER {
-            Some(TorsionExponent(e))
-        } else {
-            None
-        }
-    }
-
     /// The raw exponent value.
     pub fn value(self) -> u32 {
         self.0
@@ -59,13 +50,24 @@ impl TorsionExponent {
 
     /// Subtract, returning `None` if the result would be negative.
     pub fn checked_sub(self, rhs: u32) -> Option<TorsionExponent> {
-        self.0.checked_sub(rhs).and_then(TorsionExponent::try_new)
+        self.0.checked_sub(rhs).and_then(|e| e.try_into().ok())
     }
 }
 
 impl From<TorsionExponent> for u32 {
     fn from(e: TorsionExponent) -> u32 {
         e.0
+    }
+}
+
+impl TryFrom<u32> for TorsionExponent {
+    type Error = ();
+    fn try_from(e: u32) -> Result<Self, ()> {
+        if e <= TORSION_EVEN_POWER {
+            Ok(TorsionExponent(e))
+        } else {
+            Err(())
+        }
     }
 }
 
@@ -190,7 +192,7 @@ impl From<ChallengeHint> for u8 {
 /// See [§2.2.3] (torsion subgroups and deterministic basis computation).
 ///
 /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct TorsionBasis {
     /// First basis element R.
     pub R: ProjectiveXOnlyPoint,
@@ -630,7 +632,7 @@ impl TorsionBasis {
             eprintln!("FROM_HINT: P_after_cofactor X={}", fp2_hex(&P.X));
             eprintln!("FROM_HINT: P_after_cofactor Z={}", fp2_hex(&P.Z));
             // Cross-check: compute [5]P using scalar_mul
-            let five = crate::curves::scalar::Scalar::from_u64(5);
+            let five = scalar::Scalar::from_u64(5);
             let P_orig = ProjectiveXOnlyPoint::from_affine_x(x_P, curve);
             let P_5_ladder = P_orig.scalar_mul(&five);
             eprintln!("FROM_HINT: P_5_ladder X={}", fp2_hex(&P_5_ladder.X));

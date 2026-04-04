@@ -167,14 +167,17 @@ impl IdealKernel for LeftIdeal<4> {
 ///
 /// [Alg. 4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.6
 pub fn compute_even_response(
-    curve: &Curve,
+    _curve: &Curve,
     P: &ProjectiveXOnlyPoint,
     Q: &ProjectiveXOnlyPoint,
     alpha: &Element,
-    e_prime: u32,
-    r_rsp: u32,
+    e_prime: TorsionExponent,
+    r_rsp: TorsionExponent,
 ) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
     use crate::curves::isogeny::Kernel as CurveKernel;
+
+    let e_prime = e_prime.value();
+    let r_rsp = r_rsp.value();
 
     // Step 1: I = O₀·α + O₀·(2^r)
     let norm = BigInt::<4>::ONE.shl(r_rsp);

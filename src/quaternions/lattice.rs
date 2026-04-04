@@ -981,7 +981,9 @@ impl LeftIdeal<8> {
     /// - Ideal multiplication by element (`quat_lideal_mul`)
     ///
     /// [Alg. 3.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.9
-    pub fn reduce_to_prime_norm(&mut self, bound: i32, primality_rounds: u32) -> bool {
+    pub fn reduce_to_prime_norm(&mut self) -> bool {
+        let bound = crate::params::EQUIV_BOUND_COEFF;
+        let primality_rounds = crate::params::PRIMALITY_NUM_ITER;
         // Step 1: L2-reduce the basis and compute the Gram matrix.
         let basis = self.lattice.basis();
         let mut cols = basis.columns();

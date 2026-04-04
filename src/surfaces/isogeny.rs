@@ -245,7 +245,7 @@ impl GluingKernel {
         //
         // J = imageK1_8 has the pattern (x:x:y:y). J.x = J.y = x,
         // J.z = J.w = y. Scaling uses (y,y,x,x) = projective inverse.
-        let (x_val, y_val) = (&data.J.x, &data.J.z);
+        let (x_val, y_val) = (&data.J.X, &data.J.Z);
 
         // 4–5. ADDComponents for each component curve (Jacobian).
         let (u1, v1, w1) = add_sub_components_jac(&P.0, &T1.0, A1);
@@ -580,13 +580,13 @@ fn add_sub_components_jac(
     A: &Fp2,
 ) -> (Fp2, Fp2, Fp2) {
     // C reference (ec_jac.c:305-335):
-    let t0 = P.z.square(); // z1²
-    let t1 = Q.z.square(); // z2²
-    let t2 = &P.x * &t1; // x1·z2²
-    let t3 = &t0 * &Q.x; // z1²·x2
-    let mut t4 = &P.y * &Q.z; // y1·z2
+    let t0 = P.Z.square(); // z1²
+    let t1 = Q.Z.square(); // z2²
+    let t2 = &P.X * &t1; // x1·z2²
+    let t3 = &t0 * &Q.X; // z1²·x2
+    let mut t4 = &P.Y * &Q.Z; // y1·z2
     t4 = &t4 * &t1; // y1·z2³
-    let mut t5 = &P.z * &Q.y; // z1·y2
+    let mut t5 = &P.Z * &Q.Y; // z1·y2
     t5 = &t5 * &t0; // z1³·y2
     let t0 = &t0 * &t1; // (z1·z2)²
     let t6 = &t4 * &t5; // (z1·z2)³·y1·y2
@@ -778,17 +778,17 @@ pub(crate) fn codomain_8torsion(
     let hs1 = T1.squared().hadamard();
     let hs2 = T2.squared().hadamard();
 
-    let xawb = &hs1.x * &hs2.y;
-    let zaxb = &hs2.x * &hs1.y;
+    let xawb = &hs1.X * &hs2.Y;
+    let zaxb = &hs2.X * &hs1.Y;
 
-    let alpha = &hs2.x * &xawb;
-    let beta = &hs2.y * &zaxb;
-    let gamma = &hs2.z * &xawb;
-    let delta = &hs2.w * &zaxb;
+    let alpha = &hs2.X * &xawb;
+    let beta = &hs2.Y * &zaxb;
+    let gamma = &hs2.Z * &xawb;
+    let delta = &hs2.W * &zaxb;
 
-    let zgwd = &hs2.z * &hs2.w;
-    let alpha_inv = &hs1.y * &zgwd;
-    let beta_inv = &hs1.x * &zgwd;
+    let zgwd = &hs2.Z * &hs2.W;
+    let alpha_inv = &hs1.Y * &zgwd;
+    let beta_inv = &hs1.X * &zgwd;
     let gamma_inv = delta;
     let delta_inv = gamma;
 
@@ -824,17 +824,17 @@ fn codomain_4torsion(T1: &JacobianPoint, domain: &Jacobian) -> (DualThetaNullPoi
     let ag = (&a2 * &g2).sqrt();
 
     // Lines 5–8: recover (α, β, γ, δ).
-    let beta = &(&ab * &ag) * &hs.z;
-    let delta_inv = &beta * &hs.x;
-    let beta_mul = &beta * &hs.x;
-    let xgd_ab_a2 = &(&hs.z * &ab) * &a2;
+    let beta = &(&ab * &ag) * &hs.Z;
+    let delta_inv = &beta * &hs.X;
+    let beta_mul = &beta * &hs.X;
+    let xgd_ab_a2 = &(&hs.Z * &ab) * &a2;
     let _delta = &xgd_ab_a2 * &(&ab * &a2);
-    let alpha = &(&hs.x * &ab) * &a2;
+    let alpha = &(&hs.X * &ab) * &a2;
     let gamma = &alpha * &g2;
     let delta_final = &alpha * &d2;
 
     // Projective inverses.
-    let alpha_inv = &hs.x * &d2;
+    let alpha_inv = &hs.X * &d2;
     let beta_inv = &alpha * &b2;
     let gamma_inv_val = &delta_inv * &b2;
 
@@ -900,17 +900,17 @@ pub(crate) fn codomain_8torsion_no_hadamard(
     let hs1 = T1.squared().hadamard();
     let hs2 = T2.squared().hadamard();
 
-    let xawb = &hs1.x * &hs2.y;
-    let zaxb = &hs2.x * &hs1.y;
+    let xawb = &hs1.X * &hs2.Y;
+    let zaxb = &hs2.X * &hs1.Y;
 
-    let alpha = &hs2.x * &xawb;
-    let beta = &hs2.y * &zaxb;
-    let gamma = &hs2.z * &xawb;
-    let delta = &hs2.w * &zaxb;
+    let alpha = &hs2.X * &xawb;
+    let beta = &hs2.Y * &zaxb;
+    let gamma = &hs2.Z * &xawb;
+    let delta = &hs2.W * &zaxb;
 
-    let zgwd = &hs2.z * &hs2.w;
-    let alpha_inv = &hs1.y * &zgwd;
-    let beta_inv = &hs1.x * &zgwd;
+    let zgwd = &hs2.Z * &hs2.W;
+    let alpha_inv = &hs1.Y * &zgwd;
+    let beta_inv = &hs1.X * &zgwd;
     let gamma_inv = delta;
     let delta_inv = gamma;
 
@@ -956,7 +956,7 @@ pub(crate) fn eval(
             &dual.delta_inv,
         )
         .hadamard();
-    JacobianPoint::new(t.x, t.y, t.z, t.w, codomain.clone())
+    JacobianPoint::new(t.X, t.Y, t.Z, t.W, codomain.clone())
 }
 
 /// Evaluate: penultimate step (`hadamard_bool_1=0, hadamard_bool_2=0`).
@@ -973,7 +973,7 @@ pub(crate) fn eval_no_outer_hadamard(
         &dual.gamma_inv,
         &dual.delta_inv,
     );
-    JacobianPoint::new(t.x, t.y, t.z, t.w, codomain.clone())
+    JacobianPoint::new(t.X, t.Y, t.Z, t.W, codomain.clone())
 }
 
 /// Evaluate: ultimate step (`hadamard_bool_1=1, hadamard_bool_2=0`).
@@ -990,7 +990,7 @@ pub(crate) fn eval_ultimate(
         &dual.gamma_inv,
         &dual.delta_inv,
     );
-    JacobianPoint::new(t.x, t.y, t.z, t.w, codomain.clone())
+    JacobianPoint::new(t.X, t.Y, t.Z, t.W, codomain.clone())
 }
 
 /// Codomain from 8-torsion: ultimate step (`hadamard_bool_1=1, hadamard_bool_2=0`).
@@ -1010,17 +1010,17 @@ pub(crate) fn codomain_8torsion_ultimate(
     let hs1 = T1.hadamard().squared().hadamard();
     let hs2 = T2.hadamard().squared().hadamard();
 
-    let xawb = &hs1.x * &hs2.y;
-    let zaxb = &hs2.x * &hs1.y;
+    let xawb = &hs1.X * &hs2.Y;
+    let zaxb = &hs2.X * &hs1.Y;
 
-    let alpha = &hs2.x * &xawb;
-    let beta = &hs2.y * &zaxb;
-    let gamma = &hs2.z * &xawb;
-    let delta = &hs2.w * &zaxb;
+    let alpha = &hs2.X * &xawb;
+    let beta = &hs2.Y * &zaxb;
+    let gamma = &hs2.Z * &xawb;
+    let delta = &hs2.W * &zaxb;
 
-    let zgwd = &hs2.z * &hs2.w;
-    let alpha_inv = &hs1.y * &zgwd;
-    let beta_inv = &hs1.x * &zgwd;
+    let zgwd = &hs2.Z * &hs2.W;
+    let alpha_inv = &hs1.Y * &zgwd;
+    let beta_inv = &hs1.X * &zgwd;
     let gamma_inv = delta;
     let delta_inv = gamma;
 
@@ -1303,7 +1303,7 @@ fn theta_product_to_montgomery(
 ) -> ProductPoint {
     let (a, b, c, _d) = (&null.a, &null.b, &null.c, &null.d);
     #[allow(unused_variables)]
-    let (x, y, z, w) = (&P.x, &P.y, &P.z, &P.w);
+    let (x, y, z, w) = (&P.X, &P.Y, &P.Z, &P.W);
 
     // Algorithm 8.45:
     // X₁ = a·z + c·x,  Z₁ = a·z − c·x

@@ -58,6 +58,18 @@ impl From<Fp2> for AffineX {
     }
 }
 
+impl ConditionallySelectable for AffineX {
+    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+        Self(Fp2::conditional_select(&a.0, &b.0, choice))
+    }
+}
+
+impl ConditionallySelectable for Coefficient {
+    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+        Self(Fp2::conditional_select(&a.0, &b.0, choice))
+    }
+}
+
 impl Coefficient {
     /// A = 0, the coefficient of the starting curve E₀.
     pub const ZERO: Coefficient = Coefficient(Fp2::ZERO);
@@ -588,8 +600,8 @@ mod tests {
         let p2_jac = p_jac.double();
 
         // Convert Jacobian to affine: x_aff = x / z².
-        let z2_inv = p2_jac.z.square().invert();
-        let p2_x_jac = &p2_jac.x * &z2_inv;
+        let z2_inv = p2_jac.Z.square().invert();
+        let p2_x_jac = &p2_jac.X * &z2_inv;
 
         assert_eq!(
             p2_x_mont, p2_x_jac,
@@ -629,18 +641,18 @@ mod tests {
 
         // Check P_jac is on curve.
         let A = Fp2::from(*curve.coefficient().as_fp2());
-        let z_inv = p_jac.z.invert();
-        let xa = &p_jac.x * &z_inv.square();
-        let ya = &p_jac.y * &(&z_inv.square() * &z_inv);
+        let z_inv = p_jac.Z.invert();
+        let xa = &p_jac.X * &z_inv.square();
+        let ya = &p_jac.Y * &(&z_inv.square() * &z_inv);
         let lhs = ya.square();
         let xa2 = xa.square();
         let rhs = &(&(&xa2 * &xa) + &(&A * &xa2)) + &xa;
         assert_eq!(lhs, rhs, "P_jac should be on curve");
 
         // Check Q_jac is on curve.
-        let z_inv = q_jac.z.invert();
-        let xa = &q_jac.x * &z_inv.square();
-        let ya = &q_jac.y * &(&z_inv.square() * &z_inv);
+        let z_inv = q_jac.Z.invert();
+        let xa = &q_jac.X * &z_inv.square();
+        let ya = &q_jac.Y * &(&z_inv.square() * &z_inv);
         let lhs = ya.square();
         let xa2 = xa.square();
         let rhs = &(&(&xa2 * &xa) + &(&A * &xa2)) + &xa;
@@ -693,19 +705,19 @@ mod tests {
 /// elements. This is tracked as a future type-safety improvement.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct JacobianPoint {
-    pub(crate) x: Fp2,
-    pub(crate) y: Fp2,
-    pub(crate) z: Fp2,
+    pub(crate) X: Fp2,
+    pub(crate) Y: Fp2,
+    pub(crate) Z: Fp2,
     curve: Curve,
 }
 
 impl JacobianPoint {
     /// Create from coordinates and a curve.
-    pub fn new(x: Fp2, y: Fp2, z: Fp2, curve: &Curve) -> Self {
+    pub fn new(X: Fp2, Y: Fp2, Z: Fp2, curve: &Curve) -> Self {
         Self {
-            x,
-            y,
-            z,
+            X,
+            Y,
+            Z,
             curve: *curve,
         }
     }
@@ -745,27 +757,27 @@ impl JacobianPoint {
     pub fn double(&self) -> JacobianPoint {
         let A = Fp2::from(*self.curve.coefficient().as_fp2());
 
-        let zz = self.z.square(); // z₁²
+        let zz = self.Z.square(); // z₁²
         let zzzz = zz.square(); // z₁⁴
-        let xx = self.x.square(); // x₁²
+        let xx = self.X.square(); // x₁²
 
         // M = 3x₁² + z₁²·(2A·x₁ + z₁²)
         let two_a = &A + &A;
-        let two_a_x = &two_a * &self.x;
+        let two_a_x = &two_a * &self.X;
         let inner = &two_a_x + &zz;
         let m_term = &inner * &zz; // z₁²·(2Ax₁ + z₁²)
         let three_xx = &(&xx + &xx) + &xx;
         let m = &three_xx + &m_term; // M = 3x₁² + z₁²(2Ax₁ + z₁²)
 
         // dx = 2y₁, dy = z₁·M
-        let dx = &self.y + &self.y; // 2y₁
-        let dy = &self.z * &m; // z₁·M
+        let dx = &self.Y + &self.Y; // 2y₁
+        let dy = &self.Z * &m; // z₁·M
 
         // Precomputations
         let dx_sq = dx.square(); // 4y₁²
         let dy_sq = dy.square(); // z₁²·M²
-        let u1 = &self.x * &zz; // x₁·z₁²
-        let v1 = &self.y * &(&zz * &self.z); // y₁·z₁³
+        let u1 = &self.X * &zz; // x₁·z₁²
+        let v1 = &self.Y * &(&zz * &self.Z); // y₁·z₁³
 
         // x₃ = dy² − dx²·(A·z₁⁴ + u₁ + u₁)
         let x3 = {
@@ -785,9 +797,9 @@ impl JacobianPoint {
         let z3 = &dx * &zz;
 
         JacobianPoint {
-            x: x3,
-            y: y3,
-            z: z3,
+            X: x3,
+            Y: y3,
+            Z: z3,
             curve: self.curve,
         }
     }
@@ -802,15 +814,15 @@ impl JacobianPoint {
 /// `product_to_theta` computation.
 impl From<JacobianPoint> for ProjectiveXOnlyPoint {
     fn from(jac: JacobianPoint) -> ProjectiveXOnlyPoint {
-        let z_sq = jac.z.square();
-        ProjectiveXOnlyPoint::from_XZ(jac.x, z_sq, &jac.curve)
+        let z_sq = jac.Z.square();
+        ProjectiveXOnlyPoint::from_XZ(jac.X, z_sq, &jac.curve)
     }
 }
 
 impl From<&JacobianPoint> for ProjectiveXOnlyPoint {
     fn from(jac: &JacobianPoint) -> ProjectiveXOnlyPoint {
-        let z_sq = jac.z.square();
-        ProjectiveXOnlyPoint::from_XZ(jac.x, z_sq, &jac.curve)
+        let z_sq = jac.Z.square();
+        ProjectiveXOnlyPoint::from_XZ(jac.X, z_sq, &jac.curve)
     }
 }
 
