@@ -15,15 +15,14 @@
 //! [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
 //! [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
 
-use crate::curves::{isogeny::IsogenyDegree, TorsionExponent};
-
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
-    lattice::{l2_reduce, ExtremalOrder, Lattice},
+    lattice::{ExtremalOrder, Lattice, l2_reduce},
     linear::{Matrix, Vector},
     precomputed::{EXTREMAL_ORDERS, P_WIDE},
 };
+use crate::curves::{TorsionExponent, isogeny::IsogenyDegree};
 
 /// Find γ ∈ O with nrd(γ) = M, trying each precomputed extremal order.
 ///

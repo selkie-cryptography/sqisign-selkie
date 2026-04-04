@@ -24,12 +24,15 @@
 pub(crate) mod endomorphism;
 pub(crate) mod precomputed;
 
+use endomorphism::ActionMatrix;
+use precomputed::ACTION_MATRICES;
+
 use crate::{
     curves::{
+        TorsionBasis, TorsionExponent,
         isogeny::IsogenyDegree,
         montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
-        TorsionBasis, TorsionExponent,
     },
     params::QUAT_REPRES_BOUND_INPUT,
     quaternions::{
@@ -41,9 +44,6 @@ use crate::{
     },
     surfaces,
 };
-
-use endomorphism::ActionMatrix;
-use precomputed::ACTION_MATRICES;
 
 /// A kernel generator decomposed in a torsion basis (P, Q).
 ///
@@ -72,7 +72,7 @@ pub trait DeuringAction {
     /// The caller must ensure the element is expressed in the order basis,
     /// not the {1, i, j, k} basis.
     fn action_matrix(&self, basis_matrices: &[ActionMatrix; 4], f: TorsionExponent)
-        -> ActionMatrix;
+    -> ActionMatrix;
 }
 
 impl DeuringAction for Element {
@@ -400,7 +400,7 @@ fn fixed_degree_isogeny(
 /// [Alg. 3.15]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
 /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
 impl LeftIdeal<4> {
-    pub fn to_isogeny(&self) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
+    pub fn to_isogeny(self) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
         let f = TorsionExponent::FULL;
 
         // Step 1: Decompose via SuitableIdeals.

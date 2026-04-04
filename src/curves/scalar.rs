@@ -98,8 +98,8 @@ impl Scalar {
             } else {
                 out[full_limbs] = 0;
             }
-            for i in (full_limbs + 1)..4 {
-                out[i] = 0;
+            for limb in out.iter_mut().skip(full_limbs + 1) {
+                *limb = 0;
             }
         }
         Self(out)
@@ -110,10 +110,10 @@ impl Scalar {
     pub fn add_mod2k(&self, rhs: &Self, k: u32) -> Self {
         let mut out = [0u64; 4];
         let mut carry = 0u64;
-        for i in 0..4 {
+        for (i, out_limb) in out.iter_mut().enumerate() {
             let (s, c1) = self.0[i].overflowing_add(rhs.0[i]);
             let (s, c2) = s.overflowing_add(carry);
-            out[i] = s;
+            *out_limb = s;
             carry = (c1 as u64) + (c2 as u64);
         }
         Self(out).reduce_mod2k(k)
@@ -124,10 +124,10 @@ impl Scalar {
     pub fn sub_mod2k(&self, rhs: &Self, k: u32) -> Self {
         let mut out = [0u64; 4];
         let mut borrow = 0u64;
-        for i in 0..4 {
+        for (i, out_limb) in out.iter_mut().enumerate() {
             let (d, b1) = self.0[i].overflowing_sub(rhs.0[i]);
             let (d, b2) = d.overflowing_sub(borrow);
-            out[i] = d;
+            *out_limb = d;
             borrow = (b1 as u64) + (b2 as u64);
         }
         Self(out).reduce_mod2k(k)
@@ -247,9 +247,9 @@ mod tests {
 
     #[test]
     fn reduce_mod2k_masks_correctly() {
-        let s = Scalar::from_u64(0xff);
-        assert_eq!(s.reduce_mod2k(4), Scalar::from_u64(0x0f));
-        assert_eq!(s.reduce_mod2k(8), Scalar::from_u64(0xff));
+        let s = Scalar::from_u64(0xFF);
+        assert_eq!(s.reduce_mod2k(4), Scalar::from_u64(0x0F));
+        assert_eq!(s.reduce_mod2k(8), Scalar::from_u64(0xFF));
         assert_eq!(s.reduce_mod2k(1), Scalar::from_u64(1));
     }
 

@@ -493,8 +493,8 @@ pub fn hnf_from_columns<const N: usize>(cols: &[Vector<N>]) -> Matrix<N> {
                 let (g, _) = a[j][pivot].div_rem(&piv);
                 if !bool::from(g.is_zero()) {
                     let col_piv = a[pivot];
-                    for r in 0..d {
-                        a[j][r] = a[j][r].ct_sub(&g.ct_mul(&col_piv[r]));
+                    for (r, col_piv_r) in col_piv.iter().enumerate().take(d) {
+                        a[j][r] = a[j][r].ct_sub(&g.ct_mul(col_piv_r));
                     }
                 }
                 j += 1;
@@ -513,8 +513,8 @@ pub fn hnf_from_columns<const N: usize>(cols: &[Vector<N>]) -> Matrix<N> {
                 let (g, _) = entry.ct_sub(&r).div_rem(&piv);
                 if !bool::from(g.is_zero()) {
                     let col_piv = a[pivot];
-                    for row in 0..d {
-                        a[j][row] = a[j][row].ct_sub(&g.ct_mul(&col_piv[row]));
+                    for (row, col_piv_row) in col_piv.iter().enumerate().take(d) {
+                        a[j][row] = a[j][row].ct_sub(&g.ct_mul(col_piv_row));
                     }
                 }
                 j += 1;

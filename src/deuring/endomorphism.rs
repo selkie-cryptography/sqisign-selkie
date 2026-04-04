@@ -9,7 +9,7 @@
 //! [§3.2.1.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.2.1.1
 
 use crate::{
-    curves::{montgomery::ProjectiveXOnlyPoint, scalar::Scalar, TorsionBasis, TorsionExponent},
+    curves::{TorsionBasis, TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
     quaternions::bigint::BigInt,
 };
 

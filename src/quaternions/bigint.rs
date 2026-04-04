@@ -234,7 +234,7 @@ impl<const N: usize> BigInt<N> {
     /// Precision is limited to 53 significant bits (the mantissa of
     /// `f64`). This is sufficient for the floating-point GSO family
     /// in L2 lattice reduction, which only needs 24 bits of mantissa.
-    pub fn to_f64(&self) -> f64 {
+    pub fn to_f64(self) -> f64 {
         let neg = bool::from(self.is_negative());
         let limbs = &self.limbs;
         let mut val: f64 = 0.0;
@@ -243,11 +243,7 @@ impl<const N: usize> BigInt<N> {
             i -= 1;
             val = val * (u64::MAX as f64 + 1.0) + limbs[i] as f64;
         }
-        if neg {
-            -val
-        } else {
-            val
-        }
+        if neg { -val } else { val }
     }
 
     /// Returns `true` (as `Choice`) if this value is zero.
@@ -301,7 +297,7 @@ impl<const N: usize> BigInt<N> {
         while i > 0 {
             i -= 1;
             let s = nbits64(self.limbs[i]);
-            let r = ((k == 0) as u32) ^ 0;
+            let r = (k == 0) as u32;
             let t = r * s;
             let m = ((k == 0) as u32) & ((s > 0) as u32);
             k = k + t + (64 * i as u32) * m;
@@ -420,7 +416,7 @@ impl<const N: usize> BigInt<N> {
 
         // Euclidean convention: if remainder is nonzero and the dividend
         // was negative, adjust: q = q + 1, r = |divisor| - r.
-        let needs_adjust = (self.sign & (1 - r_is_zero)) as u64;
+        let needs_adjust = self.sign & (1 - r_is_zero);
 
         // q_adjusted = q_mag + 1 (when adjusting)
         let one = {
@@ -641,7 +637,7 @@ impl<const N: usize> BigInt<N> {
         // result^2 <= self.
         let bs = self.bitsize();
         // The sqrt has at most ceil(bs/2) bits.
-        let max_bit = (bs + 1) / 2;
+        let max_bit = bs.div_ceil(2);
 
         let mut result = Self::ZERO;
         let mut bit = max_bit;
@@ -784,11 +780,7 @@ impl<const N: usize> BigInt<N> {
 
         // Final verification: x² + qy² = m.
         let check = x_sq.ct_add(&q.ct_mul(&y.ct_mul(&y)));
-        if check == *m {
-            Some((x, y))
-        } else {
-            None
-        }
+        if check == *m { Some((x, y)) } else { None }
     }
 
     /// Modular square root: returns x such that x² ≡ n (mod m),
@@ -873,11 +865,7 @@ impl<const N: usize> BigInt<N> {
         }
 
         let check = x.ct_mul(&x).ct_mod(m);
-        if check == n_mod {
-            Some(x)
-        } else {
-            None
-        }
+        if check == n_mod { Some(x) } else { None }
     }
 
     /// Modular exponentiation: `base^exp mod modulus`.
@@ -978,11 +966,7 @@ impl<const N: usize> BigInt<N> {
         }
         let exp = p.ct_sub(&Self::ONE).shr(1);
         let result = Self::pow_mod(&a_mod, &exp, p);
-        if result == Self::ONE {
-            1
-        } else {
-            -1
-        }
+        if result == Self::ONE { 1 } else { -1 }
     }
 
     // -----------------------------------------------------------------------
@@ -1092,7 +1076,7 @@ impl<const N: usize> BigInt<N> {
             // Zero out limbs below the shift boundary.
             result[i] = ct_select_u64(0, result[i], l);
             // l transitions to 0 when i < j.
-            l = l & ((i >= j) as u64);
+            l &= (i >= j) as u64;
             if i >= j {
                 // Shift the source limb and OR in the carry from the lower limb.
                 let src = if i >= j { a[i - j] } else { 0 };
@@ -1196,7 +1180,7 @@ impl<const N: usize> BigInt<N> {
         while i > 0 {
             i -= 1;
             let s = nbits64(a[i]);
-            let r = ((k == 0) as u32) ^ 0;
+            let r = (k == 0) as u32;
             let t = r * s;
             let m = ((k == 0) as u32) & ((s > 0) as u32);
             k = k + t + (64 * i as u32) * m;

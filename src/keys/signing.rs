@@ -15,7 +15,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
     keys::{
-        verifying::VerifyingKey, Signature, SignatureError, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES,
+        SIGNING_KEY_BYTES, Signature, SignatureError, VERIFYING_KEY_BYTES, verifying::VerifyingKey,
     },
     params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES},
     quaternions::{

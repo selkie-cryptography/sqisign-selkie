@@ -9,8 +9,8 @@ use subtle::ConstantTimeEq;
 
 use crate::{
     curves::{
-        isogeny::Kernel as CurveKernel, montgomery::Curve, TorsionBasis, TorsionExponent,
-        VerifyingKeyHint,
+        TorsionBasis, TorsionExponent, VerifyingKeyHint, isogeny::Kernel as CurveKernel,
+        montgomery::Curve,
     },
     fields::Fp2,
     hash,

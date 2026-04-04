@@ -15,7 +15,7 @@ use core::ops::{Div, Mul};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::{
-    curves::{montgomery::ProjectiveXOnlyPoint, scalar::Scalar, TorsionExponent},
+    curves::{TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
     fields::fp2::Fp2,
 };
 
@@ -122,15 +122,16 @@ impl RootOfUnity {
     }
 }
 
-impl<'a, 'b> Mul<&'b RootOfUnity> for &'a RootOfUnity {
+impl<'b> Mul<&'b RootOfUnity> for &RootOfUnity {
     type Output = RootOfUnity;
     fn mul(self, rhs: &'b RootOfUnity) -> RootOfUnity {
         RootOfUnity(&self.0 * &rhs.0)
     }
 }
 
-impl<'a, 'b> Div<&'b RootOfUnity> for &'a RootOfUnity {
+impl<'b> Div<&'b RootOfUnity> for &RootOfUnity {
     type Output = RootOfUnity;
+    #[allow(clippy::suspicious_arithmetic_impl)]
     fn div(self, rhs: &'b RootOfUnity) -> RootOfUnity {
         RootOfUnity(&self.0 * &rhs.0.invert())
     }
@@ -257,7 +258,7 @@ pub(crate) fn tate_pairing(
     );
 
     let curve = p.curve();
-    let a = Fp2::from(*curve.coefficient().as_fp2());
+    let a = *curve.coefficient().as_fp2();
     let two = Fp2::from_fp(crate::fields::fp::Fp::from_small(2));
     let four = Fp2::from_fp(crate::fields::fp::Fp::from_small(4));
     let a24 = &(&a + &two) * &four.invert();

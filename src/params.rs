@@ -106,18 +106,18 @@ use crate::fields::{fp::Fp, fp2::Fp2};
 /// [Appendix B]: https://sqisign.org/spec/sqisign-20250707.pdf#appendix.B
 pub const BASIS_E0_P_X: Fp2 = Fp2::new(
     Fp::from_limbs([
-        0x0005bcab12000c08,
-        0x000452654b56d052,
-        0x00026f81b5190a0a,
-        0x00036cfd66a361eb,
-        0x000012726610d11b,
+        0x0005BCAB12000C08,
+        0x000452654B56D052,
+        0x00026F81B5190A0A,
+        0x00036CFD66A361EB,
+        0x000012726610D11B,
     ]),
     Fp::from_limbs([
-        0x0006b96065c83efc,
-        0x00029da1d4a82cd9,
-        0x000190797ab98bdf,
-        0x0006841aa6eeee05,
-        0x0001377c5431166,
+        0x0006B96065C83EFC,
+        0x00029DA1D4A82CD9,
+        0x000190797AB98BDF,
+        0x0006841AA6EEEE05,
+        0x0001377C5431166,
     ]),
 );
 
@@ -132,18 +132,18 @@ pub const BASIS_E0_P_X: Fp2 = Fp2::new(
 /// [Appendix B]: https://sqisign.org/spec/sqisign-20250707.pdf#appendix.B
 pub const BASIS_E0_Q_X: Fp2 = Fp2::new(
     Fp::from_limbs([
-        0x00021dd55b97832f,
-        0x000210f2d30b26ad,
-        0x00000680bcfcf6396,
-        0x00027b318ec126a7,
-        0x000004ffba5956012,
+        0x00021DD55B97832F,
+        0x000210F2D30B26AD,
+        0x00000680BCFCF6396,
+        0x00027B318EC126A7,
+        0x000004FFBA5956012,
     ]),
     Fp::from_limbs([
-        0x00074590149117e3,
-        0x0004982edefcc606,
-        0x0002ae3db0cc6884,
-        0x0007d0384872f5ec,
-        0x000004fbb0fcb5a52,
+        0x00074590149117E3,
+        0x0004982EDEFCC606,
+        0x0002AE3DB0CC6884,
+        0x0007D0384872F5EC,
+        0x000004FBB0FCB5A52,
     ]),
 );
 

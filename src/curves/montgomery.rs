@@ -754,7 +754,7 @@ impl JacobianPoint {
     /// ```
     #[must_use]
     pub fn double(&self) -> JacobianPoint {
-        let A = Fp2::from(*self.curve.coefficient().as_fp2());
+        let A = *self.curve.coefficient().as_fp2();
 
         let zz = self.Z.square(); // z₁²
         let zzzz = zz.square(); // z₁⁴
@@ -860,7 +860,7 @@ pub fn lift_basis(
     PmQ: &ProjectiveXOnlyPoint,
     curve: &Curve,
 ) -> Option<(JacobianPoint, JacobianPoint)> {
-    let A = Fp2::from(*curve.coefficient().as_fp2());
+    let A = *curve.coefficient().as_fp2();
 
     // Normalize P: compute affine x_P = X_P / Z_P.
     let z_inv = P.Z.invert();

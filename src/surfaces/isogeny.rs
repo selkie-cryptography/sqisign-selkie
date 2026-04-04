@@ -28,8 +28,8 @@ use crate::{
     },
     fields::fp2::Fp2,
     surfaces::{
-        hadamard4, DualThetaNullPoint, EllipticProduct, GluingMatrix, Jacobian, JacobianPoint,
-        ProductPoint, ThetaNullPoint,
+        DualThetaNullPoint, EllipticProduct, GluingMatrix, Jacobian, JacobianPoint, ProductPoint,
+        ThetaNullPoint, hadamard4,
     },
 };
 

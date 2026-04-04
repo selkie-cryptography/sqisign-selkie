@@ -31,10 +31,10 @@ use crate::{
 /// For NIST-I: 2λ/8 = 2·128/8 = 32 bytes = 256 bits, which is
 /// exactly byte-aligned. This means no intermediate masking is
 /// needed (see [`hash`] # Security).
-const INTERMEDIATE_BYTES: usize = (2 * SECURITY_BITS as usize + 7) / 8;
+const INTERMEDIATE_BYTES: usize = (2 * SECURITY_BITS as usize).div_ceil(8);
 
 /// Number of bytes in the final challenge output (⌈e_chl/8⌉ = 16).
-pub(crate) const CHALLENGE_BYTES: usize = (E_CHL as usize + 7) / 8;
+pub(crate) const CHALLENGE_BYTES: usize = (E_CHL as usize).div_ceil(8);
 
 /// Bit mask for the top byte of the final challenge to ensure
 /// the output is < 2^e_chl.
@@ -42,11 +42,7 @@ pub(crate) const CHALLENGE_BYTES: usize = (E_CHL as usize + 7) / 8;
 /// For NIST-I: e_chl = 122, 122 % 8 = 2, so mask = 0b11 = 0x03.
 const CHALLENGE_TOP_MASK: u8 = {
     let bits = E_CHL as usize % 8;
-    if bits == 0 {
-        0xff
-    } else {
-        (1u8 << bits) - 1
-    }
+    if bits == 0 { 0xFF } else { (1u8 << bits) - 1 }
 };
 
 // Compile-time check: intermediate output is byte-aligned for NIST-I,
