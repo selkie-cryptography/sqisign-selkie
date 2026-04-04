@@ -15,11 +15,12 @@ pub use verifying::VerifyingKey;
 
 pub use crate::params::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};
 
-use crate::curves::montgomery::Curve;
-use crate::curves::{AuxiliaryHint, ChallengeHint, TorsionBasis};
-use crate::fields::fp2::Fp2;
-use crate::hash::CHALLENGE_BYTES;
-use crate::params::{E_RSP, TORSION_2POWER_BYTES};
+use crate::{
+    curves::{montgomery::Curve, AuxiliaryHint, ChallengeHint, TorsionBasis},
+    fields::fp2::Fp2,
+    hash::CHALLENGE_BYTES,
+    params::{E_RSP, TORSION_2POWER_BYTES},
+};
 
 /// A parsed, validated SQIsign signature.
 ///

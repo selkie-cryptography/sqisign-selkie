@@ -2,8 +2,8 @@
 //!
 //! This module provides:
 //! - [`montgomery`]: Montgomery curves and x-only projective point arithmetic
-//! - [`TorsionBasis`]: generators of torsion subgroups, used to define
-//!   isogeny kernels
+//! - [`TorsionBasis`]: generators of torsion subgroups, used to define isogeny
+//!   kernels
 //! - [`two_isogeny`], [`four_isogeny`]: individual isogeny steps
 //! - [`chain`]: chains of isogenies of degree 2^e
 //! - Torsion basis hints and ladders ([§2.2.3], [§8.2])
@@ -18,10 +18,11 @@ pub mod scalar;
 
 use subtle::ConditionallySelectable;
 
-use crate::curves::montgomery::{differential_add_and_double, Curve, ProjectiveXOnlyPoint};
-use crate::fields::fp::Fp;
-use crate::fields::fp2::Fp2;
-use crate::params::TORSION_EVEN_POWER;
+use crate::{
+    curves::montgomery::{differential_add_and_double, Curve, ProjectiveXOnlyPoint},
+    fields::{fp::Fp, fp2::Fp2},
+    params::TORSION_EVEN_POWER,
+};
 
 /// An exponent e such that 2^e divides the torsion group order.
 ///
@@ -253,11 +254,15 @@ impl TorsionBasis {
         c2: &crate::quaternions::bigint::BigInt<4>,
         f: TorsionExponent,
     ) -> Option<crate::quaternions::lattice::LeftIdeal<4>> {
-        use crate::deuring::precomputed::ACTION_MATRICES;
-        use crate::quaternions::algebra::{Coordinate, Denominator, Element};
-        use crate::quaternions::bigint::BigInt;
-        use crate::quaternions::lattice::LeftIdeal;
-        use crate::quaternions::precomputed::EXTREMAL_ORDERS;
+        use crate::{
+            deuring::precomputed::ACTION_MATRICES,
+            quaternions::{
+                algebra::{Coordinate, Denominator, Element},
+                bigint::BigInt,
+                lattice::LeftIdeal,
+                precomputed::EXTREMAL_ORDERS,
+            },
+        };
 
         // Action matrices for E₀: [i, j, k, gen2, gen3, gen4].
         let m_i = &ACTION_MATRICES[0][0];

@@ -20,9 +20,11 @@
 //! [`E_CHL`]: crate::params::E_CHL
 //! [`HASH_ITERATIONS`]: crate::params::HASH_ITERATIONS
 
-use crate::fields::fp2::Fp2;
-use crate::keys::VerifyingKey;
-use crate::params::{E_CHL, FP2_ENCODED_BYTES, HASH_ITERATIONS, SECURITY_BITS};
+use crate::{
+    fields::fp2::Fp2,
+    keys::VerifyingKey,
+    params::{E_CHL, FP2_ENCODED_BYTES, HASH_ITERATIONS, SECURITY_BITS},
+};
 
 /// Number of bytes in the intermediate SHAKE256 output.
 ///

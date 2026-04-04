@@ -5,8 +5,10 @@
 //! and Gram matrices. All dimensions are 4, matching the rank of the
 //! quaternion algebra B_{p,∞}.
 
-use core::fmt;
-use core::ops::{Add, Index, IndexMut, Mul, Neg, Sub};
+use core::{
+    fmt,
+    ops::{Add, Index, IndexMut, Mul, Neg, Sub},
+};
 
 use super::bigint::BigInt;
 

@@ -7,12 +7,12 @@
 //! End(E) ≅ O.
 //!
 //! The main algorithms are:
-//! - [`IdealToIsogeny`][alg313] (Algorithm 3.13): convert an O₀-ideal to
-//!   an isogeny and its images on torsion points
-//! - [`FixedDegreeIsogeny`][alg315] (Algorithm 3.15): compute an isogeny
-//!   of prescribed degree from precomputed data
-//! - [`SuitableIdeals`][alg316] (Algorithm 3.16): decompose an ideal
-//!   into pieces with coprime odd norms
+//! - [`IdealToIsogeny`][alg313] (Algorithm 3.13): convert an O₀-ideal to an
+//!   isogeny and its images on torsion points
+//! - [`FixedDegreeIsogeny`][alg315] (Algorithm 3.15): compute an isogeny of
+//!   prescribed degree from precomputed data
+//! - [`SuitableIdeals`][alg316] (Algorithm 3.16): decompose an ideal into
+//!   pieces with coprime odd norms
 //!
 //! See [§3.2] of the SQIsign specification.
 //!
@@ -24,17 +24,23 @@
 pub(crate) mod endomorphism;
 pub(crate) mod precomputed;
 
-use crate::curves::isogeny::IsogenyDegree;
-use crate::curves::montgomery::{Curve, ProjectiveXOnlyPoint};
-use crate::curves::scalar::Scalar;
-use crate::curves::{TorsionBasis, TorsionExponent};
-use crate::params::QUAT_REPRES_BOUND_INPUT;
-use crate::quaternions::algebra::Element;
-use crate::quaternions::bigint::BigInt;
-use crate::quaternions::ideal::represent_integer;
-use crate::quaternions::lattice::{ExtremalOrder, Lattice, LeftIdeal};
-use crate::quaternions::precomputed::EXTREMAL_ORDERS;
-use crate::surfaces;
+use crate::{
+    curves::{
+        isogeny::IsogenyDegree,
+        montgomery::{Curve, ProjectiveXOnlyPoint},
+        scalar::Scalar,
+        TorsionBasis, TorsionExponent,
+    },
+    params::QUAT_REPRES_BOUND_INPUT,
+    quaternions::{
+        algebra::Element,
+        bigint::BigInt,
+        ideal::represent_integer,
+        lattice::{ExtremalOrder, Lattice, LeftIdeal},
+        precomputed::EXTREMAL_ORDERS,
+    },
+    surfaces,
+};
 
 use endomorphism::ActionMatrix;
 use precomputed::ACTION_MATRICES;
@@ -152,7 +158,8 @@ impl IdealKernel for LeftIdeal<4> {
     }
 }
 
-// KernelToIdeal (Algorithm 3.17) is TorsionBasis::kernel_to_ideal() in curves/mod.rs.
+// KernelToIdeal (Algorithm 3.17) is TorsionBasis::kernel_to_ideal() in
+// curves/mod.rs.
 
 /// Compute the even (non-backtracking) response isogeny.
 ///

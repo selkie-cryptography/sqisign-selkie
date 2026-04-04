@@ -62,7 +62,8 @@ pub const SIGNATURE_BYTES: usize = 148;
 // SuitableIdeals / id2iso parameters
 // ---------------------------------------------------------------------------
 
-/// Half-width of the enumeration box in [Algorithm 3.16][Alg. 3.16] (SuitableIdeals).
+/// Half-width of the enumeration box in [Algorithm 3.16][Alg. 3.16]
+/// (SuitableIdeals).
 ///
 /// For NIST-I: m = 2 + ⌊(⌈log₂ p⌉ − f) / 4⌋ = 2 + ⌊3/4⌋ = 2.
 /// The algorithm enumerates (2m+1)⁴ − 1 = 624 non-zero vectors per order.
@@ -92,8 +93,7 @@ pub const PRIMALITY_NUM_ITER: u32 = 20;
 // Precomputed E₀ basis points
 // ---------------------------------------------------------------------------
 
-use crate::fields::fp::Fp;
-use crate::fields::fp2::Fp2;
+use crate::fields::{fp::Fp, fp2::Fp2};
 
 /// x-coordinate of the first basis point P₀ of E₀\[2^f\],
 /// where f = [`TORSION_EVEN_POWER`].

@@ -16,9 +16,11 @@
 
 use core::ops::Add;
 
-use super::algebra::{Coordinate, Denominator, Element};
-use super::bigint::BigInt;
-use super::linear::{hnf_from_columns, Matrix, Vector};
+use super::{
+    algebra::{Coordinate, Denominator, Element},
+    bigint::BigInt,
+    linear::{hnf_from_columns, Matrix, Vector},
+};
 
 // ---------------------------------------------------------------------------
 // Lattice<N>: quaternion lattice (not necessarily in HNF)
@@ -347,8 +349,8 @@ impl Lattice<4> {
     /// 1. Compute the Gram matrix G (reduced norm quadratic form)
     /// 2. Compute the dual Gram matrix G* = adj(G)/det(G)
     /// 3. LLL-reduce G* to get tight per-coordinate bounds
-    /// 4. Rejection sample: pick uniform coords in the bounding box,
-    ///    map through the LLL transformation, check norm ≤ radius
+    /// 4. Rejection sample: pick uniform coords in the bounding box, map
+    ///    through the LLL transformation, check norm ≤ radius
     /// 5. Convert integer coords back to a quaternion element
     ///
     /// Implements [LatticeSampling][Alg. 3.3] as used by
@@ -406,7 +408,8 @@ impl Lattice<4> {
         // For now, use a simpler approach: solve for U.
         //
         // Actually, the C ref's approach is:
-        //   1. LLL-reduce dual_gram, getting U such that dual_gram_reduced = U^T · dual_gram · U
+        //   1. LLL-reduce dual_gram, getting U such that dual_gram_reduced = U^T ·
+        //      dual_gram · U
         //   2. Invert U: U_inv = adj(U) * det(U) (det = ±1)
         //   3. Bounding box: box[i] = √(dual_gram_reduced[i][i] * radius / det_g)
         //   4. Sample x in [-box[i], box[i]]^4

@@ -13,13 +13,18 @@
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::keys::verifying::VerifyingKey;
-use crate::keys::{Signature, SignatureError, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};
-use crate::params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES};
-use crate::quaternions::algebra::{Coordinate, Denominator, Element};
-use crate::quaternions::bigint::BigInt;
-use crate::quaternions::lattice::LeftIdeal;
-use crate::quaternions::precomputed::EXTREMAL_ORDERS;
+use crate::{
+    keys::{
+        verifying::VerifyingKey, Signature, SignatureError, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES,
+    },
+    params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES},
+    quaternions::{
+        algebra::{Coordinate, Denominator, Element},
+        bigint::BigInt,
+        lattice::LeftIdeal,
+        precomputed::EXTREMAL_ORDERS,
+    },
+};
 
 /// An SQIsign signing (secret) key.
 ///
@@ -58,16 +63,16 @@ impl SigningKey {
     ///
     /// Corresponds to `SQIsign.KeyGen` ([§4.3], Algorithm 4.1):
     ///
-    /// 1. Sample a random secret left O₀-ideal I_sk of prime norm
-    ///    D_mix via `RandomIdealGivenNorm` ([§3.1.6])
-    /// 2. Reduce to a smaller equivalent ideal via
-    ///    `RandomEquivalentPrimeIdeal` ([§3.1.6])
-    /// 3. Translate I_sk to the secret isogeny φ_sk : E₀ → E_pk
-    ///    and evaluate on the torsion basis via `IdealToIsogeny` ([§3.2.3])
-    /// 4. Generate the deterministic torsion basis hint for E_pk
-    ///    via `TorsionBasisToHint` ([§2.2.3])
-    /// 5. Compute the change-of-basis matrix M_sk via
-    ///    `ChangeOfBasis` ([§2.2.5])
+    /// 1. Sample a random secret left O₀-ideal I_sk of prime norm D_mix via
+    ///    `RandomIdealGivenNorm` ([§3.1.6])
+    /// 2. Reduce to a smaller equivalent ideal via `RandomEquivalentPrimeIdeal`
+    ///    ([§3.1.6])
+    /// 3. Translate I_sk to the secret isogeny φ_sk : E₀ → E_pk and evaluate on
+    ///    the torsion basis via `IdealToIsogeny` ([§3.2.3])
+    /// 4. Generate the deterministic torsion basis hint for E_pk via
+    ///    `TorsionBasisToHint` ([§2.2.3])
+    /// 5. Compute the change-of-basis matrix M_sk via `ChangeOfBasis`
+    ///    ([§2.2.5])
     /// 6. Encode pk = (E_pk, hint_pk) and sk = (pk, I_sk, M_sk)
     ///
     /// This is a probabilistic algorithm: steps 2–3 may fail, in which
@@ -99,7 +104,8 @@ impl SigningKey {
 
         let mut pos = VERIFYING_KEY_BYTES;
 
-        // Parse I_sk: norm (32 bytes unsigned) + generator coords (4 × 32 bytes signed).
+        // Parse I_sk: norm (32 bytes unsigned) + generator coords (4 × 32 bytes
+        // signed).
         let norm = BigInt::<4>::from_bytes_le_unsigned(
             bytes[pos..pos + FP_ENCODED_BYTES].try_into().unwrap(),
         );
@@ -161,8 +167,8 @@ impl SigningKey {
     ///
     /// **Commitment** (lines 4–9):
     /// 1. Sample a random commitment ideal I_com of norm D_mix
-    /// 2. Translate to the commitment isogeny φ_com : E₀ → E_com
-    ///    via `IdealToIsogeny` ([§3.2.3])
+    /// 2. Translate to the commitment isogeny φ_com : E₀ → E_com via
+    ///    `IdealToIsogeny` ([§3.2.3])
     ///
     /// **Challenge** (line 10):
     /// 3. Compute chl ← HASH(pk ‖ j(E_com) ‖ msg)
@@ -170,15 +176,14 @@ impl SigningKey {
     /// **Response** (lines 11–38):
     /// 4. Convert chl to the challenge ideal I_chl via M_sk and
     ///    `KernelDecomposedToIdeal` ([§3.2.6])
-    /// 5. Sample response quaternion α_rsp from the intersection
-    ///    lattice via `RandomEquivalentQuaternion` ([§4.4.3])
-    /// 6. Compute backtracking via
-    ///    `ComputeBacktrackingAndNormalize` ([§4.4.3])
-    /// 7. Compute the response isogeny, split into odd and even
-    ///    parts, using `SplitAuxiliaryIsogeny` ([§4.4.3]) or
-    ///    `IdealToIsogeny` depending on e'_rsp
-    /// 8. Compute the challenge isogeny via
-    ///    `ComputeChallengeIsogeny` ([§4.4.2])
+    /// 5. Sample response quaternion α_rsp from the intersection lattice via
+    ///    `RandomEquivalentQuaternion` ([§4.4.3])
+    /// 6. Compute backtracking via `ComputeBacktrackingAndNormalize` ([§4.4.3])
+    /// 7. Compute the response isogeny, split into odd and even parts, using
+    ///    `SplitAuxiliaryIsogeny` ([§4.4.3]) or `IdealToIsogeny` depending on
+    ///    e'_rsp
+    /// 8. Compute the challenge isogeny via `ComputeChallengeIsogeny`
+    ///    ([§4.4.2])
     /// 9. Encode σ = (E_aux, n_bt, r_rsp, M_chl, chl, hint_aux, hint_chl)
     ///
     /// This is probabilistic: several sub-algorithms may fail,

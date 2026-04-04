@@ -36,6 +36,5 @@ pub(crate) mod deuring;
 // Key types and signatures
 pub mod keys;
 
-pub use keys::SignatureError;
-pub use keys::{Signature, SigningKey, VerifyingKey};
+pub use keys::{Signature, SignatureError, SigningKey, VerifyingKey};
 pub use params::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};

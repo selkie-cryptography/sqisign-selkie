@@ -12,8 +12,7 @@
 
 use core::fmt;
 
-use super::bigint::BigInt;
-use super::precomputed::P_WIDE;
+use super::{bigint::BigInt, precomputed::P_WIDE};
 
 // ---------------------------------------------------------------------------
 // Coordinate: a coefficient in the quaternion basis {1, i, j, k}

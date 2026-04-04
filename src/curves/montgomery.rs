@@ -25,8 +25,7 @@ use core::ops::Mul;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 use super::scalar::Scalar;
-use crate::fields::fp::Fp;
-use crate::fields::fp2::Fp2;
+use crate::fields::{fp::Fp, fp2::Fp2};
 
 /// The Montgomery coefficient A of a curve E_A : y² = x³ + Ax² + x.
 ///

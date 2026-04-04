@@ -2,8 +2,7 @@
 // to an integration test in tests/.
 
 use super::*;
-use precomputed::torsion_basis;
-use precomputed::ACTION_MATRICES;
+use precomputed::{torsion_basis, ACTION_MATRICES};
 
 #[test]
 fn action_matrix_via_trait() {
@@ -219,9 +218,11 @@ fn c_ref_basis_cross_check() {
 /// Verify that M_i applied to the basis produces i(P₀).
 #[test]
 fn action_matrix_consistent_with_basis() {
-    use crate::curves::montgomery::{Curve, ProjectiveXOnlyPoint};
-    use crate::curves::scalar::Scalar;
-    use crate::curves::TorsionBasis;
+    use crate::curves::{
+        montgomery::{Curve, ProjectiveXOnlyPoint},
+        scalar::Scalar,
+        TorsionBasis,
+    };
 
     let p0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &Curve::E0);
     let q0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &Curve::E0);

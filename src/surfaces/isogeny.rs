@@ -22,13 +22,15 @@
 //!
 //! [`Kernel::isogeny`]: super::Kernel::isogeny
 
-use crate::curves::montgomery::{
-    Coefficient, Curve, JacobianPoint as CurveJacobianPoint, ProjectiveXOnlyPoint,
-};
-use crate::fields::fp2::Fp2;
-use crate::surfaces::{
-    hadamard4, DualThetaNullPoint, EllipticProduct, GluingMatrix, Jacobian, JacobianPoint,
-    ProductPoint, ThetaNullPoint,
+use crate::{
+    curves::montgomery::{
+        Coefficient, Curve, JacobianPoint as CurveJacobianPoint, ProjectiveXOnlyPoint,
+    },
+    fields::fp2::Fp2,
+    surfaces::{
+        hadamard4, DualThetaNullPoint, EllipticProduct, GluingMatrix, Jacobian, JacobianPoint,
+        ProductPoint, ThetaNullPoint,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -940,7 +942,6 @@ pub(crate) fn codomain_8torsion_no_hadamard(
 /// relationships such that the eval formula is simply
 /// `H(precomp · P²)` — the inner Hadamard is absorbed into how
 /// the precomputation relates to the codomain.
-///
 pub(crate) fn eval(
     P: &JacobianPoint,
     dual: &DualThetaNullPoint,
@@ -993,7 +994,8 @@ pub(crate) fn eval_ultimate(
     JacobianPoint::new(t.X, t.Y, t.Z, t.W, codomain.clone())
 }
 
-/// Codomain from 8-torsion: ultimate step (`hadamard_bool_1=1, hadamard_bool_2=0`).
+/// Codomain from 8-torsion: ultimate step (`hadamard_bool_1=1,
+/// hadamard_bool_2=0`).
 ///
 /// Same cross-product formulas as the normal 8-torsion codomain, but
 /// applies Hadamard to each kernel point BEFORE `to_squared_theta`,
