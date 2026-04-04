@@ -15,8 +15,13 @@ use core::ops::{Div, Mul};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::{
-    curves::{TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
+    curves::{
+        TorsionBasis, TorsionExponent,
+        montgomery::{ProjectiveXOnlyPoint, lift_basis},
+        scalar::Scalar,
+    },
     fields::fp2::Fp2,
+    quaternions::bigint::BigInt,
 };
 
 // ---------------------------------------------------------------------------
@@ -305,4 +310,96 @@ pub(crate) fn tate_pairing(
     }
 
     RootOfUnity(result)
+}
+
+// ---------------------------------------------------------------------------
+// Change of basis (Algorithm 2.5)
+// ---------------------------------------------------------------------------
+
+/// A 2×2 change-of-basis matrix over Z/2^f Z.
+///
+/// Represents the matrix M such that M · (P₁, P₂)ᵀ = (Q₁, Q₂)ᵀ,
+/// i.e., Q₁ = [x₁]P₁ + [x₂]P₂ and Q₂ = [x₃]P₁ + [x₄]P₂.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ChangeOfBasisMatrix {
+    /// Matrix entries as Scalars: [[x₁, x₂], [x₃, x₄]].
+    pub entries: [[Scalar; 2]; 2],
+}
+
+/// Compute the change-of-basis matrix from a full basis (P₁, P₂) of
+/// E[2^f] to a target basis (Q₁, Q₂) of E[2^e].
+///
+/// Returns the matrix (x₁, x₂, x₃, x₄) such that:
+///   Q₁ = [x₁]P₁ + [x₂]P₂
+///   Q₂ = [x₃]P₁ + [x₄]P₂
+///
+/// Implements [ChangeOfBasis][Alg. 2.5] ([Algorithm 2.5][Alg. 2.5]).
+///
+/// # Panics
+///
+/// Panics if basis lifting fails (point not on curve).
+///
+/// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
+pub(crate) fn change_of_basis(
+    full_basis: &TorsionBasis,
+    target_basis: &TorsionBasis,
+    e: TorsionExponent,
+) -> ChangeOfBasisMatrix {
+    let curve = full_basis.R.curve();
+    let f = TorsionExponent::FULL;
+
+    // Lift both bases to Jacobian for deterministic cross-sum computation.
+    // The tate_pairing needs x(A+B) for each pair, which requires
+    // Jacobian arithmetic to deterministically distinguish P+Q from P−Q.
+    let (p1_jac, p2_jac) = lift_basis(&full_basis.R, &full_basis.S, &full_basis.RS, curve)
+        .expect("full basis lift failed");
+    let (q1_jac, q2_jac) = lift_basis(&target_basis.R, &target_basis.S, &target_basis.RS, curve)
+        .expect("target basis lift failed");
+
+    // Compute cross-sum x-coordinates via Jacobian arithmetic.
+    let (q1_plus_p2, _) = q1_jac.x_add_sub(&p2_jac);
+    let (q1_plus_p1, _) = q1_jac.x_add_sub(&p1_jac);
+    let (q2_plus_p2, _) = q2_jac.x_add_sub(&p2_jac);
+    let (q2_plus_p1, _) = q2_jac.x_add_sub(&p1_jac);
+
+    // Step 1: ζ ← t_{2^e}(P₁, P₂)
+    let zeta = tate_pairing(&full_basis.R, &full_basis.S, &full_basis.RS, e);
+
+    // Step 2: Compute the four cross-pairings.
+    // ζ₁ ← t_{2^e}(Q₁, P₂)
+    let zeta1 = tate_pairing(&target_basis.R, &full_basis.S, &q1_plus_p2, e);
+    // ζ₂ ← 1/t_{2^e}(Q₁, P₁)
+    let zeta2_inv = tate_pairing(&target_basis.R, &full_basis.R, &q1_plus_p1, e);
+    let zeta2 = RootOfUnity::ONE / zeta2_inv;
+    // ζ₃ ← t_{2^e}(Q₂, P₂)
+    let zeta3 = tate_pairing(&target_basis.S, &full_basis.S, &q2_plus_p2, e);
+    // ζ₄ ← 1/t_{2^e}(Q₂, P₁)
+    let zeta4_inv = tate_pairing(&target_basis.S, &full_basis.R, &q2_plus_p1, e);
+    let zeta4 = RootOfUnity::ONE / zeta4_inv;
+
+    // Step 3-4: x_i ← 2^{f-e} · log_ζ(ζ_i)
+    let k1 = zeta.dlog(&zeta1, e);
+    let k2 = zeta.dlog(&zeta2, e);
+    let k3 = zeta.dlog(&zeta3, e);
+    let k4 = zeta.dlog(&zeta4, e);
+
+    // Scale by 2^{f-e}: shift left by (f - e) bits.
+    let shift = f.value() - e.value();
+    let x1 = BigInt::<4>::from(k1).shl(shift);
+    let x2 = BigInt::<4>::from(k2).shl(shift);
+    let x3 = BigInt::<4>::from(k3).shl(shift);
+    let x4 = BigInt::<4>::from(k4).shl(shift);
+
+    ChangeOfBasisMatrix {
+        entries: [
+            [
+                Scalar::from_limbs(*x1.as_limbs()),
+                Scalar::from_limbs(*x2.as_limbs()),
+            ],
+            [
+                Scalar::from_limbs(*x3.as_limbs()),
+                Scalar::from_limbs(*x4.as_limbs()),
+            ],
+        ],
+    }
 }

@@ -20,7 +20,7 @@
 //! [§2.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
 //! [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 
-use core::ops::Mul;
+use core::ops::{Mul, Neg};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
@@ -799,6 +799,79 @@ impl JacobianPoint {
             X: x3,
             Y: y3,
             Z: z3,
+            curve: self.curve,
+        }
+    }
+}
+
+impl JacobianPoint {
+    /// Compute the x-only Montgomery projective coordinates of P + Q
+    /// and P − Q from two Jacobian points.
+    ///
+    /// Returns `(x(P+Q), x(P-Q))` as `ProjectiveXOnlyPoint`s.
+    ///
+    /// Uses the full Jacobian addition formula (`ec_jac.c:305`) to
+    /// deterministically distinguish P+Q from P−Q (impossible with
+    /// x-only arithmetic alone).
+    ///
+    /// This is used by
+    /// [`ChangeOfBasis`](crate::curves::pairing::change_of_basis)
+    /// to compute the cross-pairing sum points.
+    #[must_use]
+    pub fn x_add_sub(&self, other: &Self) -> (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint) {
+        let a = *self.curve.coefficient().as_fp2();
+
+        let t0 = self.Z.square(); // z1²
+        let t1 = other.Z.square(); // z2²
+        let t2 = &self.X * &t1; // x1·z2²
+        let t3 = &t0 * &other.X; // z1²·x2
+        let mut t4 = &self.Y * &other.Z; // y1·z2
+        t4 = &t4 * &t1; // y1·z2³
+        let mut t5 = &self.Z * &other.Y; // z1·y2
+        t5 = &t5 * &t0; // z1³·y2
+        let t0 = &t0 * &t1; // (z1·z2)²
+        let t6 = &t4 * &t5; // (z1·z2)³·y1·y2
+        let v = &t6 + &t6; // 2·(z1·z2)³·y1·y2
+
+        let t4_sq = t4.square();
+        let t5_sq = t5.square();
+        let sum_y2 = &t4_sq + &t5_sq;
+        let sum_x = &t2 + &t3;
+        let lambda = &t2 - &t3;
+        let lambda_sq = lambda.square();
+        let a_t0 = &a * &t0;
+        let gamma = &(&sum_x + &a_t0) * &lambda_sq;
+
+        let u = &sum_y2 - &gamma;
+        let w = &lambda_sq * &t0;
+
+        // x(P+Q) = (u + v) : w,  x(P-Q) = (u - v) : w
+        let x_add = ProjectiveXOnlyPoint::from_XZ(&u + &v, w, &self.curve);
+        let x_sub = ProjectiveXOnlyPoint::from_XZ(&u - &v, w, &self.curve);
+        (x_add, x_sub)
+    }
+}
+
+impl Neg for JacobianPoint {
+    type Output = Self;
+    /// −(x, y, z) = (x, −y, z).
+    fn neg(self) -> Self {
+        Self {
+            X: self.X,
+            Y: -&self.Y,
+            Z: self.Z,
+            curve: self.curve,
+        }
+    }
+}
+
+impl Neg for &JacobianPoint {
+    type Output = JacobianPoint;
+    fn neg(self) -> JacobianPoint {
+        JacobianPoint {
+            X: self.X,
+            Y: -&self.Y,
+            Z: self.Z,
             curve: self.curve,
         }
     }

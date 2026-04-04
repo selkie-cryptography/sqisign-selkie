@@ -10,6 +10,8 @@
 mod signing;
 mod verifying;
 
+use core::ops::Mul;
+
 pub use signing::SigningKey;
 pub use verifying::VerifyingKey;
 
@@ -235,7 +237,7 @@ fn sub_mod2k(
     }
 }
 
-impl core::ops::Mul<&TorsionBasis> for &ChallengeMatrix {
+impl Mul<&TorsionBasis> for &ChallengeMatrix {
     type Output = TorsionBasis;
 
     fn mul(self, basis: &TorsionBasis) -> TorsionBasis {

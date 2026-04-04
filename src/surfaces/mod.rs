@@ -24,6 +24,8 @@
 
 pub(crate) mod isogeny;
 
+use core::ops::Mul;
+
 use crate::{
     curves::montgomery::{Curve, ProjectiveXOnlyPoint},
     fields::fp2::Fp2,
@@ -151,7 +153,7 @@ impl GluingMatrix {
 }
 
 /// Matrix-vector multiplication: M · v over F_{p²}⁴.
-impl core::ops::Mul<&(Fp2, Fp2, Fp2, Fp2)> for &GluingMatrix {
+impl Mul<&(Fp2, Fp2, Fp2, Fp2)> for &GluingMatrix {
     type Output = (Fp2, Fp2, Fp2, Fp2);
 
     fn mul(self, v: &(Fp2, Fp2, Fp2, Fp2)) -> (Fp2, Fp2, Fp2, Fp2) {
@@ -167,7 +169,7 @@ impl core::ops::Mul<&(Fp2, Fp2, Fp2, Fp2)> for &GluingMatrix {
 }
 
 /// Matrix-matrix multiplication: self · rhs over F_{p²}⁴ˣ⁴.
-impl core::ops::Mul<&GluingMatrix> for &GluingMatrix {
+impl Mul<&GluingMatrix> for &GluingMatrix {
     type Output = GluingMatrix;
 
     /// Matrix multiplication: self · rhs.
@@ -184,7 +186,7 @@ impl core::ops::Mul<&GluingMatrix> for &GluingMatrix {
     }
 }
 
-impl core::ops::Mul<GluingMatrix> for GluingMatrix {
+impl Mul<GluingMatrix> for GluingMatrix {
     type Output = GluingMatrix;
     fn mul(self, rhs: GluingMatrix) -> GluingMatrix {
         &self * &rhs
