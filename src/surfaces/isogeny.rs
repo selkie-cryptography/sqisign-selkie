@@ -1291,8 +1291,8 @@ fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
     let A2 = &A2_num * &C2.invert();
 
     EllipticProduct::new(
-        Curve::new(Coefficient::from(A1)),
-        Curve::new(Coefficient::from(A2)),
+        Curve::from(Coefficient::from(A1)),
+        Curve::from(Coefficient::from(A2)),
     )
 }
 

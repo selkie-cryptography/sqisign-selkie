@@ -289,7 +289,7 @@ impl TwoIsogeny {
         let A24 = &zp_sq - &xp_sq;
         let C24 = zp_sq;
         TwoIsogeny {
-            codomain: Curve::from_projective(A24, C24),
+            codomain: Curve::from_doubling_constants(A24, C24),
             kernel: *P,
         }
     }
@@ -337,7 +337,7 @@ impl TwoIsogenySingular {
         let A24_prime = &A24_prime + &C24_prime;
         let C24_prime = &C24_prime + &C24_prime;
         TwoIsogenySingular {
-            codomain: Curve::from_projective(A24_prime, C24_prime),
+            codomain: Curve::from_doubling_constants(A24_prime, C24_prime),
             c0,
             c1,
         }
@@ -381,7 +381,7 @@ impl FourIsogeny {
             &d + &d
         };
         FourIsogeny {
-            codomain: Curve::from_projective(A24, C24),
+            codomain: Curve::from_doubling_constants(A24, C24),
             c0,
             c1,
             c2,
