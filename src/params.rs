@@ -78,6 +78,16 @@ pub const FINDUV_BOX_SIZE: i64 = 2;
 /// [Alg. 3.15]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
 pub const QUAT_REPRES_BOUND_INPUT: u32 = 20;
 
+/// Sampling bound for `LeftIdeal::reduce_to_prime_norm` (Algorithm 3.9).
+///
+/// Random coefficients are sampled from \[−bound, bound\]⁴. The C
+/// reference uses `equiv_bound_coeff = 20`.
+pub const EQUIV_BOUND_COEFF: i32 = 20;
+
+/// Number of Miller-Rabin rounds for primality testing in ideal
+/// reduction (Algorithm 3.9). The C reference uses 20.
+pub const PRIMALITY_NUM_ITER: u32 = 20;
+
 // ---------------------------------------------------------------------------
 // Precomputed E₀ basis points
 // ---------------------------------------------------------------------------

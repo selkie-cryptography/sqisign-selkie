@@ -10,8 +10,13 @@
 //!
 //! [§8.3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.3
 
+use core::ops::{Div, Mul};
+
+use subtle::{Choice, ConditionallySelectable};
+
 use crate::curves::montgomery::ProjectiveXOnlyPoint;
 use crate::curves::scalar::Scalar;
+use crate::curves::TorsionExponent;
 use crate::fields::fp2::Fp2;
 
 // ---------------------------------------------------------------------------
@@ -64,20 +69,6 @@ impl RootOfUnity {
         Self(result)
     }
 
-    /// Compute ζ₀ / ζ₁.
-    #[must_use]
-    pub fn div(&self, other: &Self) -> Self {
-        Self(&self.0 * &other.0.invert())
-    }
-
-    /// Compute the discrete log k ∈ \[0, 2^e) such that ζ₁ = self^k.
-    ///
-    /// Uses the Pohlig-Hellman algorithm for 2-power order groups.
-    /// SQIsign only applies this to pairing outputs.
-    ///
-    /// Implements [NormalizedDlog][Alg. 2.4].
-    ///
-    /// [Alg. 2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.4
     /// Compute the discrete log k ∈ \[0, 2^e) such that target = self^k.
     ///
     /// Uses the Pohlig-Hellman algorithm for 2-power order groups.
@@ -86,7 +77,8 @@ impl RootOfUnity {
     /// Implements [NormalizedDlog][Alg. 2.4].
     ///
     /// [Alg. 2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.4
-    pub fn dlog(&self, target: &Self, e: u32) -> Scalar {
+    pub fn dlog(&self, target: &Self, e: TorsionExponent) -> Scalar {
+        let e = e.value();
         if e == 0 {
             return Scalar::ZERO;
         }
@@ -106,17 +98,18 @@ impl RootOfUnity {
         let z1_prime = target.square_n(e - e_prime);
 
         // k' = NormalizedDlog(ζ'₀, ζ'₁) — low bits
-        let k_prime = z0_prime.dlog(&z1_prime, e_prime);
+        let k_prime = z0_prime.dlog(&z1_prime, TorsionExponent::new(e_prime));
 
         // ζ''₀ = ζ₀^{2^{e'}},  ζ''₁ = ζ₁ / ζ₀^{k'}
         let z0_double_prime = self.square_n(e_prime);
         // TODO: pow by Scalar — for now convert k' to u32 for small
-        // intermediate values. The recursion ensures k' < 2^e' which
+        // intermediate values. The recursion ensures k' < 2^{e'} which
         // fits in u32 for e' ≤ 124.
-        let z1_double_prime = target.div(&self.pow(k_prime.as_limbs()[0] as u32));
+        let z1_double_prime = target / &self.pow(k_prime.as_limbs()[0] as u32);
 
         // k'' = NormalizedDlog(ζ''₀, ζ''₁) — high bits
-        let k_double_prime = z0_double_prime.dlog(&z1_double_prime, e - e_prime);
+        let k_double_prime =
+            z0_double_prime.dlog(&z1_double_prime, TorsionExponent::new(e - e_prime));
 
         // k = k' + 2^{e'} · k''
         // Use BigInt for the shift since e' can exceed 63.
@@ -126,6 +119,40 @@ impl RootOfUnity {
         let k_high = k_double_prime_big.shl(e_prime);
         let k = k_prime_big.ct_add(&k_high);
         Scalar::from_limbs(*k.as_limbs())
+    }
+}
+
+impl<'a, 'b> Mul<&'b RootOfUnity> for &'a RootOfUnity {
+    type Output = RootOfUnity;
+    fn mul(self, rhs: &'b RootOfUnity) -> RootOfUnity {
+        RootOfUnity(&self.0 * &rhs.0)
+    }
+}
+
+impl<'a, 'b> Div<&'b RootOfUnity> for &'a RootOfUnity {
+    type Output = RootOfUnity;
+    fn div(self, rhs: &'b RootOfUnity) -> RootOfUnity {
+        RootOfUnity(&self.0 * &rhs.0.invert())
+    }
+}
+
+impl Mul for RootOfUnity {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self {
+        &self * &rhs
+    }
+}
+
+impl Div for RootOfUnity {
+    type Output = Self;
+    fn div(self, rhs: Self) -> Self {
+        &self / &rhs
+    }
+}
+
+impl ConditionallySelectable for RootOfUnity {
+    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+        Self(Fp2::conditional_select(&a.0, &b.0, choice))
     }
 }
 
@@ -220,8 +247,9 @@ pub(crate) fn tate_pairing(
     p: &ProjectiveXOnlyPoint,
     q: &ProjectiveXOnlyPoint,
     pq: &ProjectiveXOnlyPoint,
-    e: u32,
+    e: TorsionExponent,
 ) -> RootOfUnity {
+    let e = e.value();
     debug_assert!(p.curve() == q.curve(), "P and Q must be on the same curve");
     debug_assert!(
         q.curve() == pq.curve(),

@@ -137,7 +137,7 @@ impl GluingMatrix {
 
     /// Apply this matrix to a point in theta coordinates.
     pub(crate) fn apply_point(&self, P: &JacobianPoint) -> JacobianPoint {
-        let v = [&P.x, &P.y, &P.z, &P.w];
+        let v = [&P.X, &P.Y, &P.Z, &P.W];
         let mut out = [Fp2::ZERO; 4];
         for i in 0..4 {
             for j in 0..4 {
@@ -252,20 +252,20 @@ impl Jacobian {
 /// coordinates.
 #[derive(Clone, Debug)]
 pub(crate) struct JacobianPoint {
-    pub(crate) x: Fp2,
-    pub(crate) y: Fp2,
-    pub(crate) z: Fp2,
-    pub(crate) w: Fp2,
+    pub(crate) X: Fp2,
+    pub(crate) Y: Fp2,
+    pub(crate) Z: Fp2,
+    pub(crate) W: Fp2,
     pub(crate) surface: Jacobian,
 }
 
 impl JacobianPoint {
-    pub(crate) fn new(x: Fp2, y: Fp2, z: Fp2, w: Fp2, surface: Jacobian) -> JacobianPoint {
+    pub(crate) fn new(X: Fp2, Y: Fp2, Z: Fp2, W: Fp2, surface: Jacobian) -> JacobianPoint {
         JacobianPoint {
-            x,
-            y,
-            z,
-            w,
+            X,
+            Y,
+            Z,
+            W,
             surface,
         }
     }
@@ -273,12 +273,12 @@ impl JacobianPoint {
     /// Hadamard transform.
     #[must_use]
     pub(crate) fn hadamard(&self) -> JacobianPoint {
-        let (x, y, z, w) = hadamard4(&self.x, &self.y, &self.z, &self.w);
+        let (x, y, z, w) = hadamard4(&self.X, &self.Y, &self.Z, &self.W);
         JacobianPoint {
-            x,
-            y,
-            z,
-            w,
+            X: x,
+            Y: y,
+            Z: z,
+            W: w,
             surface: self.surface.clone(),
         }
     }
@@ -287,10 +287,10 @@ impl JacobianPoint {
     #[must_use]
     pub(crate) fn squared(&self) -> JacobianPoint {
         JacobianPoint {
-            x: self.x.square(),
-            y: self.y.square(),
-            z: self.z.square(),
-            w: self.w.square(),
+            X: self.X.square(),
+            Y: self.Y.square(),
+            Z: self.Z.square(),
+            W: self.W.square(),
             surface: self.surface.clone(),
         }
     }
@@ -299,10 +299,10 @@ impl JacobianPoint {
     #[must_use]
     pub(crate) fn scale(&self, cx: &Fp2, cy: &Fp2, cz: &Fp2, cw: &Fp2) -> JacobianPoint {
         JacobianPoint {
-            x: &self.x * cx,
-            y: &self.y * cy,
-            z: &self.z * cz,
-            w: &self.w * cw,
+            X: &self.X * cx,
+            Y: &self.Y * cy,
+            Z: &self.Z * cz,
+            W: &self.W * cw,
             surface: self.surface.clone(),
         }
     }
