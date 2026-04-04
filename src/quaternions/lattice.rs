@@ -19,7 +19,7 @@ use core::ops::Add;
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
-    linear::{hnf_from_columns, Matrix, Vector},
+    linear::{Matrix, Vector, hnf_from_columns},
 };
 
 // ---------------------------------------------------------------------------
@@ -282,8 +282,8 @@ impl Lattice<4> {
         let mut result = [BigInt::<4>::ZERO; 4];
         for i in 0..4 {
             let mut val = BigInt::<4>::ZERO;
-            for j in 0..4 {
-                val = val.ct_add(&adj[i][j].ct_mul(&rhs[j]));
+            for (j, rhs_j) in rhs.iter().enumerate() {
+                val = val.ct_add(&adj[i][j].ct_mul(rhs_j));
             }
             let (q, r) = val.div_rem(&det);
             if !bool::from(r.is_zero()) {
@@ -460,9 +460,10 @@ impl Lattice<4> {
                 let bitlen = two_b.bitsize();
                 loop {
                     let mut bytes = [0u8; 64]; // BigInt<8> = 512 bits
-                    OsRng.fill_bytes(&mut bytes[..((bitlen as usize + 7) / 8)]);
-                    let val =
-                        BigInt::<8>::from_bytes_le_unsigned(&bytes[..((bitlen as usize + 7) / 8)]);
+                    OsRng.fill_bytes(&mut bytes[..(bitlen as usize).div_ceil(8)]);
+                    let val = BigInt::<8>::from_bytes_le_unsigned(
+                        &bytes[..(bitlen as usize).div_ceil(8)],
+                    );
                     let val = val.abs(); // ensure positive
                     if val.bitsize() <= bitlen {
                         // Check val <= 2*bounds[i]
@@ -504,8 +505,8 @@ impl Lattice<4> {
             // result = Σ x[i] · col_i, with the lattice denominator.
             let mut coords = [BigInt::<8>::ZERO; 4];
             for i in 0..4 {
-                for k in 0..4 {
-                    coords[k] = coords[k].ct_add(&x[i].ct_mul(&cols_8[i][k]));
+                for (k, coord) in coords.iter_mut().enumerate() {
+                    *coord = coord.ct_add(&x[i].ct_mul(&cols_8[i][k]));
                 }
             }
 
@@ -784,10 +785,10 @@ impl LeftIdeal<4> {
     pub fn new(alpha: &Element, norm: &BigInt<4>, order: &Lattice<4>) -> Self {
         // Compute Oα: multiply each basis element of O by α.
         let mut o_alpha_cols = [Vector::ZERO; 4];
-        for j in 0..4 {
+        for (j, o_alpha_col) in o_alpha_cols.iter_mut().enumerate() {
             let basis_j = order.basis_elem(j);
             let product = basis_j.mul(alpha);
-            o_alpha_cols[j] = Vector::new(
+            *o_alpha_col = Vector::new(
                 *product.a.as_bigint(),
                 *product.b.as_bigint(),
                 *product.c.as_bigint(),
@@ -799,9 +800,9 @@ impl LeftIdeal<4> {
 
         // Compute ON: scale each basis vector of O by N.
         let mut o_n_cols = order.basis.columns();
-        for j in 0..4 {
+        for col in &mut o_n_cols {
             for row in 0..4 {
-                o_n_cols[j][row] = o_n_cols[j][row].ct_mul(norm);
+                col[row] = col[row].ct_mul(norm);
             }
         }
         let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), order.denom);
@@ -894,9 +895,9 @@ impl LeftIdeal<4> {
         let mut n: i64 = 0;
         while n < MAX_NORM {
             n += 1;
-            let mut a = -(n as i64);
-            while a <= n as i64 {
-                let rem_a = n as i64 - a.abs();
+            let mut a = -n;
+            while a <= n {
+                let rem_a = n - a.abs();
                 let mut b = -rem_a;
                 while b <= rem_a {
                     let rem_b = rem_a - b.abs();
@@ -904,7 +905,7 @@ impl LeftIdeal<4> {
                     while c <= rem_b {
                         let d = rem_b - c.abs();
                         for &d_val in &[d, -d] {
-                            if a.abs() + b.abs() + c.abs() + d_val.abs() != n as i64 {
+                            if a.abs() + b.abs() + c.abs() + d_val.abs() != n {
                                 continue;
                             }
 
@@ -1021,8 +1022,8 @@ impl LeftIdeal<8> {
                 // Reconstruct α = Σ c_i · col_i in the reduced basis.
                 let mut alpha = [BigInt::<8>::ZERO; 4];
                 for i in 0..4 {
-                    for k in 0..4 {
-                        alpha[k] = alpha[k].ct_add(&c[i].ct_mul(&cols[i][k]));
+                    for (k, alpha_k) in alpha.iter_mut().enumerate() {
+                        *alpha_k = alpha_k.ct_add(&c[i].ct_mul(&cols[i][k]));
                     }
                 }
 
@@ -1328,9 +1329,7 @@ fn insert_before<const N: usize>(
 ) {
     let mut j = k;
     while j > s {
-        let tmp = basis[j];
-        basis[j] = basis[j - 1];
-        basis[j - 1] = tmp;
+        basis.swap(j, j - 1);
 
         for row in 0..D {
             let tmp = gram[row][j];

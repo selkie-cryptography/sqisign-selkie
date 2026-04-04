@@ -9,6 +9,7 @@
 // Projective coordinates traditionally use uppercase letters,
 // lowercase for affine coordinates.
 #![allow(non_snake_case)]
+#![allow(clippy::op_ref)]
 #![deny(missing_docs, clippy::unwrap_used)]
 #![warn(rust_2018_idioms, unused_lifetimes, unused_qualifications)]
 

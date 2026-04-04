@@ -1,8 +1,9 @@
 // TODO: Consider moving the network-dependent test (c_ref_basis_cross_check)
 // to an integration test in tests/.
 
+use precomputed::{ACTION_MATRICES, torsion_basis};
+
 use super::*;
-use precomputed::{torsion_basis, ACTION_MATRICES};
 
 #[test]
 fn action_matrix_via_trait() {
@@ -158,10 +159,10 @@ fn c_ref_basis_cross_check() {
     let p = BigInt::<8>::from_sign_and_limbs(
         0,
         [
-            0xffffffffffffffff,
-            0xffffffffffffffff,
-            0xffffffffffffffff,
-            0x04ffffffffffffff,
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0x04FFFFFFFFFFFFFF,
             0,
             0,
             0,
@@ -219,9 +220,9 @@ fn c_ref_basis_cross_check() {
 #[test]
 fn action_matrix_consistent_with_basis() {
     use crate::curves::{
+        TorsionBasis,
         montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
-        TorsionBasis,
     };
 
     let p0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &Curve::E0);

@@ -12,7 +12,7 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-use crate::fields::fp::{Fp, FP_ENCODED_BYTES};
+use crate::fields::fp::{FP_ENCODED_BYTES, Fp};
 
 /// Number of bytes in a canonical encoding of an element of F_{p²}.
 pub const FP2_ENCODED_BYTES: usize = 2 * FP_ENCODED_BYTES;
@@ -209,7 +209,7 @@ impl Fp2 {
 // Operators
 // ---------------------------------------------------------------------------
 
-impl<'a, 'b> Add<&'b Fp2> for &'a Fp2 {
+impl<'b> Add<&'b Fp2> for &Fp2 {
     type Output = Fp2;
     fn add(self, rhs: &'b Fp2) -> Fp2 {
         Fp2 {
@@ -219,7 +219,7 @@ impl<'a, 'b> Add<&'b Fp2> for &'a Fp2 {
     }
 }
 
-impl<'a, 'b> Sub<&'b Fp2> for &'a Fp2 {
+impl<'b> Sub<&'b Fp2> for &Fp2 {
     type Output = Fp2;
     fn sub(self, rhs: &'b Fp2) -> Fp2 {
         Fp2 {
@@ -229,7 +229,7 @@ impl<'a, 'b> Sub<&'b Fp2> for &'a Fp2 {
     }
 }
 
-impl<'a> Neg for &'a Fp2 {
+impl Neg for &Fp2 {
     type Output = Fp2;
     fn neg(self) -> Fp2 {
         Fp2 {
@@ -239,7 +239,7 @@ impl<'a> Neg for &'a Fp2 {
     }
 }
 
-impl<'a, 'b> Mul<&'b Fp2> for &'a Fp2 {
+impl<'b> Mul<&'b Fp2> for &Fp2 {
     type Output = Fp2;
 
     /// Karatsuba multiplication: 3M + 5A instead of 4M + 2A.
@@ -254,7 +254,7 @@ impl<'a, 'b> Mul<&'b Fp2> for &'a Fp2 {
 }
 
 /// Multiply an F_{p²} element by a base field element.
-impl<'a, 'b> Mul<&'b Fp> for &'a Fp2 {
+impl<'b> Mul<&'b Fp> for &Fp2 {
     type Output = Fp2;
     fn mul(self, rhs: &'b Fp) -> Fp2 {
         Fp2 {

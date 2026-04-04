@@ -33,10 +33,10 @@ pub const NUM_EXTREMAL_ORDERS: usize = 7;
 pub const P: BigInt<4> = BigInt::from_sign_and_limbs(
     0,
     [
-        0xffffffffffffffff,
-        0xffffffffffffffff,
-        0xffffffffffffffff,
-        0x04ffffffffffffff,
+        0xFFFFFFFFFFFFFFFF,
+        0xFFFFFFFFFFFFFFFF,
+        0xFFFFFFFFFFFFFFFF,
+        0x04FFFFFFFFFFFFFF,
     ],
 );
 
@@ -45,10 +45,10 @@ pub const P: BigInt<4> = BigInt::from_sign_and_limbs(
 pub const P_WIDE: BigInt<8> = BigInt::from_sign_and_limbs(
     0,
     [
-        0xffffffffffffffff,
-        0xffffffffffffffff,
-        0xffffffffffffffff,
-        0x04ffffffffffffff,
+        0xFFFFFFFFFFFFFFFF,
+        0xFFFFFFFFFFFFFFFF,
+        0xFFFFFFFFFFFFFFFF,
+        0x04FFFFFFFFFFFFFF,
         0,
         0,
         0,
@@ -212,8 +212,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0xf5f27a647b8578d4,
-                            0xb8746101369629b9,
+                            0xF5F27A647B8578D4,
+                            0xB8746101369629B9,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -222,8 +222,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0xfaf93d323dc2bc6a,
-                            0x5c3a30809b4b14dc,
+                            0xFAF93D323DC2BC6A,
+                            0x5C3A30809B4B14DC,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -235,8 +235,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x95ad2ad56fa47d47,
-                            0xc89877e749be8a4b,
+                            0x95AD2AD56FA47D47,
+                            0xC89877E749BE8A4B,
                             0x0000000000000001,
                             0x0000000000000000,
                         ],
@@ -245,8 +245,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x3e355e2970603f47,
-                            0x78dd10ae2a1bd950,
+                            0x3E355E2970603F47,
+                            0x78DD10AE2A1BD950,
                             0x0000000000000000,
                             0x0280000000000000,
                         ],
@@ -258,8 +258,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0xfaf93d323dc2bc6a,
-                            0x5c3a30809b4b14dc,
+                            0xFAF93D323DC2BC6A,
+                            0x5C3A30809B4B14DC,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -281,8 +281,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         1,
                         [
-                            0xb19426e828ee3fe7,
-                            0x0d6de568af586d7a,
+                            0xB19426E828EE3FE7,
+                            0x0D6DE568AF586D7A,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -292,8 +292,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             BigInt::from_sign_and_limbs(
                 0,
                 [
-                    0xf5f27a647b8578d4,
-                    0xb8746101369629b9,
+                    0xF5F27A647B8578D4,
+                    0xB8746101369629B9,
                     0x0000000000000000,
                     0x0000000000000000,
                 ],
@@ -304,8 +304,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             Coordinate::from_sign_and_limbs(
                 0,
                 [
-                    0x95ad2ad56fa47d47,
-                    0xc89877e749be8a4b,
+                    0x95AD2AD56FA47D47,
+                    0xC89877E749BE8A4B,
                     0x0000000000000001,
                     0x0000000000000000,
                 ],
@@ -321,8 +321,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                 ],
             ),
             Denominator::from_limbs([
-                0xf5f27a647b8578d4,
-                0xb8746101369629b9,
+                0xF5F27A647B8578D4,
+                0xB8746101369629B9,
                 0x0000000000000000,
                 0x0000000000000000,
             ]),
@@ -338,8 +338,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x3c6fa8e67715e5e2,
-                            0x17949bec872b9078,
+                            0x3C6FA8E67715E5E2,
+                            0x17949BEC872B9078,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -348,8 +348,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x1e37d4733b8af2f1,
-                            0x0bca4df64395c83c,
+                            0x1E37D4733B8AF2F1,
+                            0x0BCA4DF64395C83C,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -361,8 +361,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         1,
                         [
-                            0xb034808274c8307a,
-                            0x09ab399ac43a4e8a,
+                            0xB034808274C8307A,
+                            0x09AB399AC43A4E8A,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -371,10 +371,10 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x3d25ca466bc9954f,
-                            0x04f5822946ed431b,
-                            0xeb3e45306eb3e453,
-                            0x0045306eb3e45306,
+                            0x3D25CA466BC9954F,
+                            0x04F5822946ED431B,
+                            0xEB3E45306EB3E453,
+                            0x0045306EB3E45306,
                         ],
                     ),
                 ),
@@ -384,8 +384,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x1e37d4733b8af2f1,
-                            0x0bca4df64395c83c,
+                            0x1E37D4733B8AF2F1,
+                            0x0BCA4DF64395C83C,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -407,8 +407,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0xbd312454ca3a0e7f,
-                            0x002172f0cb4ce562,
+                            0xBD312454CA3A0E7F,
+                            0x002172F0CB4CE562,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -418,8 +418,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             BigInt::from_sign_and_limbs(
                 0,
                 [
-                    0x3c6fa8e67715e5e2,
-                    0x17949bec872b9078,
+                    0x3C6FA8E67715E5E2,
+                    0x17949BEC872B9078,
                     0x0000000000000000,
                     0x0000000000000000,
                 ],
@@ -430,8 +430,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             Coordinate::from_sign_and_limbs(
                 1,
                 [
-                    0xb034808274c8307a,
-                    0x09ab399ac43a4e8a,
+                    0xB034808274C8307A,
+                    0x09AB399AC43A4E8A,
                     0x0000000000000000,
                     0x0000000000000000,
                 ],
@@ -447,8 +447,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                 ],
             ),
             Denominator::from_limbs([
-                0x3c6fa8e67715e5e2,
-                0x17949bec872b9078,
+                0x3C6FA8E67715E5E2,
+                0x17949BEC872B9078,
                 0x0000000000000000,
                 0x0000000000000000,
             ]),
@@ -464,8 +464,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0xde33c5116deeafa2,
-                            0x2df94f97c89ec8ce,
+                            0xDE33C5116DEEAFA2,
+                            0x2DF94F97C89EC8CE,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -474,8 +474,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x6f19e288b6f757d1,
-                            0x16fca7cbe44f6467,
+                            0x6F19E288B6F757D1,
+                            0x16FCA7CBE44F6467,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -487,8 +487,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0xd17aa943da6bdd36,
-                            0x44d44b0c564ce307,
+                            0xD17AA943DA6BDD36,
+                            0x44D44B0C564CE307,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -497,10 +497,10 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         1,
                         [
-                            0xa0a2047cc4063a03,
-                            0x6cee07961df46dbc,
-                            0xc7ce0c7ce0c7ce0c,
-                            0x007ce0c7ce0c7ce0,
+                            0xA0A2047CC4063A03,
+                            0x6CEE07961DF46DBC,
+                            0xC7CE0C7CE0C7CE0C,
+                            0x007CE0C7CE0C7CE0,
                         ],
                     ),
                 ),
@@ -510,8 +510,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x6f19e288b6f757d1,
-                            0x16fca7cbe44f6467,
+                            0x6F19E288B6F757D1,
+                            0x16FCA7CBE44F6467,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -533,8 +533,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         1,
                         [
-                            0xd9f82148a1e2188f,
-                            0x00d6e1b21a072e79,
+                            0xD9F82148A1E2188F,
+                            0x00D6E1B21A072E79,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -544,8 +544,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             BigInt::from_sign_and_limbs(
                 0,
                 [
-                    0xde33c5116deeafa2,
-                    0x2df94f97c89ec8ce,
+                    0xDE33C5116DEEAFA2,
+                    0x2DF94F97C89EC8CE,
                     0x0000000000000000,
                     0x0000000000000000,
                 ],
@@ -556,8 +556,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             Coordinate::from_sign_and_limbs(
                 0,
                 [
-                    0xd17aa943da6bdd36,
-                    0x44d44b0c564ce307,
+                    0xD17AA943DA6BDD36,
+                    0x44D44B0C564CE307,
                     0x0000000000000000,
                     0x0000000000000000,
                 ],
@@ -573,8 +573,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                 ],
             ),
             Denominator::from_limbs([
-                0xde33c5116deeafa2,
-                0x2df94f97c89ec8ce,
+                0xDE33C5116DEEAFA2,
+                0x2DF94F97C89EC8CE,
                 0x0000000000000000,
                 0x0000000000000000,
             ]),
@@ -590,8 +590,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x380014f2025b96a4,
-                            0x7bbeab7f79584e7c,
+                            0x380014F2025B96A4,
+                            0x7BBEAB7F79584E7C,
                             0x0000000000000001,
                             0x0000000000000000,
                         ],
@@ -600,8 +600,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x1c000a79012dcb52,
-                            0xbddf55bfbcac273e,
+                            0x1C000A79012DCB52,
+                            0xBDDF55BFBCAC273E,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -613,8 +613,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         1,
                         [
-                            0x4ba119e7333973e3,
-                            0xdbd0ee6227026ebc,
+                            0x4BA119E7333973E3,
+                            0xDBD0EE6227026EBC,
                             0x0000000000000007,
                             0x0000000000000000,
                         ],
@@ -623,10 +623,10 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x09f01d923dd0ca33,
-                            0x83f7e395afe92f81,
-                            0xfffffffffffffffc,
-                            0x027fffffffffffff,
+                            0x09F01D923DD0CA33,
+                            0x83F7E395AFE92F81,
+                            0xFFFFFFFFFFFFFFFC,
+                            0x027FFFFFFFFFFFFF,
                         ],
                     ),
                 ),
@@ -636,8 +636,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x1c000a79012dcb52,
-                            0xbddf55bfbcac273e,
+                            0x1C000A79012DCB52,
+                            0xBDDF55BFBCAC273E,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -659,8 +659,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x87f571c0f93ceb73,
-                            0x12fab9cbcb3c667a,
+                            0x87F571C0F93CEB73,
+                            0x12FAB9CBCB3C667A,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -670,8 +670,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             BigInt::from_sign_and_limbs(
                 0,
                 [
-                    0x380014f2025b96a4,
-                    0x7bbeab7f79584e7c,
+                    0x380014F2025B96A4,
+                    0x7BBEAB7F79584E7C,
                     0x0000000000000001,
                     0x0000000000000000,
                 ],
@@ -682,8 +682,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             Coordinate::from_sign_and_limbs(
                 1,
                 [
-                    0x4ba119e7333973e3,
-                    0xdbd0ee6227026ebc,
+                    0x4BA119E7333973E3,
+                    0xDBD0EE6227026EBC,
                     0x0000000000000007,
                     0x0000000000000000,
                 ],
@@ -699,8 +699,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                 ],
             ),
             Denominator::from_limbs([
-                0x380014f2025b96a4,
-                0x7bbeab7f79584e7c,
+                0x380014F2025B96A4,
+                0x7BBEAB7F79584E7C,
                 0x0000000000000001,
                 0x0000000000000000,
             ]),
@@ -716,9 +716,9 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0xe2b97b9e55af7ffa,
-                            0xc227f76b578ca7af,
-                            0x000000000000000f,
+                            0xE2B97B9E55AF7FFA,
+                            0xC227F76B578CA7AF,
+                            0x000000000000000F,
                             0x0000000000000000,
                         ],
                     ),
@@ -726,8 +726,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0xf15cbdcf2ad7bffd,
-                            0xe113fbb5abc653d7,
+                            0xF15CBDCF2AD7BFFD,
+                            0xE113FBB5ABC653D7,
                             0x0000000000000007,
                             0x0000000000000000,
                         ],
@@ -739,9 +739,9 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         1,
                         [
-                            0xa2ef1ce7f02b0d16,
-                            0x066759632c56054b,
-                            0x000000000000006f,
+                            0xA2EF1CE7F02B0D16,
+                            0x066759632C56054B,
+                            0x000000000000006F,
                             0x0000000000000000,
                         ],
                     ),
@@ -749,10 +749,10 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x84ac06ea9d3bf0ab,
-                            0xd021882bdde962e5,
-                            0xffffffffffffffe2,
-                            0x13ffffffffffffff,
+                            0x84AC06EA9D3BF0AB,
+                            0xD021882BDDE962E5,
+                            0xFFFFFFFFFFFFFFE2,
+                            0x13FFFFFFFFFFFFFF,
                         ],
                     ),
                 ),
@@ -762,8 +762,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0xf15cbdcf2ad7bffd,
-                            0xe113fbb5abc653d7,
+                            0xF15CBDCF2AD7BFFD,
+                            0xE113FBB5ABC653D7,
                             0x0000000000000007,
                             0x0000000000000000,
                         ],
@@ -785,8 +785,8 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                     BigInt::from_sign_and_limbs(
                         0,
                         [
-                            0x077013f15c4a1f37,
-                            0x9281da3156007183,
+                            0x077013F15C4A1F37,
+                            0x9281DA3156007183,
                             0x0000000000000000,
                             0x0000000000000000,
                         ],
@@ -796,9 +796,9 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             BigInt::from_sign_and_limbs(
                 0,
                 [
-                    0xe2b97b9e55af7ffa,
-                    0xc227f76b578ca7af,
-                    0x000000000000000f,
+                    0xE2B97B9E55AF7FFA,
+                    0xC227F76B578CA7AF,
+                    0x000000000000000F,
                     0x0000000000000000,
                 ],
             ),
@@ -808,9 +808,9 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
             Coordinate::from_sign_and_limbs(
                 1,
                 [
-                    0xa2ef1ce7f02b0d16,
-                    0x066759632c56054b,
-                    0x000000000000006f,
+                    0xA2EF1CE7F02B0D16,
+                    0x066759632C56054B,
+                    0x000000000000006F,
                     0x0000000000000000,
                 ],
             ),
@@ -825,9 +825,9 @@ pub const EXTREMAL_ORDERS: [ExtremalOrder<4>; NUM_EXTREMAL_ORDERS] = [
                 ],
             ),
             Denominator::from_limbs([
-                0xe2b97b9e55af7ffa,
-                0xc227f76b578ca7af,
-                0x000000000000000f,
+                0xE2B97B9E55AF7FFA,
+                0xC227F76B578CA7AF,
+                0x000000000000000F,
                 0x0000000000000000,
             ]),
         ),

@@ -62,11 +62,11 @@ impl core::fmt::Debug for Fp {
 ///
 /// Taken from the C reference `nres()` function.
 const R2: Fp = Fp([
-    0x0004cccccccccf5c,
+    0x0004CCCCCCCCCF5C,
     0x0001999999999999,
     0x0003333333333333,
     0x0006666666666666,
-    0x00000ccccccccccc,
+    0x00000CCCCCCCCCCC,
 ]);
 
 impl Fp {
@@ -97,7 +97,7 @@ impl Fp {
         0x0000000000000000,
         0x0000000000000000,
         0x0000000000000000,
-        0x0000c00000000000,
+        0x0000C00000000000,
     ]);
 
     /// Construct a field element from a small integer.
@@ -108,21 +108,21 @@ impl Fp {
     }
 
     /// Convert a field element in normal form to Montgomery form.
-    fn to_montgomery(&self) -> Fp {
-        self * &R2
+    fn to_montgomery(self) -> Fp {
+        &self * &R2
     }
 
     /// Convert from Montgomery form back to normal (canonical) form.
-    fn from_montgomery(&self) -> Fp {
+    fn reduce_montgomery(self) -> Fp {
         let one = Fp([1, 0, 0, 0, 0]);
-        let mut r = self * &one;
+        let mut r = &self * &one;
         r.final_sub();
         r
     }
 
     /// Encode this field element as 32 bytes, little-endian.
     pub fn to_bytes(&self) -> [u8; FP_ENCODED_BYTES] {
-        let c = self.from_montgomery();
+        let c = self.reduce_montgomery();
         let mut out = [0u8; 32];
 
         // Pack the 5 radix-51 limbs into 32 bytes, little-endian.
@@ -354,7 +354,7 @@ impl Fp {
 // Operator implementations
 // ---------------------------------------------------------------------------
 
-impl<'a, 'b> Add<&'b Fp> for &'a Fp {
+impl<'b> Add<&'b Fp> for &Fp {
     type Output = Fp;
 
     /// Modular addition, reduced to less than 2p.
@@ -378,7 +378,7 @@ impl<'a, 'b> Add<&'b Fp> for &'a Fp {
     }
 }
 
-impl<'a, 'b> Sub<&'b Fp> for &'a Fp {
+impl<'b> Sub<&'b Fp> for &Fp {
     type Output = Fp;
 
     /// Modular subtraction, reduced to less than 2p.
@@ -398,7 +398,7 @@ impl<'a, 'b> Sub<&'b Fp> for &'a Fp {
     }
 }
 
-impl<'a> Neg for &'a Fp {
+impl Neg for &Fp {
     type Output = Fp;
 
     fn neg(self) -> Fp {
@@ -406,7 +406,7 @@ impl<'a> Neg for &'a Fp {
     }
 }
 
-impl<'a, 'b> Mul<&'b Fp> for &'a Fp {
+impl<'b> Mul<&'b Fp> for &Fp {
     type Output = Fp;
 
     /// Modular multiplication (Montgomery form), reduced to less than 2p.

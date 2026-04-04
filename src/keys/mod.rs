@@ -14,9 +14,8 @@ pub use signing::SigningKey;
 pub use verifying::VerifyingKey;
 
 pub use crate::params::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};
-
 use crate::{
-    curves::{montgomery::Curve, AuxiliaryHint, ChallengeHint, TorsionBasis},
+    curves::{AuxiliaryHint, ChallengeHint, TorsionBasis, montgomery::Curve},
     fields::fp2::Fp2,
     hash::CHALLENGE_BYTES,
     params::{E_RSP, TORSION_2POWER_BYTES},
@@ -85,7 +84,7 @@ impl Signature {
         let r_rsp = sig[65] as u32;
 
         // M_chl: 2×2 matrix, each component ⌈(e_rsp+7)/8⌉ bytes.
-        let comp_bytes = ((E_RSP + 7) / 8) as usize;
+        let comp_bytes = E_RSP.div_ceil(8) as usize;
         let m_offset = 66;
         let M_chl =
             ChallengeMatrix::from_bytes(&sig[m_offset..m_offset + 4 * comp_bytes], comp_bytes)?;
@@ -230,8 +229,9 @@ fn sub_mod2k(
     if remaining_bits > 0 && full_bytes < TORSION_2POWER_BYTES {
         out[full_bytes] &= (1u8 << remaining_bits) - 1;
     }
-    for i in (full_bytes + if remaining_bits > 0 { 1 } else { 0 })..TORSION_2POWER_BYTES {
-        out[i] = 0;
+    let start = full_bytes + if remaining_bits > 0 { 1 } else { 0 };
+    for byte in out.iter_mut().take(TORSION_2POWER_BYTES).skip(start) {
+        *byte = 0;
     }
 }
 

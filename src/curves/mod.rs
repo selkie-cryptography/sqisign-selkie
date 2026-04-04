@@ -19,7 +19,7 @@ pub mod scalar;
 use subtle::ConditionallySelectable;
 
 use crate::{
-    curves::montgomery::{differential_add_and_double, Curve, ProjectiveXOnlyPoint},
+    curves::montgomery::{Curve, ProjectiveXOnlyPoint, differential_add_and_double},
     fields::{fp::Fp, fp2::Fp2},
     params::TORSION_EVEN_POWER,
 };
@@ -362,9 +362,9 @@ impl TorsionBasis {
         //   }
         // With NWORDS_ORDER=4 and RADIX=64, this is 256 bits.
         // Our equivalent: 32 bytes × 8 bits = 256 bits.
-        for byte_idx in 0..32usize {
+        for byte in &m {
             for bit_pos in 0..8u32 {
-                let bit = (m[byte_idx] >> bit_pos) & 1;
+                let bit = (byte >> bit_pos) & 1;
                 // C ref: cswap when bit == 0
                 let mask = subtle::Choice::from(bit ^ 1);
                 ProjectiveXOnlyPoint::conditional_swap(&mut x1, &mut x2, mask);
@@ -444,8 +444,8 @@ impl TorsionBasis {
         n_t[..n_len].copy_from_slice(&n[..n_len]);
 
         // Subtract 1 from even scalars (constant-time).
-        sub_one_ct(&mut m_t, mask_m ^ 0xff); // subtract if m was even
-        sub_one_ct(&mut n_t, mask_n ^ 0xff); // subtract if n was even
+        sub_one_ct(&mut m_t, mask_m ^ 0xFF); // subtract if m was even
+        sub_one_ct(&mut n_t, mask_n ^ 0xFF); // subtract if n was even
 
         // Compute recoding bits r[2i] and r[2i+1].
         let mut r = vec![0u8; 2 * kbits];
@@ -550,7 +550,7 @@ impl TorsionBasis {
         let mut curve = *curve;
         curve.normalize();
         let curve = &curve;
-        let A = Fp2::from(*curve.coefficient().as_fp2());
+        let A = *curve.coefficient().as_fp2();
 
         // Special case: A = 0 (the starting curve E₀).
         // Use precomputed basis points and compute the difference.
@@ -685,7 +685,7 @@ impl TorsionBasis {
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
     pub(crate) fn to_hint(curve: &Curve) -> (TorsionBasis, BasisHint) {
         let _e = TORSION_EVEN_POWER;
-        let A = Fp2::from(*curve.coefficient().as_fp2());
+        let A = *curve.coefficient().as_fp2();
 
         if A == Fp2::ZERO {
             // E₀ has no hint — the basis is precomputed.

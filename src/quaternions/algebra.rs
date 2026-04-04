@@ -67,7 +67,7 @@ impl Coordinate {
     ///
     /// Works for any `N >= 4`. The upper limbs are zeroed.
     #[inline]
-    pub fn to_bigint<const N: usize>(&self) -> BigInt<N> {
+    pub fn to_bigint<const N: usize>(self) -> BigInt<N> {
         let mut limbs = [0u64; N];
         limbs[0] = self.0.as_limbs()[0];
         limbs[1] = self.0.as_limbs()[1];
@@ -171,7 +171,7 @@ impl Denominator {
 
     /// Widens to `BigInt<N>` by zero-extending the four limbs.
     #[inline]
-    pub fn to_bigint<const N: usize>(&self) -> BigInt<N> {
+    pub fn to_bigint<const N: usize>(self) -> BigInt<N> {
         let mut limbs = [0u64; N];
         limbs[0] = self.0.as_limbs()[0];
         limbs[1] = self.0.as_limbs()[1];

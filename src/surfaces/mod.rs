@@ -129,9 +129,9 @@ impl GluingMatrix {
     pub(crate) fn apply_null(&self, null: &ThetaNullPoint) -> ThetaNullPoint {
         let v = [&null.a, &null.b, &null.c, &null.d];
         let mut out = [Fp2::ZERO; 4];
-        for i in 0..4 {
-            for j in 0..4 {
-                out[i] = &out[i] + &(&self.0[i][j] * v[j]);
+        for (i, out_elem) in out.iter_mut().enumerate() {
+            for (j, vj) in v.iter().enumerate() {
+                *out_elem = &*out_elem + &(&self.0[i][j] * *vj);
             }
         }
         ThetaNullPoint::new(out[0], out[1], out[2], out[3])
@@ -141,9 +141,9 @@ impl GluingMatrix {
     pub(crate) fn apply_point(&self, P: &JacobianPoint) -> JacobianPoint {
         let v = [&P.X, &P.Y, &P.Z, &P.W];
         let mut out = [Fp2::ZERO; 4];
-        for i in 0..4 {
-            for j in 0..4 {
-                out[i] = &out[i] + &(&self.0[i][j] * v[j]);
+        for (i, out_elem) in out.iter_mut().enumerate() {
+            for (j, vj) in v.iter().enumerate() {
+                *out_elem = &*out_elem + &(&self.0[i][j] * *vj);
             }
         }
         JacobianPoint::new(out[0], out[1], out[2], out[3], P.surface.clone())
@@ -157,9 +157,9 @@ impl core::ops::Mul<&(Fp2, Fp2, Fp2, Fp2)> for &GluingMatrix {
     fn mul(self, v: &(Fp2, Fp2, Fp2, Fp2)) -> (Fp2, Fp2, Fp2, Fp2) {
         let va = [&v.0, &v.1, &v.2, &v.3];
         let mut out = [Fp2::ZERO; 4];
-        for i in 0..4 {
-            for j in 0..4 {
-                out[i] = &out[i] + &(&self.0[i][j] * va[j]);
+        for (i, out_elem) in out.iter_mut().enumerate() {
+            for (j, vaj) in va.iter().enumerate() {
+                *out_elem = &*out_elem + &(&self.0[i][j] * *vaj);
             }
         }
         (out[0], out[1], out[2], out[3])
@@ -173,10 +173,10 @@ impl core::ops::Mul<&GluingMatrix> for &GluingMatrix {
     /// Matrix multiplication: self · rhs.
     fn mul(self, rhs: &GluingMatrix) -> GluingMatrix {
         let mut out = [[Fp2::ZERO; 4]; 4];
-        for i in 0..4 {
-            for j in 0..4 {
+        for (i, out_row) in out.iter_mut().enumerate() {
+            for (j, out_elem) in out_row.iter_mut().enumerate() {
                 for k in 0..4 {
-                    out[i][j] = &out[i][j] + &(&self.0[i][k] * &rhs.0[k][j]);
+                    *out_elem = &*out_elem + &(&self.0[i][k] * &rhs.0[k][j]);
                 }
             }
         }
@@ -471,8 +471,8 @@ impl Kernel {
         // Convert bottom strategy point from Jacobian to Montgomery
         // via jac_to_xz (the From impl). The codomain computation
         // uses these Montgomery points.
-        let A1 = Fp2::from(*self.domain.E1.coefficient().as_fp2());
-        let A2 = Fp2::from(*self.domain.E2.coefficient().as_fp2());
+        let A1 = *self.domain.E1.coefficient().as_fp2();
+        let A2 = *self.domain.E2.coefficient().as_fp2();
 
         let gluing_T1_jac = strat_pts[k].0;
         let gluing_T2_jac = strat_pts[k].1;
@@ -561,9 +561,7 @@ impl Kernel {
         // Push remaining strategy points through the gluing eval.
         // The strategy points are already in Jacobian — pass directly.
         let mut theta_strat: Vec<(JacobianPoint, JacobianPoint)> = Vec::new();
-        for i in 0..k {
-            let (ri_jac, si_jac) = strat_pts[i];
-
+        for &(ri_jac, si_jac) in strat_pts.iter().take(k) {
             let R = GluingKernel::eval(&ri_jac, &gluing.T1_jac, &A1, &A2, &gluing_data);
             let S = GluingKernel::eval(&si_jac, &gluing.T1_jac, &A1, &A2, &gluing_data);
             theta_strat.push((R, S));
@@ -741,8 +739,8 @@ impl Kernel {
 mod tests {
     use super::*;
     use crate::curves::{
-        montgomery::{Curve, ProjectiveXOnlyPoint},
         TorsionExponent,
+        montgomery::{Curve, ProjectiveXOnlyPoint},
     };
 
     /// Minimal (2,2)-chain test: e=2 on E₁ × E₂ where E₁ ≠ E₂.
@@ -879,8 +877,8 @@ mod tests {
     #[test]
     fn gluing_from_kat_data() {
         use crate::{
-            curves::{isogeny::Kernel as CurveKernel, BasisHint, TorsionExponent as TE},
-            keys::{Signature, VerifyingKey, SIGNATURE_BYTES},
+            curves::{BasisHint, TorsionExponent as TE, isogeny::Kernel as CurveKernel},
+            keys::{SIGNATURE_BYTES, Signature, VerifyingKey},
         };
 
         let pk_hex = "07CCD21425136F6E865E497D2D4D208F0054AD81372066E817480787AAF7B2029550C89E892D618CE3230F23510BFBE68FCCDDAEA51DB1436B462ADFAF008A010B";

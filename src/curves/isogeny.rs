@@ -20,9 +20,9 @@ use subtle::ConstantTimeEq;
 
 use crate::{
     curves::{
+        TorsionExponent,
         montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
-        TorsionExponent,
     },
     fields::fp2::Fp2,
 };
@@ -172,11 +172,11 @@ impl Kernel {
             let phi = FourIsogeny::from_kernel(&strat_pts[k]);
             curve = phi.codomain;
 
-            for i in 0..k {
-                strat_pts[i] = phi.eval(&strat_pts[i]);
+            for pt in strat_pts.iter_mut().take(k) {
+                *pt = phi.eval(pt);
             }
-            for i in 0..k {
-                orders[i] -= 2;
+            for order in orders.iter_mut().take(k) {
+                *order -= 2;
             }
             orders.truncate(k);
             strat_pts.truncate(k);
