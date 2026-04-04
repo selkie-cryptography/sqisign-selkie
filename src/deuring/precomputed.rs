@@ -29,8 +29,7 @@ use crate::quaternions::bigint::BigInt;
 /// by converting from the Broadwell Montgomery form (R = 2^256) to
 /// plain integers.
 pub mod torsion_basis {
-    use crate::fields::fp::Fp;
-    use crate::fields::fp2::Fp2;
+    use crate::fields::{fp::Fp, fp2::Fp2};
 
     const E0_PX_RE_BYTES: [u8; 32] = [
         0x78, 0x00, 0xb4, 0xae, 0x5e, 0xd9, 0x19, 0x21, 0x8b, 0xa7, 0xbf, 0x59, 0x1a, 0x99, 0xbe,

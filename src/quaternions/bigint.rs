@@ -9,9 +9,11 @@
 //! [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
 //! [cb]: https://github.com/RustCrypto/crypto-bigint
 
-use core::cmp::Ordering;
-use core::fmt;
-use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::{
+    cmp::Ordering,
+    fmt,
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
@@ -342,7 +344,8 @@ impl<const N: usize> BigInt<N> {
 
     /// Negation. Flips the sign bit.
     ///
-    /// Table 1 (§3.1) from [Kouider et al.][ct-bigint]: `c_sign = 1 XOR a_sign`.
+    /// Table 1 (§3.1) from [Kouider et al.][ct-bigint]: `c_sign = 1 XOR
+    /// a_sign`.
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
     #[inline]
@@ -1002,8 +1005,8 @@ impl<const N: usize> BigInt<N> {
         (result, carry)
     }
 
-    /// Constant-time unsigned subtraction of magnitudes. Returns `(limbs, borrow)`.
-    /// Borrow is 1 if `a < b` (unsigned).
+    /// Constant-time unsigned subtraction of magnitudes. Returns `(limbs,
+    /// borrow)`. Borrow is 1 if `a < b` (unsigned).
     #[inline]
     const fn mag_sub(a: &[u64; N], b: &[u64; N]) -> ([u64; N], u64) {
         let mut result = [0u64; N];
@@ -1203,7 +1206,8 @@ impl<const N: usize> BigInt<N> {
 
     /// Schoolbook multiplication of magnitudes, truncated to `N` limbs.
     ///
-    /// Adapted from Table 1 (§3.1) of [Kouider et al.][ct-bigint] (schoolbook limb-by-limb).
+    /// Adapted from Table 1 (§3.1) of [Kouider et al.][ct-bigint] (schoolbook
+    /// limb-by-limb).
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
     fn mag_mul(a: &[u64; N], b: &[u64; N]) -> [u64; N] {
@@ -1272,7 +1276,8 @@ impl<const N: usize> BigInt<N> {
 
     /// Constant-time signed multiplication.
     ///
-    /// Sign is XOR of input signs (Table 1, §3.1 of [Kouider et al.][ct-bigint]).
+    /// Sign is XOR of input signs (Table 1, §3.1 of [Kouider et
+    /// al.][ct-bigint]).
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
     /// Magnitude is schoolbook product, truncated to `N` limbs.

@@ -18,12 +18,14 @@
 
 use subtle::ConstantTimeEq;
 
-use crate::curves::{
-    montgomery::{Curve, ProjectiveXOnlyPoint},
-    scalar::Scalar,
-    TorsionExponent,
+use crate::{
+    curves::{
+        montgomery::{Curve, ProjectiveXOnlyPoint},
+        scalar::Scalar,
+        TorsionExponent,
+    },
+    fields::fp2::Fp2,
 };
-use crate::fields::fp2::Fp2;
 
 // ---------------------------------------------------------------------------
 // IsogenyDegree

@@ -8,10 +8,10 @@
 //!
 //! [§3.2.1.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.2.1.1
 
-use crate::curves::montgomery::ProjectiveXOnlyPoint;
-use crate::curves::scalar::Scalar;
-use crate::curves::{TorsionBasis, TorsionExponent};
-use crate::quaternions::bigint::BigInt;
+use crate::{
+    curves::{montgomery::ProjectiveXOnlyPoint, scalar::Scalar, TorsionBasis, TorsionExponent},
+    quaternions::bigint::BigInt,
+};
 
 /// A 2×2 matrix over Z/2^f Z representing the action of an
 /// endomorphism on a torsion basis (P, Q) of E[2^f].

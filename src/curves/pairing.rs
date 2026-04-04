@@ -14,10 +14,10 @@ use core::ops::{Div, Mul};
 
 use subtle::{Choice, ConditionallySelectable};
 
-use crate::curves::montgomery::ProjectiveXOnlyPoint;
-use crate::curves::scalar::Scalar;
-use crate::curves::TorsionExponent;
-use crate::fields::fp2::Fp2;
+use crate::{
+    curves::{montgomery::ProjectiveXOnlyPoint, scalar::Scalar, TorsionExponent},
+    fields::fp2::Fp2,
+};
 
 // ---------------------------------------------------------------------------
 // Reduced Tate pairing value

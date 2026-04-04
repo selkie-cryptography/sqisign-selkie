@@ -148,8 +148,7 @@ impl Fp2 {
     /// 2. x₀ ← a₀ + δ,  t₀ ← 2·x₀
     /// 3. x₁ ← t₀^{(p−3)/4}
     /// 4. x₀ ← x₀·x₁,  x₁ ← a₁·x₁
-    /// 5. If (2·x₀)² = t₀: r ← x₀ + x₁·i
-    ///    else:              r ← x₁ − x₀·i
+    /// 5. If (2·x₀)² = t₀: r ← x₀ + x₁·i else:              r ← x₁ − x₀·i
     /// 6. If re(r) is odd, or re(r) = 0 and im(r) is odd: r ← −r
     ///
     /// Step 6 is the canonicalization.

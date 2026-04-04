@@ -19,10 +19,12 @@
 //! [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
 //! [Algorithm 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
 
-use super::algebra::{Coordinate, Denominator, Element};
-use super::bigint::BigInt;
-use super::lattice::{ExtremalOrder, Lattice};
-use super::linear::{Matrix, Vector};
+use super::{
+    algebra::{Coordinate, Denominator, Element},
+    bigint::BigInt,
+    lattice::{ExtremalOrder, Lattice},
+    linear::{Matrix, Vector},
+};
 
 /// Number of precomputed extremal orders.
 pub const NUM_EXTREMAL_ORDERS: usize = 7;

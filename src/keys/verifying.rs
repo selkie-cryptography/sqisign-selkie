@@ -7,14 +7,17 @@
 
 use subtle::ConstantTimeEq;
 
-use crate::curves::isogeny::Kernel as CurveKernel;
-use crate::curves::montgomery::Curve;
-use crate::curves::{TorsionBasis, TorsionExponent, VerifyingKeyHint};
-use crate::fields::Fp2;
-use crate::hash;
-use crate::keys::{Signature, SignatureError, VERIFYING_KEY_BYTES};
-use crate::params::{E_RSP, TORSION_EVEN_POWER};
-use crate::surfaces;
+use crate::{
+    curves::{
+        isogeny::Kernel as CurveKernel, montgomery::Curve, TorsionBasis, TorsionExponent,
+        VerifyingKeyHint,
+    },
+    fields::Fp2,
+    hash,
+    keys::{Signature, SignatureError, VERIFYING_KEY_BYTES},
+    params::{E_RSP, TORSION_EVEN_POWER},
+    surfaces,
+};
 
 /// An SQIsign verifying (public) key.
 ///
