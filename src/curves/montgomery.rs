@@ -104,11 +104,19 @@ impl From<Coefficient> for Fp2 {
 /// A Montgomery curve E_A : y² = x³ + Ax² + x over F_{p²}.
 ///
 /// Stores the [`Coefficient`] A together with precomputed
-/// projective doubling constants (A₂₄, C₂₄) = (A + 2, 4).
+/// projective doubling constants (A₂₄, C₂₄) = (A + 2C, 4C), and the
+/// projective Montgomery coefficient (A : C).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Curve {
+    /// Affine Montgomery coefficient A (= Aproj/Cproj).
     A: Coefficient,
+    /// Projective Montgomery coefficient A (numerator).
+    Aproj: Fp2,
+    /// Projective Montgomery coefficient C (denominator).
+    Cproj: Fp2,
+    /// Doubling constant A₂₄ = A + 2C.
     A24: Fp2,
+    /// Doubling constant C₂₄ = 4C.
     C24: Fp2,
 }
 
@@ -118,39 +126,77 @@ impl Curve {
     /// This is the supersingular curve used as the base in SQIsign.
     pub const E0: Curve = Curve {
         A: Coefficient::ZERO,
+        Aproj: Fp2::ZERO,
+        Cproj: Fp2::ONE,
         A24: Fp2::new(Fp::TWO, Fp::ZERO),
         C24: Fp2::new(Fp::FOUR, Fp::ZERO),
     };
 
-    /// Construct a curve from its Montgomery coefficient.
-    pub fn new(A: Coefficient) -> Curve {
-        let a = A.as_fp2();
+    /// Construct from the affine Montgomery coefficient A (C = 1).
+    pub fn from_affine(A: Coefficient) -> Curve {
+        let a = *A.as_fp2();
         let two = Fp2::from_fp(Fp::from_small(2));
         let four = Fp2::from_fp(Fp::from_small(4));
         Curve {
             A,
-            A24: a + &two,
+            Aproj: a,
+            Cproj: Fp2::ONE,
+            A24: &a + &two,
             C24: four,
+        }
+    }
+
+    /// Construct from projective Montgomery coefficient (A : C).
+    ///
+    /// The affine coefficient is A/C (requires one inversion).
+    pub fn from_projective_coeff(Aproj: Fp2, Cproj: Fp2) -> Curve {
+        let c_inv = Cproj.invert();
+        let a_affine = &Aproj * &c_inv;
+        let two = Fp2::from_fp(Fp::from_small(2));
+        let four = Fp2::from_fp(Fp::from_small(4));
+        let two_c = &Cproj + &Cproj;
+        Curve {
+            A: Coefficient(a_affine),
+            Aproj,
+            Cproj,
+            A24: &Aproj + &two_c,
+            C24: &four * &Cproj,
         }
     }
 
     /// Construct from projective doubling constants (A₂₄ : C₂₄).
     ///
-    /// This avoids field inversions when the curve is produced by an
-    /// isogeny codomain computation, which naturally outputs projective
-    /// constants. The affine coefficient A is recovered as
-    /// A = 4·A₂₄/C₂₄ − 2.
-    pub fn from_projective(A24: Fp2, C24: Fp2) -> Curve {
+    /// Used when the curve is produced by an isogeny codomain
+    /// computation, which naturally outputs doubling constants.
+    /// The affine coefficient is recovered as A = 4·A₂₄/C₂₄ − 2.
+    pub fn from_doubling_constants(A24: Fp2, C24: Fp2) -> Curve {
         let two = Fp2::from_fp(Fp::from_small(2));
         let four = Fp2::from_fp(Fp::from_small(4));
         let A = &(&(&four * &A24) * &C24.invert()) - &two;
+        // (A : C) from (A24 : C24): A24 = A+2C, C24 = 4C
+        // so (A : C) = (4·A24 − 2·C24 : C24).
+        let two_c24 = &C24 + &C24;
+        let four_a24 = {
+            let t = &A24 + &A24;
+            &t + &t
+        };
         Curve {
             A: Coefficient(A),
+            Aproj: &four_a24 - &two_c24,
+            Cproj: C24,
             A24,
             C24,
         }
     }
+}
 
+impl From<Coefficient> for Curve {
+    fn from(A: Coefficient) -> Self {
+        Self::from_affine(A)
+    }
+}
+
+impl Curve {
     /// Normalize the doubling constants to (A₂₄/C₂₄ : 1).
     ///
     /// The C reference (`ec_normalize_curve_and_A24`) normalizes
@@ -179,6 +225,15 @@ impl Curve {
     /// The projective doubling constants (A₂₄, C₂₄).
     pub fn projective_constants(&self) -> (&Fp2, &Fp2) {
         (&self.A24, &self.C24)
+    }
+
+    /// The projective Montgomery coefficient (A : C).
+    ///
+    /// Isogeny codomains produce curves with C ≠ 1; use this for
+    /// projective arithmetic (e.g., [`Isomorphism`]) instead of
+    /// [`coefficient`](Self::coefficient).
+    pub fn projective_coefficient(&self) -> (&Fp2, &Fp2) {
+        (&self.Aproj, &self.Cproj)
     }
 
     /// Compute the [j-invariant] j(E_A).
@@ -673,6 +728,145 @@ mod tests {
         let p_x = &p_mont.X * &p_mont.Z.invert();
         let orig_x = &p.X * &p.Z.invert();
         assert_eq!(p_x, orig_x, "jac_to_xz should preserve affine x");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Isomorphisms between Montgomery curves (§2.2.1.1, §8.2.2)
+// ---------------------------------------------------------------------------
+
+/// An isomorphism between two Montgomery curves with the same j-invariant.
+///
+/// Implements [IsomorphismMontgomeryCurves][Alg. 8.9] from the spec.
+/// Works entirely in projective coordinates — no field inversions.
+///
+/// The isomorphism maps x-only projective points via precomputed
+/// projective constants (λ_x, λ_z, A, C, A', C') so that each
+/// point evaluation is 4M + 1a.
+///
+/// [Alg. 8.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.9
+#[derive(Copy, Clone, Debug)]
+pub struct Isomorphism {
+    /// λ_x = (2A'³ − 9A'C'²)(3C³ − A²C).
+    lambda_x: Fp2,
+    /// λ_z = (2A³ − 9AC²)(3C'³ − A'²C').
+    lambda_z: Fp2,
+    /// Precomputed: 3CC'.
+    three_cc_prime: Fp2,
+    /// AC' (source A · target C).
+    ac_prime: Fp2,
+    /// A'C (target A · source C).
+    a_prime_c: Fp2,
+    target: Curve,
+}
+
+impl Isomorphism {
+    /// Compute the isomorphism from `source` to `target`.
+    ///
+    /// Both curves must have the same j-invariant. Returns `None` if
+    /// λ_x = 0 or λ_z = 0 (degenerate case, see Remark 1 in the spec).
+    ///
+    /// Implements lines 1–3 of [Algorithm 8.9][Alg. 8.9].
+    ///
+    /// [Alg. 8.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.9
+    #[must_use]
+    pub fn new(source: &Curve, target: &Curve) -> Option<Self> {
+        let (a_ref, c_ref) = source.projective_coefficient();
+        let (a, c) = (*a_ref, *c_ref);
+        let (ap_ref, cp_ref) = target.projective_coefficient();
+        let (a_prime, c_prime) = (*ap_ref, *cp_ref);
+
+        // Line 1: λ_x ← (2A'³ − 9A'C'²)(3C³ − A²C)
+        let lambda_x = {
+            let a_prime_c_prime_sq = &a_prime * &c_prime.square();
+            let nine_a_prime_c_prime_sq = {
+                let t = &a_prime_c_prime_sq + &a_prime_c_prime_sq;
+                let t4 = &t + &t;
+                let t8 = &t4 + &t4;
+                &t8 + &a_prime_c_prime_sq
+            };
+            let two_a_prime_cubed = {
+                let t = &a_prime.square() * &a_prime;
+                &t + &t
+            };
+            let left = &two_a_prime_cubed - &nine_a_prime_c_prime_sq;
+
+            let c_cubed = &c.square() * &c;
+            let three_c_cubed = {
+                let t = &c_cubed + &c_cubed;
+                &t + &c_cubed
+            };
+            let a_sq_c = &a.square() * &c;
+            let right = &three_c_cubed - &a_sq_c;
+
+            &left * &right
+        };
+
+        // Line 2: λ_z ← (2A³ − 9AC²)(3C'³ − A'²C')
+        let lambda_z = {
+            let a_c_sq = &a * &c.square();
+            let nine_a_c_sq = {
+                let t = &a_c_sq + &a_c_sq;
+                let t4 = &t + &t;
+                let t8 = &t4 + &t4;
+                &t8 + &a_c_sq
+            };
+            let two_a_cubed = {
+                let t = &a.square() * &a;
+                &t + &t
+            };
+            let left = &two_a_cubed - &nine_a_c_sq;
+
+            let c_prime_cubed = &c_prime.square() * &c_prime;
+            let three_c_prime_cubed = {
+                let t = &c_prime_cubed + &c_prime_cubed;
+                &t + &c_prime_cubed
+            };
+            let a_prime_sq_c_prime = &a_prime.square() * &c_prime;
+            let right = &three_c_prime_cubed - &a_prime_sq_c_prime;
+
+            &left * &right
+        };
+
+        // Line 3: degeneracy check
+        if lambda_x == Fp2::ZERO || lambda_z == Fp2::ZERO {
+            return None;
+        }
+
+        // Precompute constants for eval (lines 5–8).
+        let cc_prime = &c * &c_prime;
+        let three_cc_prime = {
+            let t = &cc_prime + &cc_prime;
+            &t + &cc_prime
+        };
+
+        Some(Self {
+            lambda_x,
+            lambda_z,
+            three_cc_prime,
+            ac_prime: &a * &c_prime,
+            a_prime_c: &a_prime * &c,
+            target: *target,
+        })
+    }
+
+    /// Apply this isomorphism to a projective x-only point.
+    ///
+    /// Implements lines 5–6 of [Algorithm 8.9][Alg. 8.9]:
+    /// ```text
+    /// X' ← λ_x(3X·CC' + AC'·Z) − λ_z·A'C·Z
+    /// Z' ← 3λ_z·CC'·Z
+    /// ```
+    ///
+    /// [Alg. 8.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.9
+    #[must_use]
+    pub fn eval(&self, p: &ProjectiveXOnlyPoint) -> ProjectiveXOnlyPoint {
+        // X' = λ_x·(3CC'·X + AC'·Z) − λ_z·A'C·Z
+        let term = &(&self.three_cc_prime * &p.X) + &(&self.ac_prime * &p.Z);
+        let new_x = &(&self.lambda_x * &term) - &(&self.lambda_z * &(&self.a_prime_c * &p.Z));
+        // Z' = 3·λ_z·CC'·Z
+        let new_z = &self.lambda_z * &(&self.three_cc_prime * &p.Z);
+        ProjectiveXOnlyPoint::from_XZ(new_x, new_z, &self.target)
     }
 }
 

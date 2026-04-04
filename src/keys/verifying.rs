@@ -9,8 +9,9 @@ use subtle::ConstantTimeEq;
 
 use crate::{
     curves::{
-        TorsionBasis, TorsionExponent, VerifyingKeyHint, isogeny::Kernel as CurveKernel,
-        montgomery::Curve,
+        TorsionBasis, TorsionExponent, VerifyingKeyHint,
+        isogeny::Kernel as CurveKernel,
+        montgomery::{Coefficient, Curve},
     },
     fields::Fp2,
     hash,
@@ -48,7 +49,7 @@ impl VerifyingKey {
             .map_err(|_| SignatureError::NonCanonical)?;
         let A = Fp2::from_bytes(a_bytes);
         let hint = VerifyingKeyHint::from(bytes[64]);
-        let curve = Curve::new(A.into());
+        let curve = Curve::from(Coefficient::from(A));
 
         Ok(VerifyingKey {
             curve,

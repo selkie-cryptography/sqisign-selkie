@@ -17,7 +17,10 @@ pub use verifying::VerifyingKey;
 
 pub use crate::params::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};
 use crate::{
-    curves::{AuxiliaryHint, ChallengeHint, TorsionBasis, montgomery::Curve},
+    curves::{
+        AuxiliaryHint, ChallengeHint, TorsionBasis,
+        montgomery::{Coefficient, Curve},
+    },
     fields::fp2::Fp2,
     hash::CHALLENGE_BYTES,
     params::{E_RSP, TORSION_2POWER_BYTES},
@@ -79,7 +82,7 @@ impl Signature {
                 .try_into()
                 .map_err(|_| SignatureError::NonCanonical)?,
         );
-        let curve_aux = Curve::new(A_aux.into());
+        let curve_aux = Curve::from(Coefficient::from(A_aux));
 
         // n_bt, r_rsp: 1 byte each.
         let n_bt = sig[64] as u32;
