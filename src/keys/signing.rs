@@ -11,7 +11,7 @@
 //! [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
 
 #[cfg(feature = "zeroize")]
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::ZeroizeOnDrop;
 
 use crate::{
     curves::{
