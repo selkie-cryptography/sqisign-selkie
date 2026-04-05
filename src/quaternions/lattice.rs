@@ -568,6 +568,11 @@ impl<const N: usize> core::fmt::Debug for Lattice<N> {
 /// Can only be constructed via `From<Lattice>` (which computes the
 /// HNF) or the `+` operator on two [`Lattice`] values. Two
 /// `HnfLattice` values can be compared directly for lattice equality.
+// TODO: Consider making `Lattice` generic over a marker type (e.g.,
+// `Lattice<N, Form>` with `Form ∈ {General, Hnf}`) so that shared
+// operations (conjugate, intersection, product, dual, sum) are
+// implemented once, and HNF-specific operations (contains,
+// back-substitution) are available only when `Form = Hnf`.
 #[derive(Clone)]
 pub struct HnfLattice<const N: usize> {
     basis: Matrix<N>,
@@ -652,6 +657,60 @@ impl<const N: usize> HnfLattice<N> {
         }
 
         Some(Vector::new(x[0], x[1], x[2], x[3]))
+    }
+}
+
+impl<const N: usize> HnfLattice<N> {
+    /// Conjugate this lattice (negate the i, j, k coordinates).
+    ///
+    /// Result is re-reduced to HNF since negation breaks the form.
+    ///
+    /// See [§3.1.6.1] (Ideal inverse) of the spec.
+    ///
+    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
+    #[must_use]
+    pub fn conjugate(&self) -> Self {
+        let mut conj_basis = self.basis;
+        for col in 0..4 {
+            conj_basis[1][col] = conj_basis[1][col].wrapping_neg();
+            conj_basis[2][col] = conj_basis[2][col].wrapping_neg();
+            conj_basis[3][col] = conj_basis[3][col].wrapping_neg();
+        }
+        Self::from(Lattice {
+            basis: conj_basis,
+            denom: self.denom,
+        })
+    }
+
+    /// Lattice intersection: `self ∩ other`.
+    ///
+    /// Computed via `L₁ ∩ L₂ = dual(dual(L₁) + dual(L₂))`.
+    ///
+    /// See [§3.1.5.2] (Intersection) of the spec.
+    ///
+    /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
+    #[must_use]
+    pub fn intersection(&self, other: &Self) -> Self {
+        let lat_a = Lattice::<N>::from(*self);
+        let lat_b = Lattice::<N>::from(*other);
+        lat_a.intersection(&lat_b)
+    }
+}
+
+impl HnfLattice<4> {
+    /// Lattice product: `self · other`.
+    ///
+    /// Multiplies each pair of basis elements (4×4 = 16 products),
+    /// then takes HNF. Requires N=4 for quaternion multiplication.
+    ///
+    /// See [§3.1.5.2] (Multiplication) of the spec.
+    ///
+    /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
+    #[must_use]
+    pub fn product(&self, other: &Self) -> Self {
+        let lat_a = Lattice::<4>::from(*self);
+        let lat_b = Lattice::<4>::from(*other);
+        lat_a.product(&lat_b)
     }
 }
 
@@ -811,6 +870,62 @@ impl LeftIdeal<4> {
             lattice: o_alpha.sum(&o_n),
             norm: *norm,
             parent_order: *order,
+        }
+    }
+
+    /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
+    ///
+    /// The inverse is NOT an ideal (it's a rank-4 lattice, not
+    /// contained in an order), but its product with another ideal
+    /// gives an ideal. Used for pushforward: `[J]_* I = J⁻¹(J ∩ I)`.
+    ///
+    /// See [§3.1.6.1] (Ideal inverse) of the spec.
+    ///
+    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
+    /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
+    ///
+    /// Returns a `Lattice<4>` (fractional ideal), not an `HnfLattice`,
+    /// since scaling by 1/nrd(I) produces non-integer coordinates.
+    /// Used for pushforward: `[J]_* I = J⁻¹(J ∩ I)`.
+    ///
+    /// See [§3.1.6.1] (Ideal inverse) of the spec.
+    ///
+    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
+    /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
+    ///
+    /// Returns the conjugate lattice scaled by 1/nrd(I). Used for
+    /// pushforward: `[J]_* I = J⁻¹(J ∩ I)`.
+    ///
+    /// See [§3.1.6.1] (Ideal inverse) of the spec.
+    ///
+    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
+    pub fn inverse(&self) -> HnfLattice<4> {
+        let mut conj = self.lattice.conjugate();
+        // Scale by 1/nrd(I) — multiply the denominator by nrd(I).
+        conj.denom = conj
+            .denom
+            .ct_mul(&BigInt::<4>::from_sign_and_limbs(0, *self.norm.as_limbs()));
+        conj
+    }
+
+    /// Pushforward of an ideal: `[J]_* I = J⁻¹(J ∩ I)`.
+    ///
+    /// Given `self = J` and `other = I` (with coprime norms),
+    /// computes the pushforward ideal. The result has norm `nrd(I)`
+    /// and left order `O_R(J)` (provided by `right_order_j`).
+    ///
+    /// See [§3.1.6.1] (Pushforward and pullback of ideals) of the spec.
+    ///
+    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
+    pub fn pushforward(&self, other: &Self, right_order_j: &Lattice<4>) -> Self {
+        let j_inter_i = self.lattice.intersection(&other.lattice);
+        let j_inv = self.inverse();
+        let result_lattice = j_inv.product(&j_inter_i);
+
+        Self {
+            lattice: result_lattice,
+            norm: *other.norm(),
+            parent_order: *right_order_j,
         }
     }
 
