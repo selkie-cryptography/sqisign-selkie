@@ -16,6 +16,8 @@
 
 use core::ops::Add;
 
+use rand_core::{OsRng, RngCore};
+
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
@@ -445,8 +447,6 @@ impl Lattice<4> {
         }
 
         // Step 3: Rejection sampling.
-        use rand_core::{OsRng, RngCore};
-
         for _ in 0..10_000 {
             // Sample uniform x[i] in [-bounds[i], bounds[i]].
             let mut x = [BigInt::<8>::ZERO; 4];
@@ -875,24 +875,6 @@ impl LeftIdeal<4> {
 
     /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
     ///
-    /// The inverse is NOT an ideal (it's a rank-4 lattice, not
-    /// contained in an order), but its product with another ideal
-    /// gives an ideal. Used for pushforward: `[J]_* I = J⁻¹(J ∩ I)`.
-    ///
-    /// See [§3.1.6.1] (Ideal inverse) of the spec.
-    ///
-    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
-    /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
-    ///
-    /// Returns a `Lattice<4>` (fractional ideal), not an `HnfLattice`,
-    /// since scaling by 1/nrd(I) produces non-integer coordinates.
-    /// Used for pushforward: `[J]_* I = J⁻¹(J ∩ I)`.
-    ///
-    /// See [§3.1.6.1] (Ideal inverse) of the spec.
-    ///
-    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
-    /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
-    ///
     /// Returns the conjugate lattice scaled by 1/nrd(I). Used for
     /// pushforward: `[J]_* I = J⁻¹(J ∩ I)`.
     ///
@@ -942,20 +924,45 @@ impl LeftIdeal<4> {
     ///
     /// [Algorithm 3.10]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.10
     pub fn random_prime_norm(n: &BigInt<4>, order: &ExtremalOrder<4>) -> Option<Self> {
-        let bound: u32 = 10000;
-        let mut counter: u32 = 0;
+        // Algorithm 3.10, prime case: sample γ = g₁i + g₂j + g₃ij
+        // with g₁, g₂, g₃ uniform in [0, N-1], check Legendre
+        // symbol, then adjust with modular sqrt.
+        let n_bits = n.bitsize() as usize;
+        let n_bytes = n_bits.div_ceil(8);
 
-        while counter < bound {
-            counter += 1;
+        for _ in 0..10_000 {
+            // Sample g₁, g₂, g₃ uniform in [0, N-1] via rejection.
+            let sample_mod_n = || -> BigInt<4> {
+                loop {
+                    let mut bytes = [0u8; 32];
+                    OsRng.fill_bytes(&mut bytes[..n_bytes]);
+                    // Mask top byte to avoid bias.
+                    if n_bits % 8 != 0 {
+                        bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
+                    }
+                    let val = BigInt::<4>::from_bytes_le_unsigned(&bytes[..n_bytes]);
+                    // Reject if val >= N.
+                    if val.bitsize() <= n.bitsize() && val.ct_mod(n) == val {
+                        return val; // val < N
+                    }
+                }
+            };
 
-            let g1 = counter as i64 % 100;
-            let g2 = (counter as i64 / 100) % 100;
-            let g3 = (counter as i64 / 10000) % 100;
+            let g1 = sample_mod_n();
+            let g2 = sample_mod_n();
+            let g3 = sample_mod_n();
 
-            let gamma = Element::from_i64(0, g1, g2, g3);
+            // γ = g₁i + g₂j + g₃ij  (a = 0, denom = 1)
+            let gamma = Element::new(
+                Coordinate::ZERO,
+                Coordinate::from_bigint(g1),
+                Coordinate::from_bigint(g2),
+                Coordinate::from_bigint(g3),
+                Denominator::ONE,
+            );
             let (nrd_num, nrd_den) = gamma.norm();
 
-            // Narrow norm to BigInt<4> for Legendre/sqrt.
+            // Narrow norm to BigInt<4>.
             let nrd_num_4: subtle::CtOption<BigInt<4>> = nrd_num.into();
             let nrd_den_4: subtle::CtOption<BigInt<4>> = nrd_den.into();
             if !bool::from(nrd_num_4.is_some()) || !bool::from(nrd_den_4.is_some()) {
@@ -968,20 +975,22 @@ impl LeftIdeal<4> {
                 continue;
             }
 
+            // Check Legendre(-nrd(γ), N) = 1.
             let neg_nrd = n.ct_sub(&nrd_val.ct_mod(n));
             if BigInt::<4>::legendre(&neg_nrd, n) != 1 {
                 continue;
             }
 
+            // γ ← γ + √(-nrd(γ)) mod N
             let sqrt = match BigInt::<4>::modular_sqrt(&neg_nrd, n) {
                 Some(s) => s,
                 None => continue,
             };
             let gamma_adjusted = Element::new(
                 Coordinate::from_bigint(sqrt),
-                Coordinate::from_i64(g1),
-                Coordinate::from_i64(g2),
-                Coordinate::from_i64(g3),
+                Coordinate::from_bigint(g1),
+                Coordinate::from_bigint(g2),
+                Coordinate::from_bigint(g3),
                 Denominator::ONE,
             );
 
@@ -1344,130 +1353,6 @@ const ETA: f64 = 0.51;
 /// Following the spec: δ = 0.99 (any value in (1/4, 1) works).
 const DELTA: f64 = 0.99;
 
-/// Extend the GSO family from row k-1 to row k.
-///
-/// [Algorithm 3.4] from the spec.
-///
-/// [Algorithm 3.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.4
-fn extend_gso_family<const N: usize>(
-    gram: &Matrix<N>,
-    k: usize,
-    r: &mut [[f64; D]; D],
-    mu: &mut [[f64; D]; D],
-) {
-    for j in 0..=k {
-        r[k][j] = gram[k][j].to_f64();
-        for l in 0..j {
-            r[k][j] -= r[k][l] * mu[j][l];
-        }
-        if j < k {
-            mu[k][j] = r[k][j] / r[j][j];
-        }
-    }
-}
-
-/// Size-reduce the basis at index k.
-///
-/// [Algorithm 3.5] from the spec.
-///
-/// [Algorithm 3.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.5
-fn size_reduce<const N: usize>(
-    basis: &mut [Vector<N>; D],
-    gram: &mut Matrix<N>,
-    k: usize,
-    r: &mut [[f64; D]; D],
-    mu: &mut [[f64; D]; D],
-) {
-    let eta_bar = (ETA + 0.5) / 2.0;
-
-    loop {
-        extend_gso_family(gram, k, r, mu);
-
-        let mut done = true;
-        let mut ii = k;
-        while ii > 0 {
-            ii -= 1;
-            if mu[k][ii].abs() > eta_bar {
-                done = false;
-                let x = mu[k][ii].round() as i64;
-                let x_big = BigInt::<N>::from_i64(x);
-
-                // b_k ← b_k - X * b_i
-                let old_bi = basis[ii];
-                for row in 0..D {
-                    basis[k][row] = basis[k][row].ct_sub(&x_big.ct_mul(&old_bi[row]));
-                }
-
-                // Update Gram matrix
-                for j in 0..D {
-                    let update = x_big.ct_mul(&gram[ii][j]);
-                    gram[k][j] = gram[k][j].ct_sub(&update);
-                }
-                for j in 0..D {
-                    let update = x_big.ct_mul(&gram[j][ii]);
-                    gram[j][k] = gram[j][k].ct_sub(&update);
-                }
-
-                // Update μ
-                let x_f = x as f64;
-                for j in 0..ii {
-                    mu[k][j] -= x_f * mu[ii][j];
-                }
-                mu[k][ii] -= x_f;
-
-                // Update r
-                r[k][ii] = gram[k][ii].to_f64();
-                for l in 0..ii {
-                    r[k][ii] -= r[k][l] * mu[ii][l];
-                }
-            }
-        }
-
-        if done {
-            break;
-        }
-    }
-}
-
-/// Insert basis vector k before position s, shifting others right.
-///
-/// [Algorithm 3.6] from the spec.
-///
-/// [Algorithm 3.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.6
-fn insert_before<const N: usize>(
-    basis: &mut [Vector<N>; D],
-    gram: &mut Matrix<N>,
-    k: usize,
-    s: usize,
-    r: &mut [[f64; D]; D],
-    mu: &mut [[f64; D]; D],
-) {
-    let mut j = k;
-    while j > s {
-        basis.swap(j, j - 1);
-
-        for row in 0..D {
-            let tmp = gram[row][j];
-            gram[row][j] = gram[row][j - 1];
-            gram[row][j - 1] = tmp;
-        }
-        for col in 0..D {
-            let tmp = gram[j][col];
-            gram[j][col] = gram[j - 1][col];
-            gram[j - 1][col] = tmp;
-        }
-
-        j -= 1;
-    }
-
-    r[s][s] = gram[s][s].to_f64();
-    for i in 0..s {
-        mu[s][i] = mu[k][i];
-        r[s][i] = r[k][i];
-        r[s][s] -= mu[s][i] * r[s][i];
-    }
-}
-
 /// L2 lattice reduction for a dimension-four lattice.
 ///
 /// Takes a basis (as an array of four column vectors) and its Gram
@@ -1484,7 +1369,125 @@ fn insert_before<const N: usize>(
 /// [Algorithm 3.3] from the spec.
 ///
 /// [Algorithm 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
-pub fn l2_reduce<const N: usize>(basis: &mut [Vector<N>; D], gram: &mut Matrix<N>) {
+pub(crate) fn l2_reduce<const N: usize>(basis: &mut [Vector<N>; D], gram: &mut Matrix<N>) {
+    /// Extend the GSO family from row k-1 to row k ([Algorithm 3.4]).
+    ///
+    /// [Algorithm 3.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.4
+    fn extend_gso_family<const N: usize>(
+        gram: &Matrix<N>,
+        k: usize,
+        r: &mut [[f64; D]; D],
+        mu: &mut [[f64; D]; D],
+    ) {
+        for j in 0..=k {
+            r[k][j] = gram[k][j].to_f64();
+            for l in 0..j {
+                r[k][j] -= r[k][l] * mu[j][l];
+            }
+            if j < k {
+                mu[k][j] = r[k][j] / r[j][j];
+            }
+        }
+    }
+
+    /// Size-reduce the basis at index k ([Algorithm 3.5]).
+    ///
+    /// [Algorithm 3.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.5
+    fn size_reduce<const N: usize>(
+        basis: &mut [Vector<N>; D],
+        gram: &mut Matrix<N>,
+        k: usize,
+        r: &mut [[f64; D]; D],
+        mu: &mut [[f64; D]; D],
+    ) {
+        let eta_bar = (ETA + 0.5) / 2.0;
+
+        loop {
+            extend_gso_family(gram, k, r, mu);
+
+            let mut done = true;
+            let mut ii = k;
+            while ii > 0 {
+                ii -= 1;
+                if mu[k][ii].abs() > eta_bar {
+                    done = false;
+                    let x = mu[k][ii].round() as i64;
+                    let x_big = BigInt::<N>::from_i64(x);
+
+                    // b_k ← b_k - X * b_i
+                    let old_bi = basis[ii];
+                    for row in 0..D {
+                        basis[k][row] = basis[k][row].ct_sub(&x_big.ct_mul(&old_bi[row]));
+                    }
+
+                    // Update Gram matrix
+                    for j in 0..D {
+                        let update = x_big.ct_mul(&gram[ii][j]);
+                        gram[k][j] = gram[k][j].ct_sub(&update);
+                    }
+                    for j in 0..D {
+                        let update = x_big.ct_mul(&gram[j][ii]);
+                        gram[j][k] = gram[j][k].ct_sub(&update);
+                    }
+
+                    // Update μ
+                    let x_f = x as f64;
+                    for j in 0..ii {
+                        mu[k][j] -= x_f * mu[ii][j];
+                    }
+                    mu[k][ii] -= x_f;
+
+                    // Update r
+                    r[k][ii] = gram[k][ii].to_f64();
+                    for l in 0..ii {
+                        r[k][ii] -= r[k][l] * mu[ii][l];
+                    }
+                }
+            }
+
+            if done {
+                break;
+            }
+        }
+    }
+
+    /// Insert basis vector k before position s ([Algorithm 3.6]).
+    ///
+    /// [Algorithm 3.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.6
+    fn insert_before<const N: usize>(
+        basis: &mut [Vector<N>; D],
+        gram: &mut Matrix<N>,
+        k: usize,
+        s: usize,
+        r: &mut [[f64; D]; D],
+        mu: &mut [[f64; D]; D],
+    ) {
+        let mut j = k;
+        while j > s {
+            basis.swap(j, j - 1);
+
+            for row in 0..D {
+                let tmp = gram[row][j];
+                gram[row][j] = gram[row][j - 1];
+                gram[row][j - 1] = tmp;
+            }
+            for col in 0..D {
+                let tmp = gram[j][col];
+                gram[j][col] = gram[j - 1][col];
+                gram[j - 1][col] = tmp;
+            }
+
+            j -= 1;
+        }
+
+        r[s][s] = gram[s][s].to_f64();
+        for i in 0..s {
+            mu[s][i] = mu[k][i];
+            r[s][i] = r[k][i];
+            r[s][s] -= mu[s][i] * r[s][i];
+        }
+    }
+
     let delta_bar = (DELTA + 1.0) / 2.0;
 
     let mut r = [[0.0f64; D]; D];
