@@ -31,6 +31,7 @@ use crate::{
         lattice::LeftIdeal,
         precomputed::EXTREMAL_ORDERS,
     },
+    surfaces,
 };
 
 /// An SQIsign signing (secret) key.
@@ -202,9 +203,247 @@ impl SigningKey {
     /// [§4.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
     /// [§4.4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
     /// [§4.4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
-    pub fn sign(&self, _msg: &[u8]) -> Result<Signature, SignatureError> {
-        // Requires: quaternion algebra, id2iso, pairings, SHAKE256.
-        todo!()
+    /// Sign a message.
+    ///
+    /// Implements [SQIsign.Sign][Alg. 4.2] ([Algorithm 4.2][Alg. 4.2]).
+    ///
+    /// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
+    pub fn sign(&self, msg: &[u8]) -> Result<Signature, SignatureError> {
+        // TODO: remaining issues before sign() produces valid signatures:
+        //   - Degree computations (lines 16-20) are placeholders
+        //   - I_com,rsp computation (line 19/24) not implemented
+        //   - Signature encoding to bytes (line 38)
+        //   - Right order of I_sk for pushforward (line 13)
+
+        use crate::{
+            curves::{BasisHint, ChangeOfBasisMatrix, TorsionBasis},
+            params::{D_MIX, E_RSP},
+            quaternions::lattice::LeftIdeal as LeftIdeal8,
+        };
+
+        let f = TORSION_EVEN_POWER;
+        let e_rsp = E_RSP;
+
+        // Line 1: Parse sk
+        let e_pk = self.verifying_key.curve();
+
+        // Line 2: basis on E_pk
+        let basis_pk = TorsionBasis::from_hint(
+            e_pk,
+            BasisHint::from_byte(u8::from(self.verifying_key.hint)),
+        );
+
+        // Line 3: while true do
+        for _ in 0..1000 {
+            // --- Commitment (lines 4–9) ---
+
+            // Line 4: I_com ← RandomIdealGivenNorm(D_mix, true)
+            // D_MIX is BigInt<9> (513 bits); widen to BigInt<8> for the
+            // wide ideal path. This loses the top bit — TODO: use BigInt<9>
+            // when random_prime_norm_wide supports it.
+            let d_mix_wide = BigInt::<8>::from_limbs({
+                let mut limbs = [0u64; 8];
+                let d = D_MIX.as_limbs();
+                limbs[..8.min(d.len())].copy_from_slice(&d[..8.min(d.len())]);
+                limbs
+            });
+            let mut i_com =
+                match LeftIdeal8::<8>::random_prime_norm_wide(&d_mix_wide, &EXTREMAL_ORDERS[0]) {
+                    Some(i) => i,
+                    None => continue,
+                };
+
+            // Lines 5–6: RandomEquivalentPrimeIdeal
+            if !i_com.reduce_to_prime_norm() {
+                continue;
+            }
+
+            // Narrow to LeftIdeal<4> for to_isogeny.
+            let i_com_narrow = match i_com.narrow() {
+                Some(i) => i,
+                None => continue,
+            };
+
+            // Line 7: E_com, P_com, Q_com ← IdealToIsogeny(I_com)
+            let (e_com, p_com, q_com) = match i_com_narrow.to_isogeny() {
+                Some(r) => r,
+                None => continue,
+            };
+
+            // --- Challenge (line 10) ---
+            let chl = Challenge::derive(&self.verifying_key, &e_com, msg);
+
+            // --- Response (lines 11–38) ---
+
+            // Line 11: (c₁, c₂) ← M_sk · (1, chl)
+            let chl_scalar: Scalar = chl.into();
+            let c1 = self.mat_sk[0][0].add_mod2k(&self.mat_sk[0][1].mul_mod2k(&chl_scalar, f), f);
+            let c2 = self.mat_sk[1][0].add_mod2k(&self.mat_sk[1][1].mul_mod2k(&chl_scalar, f), f);
+
+            // Line 12: I'_chl ← KernelDecomposedToIdeal(c₁, c₂)
+            let c1_big = BigInt::<4>::from(c1);
+            let c2_big = BigInt::<4>::from(c2);
+            let i_chl_prime =
+                match TorsionBasis::kernel_to_ideal(&c1_big, &c2_big, TorsionExponent::FULL) {
+                    Some(ideal) => ideal,
+                    None => continue,
+                };
+
+            // Line 13: I_chl ← [I_sk]_* I'_chl
+            // TODO: use actual O_R(I_sk) instead of O₀.
+            let i_chl = self
+                .ideal
+                .pushforward(&i_chl_prime, EXTREMAL_ORDERS[0].order());
+
+            // Line 14: α_rsp ← RandomEquivalentQuaternion(I_com ∩ I_sk · I_chl)
+            let i_sk_i_chl = self.ideal.lattice().product(&i_chl.lattice());
+            let intersection = self.ideal.lattice().intersection(&i_sk_i_chl);
+            let intersection_lat = crate::quaternions::lattice::Lattice::<4>::from(intersection);
+            // TODO: compute proper radius D_rsp · D²_mix · 2^{f+1}
+            let radius = BigInt::<4>::ONE.shl(f);
+            let alpha_rsp = match intersection_lat.sample_from_ball(&radius) {
+                Some(a) => a,
+                None => continue,
+            };
+
+            // Line 15: α_rsp, n_bt ← ComputeBacktrackingAndNormalize(α_rsp)
+            let (alpha_rsp, n_bt) = alpha_rsp.compute_backtracking();
+
+            // Lines 16–20: degree computations
+            // TODO: compute properly from nrd(α_rsp)
+            let r_rsp_val = 0u32;
+            let q_rsp: u64 = 1;
+            let e_rsp_prime = e_rsp - r_rsp_val - n_bt;
+
+            let r_rsp =
+                TorsionExponent::try_from(r_rsp_val).map_err(|_| SignatureError::SigningFailed)?;
+            let n_bt_te =
+                TorsionExponent::try_from(n_bt).map_err(|_| SignatureError::SigningFailed)?;
+            let e_rsp_prime_te = TorsionExponent::try_from(e_rsp_prime)
+                .map_err(|_| SignatureError::SigningFailed)?;
+
+            // Lines 21–33: compute response isogeny
+            let (mut e_chl, mut p_chl, mut q_chl);
+            let curve_aux;
+            let p_aux;
+            let q_aux;
+
+            if e_rsp_prime > 0 {
+                // Lines 22–27: auxiliary isogeny path
+                let aux_norm = BigInt::<4>::ONE
+                    .shl(e_rsp_prime)
+                    .ct_sub(&BigInt::<4>::from_u64(q_rsp));
+                let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0]) {
+                    Some(i) => i,
+                    None => continue,
+                };
+
+                // TODO: compute I_com,rsp = O₀·α_rsp + O₀(q_rsp·D_mix)
+                let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_aux.to_isogeny() {
+                    Some(r) => r,
+                    None => continue,
+                };
+
+                let split = match split_auxiliary_isogeny(
+                    &e_com,
+                    &e_aux_prime,
+                    &p_com,
+                    &q_com,
+                    &p_aux_prime,
+                    &q_aux_prime,
+                    q_rsp,
+                    e_rsp_prime_te,
+                    r_rsp,
+                ) {
+                    Some(r) => r,
+                    None => continue,
+                };
+                curve_aux = split.0;
+                p_aux = split.1;
+                q_aux = split.2;
+                e_chl = split.3;
+                p_chl = split.4;
+                q_chl = split.5;
+            } else {
+                // Lines 28–31: direct path
+                let (ec, pc, qc) = match i_com_narrow.to_isogeny() {
+                    Some(r) => r,
+                    None => continue,
+                };
+                e_chl = ec;
+                p_chl = pc;
+                q_chl = qc;
+                curve_aux = e_chl;
+                p_aux = p_chl;
+                q_aux = q_chl;
+            }
+
+            // Lines 34–35: even response
+            if r_rsp_val > 0 {
+                let (ec, pc, qc) = match crate::deuring::compute_even_response(
+                    &e_chl,
+                    &p_chl,
+                    &q_chl,
+                    &alpha_rsp,
+                    e_rsp_prime_te,
+                    r_rsp,
+                ) {
+                    Some(r) => r,
+                    None => continue,
+                };
+                e_chl = ec;
+                p_chl = pc;
+                q_chl = qc;
+            }
+
+            // Line 36: ComputeChallengeIsogeny
+            let (e_chl_final, p_chl_final, q_chl_final) =
+                match compute_challenge_isogeny(&basis_pk, &chl, &e_chl, &p_chl, &q_chl, n_bt_te) {
+                    Some(r) => r,
+                    None => continue,
+                };
+
+            // Line 37: SetChangeOfBasisMatrix (inlined)
+            let (det_aux, hint_aux_raw) = TorsionBasis::to_hint(&curve_aux);
+            let (det_chl, hint_chl_raw) = TorsionBasis::to_hint(&e_chl_final);
+
+            let e_cob = TorsionExponent::try_from(e_rsp_prime + r_rsp_val)
+                .map_err(|_| SignatureError::SigningFailed)?;
+            let scale = f - e_cob.value() - 2;
+            let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
+
+            let det_aux_scaled = TorsionBasis::new(
+                &scale_scalar * &det_aux.R,
+                &scale_scalar * &det_aux.S,
+                &scale_scalar * &det_aux.RS,
+            );
+            let det_chl_scaled = TorsionBasis::new(
+                &scale_scalar * &det_chl.R,
+                &scale_scalar * &det_chl.S,
+                &scale_scalar * &det_chl.RS,
+            );
+
+            let basis_aux = TorsionBasis::new(p_aux, q_aux, p_aux.projective_difference(&q_aux));
+            let m1 = ChangeOfBasisMatrix::from_bases(&basis_aux, &det_aux_scaled, e_cob);
+
+            let basis_chl = TorsionBasis::new(
+                p_chl_final,
+                q_chl_final,
+                p_chl_final.projective_difference(&q_chl_final),
+            );
+            let transformed = m1.mul(&basis_chl, e_cob);
+            let m_chl = ChangeOfBasisMatrix::from_bases(&det_chl_scaled, &transformed, e_cob);
+
+            // Line 38: assemble signature
+            let hint_aux = crate::curves::AuxiliaryHint::from(hint_aux_raw.to_byte());
+            let hint_chl = crate::curves::ChallengeHint::from(hint_chl_raw.to_byte());
+
+            // TODO: encode signature to wire format (148 bytes).
+            let _ = (curve_aux, n_bt_te, r_rsp, m_chl, chl, hint_aux, hint_chl);
+            return Err(SignatureError::SigningFailed);
+        }
+
+        Err(SignatureError::SigningFailed)
     }
 }
 
@@ -294,4 +533,99 @@ pub(crate) fn compute_challenge_isogeny(
 
     // Line 3
     Some((curve_chl, p_chl, q_chl))
+}
+
+// ---------------------------------------------------------------------------
+// Split auxiliary isogeny (Algorithm 4.5)
+// ---------------------------------------------------------------------------
+
+/// Compute the split auxiliary isogeny via a (2,2)-isogeny chain.
+///
+/// Takes the commitment curve E₁ (= E_com) and auxiliary curve E₂
+/// (= E'_aux) with torsion points, and computes the (2,2)-isogeny
+/// chain that splits the response isogeny into odd and even parts.
+///
+/// Returns `(E_aux, P_aux, Q_aux, E_chl, P_chl, Q_chl)`.
+///
+/// Implements [SplitAuxiliaryIsogeny][Alg. 4.5] ([Algorithm 4.5][Alg. 4.5]).
+///
+/// [Alg. 4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.5
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn split_auxiliary_isogeny(
+    e1: &Curve,
+    e2: &Curve,
+    p1: &ProjectiveXOnlyPoint,
+    q1: &ProjectiveXOnlyPoint,
+    p2: &ProjectiveXOnlyPoint,
+    q2: &ProjectiveXOnlyPoint,
+    q_rsp: u64,
+    e_prime: TorsionExponent,
+    r_rsp: TorsionExponent,
+) -> Option<(
+    Curve,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+    Curve,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+)> {
+    let f = TORSION_EVEN_POWER;
+    let e_prime_val = e_prime.value();
+    let r_val = r_rsp.value();
+
+    // Line 1: P''₁, Q''₁ ← [2^{f-e'-r-2}]P₁, [2^{f-e'-r-2}]Q₁
+    let scale1 = f - e_prime_val - r_val - 2;
+    let scale1_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale1).as_limbs());
+    let p1_double_prime = &scale1_scalar * p1;
+    let q1_double_prime = &scale1_scalar * q1;
+
+    // Line 2: P'₁, Q'₁ ← [2^r]P''₁, [2^r]Q''₁
+    let mut p1_prime = p1_double_prime;
+    let mut q1_prime = q1_double_prime;
+    for _ in 0..r_val {
+        p1_prime = p1_prime.double();
+        q1_prime = q1_prime.double();
+    }
+
+    // Line 3: q_inv ← q^{-1} (mod 2^{f-e'-2})
+    let mod_bits = f - e_prime_val - 2;
+    let q_scalar = Scalar::from_u64(q_rsp);
+    let q_inv = q_scalar.inv_mod2k(mod_bits)?;
+
+    // Line 4: P'₂, Q'₂ ← [q_inv·2^{f-e'-2}]P₂, [q_inv·2^{f-e'-2}]Q₂
+    let shift_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(mod_bits).as_limbs());
+    let scale2 = q_inv.mul_mod2k(&shift_scalar, f);
+    let p2_prime = &scale2 * p2;
+    let q2_prime = &scale2 * q2;
+
+    // Line 5: (2,2)-isogeny chain
+    // Kernel: ((P'₁, P'₂), (Q'₁, Q'₂))
+    // Torsion to push through: {(P''₁, 0_{E₂}), (Q''₁, 0_{E₂})}
+    let product = surfaces::EllipticProduct::new(*e1, *e2);
+    let pmq1_prime = p1_prime.projective_difference(&q1_prime);
+    let pmq2_prime = p2_prime.projective_difference(&q2_prime);
+    let kernel = surfaces::Kernel::from_montgomery(
+        product,
+        (p1_prime, p2_prime),
+        (q1_prime, q2_prime),
+        (pmq1_prime, pmq2_prime),
+    )?;
+
+    let zero_e2 = ProjectiveXOnlyPoint::identity(e2);
+    let e_chain = TorsionExponent::try_from(e_prime_val + r_val).ok()?;
+    let (codomain, images) = kernel.isogeny(
+        e_chain,
+        &[(p1_double_prime, zero_e2), (q1_double_prime, zero_e2)],
+    );
+
+    // Line 6: return F₁, S₁, R₁, F₂, S₂, R₂
+    // The codomain is F₁ × F₂; images are (S₁,S₂) and (R₁,R₂).
+    let curve_aux = codomain.E1;
+    let curve_chl = codomain.E2;
+    let p_aux = images[0].0;
+    let q_aux = images[1].0;
+    let p_chl = images[0].1;
+    let q_chl = images[1].1;
+
+    Some((curve_aux, p_aux, q_aux, curve_chl, p_chl, q_chl))
 }

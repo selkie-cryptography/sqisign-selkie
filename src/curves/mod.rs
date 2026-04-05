@@ -121,7 +121,7 @@ impl BasisHint {
     }
 
     /// The raw byte representation.
-    fn to_byte(self) -> u8 {
+    pub(crate) fn to_byte(self) -> u8 {
         self.0
     }
 
