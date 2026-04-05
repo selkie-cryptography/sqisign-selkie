@@ -804,6 +804,30 @@ impl ChangeOfBasisMatrix {
             ],
         }
     }
+
+    /// Multiply this matrix by a [`TorsionBasis`]: `(P', Q') = M · (P, Q)`.
+    ///
+    /// - `P' = [M[0][0]]P + [M[0][1]]Q`
+    /// - `Q' = [M[1][0]]P + [M[1][1]]Q`
+    /// - `P'-Q'` via a third biscalar call (avoids sqrt branch instability)
+    ///
+    /// The `e` parameter is the torsion exponent for the biscalar ladder.
+    pub(crate) fn mul(&self, basis: &TorsionBasis, e: TorsionExponent) -> TorsionBasis {
+        let p_prime = basis.biscalar_mul(&self.entries[0][0], &self.entries[0][1], e);
+        let q_prime = basis.biscalar_mul(&self.entries[1][0], &self.entries[1][1], e);
+
+        // P'-Q' = [(a-c)]P + [(b-d)]Q
+        let k = e.value();
+        let a_minus_c = self.entries[0][0].sub_mod2k(&self.entries[1][0], k);
+        let b_minus_d = self.entries[0][1].sub_mod2k(&self.entries[1][1], k);
+        let pmq_prime = basis.biscalar_mul(&a_minus_c, &b_minus_d, e);
+
+        TorsionBasis::new(p_prime, q_prime, pmq_prime)
+    }
+
+    // SetChangeOfBasisMatrix (Algorithm 4.8) will be inlined into
+    // SigningKey::sign() since it's only called there to assemble
+    // the signature's M_chl, hint_aux, and hint_chl.
 }
 
 // ---------------------------------------------------------------------------
