@@ -132,7 +132,7 @@ impl Fp2 {
     ///
     /// For SQIsign verification the consequences cascade: a wrong
     /// root in `projective_difference` produces the wrong third point
-    /// of the torsion basis `(P, P−Q, Q)`, which makes `ladder3pt`
+    /// of the torsion basis `(P, P−Q, Q)`, which makes `scalar_mul_add`
     /// compute the wrong challenge kernel, which makes the challenge
     /// isogeny land on the wrong curve, making every subsequent step
     /// diverge.

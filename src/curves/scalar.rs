@@ -43,6 +43,16 @@ impl Scalar {
         &self.0
     }
 
+    /// Serialize to 32 little-endian bytes.
+    #[must_use]
+    pub fn to_le_bytes(&self) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (i, limb) in self.0.iter().enumerate() {
+            out[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        out
+    }
+
     /// Returns a big-endian bit iterator over the scalar.
     ///
     /// Always yields exactly `bits` bits (zero-padded from the MSB).
@@ -192,6 +202,12 @@ impl From<Scalar> for crate::quaternions::bigint::BigInt<4> {
 impl From<&Scalar> for crate::quaternions::bigint::BigInt<4> {
     fn from(s: &Scalar) -> Self {
         Self::from_limbs(s.0)
+    }
+}
+
+impl From<crate::quaternions::bigint::BigInt<4>> for Scalar {
+    fn from(b: crate::quaternions::bigint::BigInt<4>) -> Self {
+        Self::from_limbs(*b.as_limbs())
     }
 }
 

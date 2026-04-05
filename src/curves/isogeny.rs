@@ -21,7 +21,7 @@ use subtle::ConstantTimeEq;
 use crate::{
     curves::{
         TorsionExponent,
-        montgomery::{Curve, ProjectiveXOnlyPoint},
+        montgomery::{Curve, DoublingConstants, ProjectiveXOnlyPoint},
         scalar::Scalar,
     },
     fields::fp2::Fp2,
@@ -289,7 +289,7 @@ impl TwoIsogeny {
         let A24 = &zp_sq - &xp_sq;
         let C24 = zp_sq;
         TwoIsogeny {
-            codomain: Curve::from_doubling_constants(A24, C24),
+            codomain: Curve::from(DoublingConstants { A24, C24 }),
             kernel: *P,
         }
     }
@@ -321,7 +321,8 @@ pub(crate) struct TwoIsogenySingular {
 
 impl TwoIsogenySingular {
     pub(crate) fn from_curve(curve: &Curve) -> TwoIsogenySingular {
-        let (A24, C24) = curve.projective_constants();
+        let dc = curve.doubling_constants();
+        let (A24, C24) = (&dc.A24, &dc.C24);
         let t0 = &(A24 + A24) - C24;
         let t0 = &t0 + &t0;
         let t1 = C24.invert();
@@ -337,7 +338,10 @@ impl TwoIsogenySingular {
         let A24_prime = &A24_prime + &C24_prime;
         let C24_prime = &C24_prime + &C24_prime;
         TwoIsogenySingular {
-            codomain: Curve::from_doubling_constants(A24_prime, C24_prime),
+            codomain: Curve::from(DoublingConstants {
+                A24: A24_prime,
+                C24: C24_prime,
+            }),
             c0,
             c1,
         }
@@ -381,7 +385,7 @@ impl FourIsogeny {
             &d + &d
         };
         FourIsogeny {
-            codomain: Curve::from_doubling_constants(A24, C24),
+            codomain: Curve::from(DoublingConstants { A24, C24 }),
             c0,
             c1,
             c2,
@@ -413,7 +417,7 @@ mod tests {
         // (i, 0) is a 2-torsion point on E₀.
         let P = ProjectiveXOnlyPoint::from_affine_x(Fp2::I, &curve);
 
-        let (_, images) = Kernel::new(P).isogeny(TorsionExponent::new(1), &[P]);
+        let (_, images) = Kernel::new(P).isogeny(TorsionExponent::try_from(1).unwrap(), &[P]);
         assert!(bool::from(images[0].is_identity()));
     }
 
@@ -423,7 +427,7 @@ mod tests {
         let P = ProjectiveXOnlyPoint::from_affine_x(Fp2::I, &curve);
         let Q = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(5)), &curve);
 
-        let (_, images) = Kernel::new(P).isogeny(TorsionExponent::new(1), &[Q]);
+        let (_, images) = Kernel::new(P).isogeny(TorsionExponent::try_from(1).unwrap(), &[Q]);
         assert!(!bool::from(images[0].is_identity()));
     }
 
@@ -432,8 +436,92 @@ mod tests {
         let curve = Curve::E0;
         let P = ProjectiveXOnlyPoint::from_affine_x(Fp2::I, &curve);
 
-        let (codomain, _) = Kernel::new(P).isogeny(TorsionExponent::new(1), &[]);
+        let (codomain, _) = Kernel::new(P).isogeny(TorsionExponent::try_from(1).unwrap(), &[]);
         let _j = codomain.j_invariant();
+    }
+
+    /// Test that Isomorphism correctly maps points between two curves
+    /// with the same j-invariant but different projective representations.
+    ///
+    /// Strategy: compute an isogeny from E₀ to get codomain E₁ with
+    /// unnormalized (A:C). Then construct E₁' from E₁'s affine A (C=1).
+    /// Both have the same j-invariant. The isomorphism E₁ → E₁' should
+    /// map a point Q₁ on E₁ to a point Q₁' on E₁' with the same
+    /// affine x-coordinate.
+    #[test]
+    fn isomorphism_preserves_affine_x() {
+        let curve = Curve::E0;
+        let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, &curve);
+
+        // Compute a longer chain to get a codomain with non-trivial (A:C).
+        let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, &curve);
+        let (codomain, images) =
+            Kernel::new(P).isogeny(TorsionExponent::try_from(10).unwrap(), &[Q]);
+
+        // codomain has unnormalized doubling constants from the isogeny chain.
+        let q1 = &images[0];
+
+        // Reconstruct same curve from affine A (forces C=1).
+        let codomain_affine = Curve::from(*codomain.coefficient());
+
+        // Same j-invariant.
+        assert_eq!(codomain.j_invariant(), codomain_affine.j_invariant());
+
+        // Compute isomorphism.
+        let iso = codomain
+            .isomorphism(&codomain_affine)
+            .expect("isomorphism should exist for same j-invariant");
+        let q1_mapped = iso.eval(q1);
+
+        // The mapped point should have the same affine x as the original.
+        let x_orig = q1.to_affine_x();
+        let x_mapped = q1_mapped.to_affine_x();
+        assert_eq!(
+            x_orig, x_mapped,
+            "isomorphism between same curve (different projective rep) should preserve affine x"
+        );
+    }
+
+    /// Test isomorphism maps on-curve points to on-curve points.
+    ///
+    /// Uses a single 2-isogeny to produce a codomain with non-trivial
+    /// (A:C), then isomorphizes to the affine normalization and verifies
+    /// the mapped point satisfies y² = x³ + A'x² + x on the target.
+    #[test]
+    fn isomorphism_maps_on_curve() {
+        use crate::curves::montgomery::recover_y;
+
+        let curve = Curve::E0;
+        let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, &curve);
+        let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, &curve);
+
+        // Single 2-isogeny.
+        let (cod1, imgs1) = Kernel::new(P).isogeny(TorsionExponent::try_from(1).unwrap(), &[Q]);
+        let q_on_cod1 = &imgs1[0];
+
+        // Verify source point is on cod1.
+        let x_src = q_on_cod1.to_affine_x();
+        let a_src = *cod1.coefficient().as_fp2();
+        assert!(
+            recover_y(x_src.as_fp2(), &a_src).is_some(),
+            "source point should be on source curve"
+        );
+
+        // Reconstruct same curve from affine A (forces C=1).
+        let cod2 = Curve::from(*cod1.coefficient());
+        assert_eq!(cod1.j_invariant(), cod2.j_invariant());
+
+        // Isomorphism cod1 → cod2.
+        let iso = cod1.isomorphism(&cod2).expect("same j-invariant");
+        let q_mapped = iso.eval(q_on_cod1);
+
+        // Verify mapped point is on cod2.
+        let x_dst = q_mapped.to_affine_x();
+        let a_dst = *cod2.coefficient().as_fp2();
+        assert!(
+            recover_y(x_dst.as_fp2(), &a_dst).is_some(),
+            "mapped point should be on target curve"
+        );
     }
 
     #[test]
@@ -443,7 +531,7 @@ mod tests {
         let Q = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(5)), &curve);
 
         // Via Kernel::isogeny.
-        let (_, chain_imgs) = Kernel::new(P).isogeny(TorsionExponent::new(1), &[Q]);
+        let (_, chain_imgs) = Kernel::new(P).isogeny(TorsionExponent::try_from(1).unwrap(), &[Q]);
 
         // Via direct TwoIsogeny.
         let phi = TwoIsogeny::from_kernel(&P);

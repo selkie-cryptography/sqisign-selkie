@@ -39,13 +39,11 @@ fn action_matrix_linear_combination() {
     let m_b = b.action_matrix(&basis_matrices, f);
     let m_ab = ab.action_matrix(&basis_matrices, f);
 
-    let modulus = BigInt::<4>::ONE.shl(f.value());
     for row in 0..2 {
         for col in 0..2 {
             let sum = m_a
                 .entry(row, col)
-                .ct_add(m_b.entry(row, col))
-                .ct_mod(&modulus);
+                .add_mod2k(m_b.entry(row, col), f.value());
             assert_eq!(
                 sum,
                 *m_ab.entry(row, col),
