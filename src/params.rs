@@ -6,6 +6,8 @@
 //! [§4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.2
 //! [§5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.5.2
 
+use crate::quaternions::bigint::BigInt;
+
 /// Security parameter λ = 128.
 pub const SECURITY_BITS: u32 = 128;
 
@@ -88,6 +90,28 @@ pub const EQUIV_BOUND_COEFF: i32 = 20;
 /// Number of Miller-Rabin rounds for primality testing in ideal
 /// reduction (Algorithm 3.9). The C reference uses 20.
 pub const PRIMALITY_NUM_ITER: u32 = 20;
+
+/// Precomputed prime cofactor for [`RandomIdealGivenNorm`][Alg. 3.10]
+/// (non-prime case).
+///
+/// The smallest prime of the same bit size as p, used as the
+/// multiplier m in `GeneralizedRepresentInteger(mN, ...)`.
+/// For NIST-I: `QUAT_prime_cofactor = 2^251 + 65`.
+///
+/// [Alg. 3.10]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.10
+pub const QUAT_PRIME_COFACTOR: BigInt<4> = BigInt::from_limbs([0x41, 0, 0, 0x0800_0000_0000_0000]);
+
+/// Commitment/secret isogeny degree D_mix (= `COM_DEGREE` in the C ref).
+///
+/// The smallest prime > 2^{4λ} = 2^{512}. For NIST-I: `D_mix = 2^512 + 75`.
+/// This is 513 bits, so it requires `BigInt<9>` (576 bits). Our ideal
+/// infrastructure uses `BigInt<4>` and `BigInt<8>`, so `random_prime_norm`
+/// needs to be widened to accept larger norms for the commitment ideal.
+///
+/// See [§4.2.1] of the spec.
+///
+/// [§4.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.2
+pub const D_MIX: BigInt<9> = BigInt::from_limbs([0x4B, 0, 0, 0, 0, 0, 0, 0, 1]);
 
 // ---------------------------------------------------------------------------
 // Precomputed E₀ basis points
