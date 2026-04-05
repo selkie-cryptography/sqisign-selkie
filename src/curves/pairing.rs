@@ -15,13 +15,8 @@ use core::ops::{Div, Mul};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::{
-    curves::{
-        TorsionBasis, TorsionExponent,
-        montgomery::{ProjectiveXOnlyPoint, lift_basis},
-        scalar::Scalar,
-    },
+    curves::{TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
     fields::fp2::Fp2,
-    quaternions::bigint::BigInt,
 };
 
 // ---------------------------------------------------------------------------
@@ -83,11 +78,10 @@ impl RootOfUnity {
     ///
     /// [Alg. 2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.4
     pub fn dlog(&self, target: &Self, e: TorsionExponent) -> Scalar {
-        let e = e.value();
-        if e == 0 {
+        if e.value() == 0 {
             return Scalar::ZERO;
         }
-        if e == 1 {
+        if e.value() == 1 {
             return if *target == Self::ONE {
                 Scalar::ZERO
             } else {
@@ -96,32 +90,31 @@ impl RootOfUnity {
         }
 
         // e' = ⌊e/2⌋
-        let e_prime = e / 2;
+        let e_prime = e.halve();
 
         // ζ'₀ = ζ₀^{2^{e-e'}},  ζ'₁ = ζ₁^{2^{e-e'}}
-        let z0_prime = self.square_n(e - e_prime);
-        let z1_prime = target.square_n(e - e_prime);
+        let diff = e - e_prime;
+        let z0_prime = self.square_n(diff.value());
+        let z1_prime = target.square_n(diff.value());
 
         // k' = NormalizedDlog(ζ'₀, ζ'₁) — low bits
-        let k_prime = z0_prime.dlog(&z1_prime, TorsionExponent::new(e_prime));
+        let k_prime = z0_prime.dlog(&z1_prime, e_prime);
 
         // ζ''₀ = ζ₀^{2^{e'}},  ζ''₁ = ζ₁ / ζ₀^{k'}
-        let z0_double_prime = self.square_n(e_prime);
+        let z0_double_prime = self.square_n(e_prime.value());
         // TODO: pow by Scalar — for now convert k' to u32 for small
         // intermediate values. The recursion ensures k' < 2^{e'} which
         // fits in u32 for e' ≤ 124.
         let z1_double_prime = target / &self.pow(k_prime.as_limbs()[0] as u32);
 
         // k'' = NormalizedDlog(ζ''₀, ζ''₁) — high bits
-        let k_double_prime =
-            z0_double_prime.dlog(&z1_double_prime, TorsionExponent::new(e - e_prime));
+        let k_double_prime = z0_double_prime.dlog(&z1_double_prime, diff);
 
         // k = k' + 2^{e'} · k''
-        // Use BigInt for the shift since e' can exceed 63.
         use crate::quaternions::bigint::BigInt;
         let k_prime_big = BigInt::<4>::from(k_prime);
         let k_double_prime_big = BigInt::<4>::from(k_double_prime);
-        let k_high = k_double_prime_big.shl(e_prime);
+        let k_high = k_double_prime_big.shl(e_prime.value());
         let k = k_prime_big.ct_add(&k_high);
         Scalar::from_limbs(*k.as_limbs())
     }
@@ -312,97 +305,73 @@ pub(crate) fn tate_pairing(
     RootOfUnity(result)
 }
 
-// ---------------------------------------------------------------------------
-// Change of basis (Algorithm 2.5)
-// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        curves::{TorsionBasis, montgomery::Curve},
+        params,
+    };
 
-/// A 2×2 change-of-basis matrix over Z/2^f Z.
-///
-/// Represents the matrix M such that M · (P₁, P₂)ᵀ = (Q₁, Q₂)ᵀ,
-/// i.e., Q₁ = [x₁]P₁ + [x₂]P₂ and Q₂ = [x₃]P₁ + [x₄]P₂.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct ChangeOfBasisMatrix {
-    /// Matrix entries as Scalars: [[x₁, x₂], [x₃, x₄]].
-    pub entries: [[Scalar; 2]; 2],
-}
+    /// Build the E₀ torsion basis from params.
+    fn e0_basis() -> TorsionBasis {
+        let curve = Curve::E0;
+        let p = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_P_X, &curve);
+        let q = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_Q_X, &curve);
+        let pmq = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_PMQ_X, &curve);
+        TorsionBasis::new(p, q, pmq)
+    }
 
-impl ChangeOfBasisMatrix {
-    /// Compute the change-of-basis matrix from a full basis (P₁, P₂) of
-    /// E[2^f] to a target basis (Q₁, Q₂) of E[2^e].
-    ///
-    /// Returns the matrix (x₁, x₂, x₃, x₄) such that:
-    ///   Q₁ = [x₁]P₁ + [x₂]P₂
-    ///   Q₂ = [x₃]P₁ + [x₄]P₂
-    ///
-    /// Implements [ChangeOfBasis][Alg. 2.5] ([Algorithm 2.5][Alg. 2.5]).
-    ///
-    /// # Panics
-    ///
-    /// Panics if basis lifting fails (point not on curve).
-    ///
-    /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
-    pub(crate) fn from_bases(
-        full_basis: &TorsionBasis,
-        target_basis: &TorsionBasis,
-        e: TorsionExponent,
-    ) -> Self {
-        let curve = full_basis.R.curve();
-        let f = TorsionExponent::FULL;
+    #[test]
+    fn tate_pairing_is_root_of_unity() {
+        let basis = e0_basis();
+        let e = TorsionExponent::FULL; // 248
 
-        // Lift both bases to Jacobian for deterministic cross-sum computation.
-        // The tate_pairing needs x(A+B) for each pair, which requires
-        // Jacobian arithmetic to deterministically distinguish P+Q from P−Q.
-        let (p1_jac, p2_jac) = lift_basis(&full_basis.R, &full_basis.S, &full_basis.RS, curve)
-            .expect("full basis lift failed");
-        let (q1_jac, q2_jac) =
-            lift_basis(&target_basis.R, &target_basis.S, &target_basis.RS, curve)
-                .expect("target basis lift failed");
+        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
 
-        // Compute cross-sum x-coordinates via Jacobian arithmetic.
-        let (q1_plus_p2, _) = q1_jac.x_add_sub(&p2_jac);
-        let (q1_plus_p1, _) = q1_jac.x_add_sub(&p1_jac);
-        let (q2_plus_p2, _) = q2_jac.x_add_sub(&p2_jac);
-        let (q2_plus_p1, _) = q2_jac.x_add_sub(&p1_jac);
+        // ζ ≠ 1 (non-degenerate pairing on a basis).
+        assert_ne!(
+            zeta,
+            RootOfUnity::ONE,
+            "pairing of basis should be non-trivial"
+        );
 
-        // Step 1: ζ ← t_{2^e}(P₁, P₂)
-        let zeta = tate_pairing(&full_basis.R, &full_basis.S, &full_basis.RS, e);
+        // ζ^{2^e} = 1 (it's a 2^e-th root of unity).
+        let should_be_one = zeta.square_n(e.value());
+        assert_eq!(should_be_one, RootOfUnity::ONE, "ζ^(2^e) should equal 1");
+    }
 
-        // Step 2: Compute the four cross-pairings.
-        // ζ₁ ← t_{2^e}(Q₁, P₂)
-        let zeta1 = tate_pairing(&target_basis.R, &full_basis.S, &q1_plus_p2, e);
-        // ζ₂ ← 1/t_{2^e}(Q₁, P₁)
-        let zeta2_inv = tate_pairing(&target_basis.R, &full_basis.R, &q1_plus_p1, e);
-        let zeta2 = RootOfUnity::ONE / zeta2_inv;
-        // ζ₃ ← t_{2^e}(Q₂, P₂)
-        let zeta3 = tate_pairing(&target_basis.S, &full_basis.S, &q2_plus_p2, e);
-        // ζ₄ ← 1/t_{2^e}(Q₂, P₁)
-        let zeta4_inv = tate_pairing(&target_basis.S, &full_basis.R, &q2_plus_p1, e);
-        let zeta4 = RootOfUnity::ONE / zeta4_inv;
+    #[test]
+    fn dlog_round_trip_large() {
+        let basis = e0_basis();
+        let e = TorsionExponent::FULL;
+        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
 
-        // Step 3-4: x_i ← 2^{f-e} · log_ζ(ζ_i)
-        let k1 = zeta.dlog(&zeta1, e);
-        let k2 = zeta.dlog(&zeta2, e);
-        let k3 = zeta.dlog(&zeta3, e);
-        let k4 = zeta.dlog(&zeta4, e);
+        // dlog with full exponent: ζ^42 should round-trip.
+        let zeta42 = zeta.pow(42);
+        let k = zeta.dlog(&zeta42, e);
+        assert_eq!(k, Scalar::from_u64(42), "dlog(ζ^42) should be 42");
+    }
 
-        // Scale by 2^{f-e}: shift left by (f - e) bits.
-        let shift = f.value() - e.value();
-        let x1 = BigInt::<4>::from(k1).shl(shift);
-        let x2 = BigInt::<4>::from(k2).shl(shift);
-        let x3 = BigInt::<4>::from(k3).shl(shift);
-        let x4 = BigInt::<4>::from(k4).shl(shift);
+    #[test]
+    fn dlog_round_trip() {
+        let basis = e0_basis();
 
-        Self {
-            entries: [
-                [
-                    Scalar::from_limbs(*x1.as_limbs()),
-                    Scalar::from_limbs(*x2.as_limbs()),
-                ],
-                [
-                    Scalar::from_limbs(*x3.as_limbs()),
-                    Scalar::from_limbs(*x4.as_limbs()),
-                ],
-            ],
-        }
+        // Use the full-order pairing which is guaranteed primitive.
+        let e = TorsionExponent::FULL; // 248
+        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+        assert_ne!(zeta, RootOfUnity::ONE);
+
+        // Use a small exponent for the dlog test by squaring down.
+        // ζ' = ζ^{2^{248-10}} is a primitive 2^10-th root.
+        let e_small = TorsionExponent::try_from(10).unwrap();
+        let zeta_small = zeta.square_n(248 - 10);
+        assert_ne!(zeta_small, RootOfUnity::ONE);
+        assert_eq!(zeta_small.square_n(10), RootOfUnity::ONE);
+
+        // ζ'^7 should dlog back to 7.
+        let zeta7 = zeta_small.pow(7);
+        let k = zeta_small.dlog(&zeta7, e_small);
+        assert_eq!(k, Scalar::from_u64(7), "dlog(ζ'^7) should be 7");
     }
 }

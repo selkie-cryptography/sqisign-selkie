@@ -483,7 +483,7 @@ fn try_find_uv(
 
     // Factor out the 2-adic part of u.
     let e_val = u.trailing_zeros();
-    let e = TorsionExponent::new(f.value() - e_val);
+    let e = TorsionExponent::try_from(f.value() - e_val).ok()?;
 
     Some(SuitableIdealResult {
         u: u.shr(e_val).narrow()?,

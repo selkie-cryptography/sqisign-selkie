@@ -147,6 +147,28 @@ pub const BASIS_E0_Q_X: Fp2 = Fp2::new(
     ]),
 );
 
+/// x-coordinate of the difference point P₀ − Q₀ of E₀\[2^f\],
+/// where f = [`TORSION_EVEN_POWER`].
+///
+/// Precomputed from `projective_difference(P₀, Q₀)` on E₀.
+/// Stored in Montgomery form, radix-51 representation.
+pub const BASIS_E0_PMQ_X: Fp2 = Fp2::new(
+    Fp::from_limbs([
+        270480358487834,
+        2072266045736319,
+        1674191439884908,
+        2200260875474967,
+        6907110771017,
+    ]),
+    Fp::from_limbs([
+        1752869285732728,
+        495365606488051,
+        1818143936964406,
+        314346222928849,
+        165077940050103,
+    ]),
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +193,21 @@ mod tests {
     #[test]
     fn basis_e0_points_are_distinct() {
         assert_ne!(BASIS_E0_P_X, BASIS_E0_Q_X);
+    }
+
+    #[test]
+    fn basis_e0_pmq_is_on_curve() {
+        assert!(is_on_e0(&BASIS_E0_PMQ_X), "P₀−Q₀ x-coordinate is not on E₀");
+    }
+
+    #[test]
+    fn basis_e0_pmq_matches_projective_difference() {
+        use crate::curves::montgomery::{Curve, ProjectiveXOnlyPoint};
+        let curve = Curve::E0;
+        let p = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_P_X, &curve);
+        let q = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_Q_X, &curve);
+        let pmq = p.projective_difference(&q);
+        let x = pmq.to_affine_x();
+        assert_eq!(*x.as_fp2(), BASIS_E0_PMQ_X);
     }
 }

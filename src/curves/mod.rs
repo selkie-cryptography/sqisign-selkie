@@ -16,6 +16,8 @@ pub mod montgomery;
 pub(crate) mod pairing;
 pub mod scalar;
 
+use core::ops::Sub;
+
 use subtle::ConditionallySelectable;
 
 use crate::{
@@ -35,23 +37,34 @@ impl TorsionExponent {
     /// The full torsion exponent f = [`TORSION_EVEN_POWER`].
     pub const FULL: TorsionExponent = TorsionExponent(TORSION_EVEN_POWER);
 
-    /// Construct from a raw value, panicking if out of range.
-    pub fn new(e: u32) -> TorsionExponent {
-        assert!(
-            e <= TORSION_EVEN_POWER,
-            "torsion exponent {e} exceeds f = {TORSION_EVEN_POWER}"
-        );
-        TorsionExponent(e)
-    }
-
     /// The raw exponent value.
     pub fn value(self) -> u32 {
         self.0
     }
 
-    /// Subtract, returning `None` if the result would be negative.
+    /// Subtract, returning `None` if the result would be negative
+    /// or exceeds f.
     pub fn checked_sub(self, rhs: u32) -> Option<TorsionExponent> {
         self.0.checked_sub(rhs).and_then(|e| e.try_into().ok())
+    }
+
+    /// Floor-divide by 2: ⌊e/2⌋. Always valid since ⌊e/2⌋ ≤ e.
+    #[must_use]
+    pub fn halve(self) -> TorsionExponent {
+        TorsionExponent(self.0 / 2)
+    }
+}
+
+impl Sub for TorsionExponent {
+    type Output = Self;
+    /// Subtract two exponents. The result is always ≤ self, so always valid.
+    ///
+    /// # Panics
+    ///
+    /// Debug-panics if `rhs > self`.
+    fn sub(self, rhs: Self) -> Self {
+        debug_assert!(rhs.0 <= self.0);
+        Self(self.0 - rhs.0)
     }
 }
 
@@ -323,48 +336,24 @@ impl TorsionBasis {
     /// [Alg. 8.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.7
     /// Compute R + \[m\]S using the three-point Montgomery ladder.
     ///
-    /// The scalar `m` is given as a little-endian byte slice. Each byte
-    /// is expanded to 8 bits internally. The ladder always processes
-    /// exactly 256 bits (padding with zeros if `m_bytes_le` has fewer
-    /// than 32 bytes) to match the C reference's `ec_ladder3pt`.
+    /// The scalar `m` is a [`Scalar`] (256-bit unsigned integer in
+    /// four u64 limbs). The ladder always processes exactly 256 bits.
     ///
-    /// Implements `Ladder3pt` ([§8.2], Algorithm 8.7).
+    /// Implements [Ladder3pt][Alg. 8.7] ([Algorithm 8.7][Alg. 8.7]).
     ///
-    /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
-    pub fn ladder3pt(&self, m_bytes_le: &[u8]) -> ProjectiveXOnlyPoint {
+    /// [Alg. 8.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.7
+    pub fn scalar_mul_add(&self, m: &scalar::Scalar) -> ProjectiveXOnlyPoint {
         // Three-point Montgomery ladder computing R + [m]S.
         //
-        // Mirrors the C reference's `ec_ladder3pt` exactly:
-        //   X0 = S (multiplied by scalar)
-        //   X1 = R (accumulated result)
-        //   X2 = RS (difference R - S)
-        //
-        // The scalar m is given as little-endian bytes. We pad to 32
-        // bytes (256 bits) to match the C ref's NWORDS_ORDER=4 words.
-        let mut m = [0u8; 32];
-        let len = m_bytes_le.len().min(32);
-        m[..len].copy_from_slice(&m_bytes_le[..len]);
-
+        // Processes 4 limbs × 64 bits = 256 bits from LSB to MSB,
+        // matching the C reference's `ec_ladder3pt` loop structure.
         let mut x0 = self.S;
         let mut x1 = self.R;
         let mut x2 = self.RS;
 
-        // Process words from LSB to MSB, bits within each word from LSB.
-        // This matches the C ref's loop structure:
-        //   for (i = 0; i < NWORDS_ORDER; i++) {
-        //       t = 1;
-        //       for (j = 0; j < RADIX; j++) {
-        //           cswap(&X1, &X2, -((t & m[i]) == 0));
-        //           xDBLADD(&X0, &X1, ...);
-        //           cswap(&X1, &X2, -((t & m[i]) == 0));
-        //           t <<= 1;
-        //       }
-        //   }
-        // With NWORDS_ORDER=4 and RADIX=64, this is 256 bits.
-        // Our equivalent: 32 bytes × 8 bits = 256 bits.
-        for byte in &m {
-            for bit_pos in 0..8u32 {
-                let bit = (byte >> bit_pos) & 1;
+        for limb in m.as_limbs() {
+            for bit_pos in 0..64u32 {
+                let bit = ((limb >> bit_pos) & 1) as u8;
                 // C ref: cswap when bit == 0
                 let mask = subtle::Choice::from(bit ^ 1);
                 ProjectiveXOnlyPoint::conditional_swap(&mut x1, &mut x2, mask);
@@ -385,47 +374,38 @@ impl TorsionBasis {
         a: &scalar::Scalar,
         b: &scalar::Scalar,
     ) -> ProjectiveXOnlyPoint {
-        // [a]R + [b]S via the biscalar ladder.
-        // For now, use ladder3pt: compute [b]S + R, then subtract R
-        // and add [a]R... Actually the three-point ladder computes
-        // R + [m]S directly. For [a]R + [b]S we need the full
-        // biscalar ladder.
-        //
-        // TODO: implement using the Scalar-based biscalar ladder
-        // once we refactor ladder_biscalar to take Scalar.
-        // For now, convert to byte representation.
-        let a_bytes: Vec<u8> = a
-            .as_limbs()
-            .iter()
-            .flat_map(|limb| limb.to_le_bytes())
-            .collect();
-        let b_bytes: Vec<u8> = b
-            .as_limbs()
-            .iter()
-            .flat_map(|limb| limb.to_le_bytes())
-            .collect();
-        self.ladder_biscalar(&a_bytes, &b_bytes, scalar::Scalar::BITS as usize)
+        self.biscalar_mul(a, b, TorsionExponent::FULL)
     }
 
     /// Compute \[m\]R + \[n\]S from this basis.
     ///
     /// Uses the biscalar Montgomery ladder with scalar recoding.
-    /// Both scalars are given as little-endian byte slices of equal
-    /// length. Constant-time in the values of m and n.
+    /// Both scalars are [`Scalar`]s reduced mod 2^e, where `e` is the
+    /// torsion exponent of the basis. Constant-time in the scalar values.
     ///
-    /// Implements `LadderBiscalar` ([§8.2], Algorithm 8.8).
+    /// Implements [LadderBiscalar][Alg. 8.8] ([Algorithm 8.8][Alg. 8.8]).
     ///
-    /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
-    pub fn ladder_biscalar(&self, m: &[u8], n: &[u8], kbits: usize) -> ProjectiveXOnlyPoint {
+    /// [Alg. 8.8]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.8
+    pub fn biscalar_mul(
+        &self,
+        m: &scalar::Scalar,
+        n: &scalar::Scalar,
+        e: TorsionExponent,
+    ) -> ProjectiveXOnlyPoint {
+        let kbits = e.value() as usize;
         let P = &self.R;
         let Q = &self.S;
         let PmQ = &self.RS;
         let curve = P.curve();
 
+        // Convert to bytes for the recoding stage.
+        let m_bytes = m.to_le_bytes();
+        let n_bytes = n.to_le_bytes();
+
         // --- Recoding stage ---
         // Determine sigma based on parity of m and n.
-        let bit_m0 = m[0] & 1;
-        let bit_n0 = n[0] & 1;
+        let bit_m0 = m_bytes[0] & 1;
+        let bit_n0 = n_bytes[0] & 1;
         let mask_m: u8 = 0u8.wrapping_sub(bit_m0);
         let mask_n: u8 = 0u8.wrapping_sub(bit_n0);
 
@@ -438,10 +418,8 @@ impl TorsionBasis {
         // Convert even scalars to odd (subtract 1).
         let mut m_t = [0u8; 32];
         let mut n_t = [0u8; 32];
-        let m_len = m.len().min(32);
-        let n_len = n.len().min(32);
-        m_t[..m_len].copy_from_slice(&m[..m_len]);
-        n_t[..n_len].copy_from_slice(&n[..n_len]);
+        m_t.copy_from_slice(&m_bytes);
+        n_t.copy_from_slice(&n_bytes);
 
         // Subtract 1 from even scalars (constant-time).
         sub_one_ct(&mut m_t, mask_m ^ 0xFF); // subtract if m was even
@@ -730,6 +708,101 @@ impl TorsionBasis {
 
         let hint_byte = BasisHint::new(h_A as u8, h);
         (basis, hint_byte)
+    }
+}
+
+/// A 2×2 change-of-basis matrix over Z/2^f Z.
+///
+/// Represents the matrix M such that M · (P₁, P₂)ᵀ = (Q₁, Q₂)ᵀ,
+/// i.e., Q₁ = [x₁]P₁ + [x₂]P₂ and Q₂ = [x₃]P₁ + [x₄]P₂.
+///
+/// Used as M_sk (secret, in [`SigningKey`](crate::keys::SigningKey)) and
+/// M_chl (public, in [`Signature`](crate::keys::Signature)).
+///
+/// No `PartialEq`/`Eq`: M_sk in the signing key is secret.
+// TODO: explore unifying ActionMatrix, ChallengeMatrix, ChangeOfBasisMatrix,
+// and mat_sk into a common Matrix2x2<Scalar> type.
+#[derive(Copy, Clone, Debug)]
+pub struct ChangeOfBasisMatrix {
+    /// Matrix entries as Scalars: [[x₁, x₂], [x₃, x₄]].
+    pub entries: [[scalar::Scalar; 2]; 2],
+}
+
+impl ChangeOfBasisMatrix {
+    /// Compute the change-of-basis matrix from a full basis (P₁, P₂) of
+    /// E[2^f] to a target basis (Q₁, Q₂) of E[2^e].
+    ///
+    /// Returns the matrix (x₁, x₂, x₃, x₄) such that:
+    ///   Q₁ = [x₁]P₁ + [x₂]P₂
+    ///   Q₂ = [x₃]P₁ + [x₄]P₂
+    ///
+    /// Implements [ChangeOfBasis][Alg. 2.5] ([Algorithm 2.5][Alg. 2.5]).
+    ///
+    /// # Panics
+    ///
+    /// Panics if basis lifting fails (point not on curve).
+    ///
+    /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
+    pub(crate) fn from_bases(
+        full_basis: &TorsionBasis,
+        target_basis: &TorsionBasis,
+        e: TorsionExponent,
+    ) -> Self {
+        use pairing::{RootOfUnity, tate_pairing};
+        use scalar::Scalar;
+
+        use crate::{curves::montgomery::lift_basis, quaternions::bigint::BigInt};
+
+        let curve = full_basis.R.curve();
+        let f = TorsionExponent::FULL;
+
+        // Lift both bases to Jacobian for deterministic cross-sum computation.
+        let (p1_jac, p2_jac) = lift_basis(&full_basis.R, &full_basis.S, &full_basis.RS, curve)
+            .expect("full basis lift failed");
+        let (q1_jac, q2_jac) =
+            lift_basis(&target_basis.R, &target_basis.S, &target_basis.RS, curve)
+                .expect("target basis lift failed");
+
+        // Compute cross-sum x-coordinates via Jacobian arithmetic.
+        let (q1_plus_p2, _) = q1_jac.x_add_sub(&p2_jac);
+        let (q1_plus_p1, _) = q1_jac.x_add_sub(&p1_jac);
+        let (q2_plus_p2, _) = q2_jac.x_add_sub(&p2_jac);
+        let (q2_plus_p1, _) = q2_jac.x_add_sub(&p1_jac);
+
+        // Step 1: ζ ← t_{2^e}(P₁, P₂)
+        let zeta = tate_pairing(&full_basis.R, &full_basis.S, &full_basis.RS, e);
+
+        // Step 2: Compute the four cross-pairings.
+        let zeta1 = tate_pairing(&target_basis.R, &full_basis.S, &q1_plus_p2, e);
+        let zeta2 = RootOfUnity::ONE / tate_pairing(&target_basis.R, &full_basis.R, &q1_plus_p1, e);
+        let zeta3 = tate_pairing(&target_basis.S, &full_basis.S, &q2_plus_p2, e);
+        let zeta4 = RootOfUnity::ONE / tate_pairing(&target_basis.S, &full_basis.R, &q2_plus_p1, e);
+
+        // Step 3-4: x_i ← 2^{f-e} · log_ζ(ζ_i)
+        let k1 = zeta.dlog(&zeta1, e);
+        let k2 = zeta.dlog(&zeta2, e);
+        let k3 = zeta.dlog(&zeta3, e);
+        let k4 = zeta.dlog(&zeta4, e);
+
+        // Scale by 2^{f-e}: shift left by (f - e) bits.
+        let shift = f.value() - e.value();
+        let x1 = BigInt::<4>::from(k1).shl(shift);
+        let x2 = BigInt::<4>::from(k2).shl(shift);
+        let x3 = BigInt::<4>::from(k3).shl(shift);
+        let x4 = BigInt::<4>::from(k4).shl(shift);
+
+        Self {
+            entries: [
+                [
+                    Scalar::from_limbs(*x1.as_limbs()),
+                    Scalar::from_limbs(*x2.as_limbs()),
+                ],
+                [
+                    Scalar::from_limbs(*x3.as_limbs()),
+                    Scalar::from_limbs(*x4.as_limbs()),
+                ],
+            ],
+        }
     }
 }
 

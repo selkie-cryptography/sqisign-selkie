@@ -22,22 +22,22 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActionMatrix {
     /// Entries stored row-major: [[a, b], [c, d]].
-    entries: [[BigInt<4>; 2]; 2],
+    entries: [[Scalar; 2]; 2],
 }
 
 impl ActionMatrix {
     /// The zero matrix.
     pub const ZERO: Self = Self {
-        entries: [[BigInt::ZERO; 2]; 2],
+        entries: [[Scalar::ZERO; 2]; 2],
     };
 
     /// The identity matrix.
     pub const IDENTITY: Self = Self {
-        entries: [[BigInt::ONE, BigInt::ZERO], [BigInt::ZERO, BigInt::ONE]],
+        entries: [[Scalar::ONE, Scalar::ZERO], [Scalar::ZERO, Scalar::ONE]],
     };
 
     /// Creates a matrix from four entries (row-major).
-    pub const fn new(a: BigInt<4>, b: BigInt<4>, c: BigInt<4>, d: BigInt<4>) -> Self {
+    pub const fn new(a: Scalar, b: Scalar, c: Scalar, d: Scalar) -> Self {
         Self {
             entries: [[a, b], [c, d]],
         }
@@ -47,37 +47,33 @@ impl ActionMatrix {
     pub const fn from_limbs(a: [u64; 4], b: [u64; 4], c: [u64; 4], d: [u64; 4]) -> Self {
         Self {
             entries: [
-                [BigInt::from_limbs(a), BigInt::from_limbs(b)],
-                [BigInt::from_limbs(c), BigInt::from_limbs(d)],
+                [Scalar::from_limbs(a), Scalar::from_limbs(b)],
+                [Scalar::from_limbs(c), Scalar::from_limbs(d)],
             ],
         }
     }
 
     /// Returns entry at (row, col).
-    pub const fn entry(&self, row: usize, col: usize) -> &BigInt<4> {
+    pub const fn entry(&self, row: usize, col: usize) -> &Scalar {
         &self.entries[row][col]
     }
 
     /// Add scalar * other to self, mod 2^f: self += scalar * other.
+    ///
+    /// The `scalar` argument is a `BigInt<4>` because callers in the
+    /// Deuring correspondence pass quaternion coordinates, which are
+    /// `BigInt<4>`.
     pub fn add_scaled_mod(&self, scalar: &BigInt<4>, other: &Self, f: u32) -> Self {
-        let modulus = BigInt::<4>::ONE.shl(f);
+        let s = Scalar::from(*scalar);
         Self {
             entries: [
                 [
-                    self.entries[0][0]
-                        .ct_add(&scalar.ct_mul(&other.entries[0][0]))
-                        .ct_mod(&modulus),
-                    self.entries[0][1]
-                        .ct_add(&scalar.ct_mul(&other.entries[0][1]))
-                        .ct_mod(&modulus),
+                    self.entries[0][0].add_mod2k(&s.mul_mod2k(&other.entries[0][0], f), f),
+                    self.entries[0][1].add_mod2k(&s.mul_mod2k(&other.entries[0][1], f), f),
                 ],
                 [
-                    self.entries[1][0]
-                        .ct_add(&scalar.ct_mul(&other.entries[1][0]))
-                        .ct_mod(&modulus),
-                    self.entries[1][1]
-                        .ct_add(&scalar.ct_mul(&other.entries[1][1]))
-                        .ct_mod(&modulus),
+                    self.entries[1][0].add_mod2k(&s.mul_mod2k(&other.entries[1][0], f), f),
+                    self.entries[1][1].add_mod2k(&s.mul_mod2k(&other.entries[1][1], f), f),
                 ],
             ],
         }
@@ -86,17 +82,19 @@ impl ActionMatrix {
     /// Matrix-vector multiplication mod 2^f: M · [c1, c2]^T.
     ///
     /// Returns [M[0][0]*c1 + M[0][1]*c2, M[1][0]*c1 + M[1][1]*c2] mod 2^f.
+    ///
+    /// The arguments are `BigInt<4>` because callers pass quaternion
+    /// coordinates.
     pub fn eval_mod(&self, c1: &BigInt<4>, c2: &BigInt<4>, f: u32) -> (BigInt<4>, BigInt<4>) {
-        let modulus = BigInt::<4>::ONE.shl(f);
+        let s1 = Scalar::from(*c1);
+        let s2 = Scalar::from(*c2);
         let r0 = self.entries[0][0]
-            .ct_mul(c1)
-            .ct_add(&self.entries[0][1].ct_mul(c2))
-            .ct_mod(&modulus);
+            .mul_mod2k(&s1, f)
+            .add_mod2k(&self.entries[0][1].mul_mod2k(&s2, f), f);
         let r1 = self.entries[1][0]
-            .ct_mul(c1)
-            .ct_add(&self.entries[1][1].ct_mul(c2))
-            .ct_mod(&modulus);
-        (r0, r1)
+            .mul_mod2k(&s1, f)
+            .add_mod2k(&self.entries[1][1].mul_mod2k(&s2, f), f);
+        (BigInt::from(r0), BigInt::from(r1))
     }
 
     /// Apply this matrix, scaled by a scalar, to a pair of points.
@@ -110,12 +108,13 @@ impl ActionMatrix {
         q: ProjectiveXOnlyPoint,
         f: TorsionExponent,
     ) -> (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint) {
-        let modulus = BigInt::<4>::ONE.shl(f.value());
+        let s = Scalar::from(*scalar);
+        let fv = f.value();
 
-        let s00 = Scalar::from_limbs(*scalar.ct_mul(self.entry(0, 0)).ct_mod(&modulus).as_limbs());
-        let s01 = Scalar::from_limbs(*scalar.ct_mul(self.entry(0, 1)).ct_mod(&modulus).as_limbs());
-        let s10 = Scalar::from_limbs(*scalar.ct_mul(self.entry(1, 0)).ct_mod(&modulus).as_limbs());
-        let s11 = Scalar::from_limbs(*scalar.ct_mul(self.entry(1, 1)).ct_mod(&modulus).as_limbs());
+        let s00 = s.mul_mod2k(self.entry(0, 0), fv);
+        let s01 = s.mul_mod2k(self.entry(0, 1), fv);
+        let s10 = s.mul_mod2k(self.entry(1, 0), fv);
+        let s11 = s.mul_mod2k(self.entry(1, 1), fv);
 
         let basis = TorsionBasis::new(p, q, p.projective_difference(&q));
         let p_prime = basis.eval_decomposition(&s00, &s10);
@@ -125,31 +124,23 @@ impl ActionMatrix {
 
     /// Matrix-matrix multiplication mod 2^f.
     pub fn mat_mul_mod(&self, rhs: &Self, f: u32) -> Self {
-        let modulus = BigInt::<4>::ONE.shl(f);
-        let mul_mod = |a: &BigInt<4>, b: &BigInt<4>| a.ct_mul(b).ct_mod(&modulus);
-        let add_mod = |a: BigInt<4>, b: BigInt<4>| a.ct_add(&b).ct_mod(&modulus);
-
         Self {
             entries: [
                 [
-                    add_mod(
-                        mul_mod(&self.entries[0][0], &rhs.entries[0][0]),
-                        mul_mod(&self.entries[0][1], &rhs.entries[1][0]),
-                    ),
-                    add_mod(
-                        mul_mod(&self.entries[0][0], &rhs.entries[0][1]),
-                        mul_mod(&self.entries[0][1], &rhs.entries[1][1]),
-                    ),
+                    self.entries[0][0]
+                        .mul_mod2k(&rhs.entries[0][0], f)
+                        .add_mod2k(&self.entries[0][1].mul_mod2k(&rhs.entries[1][0], f), f),
+                    self.entries[0][0]
+                        .mul_mod2k(&rhs.entries[0][1], f)
+                        .add_mod2k(&self.entries[0][1].mul_mod2k(&rhs.entries[1][1], f), f),
                 ],
                 [
-                    add_mod(
-                        mul_mod(&self.entries[1][0], &rhs.entries[0][0]),
-                        mul_mod(&self.entries[1][1], &rhs.entries[1][0]),
-                    ),
-                    add_mod(
-                        mul_mod(&self.entries[1][0], &rhs.entries[0][1]),
-                        mul_mod(&self.entries[1][1], &rhs.entries[1][1]),
-                    ),
+                    self.entries[1][0]
+                        .mul_mod2k(&rhs.entries[0][0], f)
+                        .add_mod2k(&self.entries[1][1].mul_mod2k(&rhs.entries[1][0], f), f),
+                    self.entries[1][0]
+                        .mul_mod2k(&rhs.entries[0][1], f)
+                        .add_mod2k(&self.entries[1][1].mul_mod2k(&rhs.entries[1][1], f), f),
                 ],
             ],
         }
@@ -193,23 +184,23 @@ mod tests {
     #[test]
     fn action_matrix_mul() {
         let a = ActionMatrix::new(
-            BigInt::from(1i64),
-            BigInt::from(2i64),
-            BigInt::from(3i64),
-            BigInt::from(4i64),
+            Scalar::from_u64(1),
+            Scalar::from_u64(2),
+            Scalar::from_u64(3),
+            Scalar::from_u64(4),
         );
         let b = ActionMatrix::new(
-            BigInt::from(5i64),
-            BigInt::from(6i64),
-            BigInt::from(7i64),
-            BigInt::from(8i64),
+            Scalar::from_u64(5),
+            Scalar::from_u64(6),
+            Scalar::from_u64(7),
+            Scalar::from_u64(8),
         );
         let c = a.mat_mul_mod(&b, 248);
         // [1*5+2*7, 1*6+2*8] = [19, 22]
         // [3*5+4*7, 3*6+4*8] = [43, 50]
-        assert_eq!(*c.entry(0, 0), BigInt::from(19i64));
-        assert_eq!(*c.entry(0, 1), BigInt::from(22i64));
-        assert_eq!(*c.entry(1, 0), BigInt::from(43i64));
-        assert_eq!(*c.entry(1, 1), BigInt::from(50i64));
+        assert_eq!(*c.entry(0, 0), Scalar::from_u64(19));
+        assert_eq!(*c.entry(0, 1), Scalar::from_u64(22));
+        assert_eq!(*c.entry(1, 0), Scalar::from_u64(43));
+        assert_eq!(*c.entry(1, 1), Scalar::from_u64(50));
     }
 }

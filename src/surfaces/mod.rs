@@ -27,7 +27,7 @@ pub(crate) mod isogeny;
 use core::ops::Mul;
 
 use crate::{
-    curves::montgomery::{Curve, ProjectiveXOnlyPoint},
+    curves::montgomery::{Curve, ProjectiveXOnlyPoint, lift_basis},
     fields::fp2::Fp2,
     surfaces::isogeny::{GluingKernel, SplittingKernel},
 };
@@ -387,8 +387,6 @@ impl Kernel {
         Q: ProductPoint,
         PmQ: ProductPoint,
     ) -> Option<Kernel> {
-        use crate::curves::montgomery::lift_basis;
-
         let (p1, q1) = lift_basis(&P.0, &Q.0, &PmQ.0, &domain.E1)?;
         let (p2, q2) = lift_basis(&P.1, &Q.1, &PmQ.1, &domain.E2)?;
         Some(Kernel {
@@ -763,7 +761,8 @@ mod tests {
             k = k.double();
         }
         // k has order 2. Compute 2-isogeny and push P, Q through.
-        let (e1, images) = CurveKernel::new(k).isogeny(TorsionExponent::new(1), &[p, q]);
+        let (e1, images) =
+            CurveKernel::new(k).isogeny(TorsionExponent::try_from(1).unwrap(), &[p, q]);
         let p1 = images[0]; // P on E₁, order 2^247
         let q1 = images[1]; // Q on E₁, order 2^247
 
@@ -791,7 +790,7 @@ mod tests {
         let kernel = Kernel::from_montgomery(product, (p0_4, p1_4), (q0_4, q1_4), (pmq0, pmq1))
             .expect("kernel lift");
 
-        let (codomain, _) = kernel.isogeny(TorsionExponent::new(2), &[]);
+        let (codomain, _) = kernel.isogeny(TorsionExponent::try_from(2).unwrap(), &[]);
 
         eprintln!("chain_e2: E₀ j = {:?}", e0.j_invariant());
         eprintln!("chain_e2: E₁ j = {:?}", e1.j_invariant());
@@ -896,19 +895,20 @@ mod tests {
         // Reproduce verification steps up to the (2,2)-chain.
         let f = crate::params::TORSION_EVEN_POWER;
         let e_rsp = crate::params::E_RSP;
-        let e_rsp_prime = e_rsp - sig.n_bt - sig.r_rsp;
+        let e_rsp_prime = e_rsp - sig.n_bt.value() - sig.r_rsp.value();
 
         // Challenge isogeny.
         let basis_pk = crate::curves::TorsionBasis::from_hint(
             vk.curve(),
             BasisHint::from_byte(u8::from(vk.hint)),
         );
-        let kernel_gen = basis_pk.ladder3pt(&sig.chl);
+        let kernel_gen = basis_pk.scalar_mul_add(sig.chl.as_ref());
         let mut K_chl = kernel_gen;
-        for _ in 0..sig.n_bt {
+        for _ in 0..sig.n_bt.value() {
             K_chl = K_chl.double();
         }
-        let (curve_chl, _) = CurveKernel::new(K_chl).isogeny(TE::new(f - sig.n_bt), &[]);
+        let (curve_chl, _) =
+            CurveKernel::new(K_chl).isogeny(TE::try_from(f - sig.n_bt.value()).unwrap(), &[]);
 
         // Bases.
         let basis_aux = crate::curves::TorsionBasis::from_hint(
@@ -929,7 +929,7 @@ mod tests {
         }
         let mut P_chl = basis_chl.R;
         let mut Q_chl = basis_chl.S;
-        for _ in 0..(f - e_rsp_prime - sig.r_rsp - 2) {
+        for _ in 0..(f - e_rsp_prime - sig.r_rsp.value() - 2) {
             P_chl = P_chl.double();
             Q_chl = Q_chl.double();
         }
@@ -940,7 +940,7 @@ mod tests {
         let (mut P_chl, mut Q_chl) = (basis_chl_transformed.R, basis_chl_transformed.S);
 
         // Even response isogeny.
-        if sig.r_rsp > 0 {
+        if sig.r_rsp.value() > 0 {
             let kernel_pt = if sig.M_chl.first_column_even() {
                 Q_chl
             } else {
@@ -951,7 +951,11 @@ mod tests {
                 K = K.double();
             }
             let (new_curve, images) = CurveKernel::new(K)
-                .isogeny_small(TE::new(sig.r_rsp), &[P_chl, Q_chl], false)
+                .isogeny_small(
+                    TE::try_from(sig.r_rsp.value()).unwrap(),
+                    &[P_chl, Q_chl],
+                    false,
+                )
                 .expect("even response should succeed");
             let _curve_chl = new_curve;
             P_chl = images[0];
@@ -1006,7 +1010,7 @@ mod tests {
         .expect("kernel lift");
 
         // This should work if the gluing is correct.
-        let (codomain, _) = kernel.isogeny(TE::new(2), &[]);
+        let (codomain, _) = kernel.isogeny(TE::try_from(2).unwrap(), &[]);
         eprintln!(
             "KAT e=2: j(E1)={:?}, j(E2)={:?}",
             codomain.E1.j_invariant(),
@@ -1065,7 +1069,7 @@ mod tests {
         let kernel = Kernel::from_montgomery(product, (p5, q5), (q5, p5), (pmq1, pmq2))
             .expect("kernel lift");
 
-        let (codomain, _) = kernel.isogeny(TorsionExponent::new(3), &[]);
+        let (codomain, _) = kernel.isogeny(TorsionExponent::try_from(3).unwrap(), &[]);
 
         eprintln!("chain_e3: codomain E1 j = {:?}", codomain.E1.j_invariant());
         eprintln!("chain_e3: codomain E2 j = {:?}", codomain.E2.j_invariant());

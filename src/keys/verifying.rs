@@ -15,7 +15,7 @@ use crate::{
     },
     fields::Fp2,
     hash,
-    keys::{Signature, SignatureError, VERIFYING_KEY_BYTES},
+    keys::{Challenge, Signature, SignatureError, VERIFYING_KEY_BYTES},
     params::{E_RSP, TORSION_EVEN_POWER},
     surfaces,
 };
@@ -101,14 +101,14 @@ impl VerifyingKey {
                 format!("0x{re}+i*0x{im}")
             };
             eprintln!("VK: j(E_pk)={}", fp2_hex_short(&self.curve.j_invariant()));
-            eprintln!("VK: n_bt={} r_rsp={}", sig.n_bt, sig.r_rsp);
+            eprintln!("VK: n_bt={} r_rsp={}", sig.n_bt.value(), sig.r_rsp.value());
         }
 
         // --- Algorithm 4.9, line 6–7: compute e'_rsp ---
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
         let e_rsp_prime = e_rsp
-            .checked_sub(sig.n_bt)
-            .and_then(|v| v.checked_sub(sig.r_rsp))
+            .checked_sub(sig.n_bt.value())
+            .and_then(|v| v.checked_sub(sig.r_rsp.value()))
             .ok_or(SignatureError::VerificationFailed)?;
 
         // --- Line 8: torsion basis on E_pk from hint_pk ---
@@ -121,7 +121,7 @@ impl VerifyingKey {
         // Compute kernel: P_pk + [chl]Q_pk, then [2^n_bt] of that.
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
         #[cfg(test)]
-        eprintln!("VK: sig.chl bytes = {:02x?}", &sig.chl);
+        eprintln!("VK: sig.chl = {:?}", sig.chl.as_ref());
 
         #[cfg(test)]
         {
@@ -143,9 +143,9 @@ impl VerifyingKey {
             eprintln!("VK: RS(=Q) affine = {}", fp2_hex_short(&RS_aff));
         }
 
-        let kernel_gen = basis_pk.ladder3pt(&sig.chl);
+        let kernel_gen = basis_pk.scalar_mul_add(sig.chl.as_ref());
         let mut K_chl = kernel_gen;
-        for _ in 0..sig.n_bt {
+        for _ in 0..sig.n_bt.value() {
             K_chl = K_chl.double();
         }
 
@@ -173,8 +173,11 @@ impl VerifyingKey {
             eprintln!("VK: K_chl affine={}", fp2_hex_short(&k_aff));
         }
 
-        let (curve_chl, _) =
-            CurveKernel::new(K_chl).isogeny(TorsionExponent::new(f - sig.n_bt), &[]);
+        let (curve_chl, _) = CurveKernel::new(K_chl).isogeny(
+            TorsionExponent::try_from(f - sig.n_bt.value())
+                .map_err(|_| SignatureError::VerificationFailed)?,
+            &[],
+        );
 
         #[cfg(test)]
         {
@@ -256,7 +259,7 @@ impl VerifyingKey {
         let mut P_chl = basis_chl.R;
         let mut Q_chl = basis_chl.S;
         let mut PmQ_chl = basis_chl.RS;
-        for _ in 0..(f - e_rsp_prime - sig.r_rsp - 2) {
+        for _ in 0..(f - e_rsp_prime - sig.r_rsp.value() - 2) {
             P_chl = P_chl.double();
             Q_chl = Q_chl.double();
             PmQ_chl = PmQ_chl.double();
@@ -291,7 +294,7 @@ impl VerifyingKey {
             };
             eprintln!(
                 "EVEN_RSP: r_rsp={}, first_col_even={}",
-                sig.r_rsp,
+                sig.r_rsp.value(),
                 sig.M_chl.first_column_even()
             );
             eprintln!("EVEN_RSP: P_chl X_re={}", fp2_hex(&P_chl.X));
@@ -301,7 +304,7 @@ impl VerifyingKey {
             );
         }
         let mut curve_chl = curve_chl;
-        if sig.r_rsp > 0 {
+        if sig.r_rsp.value() > 0 {
             let kernel_pt = if sig.M_chl.first_column_even() {
                 Q_chl
             } else {
@@ -313,7 +316,8 @@ impl VerifyingKey {
             }
             let (new_curve, images) = CurveKernel::new(K)
                 .isogeny_small(
-                    TorsionExponent::new(sig.r_rsp),
+                    TorsionExponent::try_from(sig.r_rsp.value())
+                        .map_err(|_| SignatureError::VerificationFailed)?,
                     &[P_chl, Q_chl, PmQ_chl],
                     false,
                 )
@@ -345,7 +349,7 @@ impl VerifyingKey {
         if e_rsp_prime == 0 {
             let j = curve_chl.j_invariant();
             let chl_prime = hash::hash(self, &j, msg);
-            return if sig.chl == chl_prime {
+            return if sig.chl == Challenge::from(chl_prime) {
                 Ok(())
             } else {
                 Err(SignatureError::VerificationFailed)
@@ -382,7 +386,8 @@ impl VerifyingKey {
             };
             eprintln!(
                 "VERIFY: e_rsp_prime={e_rsp_prime} n_bt={} r_rsp={}",
-                sig.n_bt, sig.r_rsp
+                sig.n_bt.value(),
+                sig.r_rsp.value()
             );
             eprintln!("VERIFY: curve_chl j={}", fp2_hex(&curve_chl.j_invariant()));
             let aux_A = Fp2::from(*sig.curve_aux.coefficient().as_fp2());
@@ -402,13 +407,17 @@ impl VerifyingKey {
             (PmQ_chl, PmQ_aux),
         )
         .ok_or(SignatureError::VerificationFailed)?;
-        let (codomain, _) = kernel.isogeny(TorsionExponent::new(e_rsp_prime), &[]);
+        let (codomain, _) = kernel.isogeny(
+            TorsionExponent::try_from(e_rsp_prime)
+                .map_err(|_| SignatureError::VerificationFailed)?,
+            &[],
+        );
 
         // --- Lines 29–30: recompute challenge ---
         let j_com = codomain.E1.j_invariant();
         let chl_prime = hash::hash(self, &j_com, msg);
 
-        if sig.chl == chl_prime {
+        if sig.chl == Challenge::from(chl_prime) {
             Ok(())
         } else {
             Err(SignatureError::VerificationFailed)

@@ -14,10 +14,17 @@
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
-    keys::{
-        SIGNING_KEY_BYTES, Signature, SignatureError, VERIFYING_KEY_BYTES, verifying::VerifyingKey,
+    curves::{
+        TorsionBasis, TorsionExponent,
+        isogeny::Kernel,
+        montgomery::{Curve, ProjectiveXOnlyPoint},
+        scalar::Scalar,
     },
-    params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES},
+    keys::{
+        Challenge, SIGNING_KEY_BYTES, Signature, SignatureError, VERIFYING_KEY_BYTES,
+        verifying::VerifyingKey,
+    },
+    params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES, TORSION_EVEN_POWER},
     quaternions::{
         algebra::{Coordinate, Denominator, Element},
         bigint::BigInt,
@@ -55,7 +62,7 @@ pub struct SigningKey {
     ideal: LeftIdeal<4>,
     /// Change-of-basis matrix M_sk: 2×2 over Z, stored as
     /// \[\[m00, m01\], \[m10, m11\]\] with entries mod 2^f.
-    mat_sk: [[BigInt<4>; 2]; 2],
+    mat_sk: [[Scalar; 2]; 2],
 }
 
 impl SigningKey {
@@ -132,12 +139,13 @@ impl SigningKey {
         let ideal = LeftIdeal::new(&gen, &norm, EXTREMAL_ORDERS[0].order());
 
         // Parse M_sk: 4 × 32 bytes unsigned, row-major [[m00, m01], [m10, m11]].
-        let mut mat_sk = [[BigInt::<4>::ZERO; 2]; 2];
+        let mut mat_sk = [[Scalar::ZERO; 2]; 2];
         for row in &mut mat_sk {
             for entry in row.iter_mut() {
-                *entry = BigInt::<4>::from_bytes_le_unsigned(
+                let b = BigInt::<4>::from_bytes_le_unsigned(
                     bytes[pos..pos + TORSION_2POWER_BYTES].try_into().unwrap(),
                 );
+                *entry = Scalar::from(b);
                 pos += TORSION_2POWER_BYTES;
             }
         }
@@ -247,3 +255,43 @@ impl Drop for SigningKey {
 
 #[cfg(feature = "zeroize")]
 impl ZeroizeOnDrop for SigningKey {}
+
+// ---------------------------------------------------------------------------
+// Challenge isogeny (Algorithm 4.7)
+// ---------------------------------------------------------------------------
+
+/// Compute the challenge isogeny and map points through the isomorphism.
+///
+/// Given a basis (P, Q) on curve E and a challenge `chl`, computes the
+/// isogeny with kernel ⟨[2^n](P + [chl]Q)⟩ of degree 2^(f−n), producing
+/// the challenge curve E''. Then maps P', Q' from E' (which has the
+/// same j-invariant as E'') onto E'' via
+/// [`Isomorphism`](crate::curves::montgomery::Isomorphism).
+///
+/// Implements [ComputeChallengeIsogeny][Alg. 4.7] ([Algorithm 4.7][Alg. 4.7]).
+///
+/// [Alg. 4.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.7
+pub(crate) fn compute_challenge_isogeny(
+    basis: &TorsionBasis,
+    chl: &Challenge,
+    e_prime: &Curve,
+    p_prime: &ProjectiveXOnlyPoint,
+    q_prime: &ProjectiveXOnlyPoint,
+    n_bt: TorsionExponent,
+) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
+    // Line 1: E'' ← TwoIsogenyChain([2^n](P + [ch]Q), E, f-n)
+    let mut kernel_point = basis.scalar_mul_add(chl.as_ref());
+    for _ in 0..n_bt.value() {
+        kernel_point = kernel_point.double();
+    }
+    let e_chain = TorsionExponent::try_from(TORSION_EVEN_POWER - n_bt.value()).ok()?;
+    let (curve_chl, _) = Kernel::new(kernel_point).isogeny(e_chain, &[]);
+
+    // Line 2: P'', Q'' ← IsomorphismMontgomeryCurves(E', P', Q', E'')
+    let iso = e_prime.isomorphism(&curve_chl)?;
+    let p_chl = iso.eval(p_prime);
+    let q_chl = iso.eval(q_prime);
+
+    // Line 3
+    Some((curve_chl, p_chl, q_chl))
+}

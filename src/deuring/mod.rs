@@ -30,7 +30,7 @@ use precomputed::ACTION_MATRICES;
 use crate::{
     curves::{
         TorsionBasis, TorsionExponent,
-        isogeny::IsogenyDegree,
+        isogeny::{IsogenyDegree, Kernel as CurveKernel},
         montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
     },
@@ -131,26 +131,30 @@ impl IdealKernel for LeftIdeal<4> {
         let modulus = BigInt::<4>::ONE.shl(e.value());
 
         // Try first row: kernel direction = (-m01, m00).
-        let a = m_alpha.entry(0, 1).wrapping_neg().ct_mod(&modulus);
-        let b = m_alpha.entry(0, 0).ct_mod(&modulus);
+        let a_big = BigInt::<4>::from(*m_alpha.entry(0, 1))
+            .wrapping_neg()
+            .ct_mod(&modulus);
+        let b_big = BigInt::<4>::from(*m_alpha.entry(0, 0)).ct_mod(&modulus);
 
-        let (check0, check1) = m_alpha.eval_mod(&a, &b, e.value());
+        let (check0, check1) = m_alpha.eval_mod(&a_big, &b_big, e.value());
         if bool::from(check0.is_zero()) && bool::from(check1.is_zero()) {
             return Some(KernelDecomposition {
-                a: Scalar::from_limbs(*a.as_limbs()),
-                b: Scalar::from_limbs(*b.as_limbs()),
+                a: Scalar::from(a_big),
+                b: Scalar::from(b_big),
             });
         }
 
         // If first row was zero, try second row.
-        let a = m_alpha.entry(1, 1).wrapping_neg().ct_mod(&modulus);
-        let b = m_alpha.entry(1, 0).ct_mod(&modulus);
+        let a_big = BigInt::<4>::from(*m_alpha.entry(1, 1))
+            .wrapping_neg()
+            .ct_mod(&modulus);
+        let b_big = BigInt::<4>::from(*m_alpha.entry(1, 0)).ct_mod(&modulus);
 
-        let (check0, check1) = m_alpha.eval_mod(&a, &b, e.value());
+        let (check0, check1) = m_alpha.eval_mod(&a_big, &b_big, e.value());
         if bool::from(check0.is_zero()) && bool::from(check1.is_zero()) {
             return Some(KernelDecomposition {
-                a: Scalar::from_limbs(*a.as_limbs()),
-                b: Scalar::from_limbs(*b.as_limbs()),
+                a: Scalar::from(a_big),
+                b: Scalar::from(b_big),
             });
         }
 
@@ -181,8 +185,6 @@ pub fn compute_even_response(
     e_prime: TorsionExponent,
     r_rsp: TorsionExponent,
 ) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
-    use crate::curves::isogeny::Kernel as CurveKernel;
-
     let e_prime = e_prime.value();
     let r_rsp = r_rsp.value();
 
@@ -197,7 +199,7 @@ pub fn compute_even_response(
         ACTION_MATRICES[0][5], // gen4
         ACTION_MATRICES[0][0], // i (for the kernel computation)
     ];
-    let decomp = ideal.to_kernel(&basis_mats, TorsionExponent::new(r_rsp))?;
+    let decomp = ideal.to_kernel(&basis_mats, TorsionExponent::try_from(r_rsp).ok()?)?;
 
     // Step 3: K = [2^(e'+2) · s]P + [2^(e'+2) · t]Q
     let shift = e_prime + 2;
@@ -217,15 +219,15 @@ pub fn compute_even_response(
     // TODO: PmQ from projective_difference may pick wrong branch.
     // In signing, the basis (P, Q, P-Q) should have been propagated
     // from a prior computation, not recomputed here.
-    let K = basis.ladder_biscalar(
-        &s_shifted.as_limbs().map(|l| l.to_le_bytes()).concat(),
-        &t_shifted.as_limbs().map(|l| l.to_le_bytes()).concat(),
-        (r_rsp + shift) as usize,
+    let K = basis.biscalar_mul(
+        &s_shifted,
+        &t_shifted,
+        TorsionExponent::try_from(r_rsp + shift).ok()?,
     );
 
     // Step 4: E', {P', Q'} ← TwoisogenyChainSmall(K, E, r, {P, Q}, true)
     let (new_curve, images) = CurveKernel::new(K)
-        .isogeny_small(TorsionExponent::new(r_rsp), &[*P, *Q], true)
+        .isogeny_small(TorsionExponent::try_from(r_rsp).ok()?, &[*P, *Q], true)
         .ok()?;
 
     Some((new_curve, images[0], images[1]))
@@ -255,7 +257,8 @@ fn action_matrix(
     let coords = order.decompose(elem)?;
 
     let c0_mod = coords[0].ct_mod(&BigInt::<4>::ONE.shl(f.value()));
-    let mut result = ActionMatrix::new(c0_mod, BigInt::ZERO, BigInt::ZERO, c0_mod);
+    let c0_scalar = Scalar::from(c0_mod);
+    let mut result = ActionMatrix::new(c0_scalar, Scalar::ZERO, Scalar::ZERO, c0_scalar);
 
     for k in 0..3 {
         result = result.add_scaled_mod(&coords[k + 1], &gen_matrices[k], f.value());
@@ -342,9 +345,9 @@ fn fixed_degree_isogeny(
     // K₁ = [2^{f−2−e_FDI}]([u]P_t, θ(P_t))
     // K₂ = [2^{f−2−e_FDI}]([u]Q_t, θ(Q_t))
     let u_scalar = u.to_scalar();
-    let mut k1_first = &basis_t.R * &u_scalar;
+    let mut k1_first = &u_scalar * &basis_t.R;
     let mut k1_second = theta_p;
-    let mut k2_first = &basis_t.S * &u_scalar;
+    let mut k2_first = &u_scalar * &basis_t.S;
     let mut k2_second = theta_q;
 
     for _ in 0..(f.value() - 2 - e_fdi) {
@@ -368,7 +371,7 @@ fn fixed_degree_isogeny(
 
     let zero = ProjectiveXOnlyPoint::identity(&curve_t);
     let (codomain, images) = kernel.isogeny(
-        TorsionExponent::new(e_fdi),
+        TorsionExponent::try_from(e_fdi).ok()?,
         &[(basis_t.R, zero), (basis_t.S, zero)],
     );
 
@@ -447,8 +450,8 @@ impl LeftIdeal<4> {
         // K_P ← [2^{f-e}]([d₁]φ_u(P_s), P)
         // K_Q ← [2^{f-e}]([d₁]φ_u(Q_s), Q)
         let d1_scalar = d1.to_scalar();
-        let mut kp_first = &phi_u_p * &d1_scalar;
-        let mut kq_first = &phi_u_q * &d1_scalar;
+        let mut kp_first = &d1_scalar * &phi_u_p;
+        let mut kq_first = &d1_scalar * &phi_u_q;
         let mut kp_second = p_step6;
         let mut kq_second = q_step6;
 
