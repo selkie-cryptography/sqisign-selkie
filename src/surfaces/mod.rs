@@ -19,6 +19,19 @@
 //!
 //! See [§2.4] and [§8.5] of the SQIsign spec.
 //!
+//! # Divergences from spec / C reference
+//!
+//! - **Jacobian coordinates for gluing**: the spec (§8.2) only describes x-only
+//!   Montgomery arithmetic. The gluing step requires full (x,y,z) coordinates
+//!   to distinguish P+Q from P−Q, and the C reference uses Jacobian doubling
+//!   with `z₃ = 2y·z²` (not standard `2y·z`). The conversion `jac_to_xz:
+//!   (x,y,z) ↦ (x, z²)` produces a specific projective representative that
+//!   `product_to_theta` depends on. See §4 (Bug Catalog) of the sqisign-selkie
+//!   paper for the bugs found during this work.
+//! - **Squared theta definition**: the spec's `product_to_theta` uses `X·Z`
+//!   products (not `X²` and `Z²` separately). The C reference confirms this
+//!   convention.
+//!
 //! [§2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.4
 //! [§8.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
 
@@ -27,7 +40,9 @@ pub(crate) mod isogeny;
 use core::ops::Mul;
 
 use crate::{
-    curves::montgomery::{Curve, ProjectiveXOnlyPoint, lift_basis},
+    curves::montgomery::{
+        Curve, JacobianPoint as CurveJacobianPoint, ProjectiveXOnlyPoint, lift_basis,
+    },
     fields::fp2::Fp2,
     surfaces::isogeny::{GluingKernel, SplittingKernel},
 };
@@ -339,11 +354,8 @@ impl JacobianPoint {
 /// See [§2.4].
 ///
 /// [§2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.4
-/// A pair of Jacobian points, one on each curve of a product.
-pub type JacobianProductPoint = (
-    crate::curves::montgomery::JacobianPoint,
-    crate::curves::montgomery::JacobianPoint,
-);
+/// A pair of curve Jacobian points, one on each curve of a product.
+pub type JacobianProductPoint = (CurveJacobianPoint, CurveJacobianPoint);
 
 /// The kernel of a (2,2)-isogeny on E₁ × E₂, defined by two
 /// isotropic generators in Jacobian coordinates.
@@ -471,8 +483,8 @@ impl Kernel {
         // Convert bottom strategy point from Jacobian to Montgomery
         // via jac_to_xz (the From impl). The codomain computation
         // uses these Montgomery points.
-        let A1 = *self.domain.E1.coefficient().as_fp2();
-        let A2 = *self.domain.E2.coefficient().as_fp2();
+        let A1 = *self.domain.E1.coefficient();
+        let A2 = *self.domain.E2.coefficient();
 
         let gluing_T1_jac = strat_pts[k].0;
         let gluing_T2_jac = strat_pts[k].1;

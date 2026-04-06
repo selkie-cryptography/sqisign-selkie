@@ -237,8 +237,8 @@ impl GluingKernel {
     pub(crate) fn eval(
         P: &(CurveJacobianPoint, CurveJacobianPoint),
         T1: &(CurveJacobianPoint, CurveJacobianPoint),
-        A1: &Fp2,
-        A2: &Fp2,
+        A1: &Coefficient,
+        A2: &Coefficient,
         data: &GluingData,
     ) -> JacobianPoint {
         // Algorithm 8.39 (GluingEval):
@@ -577,11 +577,12 @@ fn product_to_theta(
 ///
 /// [§8.2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 fn add_sub_components_jac(
-    P: &crate::curves::montgomery::JacobianPoint,
-    Q: &crate::curves::montgomery::JacobianPoint,
-    A: &Fp2,
+    P: &CurveJacobianPoint,
+    Q: &CurveJacobianPoint,
+    A: &Coefficient,
 ) -> (Fp2, Fp2, Fp2) {
     // C reference (ec_jac.c:305-335):
+    let a = A.as_fp2();
     let t0 = P.Z.square(); // z1²
     let t1 = Q.Z.square(); // z2²
     let t2 = &P.X * &t1; // x1·z2²
@@ -599,7 +600,7 @@ fn add_sub_components_jac(
     let sum_x = &t2 + &t3; // x1·z2² + z1²·x2
     let lambda = &t2 - &t3; // x1·z2² - z1²·x2
     let lambda_sq = lambda.square();
-    let a_t0 = A * &t0;
+    let a_t0 = a * &t0;
     let gamma = &(&sum_x + &a_t0) * &lambda_sq; // (sum_x + A·(z1z2)²)·λ²
     let u = &sum_y2 - &gamma;
     let w = &lambda_sq * &t0; // (z1·z2)²·λ²

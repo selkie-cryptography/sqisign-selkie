@@ -9,6 +9,18 @@
 //! This ensures at compile time that operations requiring canonical
 //! form (equality, containment) receive properly reduced input.
 //!
+//! # Divergences from spec / C reference
+//!
+//! - **Fixed-width integers**: the C ref uses GMP; we use `BigInt<N>` with `N`
+//!   chosen per Kim et al. (ePrint 2025/1649). The commitment ideal uses
+//!   `LeftIdeal<9>` for D_MIX = 2^512+75 (513 bits); signing will use
+//!   `LeftIdeal<110>` for the full 7,026-bit worst case.
+//! - **`random_prime_norm_wide`**: constructs the ideal lattice O₀⟨γ,N⟩ via
+//!   direct quaternion multiplication with `BigInt<9>`, bypassing `Element`
+//!   (whose `Coordinate` would need widening). The C ref uses `Element`
+//!   throughout since GMP has no width limit.
+//! - **`reduce_to_prime_norm`**: generic over N (was `LeftIdeal<8>` only).
+//!
 //! See [§3.1.5.2] and [§3.1.6] of the SQIsign specification.
 //!
 //! [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
@@ -233,10 +245,10 @@ impl<const N: usize> Lattice<N> {
 
 impl<const N: usize> Copy for Lattice<N> where BigInt<N>: Copy {}
 
-impl Lattice<4> {
+impl<const N: usize> Lattice<N> {
     /// Returns the j-th basis vector (column j) as a quaternion element.
-    pub fn basis_elem(&self, j: usize) -> Element {
-        Element::new(
+    pub fn basis_elem(&self, j: usize) -> Element<N> {
+        Element::<N>::new(
             Coordinate::from_bigint(self.basis[0][j]),
             Coordinate::from_bigint(self.basis[1][j]),
             Coordinate::from_bigint(self.basis[2][j]),
@@ -244,7 +256,9 @@ impl Lattice<4> {
             Denominator::from_bigint_unchecked(self.denom),
         )
     }
+}
 
+impl Lattice<4> {
     /// Decompose an element into coordinates in this lattice's column basis.
     ///
     /// Given α ∈ L, finds (c₀, c₁, c₂, c₃) such that
@@ -254,7 +268,7 @@ impl Lattice<4> {
     /// Returns `None` if α is not in the lattice (non-integer solution).
     ///
     /// Uses the adjugate: x = adj(B)·v / det(B), avoiding field inversion.
-    pub fn decompose(&self, elem: &Element) -> Option<[BigInt<4>; 4]> {
+    pub fn decompose(&self, elem: &Element<4>) -> Option<[BigInt<4>; 4]> {
         let ed = BigInt::<4>::from(elem.denom);
 
         // Scale to common denominator: target = α_coords · lattice_denom / α_denom.
@@ -296,24 +310,29 @@ impl Lattice<4> {
 
         Some(result)
     }
+}
 
+impl<const N: usize> Lattice<N> {
     /// Lattice product: `self · other`.
     ///
     /// Multiplies each pair of basis elements (4×4 = 16 products),
     /// producing 16 column vectors, then takes the HNF to get
     /// a 4×4 basis for the product lattice.
     ///
+    /// Uses [`Element::mul_direct`] at width N — coordinates must
+    /// use at most N/2 limbs to avoid overflow.
+    ///
     /// See [§3.1.5.2] (Multiplication) of the spec.
     ///
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
-    pub fn product(&self, other: &Self) -> HnfLattice<4> {
+    pub fn product(&self, other: &Self) -> HnfLattice<N> {
         let mut all_cols = Vec::new();
 
         for i in 0..4 {
             let alpha = self.basis_elem(i);
             for j in 0..4 {
                 let beta = other.basis_elem(j);
-                let product = alpha.mul(&beta);
+                let product = alpha.mul_direct(&beta);
                 // The product has denom = self.denom * other.denom * product.denom.
                 // We need to express it in a common denominator for HNF.
                 all_cols.push(Vector::new(
@@ -338,7 +357,9 @@ impl Lattice<4> {
             denom: self.denom.ct_mul(&other.denom),
         }
     }
+}
 
+impl Lattice<4> {
     /// Sample a random element from this lattice whose reduced norm
     /// is less than `radius`.
     ///
@@ -364,7 +385,7 @@ impl Lattice<4> {
     ///
     /// [Alg. 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
     /// [Alg. 4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.3
-    pub fn sample_from_ball(&self, radius: &BigInt<4>) -> Option<Element> {
+    pub fn sample_from_ball(&self, radius: &BigInt<4>) -> Option<Element<4>> {
         // Widen to BigInt<8> for intermediate products.
         use super::ideal::gram_matrix_nrd;
 
@@ -515,7 +536,7 @@ impl Lattice<4> {
                 v.narrow().expect("sampled element fits in BigInt<4>")
             };
 
-            return Some(Element::new(
+            return Some(Element::<4>::new(
                 Coordinate::from(narrow(coords[0])),
                 Coordinate::from(narrow(coords[1])),
                 Coordinate::from(narrow(coords[2])),
@@ -591,7 +612,9 @@ impl<const N: usize> HnfLattice<N> {
     pub const fn denom(&self) -> &BigInt<N> {
         &self.denom
     }
+}
 
+impl HnfLattice<4> {
     /// Checks if a quaternion element is contained in this lattice.
     ///
     /// An element α is in the lattice L/d if the system
@@ -604,15 +627,14 @@ impl<const N: usize> HnfLattice<N> {
     /// See [§3.1.5.2] (Containment) of the spec.
     ///
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
-    pub fn contains(&self, elem: &Element) -> Option<Vector<N>> {
-        // Widen element coordinates from BigInt<4> to BigInt<N>.
-        let coords: [BigInt<N>; 4] = [
-            elem.a.to_bigint(),
-            elem.b.to_bigint(),
-            elem.c.to_bigint(),
-            elem.d.to_bigint(),
+    pub fn contains(&self, elem: &Element<4>) -> Option<Vector<4>> {
+        let coords: [BigInt<4>; 4] = [
+            *elem.a.as_bigint(),
+            *elem.b.as_bigint(),
+            *elem.c.as_bigint(),
+            *elem.d.as_bigint(),
         ];
-        let ed: BigInt<N> = elem.denom.to_bigint();
+        let ed: BigInt<4> = *elem.denom.as_bigint();
 
         // rhs = elem.coord * self.denom / elem.denom
         let rhs = [
@@ -841,7 +863,7 @@ impl LeftIdeal<4> {
     /// See [§3.1.6.1] of the spec.
     ///
     /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
-    pub fn new(alpha: &Element, norm: &BigInt<4>, order: &Lattice<4>) -> Self {
+    pub fn new(alpha: &Element<4>, norm: &BigInt<4>, order: &Lattice<4>) -> Self {
         // Compute Oα: multiply each basis element of O by α.
         let mut o_alpha_cols = [Vector::ZERO; 4];
         for (j, o_alpha_col) in o_alpha_cols.iter_mut().enumerate() {
@@ -953,7 +975,7 @@ impl LeftIdeal<4> {
             let g3 = sample_mod_n();
 
             // γ = g₁i + g₂j + g₃ij  (a = 0, denom = 1)
-            let gamma = Element::new(
+            let gamma = Element::<4>::new(
                 Coordinate::ZERO,
                 Coordinate::from_bigint(g1),
                 Coordinate::from_bigint(g2),
@@ -986,7 +1008,7 @@ impl LeftIdeal<4> {
                 Some(s) => s,
                 None => continue,
             };
-            let gamma_adjusted = Element::new(
+            let gamma_adjusted = Element::<4>::new(
                 Coordinate::from_bigint(sqrt),
                 Coordinate::from_bigint(g1),
                 Coordinate::from_bigint(g2),
@@ -1059,7 +1081,7 @@ impl LeftIdeal<4> {
             let z = sample_in_range();
             let w = sample_in_range();
 
-            let beta = Element::new(
+            let beta = Element::<4>::new(
                 Coordinate::from_bigint(x),
                 Coordinate::from_bigint(y),
                 Coordinate::from_bigint(z),
@@ -1105,7 +1127,7 @@ impl LeftIdeal<4> {
     /// secret-derived ideals via IdealToKernel during signing.
     ///
     /// [Algorithm 3.8]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.8
-    pub fn generator(&self) -> Option<Element> {
+    pub fn generator(&self) -> Option<Element<4>> {
         let basis = self.lattice.basis();
         let n_i = &self.norm;
 
@@ -1149,7 +1171,7 @@ impl LeftIdeal<4> {
                                     .ct_add(&c_big.ct_mul(&basis[row][2]))
                                     .ct_add(&d_big.ct_mul(&basis[row][3]));
                             }
-                            let gamma = Element::new(
+                            let gamma = Element::<4>::new(
                                 Coordinate::from_bigint(gamma_coords[0]),
                                 Coordinate::from_bigint(gamma_coords[1]),
                                 Coordinate::from_bigint(gamma_coords[2]),
@@ -1182,14 +1204,14 @@ impl LeftIdeal<4> {
     // TorsionBasis::kernel_to_ideal() in curves/mod.rs.
 }
 
-impl LeftIdeal<8> {
+impl LeftIdeal<9> {
     /// Construct a random left ideal of a given prime norm (wide version).
     ///
     /// For the commitment phase (Algorithm 4.2 line 4), the norm D_MIX
-    /// = 2^512 + 75 is 513 bits, which exceeds `BigInt<4>`. This method
-    /// works with `BigInt<8>` throughout and constructs the ideal lattice
-    /// directly without going through `Element` (whose `Coordinate` is
-    /// limited to `BigInt<4>`).
+    /// = 2^512 + 75 is 513 bits (9 limbs). This method works with
+    /// `BigInt<9>` throughout and constructs the ideal lattice directly
+    /// without going through `Element` (whose `Coordinate` is limited
+    /// to `BigInt<4>`).
     ///
     /// After construction, call [`reduce_to_prime_norm`] to get a small
     /// prime norm, then [`narrow`] to convert to `LeftIdeal<4>` for
@@ -1200,21 +1222,26 @@ impl LeftIdeal<8> {
     /// WARNING: Not constant-time.
     ///
     /// [Alg. 3.10]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.10
-    pub fn random_prime_norm_wide(n: &BigInt<8>, order: &ExtremalOrder<4>) -> Option<Self> {
-        let p_wide: BigInt<8> = crate::quaternions::precomputed::P_WIDE;
+    pub fn random_prime_norm_wide(n: &BigInt<9>, order: &ExtremalOrder<4>) -> Option<Self> {
+        let p_wide: BigInt<9> = {
+            let p8: BigInt<8> = crate::quaternions::precomputed::P_WIDE;
+            let mut limbs = [0u64; 9];
+            limbs[..8].copy_from_slice(p8.as_limbs());
+            BigInt::from_sign_and_limbs(0, limbs)
+        };
         let n_bits = n.bitsize() as usize;
         let n_bytes = n_bits.div_ceil(8);
 
         for _ in 0..10_000 {
             // Sample g₁, g₂, g₃ uniform in [0, N-1].
-            let sample_mod_n = || -> BigInt<8> {
+            let sample_mod_n = || -> BigInt<9> {
                 loop {
-                    let mut bytes = [0u8; 64];
+                    let mut bytes = [0u8; 72]; // 9 × 8 = 72 bytes
                     OsRng.fill_bytes(&mut bytes[..n_bytes]);
                     if n_bits % 8 != 0 {
                         bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
                     }
-                    let val = BigInt::<8>::from_bytes_le_unsigned(&bytes[..n_bytes]);
+                    let val = BigInt::<9>::from_bytes_le_unsigned(&bytes[..n_bytes]);
                     if val.ct_mod(n) == val {
                         return val;
                     }
@@ -1234,12 +1261,12 @@ impl LeftIdeal<8> {
 
             // Check Legendre(-nrd(γ), N) = 1.
             let neg_nrd = n.ct_sub(&nrd.ct_mod(n));
-            if BigInt::<8>::legendre(&neg_nrd, n) != 1 {
+            if BigInt::<9>::legendre(&neg_nrd, n) != 1 {
                 continue;
             }
 
             // a = √(-nrd(γ)) mod N.
-            let a = match BigInt::<8>::modular_sqrt(&neg_nrd, n) {
+            let a = match BigInt::<9>::modular_sqrt(&neg_nrd, n) {
                 Some(s) => s,
                 None => continue,
             };
@@ -1262,12 +1289,12 @@ impl LeftIdeal<8> {
 
             // For each order basis element e = (e₀,e₁,e₂,e₃)/denom,
             // compute e·γ = (e₀·(1·γ) + e₁·(i·γ) + e₂·(j·γ) + e₃·(k·γ))/denom.
-            let order_wide = ExtremalOrder::<8>::from(*order);
+            let order_wide = ExtremalOrder::<9>::from(*order);
             let order_lat = order_wide.order();
             let order_denom = *order_lat.denom();
 
-            let mut o_alpha_cols = [Vector::<8>::ZERO; 4];
-            for col in 0..4 {
+            let mut o_alpha_cols = [Vector::<9>::ZERO; 4];
+            for (col, o_alpha_col) in o_alpha_cols.iter_mut().enumerate() {
                 let e = [
                     order_lat.basis()[0][col],
                     order_lat.basis()[1][col],
@@ -1275,7 +1302,7 @@ impl LeftIdeal<8> {
                     order_lat.basis()[3][col],
                 ];
                 for row in 0..4 {
-                    o_alpha_cols[col][row] = e[0]
+                    o_alpha_col[row] = e[0]
                         .ct_mul(&prod_1[row])
                         .ct_add(&e[1].ct_mul(&prod_i[row]))
                         .ct_add(&e[2].ct_mul(&prod_j[row]))
@@ -1284,10 +1311,10 @@ impl LeftIdeal<8> {
             }
 
             // O₀·N: scale each order basis column by N.
-            let mut o_n_cols = [Vector::<8>::ZERO; 4];
-            for col in 0..4 {
+            let mut o_n_cols = [Vector::<9>::ZERO; 4];
+            for (col, o_n_col) in o_n_cols.iter_mut().enumerate() {
                 for row in 0..4 {
-                    o_n_cols[col][row] = order_lat.basis()[row][col].ct_mul(n);
+                    o_n_col[row] = order_lat.basis()[row][col].ct_mul(n);
                 }
             }
 
@@ -1305,8 +1332,10 @@ impl LeftIdeal<8> {
 
         None
     }
+}
 
-    /// Narrow a `LeftIdeal<8>` to `LeftIdeal<4>` after norm reduction.
+impl<const N: usize> LeftIdeal<N> {
+    /// Narrow a wide `LeftIdeal<N>` to `LeftIdeal<4>` after norm reduction.
     ///
     /// After [`reduce_to_prime_norm`], the norm is a small prime and
     /// the HNF basis entries are bounded. This converts the wide
@@ -1314,13 +1343,18 @@ impl LeftIdeal<8> {
     ///
     /// Returns `None` if any entry doesn't fit in `BigInt<4>`.
     pub fn narrow(&self) -> Option<LeftIdeal<4>> {
-        let narrow_int = |v: &BigInt<8>| -> Option<BigInt<4>> {
-            let opt: subtle::CtOption<BigInt<4>> = (*v).into();
-            if bool::from(opt.is_some()) {
-                Some(opt.unwrap())
-            } else {
-                None
+        let narrow_int = |v: &BigInt<N>| -> Option<BigInt<4>> {
+            // Check that all limbs above 4 are zero (positive) or all-ones (negative sign).
+            let limbs = v.as_limbs();
+            for &limb in &limbs[4..] {
+                if limb != 0 {
+                    return None;
+                }
             }
+            let mut out = [0u64; 4];
+            out.copy_from_slice(&limbs[..4]);
+            let sign = if bool::from(v.is_negative()) { 1 } else { 0 };
+            Some(BigInt::from_sign_and_limbs(sign, out))
         };
 
         let mut basis_4 = [[BigInt::<4>::ZERO; 4]; 4];
@@ -1366,7 +1400,12 @@ impl LeftIdeal<8> {
             },
         })
     }
+}
 
+impl<const N: usize> LeftIdeal<N>
+where
+    [u64; N]: Default,
+{
     /// Replace this ideal with an equivalent one of prime norm.
     ///
     /// Samples random short elements α in the ideal's L2-reduced
@@ -1374,17 +1413,10 @@ impl LeftIdeal<8> {
     /// I ← I · ᾱ / N(I).
     ///
     /// Implements [RandomEquivalentPrimeIdeal][Alg. 3.9].
-    /// Matches `quat_lideal_prime_norm_reduced_equivalent`
-    /// (lll_applications.c:48).
     ///
     /// WARNING: Not constant-time.
     ///
-    /// TODO(ct): Make constant-time before production use. Called on
-    /// secret-derived ideals during signing (Algorithm 4.2 lines 6, 24).
-    ///
-    /// TODO: Implement. Requires:
-    /// - Random sampling in \[−m, m\]
-    /// - Ideal multiplication by element (`quat_lideal_mul`)
+    /// TODO(ct): Make constant-time before production use.
     ///
     /// [Alg. 3.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.9
     pub fn reduce_to_prime_norm(&mut self) -> bool {
@@ -1393,8 +1425,8 @@ impl LeftIdeal<8> {
         // Step 1: L2-reduce the basis and compute the Gram matrix.
         let basis = self.lattice.basis();
         let mut cols = basis.columns();
-        let mut gram = crate::quaternions::ideal::gram_matrix_nrd(&cols);
-        l2_reduce::<8>(&mut cols, &mut gram);
+        let mut gram = crate::quaternions::ideal::gram_matrix_nrd::<N>(&cols);
+        l2_reduce::<N>(&mut cols, &mut gram);
 
         let denom = self.lattice.denom();
         let denom_sq = denom.ct_mul(denom);
@@ -1402,7 +1434,7 @@ impl LeftIdeal<8> {
         // Step 2: sample random short vectors until norm is prime.
         let limit = (2 * bound as i64 + 1).pow(4);
         for _ in 0..limit {
-            let c: [BigInt<8>; 4] = [
+            let c: [BigInt<N>; 4] = [
                 BigInt::from_i64(Self::rand_interval(bound)),
                 BigInt::from_i64(Self::rand_interval(bound)),
                 BigInt::from_i64(Self::rand_interval(bound)),
@@ -1410,7 +1442,7 @@ impl LeftIdeal<8> {
             ];
 
             // Evaluate quadratic form: nrd = c^T · G · c.
-            let mut nrd = BigInt::<8>::ZERO;
+            let mut nrd = BigInt::<N>::ZERO;
             for i in 0..4 {
                 for j in 0..4 {
                     nrd = nrd.ct_add(&c[i].ct_mul(&c[j]).ct_mul(&gram[i][j]));
@@ -1422,7 +1454,7 @@ impl LeftIdeal<8> {
 
             if norm.is_probable_prime(primality_rounds) {
                 // Reconstruct α = Σ c_i · col_i in the reduced basis.
-                let mut alpha = [BigInt::<8>::ZERO; 4];
+                let mut alpha = [BigInt::<N>::ZERO; 4];
                 for i in 0..4 {
                     for (k, alpha_k) in alpha.iter_mut().enumerate() {
                         *alpha_k = alpha_k.ct_add(&c[i].ct_mul(&cols[i][k]));
@@ -1434,20 +1466,25 @@ impl LeftIdeal<8> {
                 alpha[2] = alpha[2].wrapping_neg();
                 alpha[3] = alpha[3].wrapping_neg();
 
-                // Multiply: new lattice = old lattice · ᾱ.
-                // Wide quaternion mul in B_{p,∞} = (-1, -p): same
-                // formula as Element::mul but at BigInt<8> width.
-                let p_wide: BigInt<8> = crate::quaternions::precomputed::P_WIDE;
-                let qmul = |a: &[BigInt<8>; 4], b: &[BigInt<8>; 4]| -> [BigInt<8>; 4] {
+                // Quaternion mul in B_{p,∞} = (-1, -p) at BigInt<N> width.
+                let p_n: BigInt<N> = {
+                    let p8: BigInt<8> = crate::quaternions::precomputed::P_WIDE;
+                    let mut limbs = [0u64; N];
+                    let src = p8.as_limbs();
+                    let len = src.len().min(N);
+                    limbs[..len].copy_from_slice(&src[..len]);
+                    BigInt::from_sign_and_limbs(0, limbs)
+                };
+                let qmul = |a: &[BigInt<N>; 4], b: &[BigInt<N>; 4]| -> [BigInt<N>; 4] {
                     let (a0, a1, a2, a3) = (&a[0], &a[1], &a[2], &a[3]);
                     let (b0, b1, b2, b3) = (&b[0], &b[1], &b[2], &b[3]);
                     [
                         a0.ct_mul(b0)
                             .ct_sub(&a1.ct_mul(b1))
-                            .ct_sub(&p_wide.ct_mul(&a2.ct_mul(b2).ct_add(&a3.ct_mul(b3)))),
+                            .ct_sub(&p_n.ct_mul(&a2.ct_mul(b2).ct_add(&a3.ct_mul(b3)))),
                         a0.ct_mul(b1)
                             .ct_add(&a1.ct_mul(b0))
-                            .ct_add(&p_wide.ct_mul(&a2.ct_mul(b3).ct_sub(&a3.ct_mul(b2)))),
+                            .ct_add(&p_n.ct_mul(&a2.ct_mul(b3).ct_sub(&a3.ct_mul(b2)))),
                         a0.ct_mul(b2)
                             .ct_add(&a2.ct_mul(b0))
                             .ct_sub(&a1.ct_mul(b3))
@@ -1461,7 +1498,7 @@ impl LeftIdeal<8> {
 
                 let old_basis = self.lattice.basis();
                 let old_cols = old_basis.columns();
-                let mut new_cols = [Vector::<8>::ZERO; 4];
+                let mut new_cols = [Vector::<N>::ZERO; 4];
                 for col_idx in 0..4 {
                     let col = [
                         old_cols[col_idx][0],
@@ -1545,9 +1582,9 @@ pub struct ExtremalOrder<const N: usize> {
     /// The order as a lattice.
     order: Lattice<N>,
     /// Element z with z² = -q (small discriminant).
-    z: Element,
+    z: Element<4>,
     /// Element t with nrd(t) = p, orthogonal to z.
-    t: Element,
+    t: Element<4>,
     /// The absolute value |z²| (a small positive integer).
     q: u32,
 }
@@ -1555,7 +1592,7 @@ pub struct ExtremalOrder<const N: usize> {
 impl<const N: usize> ExtremalOrder<N> {
     /// Creates an extremal order from its components.
     #[inline]
-    pub const fn new(order: Lattice<N>, z: Element, t: Element, q: u32) -> Self {
+    pub const fn new(order: Lattice<N>, z: Element<4>, t: Element<4>, q: u32) -> Self {
         Self { order, z, t, q }
     }
 
@@ -1567,13 +1604,13 @@ impl<const N: usize> ExtremalOrder<N> {
 
     /// Returns the element z (z² = -q).
     #[inline]
-    pub const fn z(&self) -> &Element {
+    pub const fn z(&self) -> &Element<4> {
         &self.z
     }
 
     /// Returns the element t (nrd(t) = p).
     #[inline]
-    pub const fn t(&self) -> &Element {
+    pub const fn t(&self) -> &Element<4> {
         &self.t
     }
 
@@ -1590,20 +1627,37 @@ impl<const N: usize> Copy for ExtremalOrder<N> where BigInt<N>: Copy {}
 /// arithmetic that needs wider matrix entries.
 impl From<ExtremalOrder<4>> for ExtremalOrder<8> {
     fn from(order: ExtremalOrder<4>) -> Self {
-        let basis4 = order.order().basis();
-        let denom4 = order.order().denom();
-
-        let mut basis8 = Matrix::<8>::ZERO;
-        for row in 0..4 {
-            for col in 0..4 {
-                basis8[row][col] = basis4[row][col].into();
-            }
-        }
-        let order_lat = Lattice::new(basis8, (*denom4).into());
-
-        // Element is concrete — z and t copy directly.
-        ExtremalOrder::new(order_lat, *order.z(), *order.t(), order.q())
+        widen_extremal_order(&order)
     }
+}
+
+impl From<ExtremalOrder<4>> for ExtremalOrder<9> {
+    fn from(order: ExtremalOrder<4>) -> Self {
+        widen_extremal_order(&order)
+    }
+}
+
+/// Widen an `ExtremalOrder<4>` to `ExtremalOrder<M>` by zero-extending limbs.
+fn widen_extremal_order<const M: usize>(order: &ExtremalOrder<4>) -> ExtremalOrder<M> {
+    let basis4 = order.order().basis();
+    let denom4 = order.order().denom();
+
+    let widen_int = |v: &BigInt<4>| -> BigInt<M> {
+        let mut limbs = [0u64; M];
+        limbs[..4].copy_from_slice(v.as_limbs());
+        let sign = if bool::from(v.is_negative()) { 1 } else { 0 };
+        BigInt::from_sign_and_limbs(sign, limbs)
+    };
+
+    let mut basis_m = Matrix::<M>::ZERO;
+    for row in 0..4 {
+        for col in 0..4 {
+            basis_m[row][col] = widen_int(&basis4[row][col]);
+        }
+    }
+    let order_lat = Lattice::new(basis_m, widen_int(denom4));
+
+    ExtremalOrder::new(order_lat, *order.z(), *order.t(), order.q())
 }
 
 impl<const N: usize> core::fmt::Debug for ExtremalOrder<N> {
@@ -1828,9 +1882,9 @@ mod tests {
     fn lattice_basis_elem() {
         let lat = L::from_matrix(Matrix::IDENTITY);
         let e0 = lat.basis_elem(0);
-        assert_eq!(e0, Element::from_i64(1, 0, 0, 0));
+        assert_eq!(e0, Element::<4>::from_i64(1, 0, 0, 0));
         let e1 = lat.basis_elem(1);
-        assert_eq!(e1, Element::from_i64(0, 1, 0, 0));
+        assert_eq!(e1, Element::<4>::from_i64(0, 1, 0, 0));
     }
 
     #[test]
@@ -1903,7 +1957,7 @@ mod tests {
     #[test]
     fn contains_basis_element() {
         let h = H::from(L::from_matrix(Matrix::IDENTITY));
-        let elem = Element::from_i64(1, 0, 0, 0);
+        let elem = Element::<4>::from_i64(1, 0, 0, 0);
         let coords = h.contains(&elem);
         assert!(coords.is_some());
         let c = coords.unwrap();
@@ -1914,7 +1968,7 @@ mod tests {
     #[test]
     fn contains_linear_combination() {
         let h = H::from(L::from_matrix(Matrix::IDENTITY));
-        let elem = Element::from_i64(3, 7, -2, 5);
+        let elem = Element::<4>::from_i64(3, 7, -2, 5);
         let coords = h.contains(&elem).expect("should be contained");
         assert_eq!(coords[0], i(3));
         assert_eq!(coords[1], i(7));
@@ -1932,7 +1986,7 @@ mod tests {
             V::new(i(0), i(0), i(0), i(2)),
         ))
         .into();
-        let elem = Element::from_i64(1, 0, 0, 0);
+        let elem = Element::<4>::from_i64(1, 0, 0, 0);
         assert!(h.contains(&elem).is_none());
     }
 
@@ -1949,7 +2003,7 @@ mod tests {
             i(2),
         )
         .into();
-        let elem = Element::from_i64(1, 0, 0, 0);
+        let elem = Element::<4>::from_i64(1, 0, 0, 0);
         assert!(h.contains(&elem).is_some());
     }
 
@@ -1964,8 +2018,8 @@ mod tests {
     #[test]
     fn extremal_order_construction() {
         let order = L::from_matrix(Matrix::IDENTITY);
-        let z = Element::from_i64(0, 1, 0, 0);
-        let t = Element::from_i64(0, 0, 1, 0);
+        let z = Element::<4>::from_i64(0, 1, 0, 0);
+        let t = Element::<4>::from_i64(0, 0, 1, 0);
         let ext = ExtremalOrder::new(order, z, t, 1);
         assert_eq!(ext.q(), 1);
     }
@@ -2049,7 +2103,7 @@ mod tests {
             ),
             i(2),
         );
-        let one = Element::from_i64(1, 0, 0, 0);
+        let one = Element::<4>::from_i64(1, 0, 0, 0);
         let p = i(3);
         let ideal = LeftIdeal::new(&one, &i(1), &order);
         assert_eq!(*ideal.norm(), i(1));
@@ -2068,7 +2122,7 @@ mod tests {
             ),
             i(2),
         );
-        let alpha = Element::from_i64(0, 1, 0, 0); // i
+        let alpha = Element::<4>::from_i64(0, 1, 0, 0); // i
         let p = i(3);
         let ideal = LeftIdeal::new(&alpha, &i(2), &order);
 

@@ -17,6 +17,20 @@
 //!
 //! See also [§2.2] (elliptic curves) and [§8.2] (curve arithmetic).
 //!
+//! # Divergences from spec / C reference
+//!
+//! - **Three coefficient representations**: [`Curve`] caches affine
+//!   [`Coefficient`], projective [`ProjectiveCoefficient`] `(A:C)`, and
+//!   [`DoublingConstants`] `(A₂₄, C₂₄)`. The spec uses `(A:C)`; the C ref uses
+//!   `(A₂₄, C₂₄)` internally. We store all three to avoid recomputation and
+//!   inversions.
+//! - **Isomorphism**: [`Isomorphism`] implements [Algorithm 8.9][Alg89]
+//!   directly from the spec with projective `(A:C)` coefficients — no
+//!   inversions. The C ref converts through Short Weierstrass.
+//! - **Curve normalization**: the C ref normalizes `(A₂₄/C₂₄ : 1)` before
+//!   torsion basis generation. We match this via [`Curve::normalize`].
+//!
+//! [Alg89]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.9
 //! [§2.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
 //! [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 

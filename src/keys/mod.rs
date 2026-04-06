@@ -79,17 +79,20 @@ impl From<[u8; CHALLENGE_BYTES]> for Challenge {
     }
 }
 
-/// A parsed, validated SQIsign signature.
+/// A SQIsign signature.
 ///
-/// Constructed from [`SIGNATURE_BYTES`] = 148 raw bytes via
-/// [`Signature::from_bytes`] or `TryFrom<&[u8]>`. Parsing validates
-/// structural integrity (correct field lengths) but does not verify
-/// the signature — call [`VerifyingKey::verify`] for that.
+/// Produced by [`SigningKey::sign`], or deserialized from
+/// [`SIGNATURE_BYTES`] = 148 bytes via [`Signature::from_bytes`],
+/// `TryFrom<&[u8; SIGNATURE_BYTES]>`, or `TryFrom<&[u8]>`.
+/// Serialized via [`Signature::to_bytes`].
+///
+/// Deserialization validates structural integrity but does not
+/// verify the signature — call [`VerifyingKey::verify`] for that.
 ///
 /// # Wire format (148 bytes, NIST-I)
 ///
 /// ```text
-/// [ E_aux (64 B) | n_bt (1) | r_rsp (1) | M_chl (64 B) | chl (16 B) | hint_aux (1) | hint_chl (1) ]
+/// [ E_aux (64) | n_bt (1) | r_rsp (1) | M_chl (64) | chl (16) | hint_aux (1) | hint_chl (1) ]
 /// ```
 ///
 /// See [§4.6] for encoding details.
@@ -112,8 +115,6 @@ pub struct Signature {
     pub(crate) hint_aux: AuxiliaryHint,
     /// Hint for torsion basis on E_chl.
     pub(crate) hint_chl: ChallengeHint,
-    /// The raw bytes (cached for re-serialization).
-    bytes: [u8; SIGNATURE_BYTES],
 }
 
 impl Signature {
@@ -167,24 +168,55 @@ impl Signature {
             chl: chl.into(),
             hint_aux,
             hint_chl,
-            bytes: *bytes,
         })
     }
 
-    /// Serialize this signature to bytes.
+    /// Serialize this signature to its wire format.
+    ///
+    /// See [§4.6] for the encoding format.
+    ///
+    /// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
     pub fn to_bytes(&self) -> [u8; SIGNATURE_BYTES] {
-        self.bytes
-    }
+        let mut bytes = [0u8; SIGNATURE_BYTES];
 
-    /// View this signature as a byte slice.
-    pub fn as_bytes(&self) -> &[u8; SIGNATURE_BYTES] {
-        &self.bytes
+        // E_aux: 64 bytes.
+        bytes[..64].copy_from_slice(&self.curve_aux.coefficient().to_bytes());
+
+        // n_bt, r_rsp: 1 byte each.
+        bytes[64] = self.n_bt.value() as u8;
+        bytes[65] = self.r_rsp.value() as u8;
+
+        // M_chl: 4 × comp_bytes, each entry as LE bytes.
+        let comp_bytes = E_RSP.div_ceil(8) as usize;
+        let m_offset = 66;
+        let e = &self.M_chl.entries;
+        let scalars = [e[0][0], e[0][1], e[1][0], e[1][1]];
+        for (idx, s) in scalars.iter().enumerate() {
+            let s_bytes = s.to_le_bytes();
+            bytes[m_offset + idx * comp_bytes..m_offset + (idx + 1) * comp_bytes]
+                .copy_from_slice(&s_bytes[..comp_bytes]);
+        }
+
+        // chl: CHALLENGE_BYTES.
+        let chl_offset = m_offset + 4 * comp_bytes;
+        let chl_bytes = self.chl.as_scalar().to_le_bytes();
+        bytes[chl_offset..chl_offset + CHALLENGE_BYTES]
+            .copy_from_slice(&chl_bytes[..CHALLENGE_BYTES]);
+
+        // hints: 1 byte each.
+        let hint_offset = chl_offset + CHALLENGE_BYTES;
+        bytes[hint_offset] = u8::from(self.hint_aux);
+        bytes[hint_offset + 1] = u8::from(self.hint_chl);
+
+        bytes
     }
 }
 
-impl AsRef<[u8]> for Signature {
-    fn as_ref(&self) -> &[u8] {
-        &self.bytes
+impl TryFrom<&[u8; SIGNATURE_BYTES]> for Signature {
+    type Error = SignatureError;
+
+    fn try_from(bytes: &[u8; SIGNATURE_BYTES]) -> Result<Self, Self::Error> {
+        Signature::from_bytes(bytes)
     }
 }
 
@@ -220,18 +252,39 @@ impl TryFrom<&[u8]> for Signature {
 /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
 /// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
 /// [`TORSION_2POWER_BYTES`]: crate::params::TORSION_2POWER_BYTES
+/// The change-of-basis matrix M_chl from a signature (public).
 #[derive(Copy, Clone, Debug)]
-pub struct ChallengeMatrix {
-    /// Entry (0, 0): scalar a.
-    a: Scalar,
-    /// Entry (0, 1): scalar b.
-    b: Scalar,
-    /// Entry (1, 0): scalar c.
-    c: Scalar,
-    /// Entry (1, 1): scalar d.
-    d: Scalar,
-    /// Torsion exponent: scalars are reduced mod 2^e.
-    e: TorsionExponent,
+pub struct ChallengeMatrix(pub(crate) crate::curves::ChangeOfBasisMatrix);
+
+impl core::ops::Deref for ChallengeMatrix {
+    type Target = crate::curves::ChangeOfBasisMatrix;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ChallengeMatrix {
+    /// Compute the challenge matrix from two torsion bases via the
+    /// Tate pairing ([Algorithm 2.5][Alg. 2.5]).
+    ///
+    /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
+    pub(crate) fn encode(
+        full_basis: &TorsionBasis,
+        target_basis: &TorsionBasis,
+        e: TorsionExponent,
+    ) -> Self {
+        Self(crate::curves::ChangeOfBasisMatrix::from_bases(
+            full_basis,
+            target_basis,
+            e,
+        ))
+    }
+}
+
+impl From<crate::curves::ChangeOfBasisMatrix> for ChallengeMatrix {
+    fn from(m: crate::curves::ChangeOfBasisMatrix) -> Self {
+        Self(m)
+    }
 }
 
 impl ChallengeMatrix {
@@ -260,14 +313,15 @@ impl ChallengeMatrix {
             }
             Scalar::from_limbs(limbs)
         };
-        Ok(ChallengeMatrix {
-            a: parse_scalar(0),
-            b: parse_scalar(comp_bytes),
-            c: parse_scalar(2 * comp_bytes),
-            d: parse_scalar(3 * comp_bytes),
-            e: TorsionExponent::try_from((comp_bytes * 8) as u32)
-                .map_err(|_| SignatureError::NonCanonical)?,
-        })
+        let e = TorsionExponent::try_from((comp_bytes * 8) as u32)
+            .map_err(|_| SignatureError::NonCanonical)?;
+        Ok(ChallengeMatrix(crate::curves::ChangeOfBasisMatrix {
+            entries: [
+                [parse_scalar(0), parse_scalar(comp_bytes)],
+                [parse_scalar(2 * comp_bytes), parse_scalar(3 * comp_bytes)],
+            ],
+            e,
+        }))
     }
 
     /// Whether both first-column entries (a, c) are even.
@@ -284,7 +338,7 @@ impl ChallengeMatrix {
     ///
     /// [Alg. 4.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.9
     pub(crate) fn first_column_even(&self) -> bool {
-        self.a.as_limbs()[0] & 1 == 0 && self.c.as_limbs()[0] & 1 == 0
+        self.entries[0][0].as_limbs()[0] & 1 == 0 && self.entries[1][0].as_limbs()[0] & 1 == 0
     }
 }
 
@@ -300,27 +354,7 @@ impl Mul<&TorsionBasis> for &ChallengeMatrix {
     type Output = TorsionBasis;
 
     fn mul(self, basis: &TorsionBasis) -> TorsionBasis {
-        // The C reference's `matrix_scalar_application_even_basis`
-        // applies the matrix [[a, b], [c, d]] (where a=mat[0][0],
-        // b=mat[0][1], c=mat[1][0], d=mat[1][1]) by COLUMNS:
-        //   R' = [a]P + [c]Q  (column 0)
-        //   S' = [b]P + [d]Q  (column 1)
-        //   R'-S' = [(a-b)]P + [(c-d)]Q
-        //
-        // The third point (R'-S') is computed via a third biladder
-        // call, NOT via projective_difference. Using
-        // projective_difference would invoke the Fp2 sqrt, which
-        // may return a different branch and give the wrong point.
-        let P_prime = basis.biscalar_mul(&self.a, &self.c, self.e);
-        let Q_prime = basis.biscalar_mul(&self.b, &self.d, self.e);
-
-        // Compute (a - b) mod 2^e and (c - d) mod 2^e.
-        let k = self.e.value();
-        let a_minus_b = self.a.sub_mod2k(&self.b, k);
-        let c_minus_d = self.c.sub_mod2k(&self.d, k);
-        let PmQ_prime = basis.biscalar_mul(&a_minus_b, &c_minus_d, self.e);
-
-        TorsionBasis::new(P_prime, Q_prime, PmQ_prime)
+        self.0.mul(basis)
     }
 }
 

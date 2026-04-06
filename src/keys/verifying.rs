@@ -9,9 +9,9 @@ use subtle::ConstantTimeEq;
 
 use crate::{
     curves::{
-        TorsionBasis, TorsionExponent, VerifyingKeyHint,
+        BasisHint, TorsionBasis, TorsionExponent, VerifyingKeyHint,
         isogeny::Kernel as CurveKernel,
-        montgomery::{Coefficient, Curve},
+        montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint},
     },
     fields::Fp2,
     hash,
@@ -112,10 +112,8 @@ impl VerifyingKey {
             .ok_or(SignatureError::VerificationFailed)?;
 
         // --- Line 8: torsion basis on E_pk from hint_pk ---
-        let basis_pk = TorsionBasis::from_hint(
-            &self.curve,
-            crate::curves::BasisHint::from_byte(u8::from(self.hint)),
-        );
+        let basis_pk =
+            TorsionBasis::from_hint(&self.curve, BasisHint::from_byte(u8::from(self.hint)));
 
         // --- Line 9: challenge isogeny ---
         // Compute kernel: P_pk + [chl]Q_pk, then [2^n_bt] of that.
@@ -202,14 +200,10 @@ impl VerifyingKey {
         }
 
         // --- Lines 10–11: torsion bases on E_aux and E_chl ---
-        let basis_aux = TorsionBasis::from_hint(
-            &sig.curve_aux,
-            crate::curves::BasisHint::from_byte(u8::from(sig.hint_aux)),
-        );
-        let basis_chl = TorsionBasis::from_hint(
-            &curve_chl,
-            crate::curves::BasisHint::from_byte(u8::from(sig.hint_chl)),
-        );
+        let basis_aux =
+            TorsionBasis::from_hint(&sig.curve_aux, BasisHint::from_byte(u8::from(sig.hint_aux)));
+        let basis_chl =
+            TorsionBasis::from_hint(&curve_chl, BasisHint::from_byte(u8::from(sig.hint_chl)));
 
         #[cfg(test)]
         {
@@ -227,9 +221,7 @@ impl VerifyingKey {
                     .collect();
                 format!("0x{re}+i*0x{im}")
             };
-            let aff = |p: &crate::curves::montgomery::ProjectiveXOnlyPoint| -> String {
-                fp2_hex(&(&p.X * &p.Z.invert()))
-            };
+            let aff = |p: &ProjectiveXOnlyPoint| -> String { fp2_hex(&(&p.X * &p.Z.invert())) };
             eprintln!("TRACE basis_chl.R aff={}", aff(&basis_chl.R));
             eprintln!("TRACE basis_chl.S aff={}", aff(&basis_chl.S));
             eprintln!("TRACE basis_aux.R aff={}", aff(&basis_aux.R));
