@@ -75,6 +75,23 @@ impl<const N: usize> Coordinate<N> {
         Self(BigInt::from_sign_and_limbs(sign, limbs))
     }
 
+    /// Creates a non-negative coordinate from `N` little-endian `u64` limbs.
+    ///
+    /// Delegates to [`BigInt::from_limbs`].
+    #[inline]
+    pub const fn from_limbs(limbs: [u64; N]) -> Self {
+        Self(BigInt::from_limbs(limbs))
+    }
+
+    /// Creates a negative coordinate from `N` little-endian `u64` limbs
+    /// representing the absolute value.
+    ///
+    /// Delegates to [`BigInt::from_limbs_neg`].
+    #[inline]
+    pub const fn from_limbs_neg(limbs: [u64; N]) -> Self {
+        Self(BigInt::from_limbs_neg(limbs))
+    }
+
     /// Returns the inner `BigInt<N>`.
     #[inline]
     pub const fn as_bigint(&self) -> &BigInt<N> {
