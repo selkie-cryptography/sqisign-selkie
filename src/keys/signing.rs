@@ -259,10 +259,10 @@ impl SigningKey {
     /// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
     pub fn sign(&self, msg: &[u8]) -> Result<Signature, SignatureError> {
         // TODO: remaining issues before sign() produces valid signatures:
-        //   - Degree computations (lines 16-20) are placeholders
-        //   - I_com,rsp computation (line 19/24) not implemented
-        //   - Signature encoding to bytes (line 38)
-        //   - Right order of I_sk for pushforward (line 13)
+        //   - Sampling radius (line 14) is placeholder 2^f, should be D_rsp · D²_mix ·
+        //     2^{f+1} ≈ 2^1399 (requires wider lattice)
+        //   - Degree computations (lines 16-20): missing D²_mix division (coupled with
+        //     radius fix — both need wider arithmetic)
 
         let f = TORSION_EVEN_POWER;
         let e_rsp = E_RSP;
@@ -327,10 +327,8 @@ impl SigningKey {
                 };
 
             // Line 13: I_chl ← [I_sk]_* I'_chl
-            // TODO: use actual O_R(I_sk) instead of O₀.
-            let i_chl = self
-                .ideal
-                .pushforward(&i_chl_prime, EXTREMAL_ORDERS[0].order());
+            let o_r_sk = self.ideal.right_order();
+            let i_chl = self.ideal.pushforward(&i_chl_prime, &o_r_sk);
 
             // Line 14: α_rsp ← RandomEquivalentQuaternion(I_com ∩ I_sk · I_chl)
             //
@@ -345,7 +343,7 @@ impl SigningKey {
             let intersection = self.ideal.lattice().intersection(&i_sk_i_chl);
             let intersection_lat = Lattice::<4>::from(intersection);
             let radius = BigInt::<4>::ONE.shl(f);
-            let alpha_rsp = match intersection_lat.sample_from_ball(&radius) {
+            let alpha_rsp = match intersection_lat.sample_from_ball::<8>(&radius) {
                 Some(a) => a,
                 None => continue,
             };
@@ -416,14 +414,15 @@ impl SigningKey {
                     None => continue,
                 };
 
-                // Line 24: IdealToIsogeny(I_com,rsp ∩ I_aux)
-                let i_com_rsp_inter_aux = {
-                    let lat_a: Lattice<4> = (*i_com_rsp.lattice()).into();
-                    let lat_b: Lattice<4> = (*i_aux.lattice()).into();
-                    lat_a.intersection(&lat_b)
-                };
-                // TODO: construct LeftIdeal from intersection for to_isogeny
-                let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_aux.to_isogeny() {
+                // Line 24: E_aux, P_aux, Q_aux ← IdealToIsogeny(I_{com,rsp} ∩ I_aux)
+                //
+                // The intersection of two O₀-ideals with coprime norms N₁, N₂
+                // is an O₀-ideal of norm N₁·N₂.
+                let inter_lattice = i_com_rsp.lattice().intersection(i_aux.lattice());
+                let inter_norm = i_com_rsp_norm.ct_mul(i_aux.norm());
+                let i_inter =
+                    LeftIdeal::from_parts(inter_lattice, inter_norm, *EXTREMAL_ORDERS[0].order());
+                let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_inter.to_isogeny() {
                     Some(r) => r,
                     None => continue,
                 };

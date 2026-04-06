@@ -149,10 +149,22 @@ impl<const N: usize> BigInt<N> {
         Self { sign, limbs }
     }
 
-    /// Creates a `BigInt` from a little-endian limb array (non-negative).
+    /// Creates a non-negative `BigInt` from `N` little-endian `u64` limbs.
+    ///
+    /// Equivalent to `from_sign_and_limbs(0, limbs)`. Used heavily in
+    /// precomputed constant tables where the sign is always positive.
     #[inline]
     pub const fn from_limbs(limbs: [u64; N]) -> Self {
         Self { sign: 0, limbs }
+    }
+
+    /// Creates a negative `BigInt` from `N` little-endian `u64` limbs
+    /// representing the absolute value.
+    ///
+    /// Equivalent to `from_sign_and_limbs(1, limbs)`.
+    #[inline]
+    pub const fn from_limbs_neg(limbs: [u64; N]) -> Self {
+        Self { sign: 1, limbs }
     }
 
     /// Creates a `BigInt` from an `i64`.
@@ -1307,25 +1319,73 @@ impl<const N: usize> From<i32> for BigInt<N> {
 }
 
 // ---------------------------------------------------------------------------
-// Width conversions: BigInt<4> <-> BigInt<8>
+// Width conversions
 // ---------------------------------------------------------------------------
+
+impl<const N: usize> BigInt<N> {
+    /// Widen to `BigInt<W>` by zero-extending the upper limbs.
+    ///
+    /// The value is preserved exactly; the upper `W - N` limbs are zero.
+    /// Compile-time error if `W < N`.
+    #[must_use]
+    pub fn widen<const W: usize>(self) -> BigInt<W> {
+        // Compile-time check: destination must be at least as wide.
+        const {
+            assert!(
+                W >= N,
+                "widen: destination width W must be >= source width N"
+            )
+        };
+        let mut limbs = [0u64; W];
+        let mut i = 0;
+        while i < N {
+            limbs[i] = self.limbs[i];
+            i += 1;
+        }
+        BigInt::<W> {
+            sign: self.sign,
+            limbs,
+        }
+    }
+
+    /// Narrow to `BigInt<T>`, returning `None` if the value does not
+    /// fit (any of the upper `N - T` limbs are non-zero).
+    ///
+    /// Compile-time error if `T > N`.
+    #[must_use]
+    pub fn narrow_to<const T: usize>(self) -> Option<BigInt<T>> {
+        const {
+            assert!(
+                T <= N,
+                "narrow_to: destination width T must be <= source width N"
+            )
+        };
+        let mut overflow = 0u64;
+        let mut i = T;
+        while i < N {
+            overflow |= self.limbs[i];
+            i += 1;
+        }
+        if overflow != 0 {
+            return None;
+        }
+        let mut limbs = [0u64; T];
+        let mut j = 0;
+        while j < T {
+            limbs[j] = self.limbs[j];
+            j += 1;
+        }
+        Some(BigInt::<T> {
+            sign: self.sign,
+            limbs,
+        })
+    }
+}
 
 /// Widen: zero-extend a four-limb integer to eight limbs.
 impl From<BigInt<4>> for BigInt<8> {
     fn from(small: BigInt<4>) -> Self {
-        Self {
-            sign: small.sign,
-            limbs: [
-                small.limbs[0],
-                small.limbs[1],
-                small.limbs[2],
-                small.limbs[3],
-                0,
-                0,
-                0,
-                0,
-            ],
-        }
+        small.widen()
     }
 }
 
@@ -1807,6 +1867,37 @@ mod tests {
         wide.as_limbs_mut()[4] = 1;
         let ct: subtle::CtOption<BigInt<4>> = wide.into();
         assert!(!bool::from(ct.is_some()));
+    }
+
+    #[test]
+    fn generic_widen_4_to_9() {
+        let small = BigInt::<4>::from(-99i64);
+        let wide: BigInt<9> = small.widen();
+        assert_eq!(wide.as_limbs()[0], 99);
+        assert_eq!(wide.as_limbs()[4], 0);
+        assert!(bool::from(wide.is_negative()));
+    }
+
+    #[test]
+    fn generic_narrow_to() {
+        let wide = BigInt::<9>::from(123i64);
+        let narrow: BigInt<4> = wide.narrow_to().unwrap();
+        assert_eq!(narrow, BigInt::<4>::from(123i64));
+    }
+
+    #[test]
+    fn generic_narrow_to_overflow() {
+        let mut wide = BigInt::<9>::from(1i64);
+        wide.as_limbs_mut()[5] = 1;
+        assert!(wide.narrow_to::<4>().is_none());
+    }
+
+    #[test]
+    fn widen_narrow_roundtrip() {
+        let orig = BigInt::<4>::from(-12345i64);
+        let wide: BigInt<8> = orig.widen();
+        let back: BigInt<4> = wide.narrow_to().unwrap();
+        assert_eq!(orig, back);
     }
 
     #[test]

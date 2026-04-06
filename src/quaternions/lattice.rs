@@ -33,6 +33,7 @@ use rand_core::{OsRng, RngCore};
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
+    ideal::gram_matrix_nrd,
     linear::{Matrix, Vector, hnf_from_columns},
 };
 
@@ -258,7 +259,7 @@ impl<const N: usize> Lattice<N> {
     }
 }
 
-impl Lattice<4> {
+impl<const N: usize> Lattice<N> {
     /// Decompose an element into coordinates in this lattice's column basis.
     ///
     /// Given α ∈ L, finds (c₀, c₁, c₂, c₃) such that
@@ -268,8 +269,8 @@ impl Lattice<4> {
     /// Returns `None` if α is not in the lattice (non-integer solution).
     ///
     /// Uses the adjugate: x = adj(B)·v / det(B), avoiding field inversion.
-    pub fn decompose(&self, elem: &Element<4>) -> Option<[BigInt<4>; 4]> {
-        let ed = BigInt::<4>::from(elem.denom);
+    pub fn decompose(&self, elem: &Element<N>) -> Option<[BigInt<N>; 4]> {
+        let ed = BigInt::<N>::from(elem.denom);
 
         // Scale to common denominator: target = α_coords · lattice_denom / α_denom.
         let elem_coords = [
@@ -278,7 +279,7 @@ impl Lattice<4> {
             *elem.c.as_bigint(),
             *elem.d.as_bigint(),
         ];
-        let mut rhs = [BigInt::<4>::ZERO; 4];
+        let mut rhs = [BigInt::<N>::ZERO; 4];
         for i in 0..4 {
             let scaled = elem_coords[i].ct_mul(&self.denom);
             let (q, r) = scaled.div_rem(&ed);
@@ -295,9 +296,9 @@ impl Lattice<4> {
             return None;
         }
 
-        let mut result = [BigInt::<4>::ZERO; 4];
+        let mut result = [BigInt::<N>::ZERO; 4];
         for i in 0..4 {
-            let mut val = BigInt::<4>::ZERO;
+            let mut val = BigInt::<N>::ZERO;
             for (j, rhs_j) in rhs.iter().enumerate() {
                 val = val.ct_add(&adj[i][j].ct_mul(rhs_j));
             }
@@ -310,9 +311,7 @@ impl Lattice<4> {
 
         Some(result)
     }
-}
 
-impl<const N: usize> Lattice<N> {
     /// Lattice product: `self · other`.
     ///
     /// Multiplies each pair of basis elements (4×4 = 16 products),
@@ -357,15 +356,20 @@ impl<const N: usize> Lattice<N> {
             denom: self.denom.ct_mul(&other.denom),
         }
     }
-}
 
-impl Lattice<4> {
     /// Sample a random element from this lattice whose reduced norm
     /// is less than `radius`.
     ///
     /// Uses rejection sampling from a bounding parallelogram of an
     /// L2-reduced dual lattice, following the C reference's
     /// `quat_lattice_sample_from_ball` (lat_ball.c:58).
+    ///
+    /// The const generic `W` is the intermediate width for products.
+    /// It must satisfy `W >= 2 * N` to avoid overflow in Gram matrix
+    /// entries (products of N-wide values). For example:
+    /// - `Lattice<4>::sample_from_ball::<8>` (verification)
+    /// - `Lattice<9>::sample_from_ball::<18>` (commitment)
+    /// - `Lattice<110>::sample_from_ball::<220>` (signing)
     ///
     /// # Algorithm
     ///
@@ -385,29 +389,27 @@ impl Lattice<4> {
     ///
     /// [Alg. 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
     /// [Alg. 4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.3
-    pub fn sample_from_ball(&self, radius: &BigInt<4>) -> Option<Element<4>> {
-        // Widen to BigInt<8> for intermediate products.
-        use super::ideal::gram_matrix_nrd;
-
-        let cols_4 = self.basis.columns();
-        let w = |v: BigInt<4>| -> BigInt<8> { v.into() };
-        let cols_8: [Vector<8>; 4] = core::array::from_fn(|i| {
+    pub fn sample_from_ball<const W: usize>(&self, radius: &BigInt<N>) -> Option<Element<N>> {
+        // Widen columns to BigInt<W> for intermediate products.
+        let cols_n = self.basis.columns();
+        let cols_w: [Vector<W>; 4] = core::array::from_fn(|i| {
             Vector::new(
-                w(cols_4[i][0]),
-                w(cols_4[i][1]),
-                w(cols_4[i][2]),
-                w(cols_4[i][3]),
+                cols_n[i][0].widen::<W>(),
+                cols_n[i][1].widen::<W>(),
+                cols_n[i][2].widen::<W>(),
+                cols_n[i][3].widen::<W>(),
             )
         });
-        let gram = gram_matrix_nrd(&cols_8);
+        let gram = gram_matrix_nrd(&cols_w);
 
         // Adjust radius: rad = radius * denom² * 2
         // (Gram matrix corresponds to twice the reduced norm)
-        let denom_wide: BigInt<8> = self.denom.into();
-        let rad: BigInt<8> = BigInt::<8>::from(*radius)
+        let denom_wide: BigInt<W> = self.denom.widen();
+        let rad: BigInt<W> = radius
+            .widen::<W>()
             .ct_mul(&denom_wide)
             .ct_mul(&denom_wide)
-            .ct_mul(&BigInt::<8>::from_u64(2));
+            .ct_mul(&BigInt::<W>::from_u64(2));
 
         // Step 2: Compute dual Gram matrix and LLL-reduce it.
         // G* = adj(G), with det(G) tracked separately.
@@ -418,7 +420,7 @@ impl Lattice<4> {
         // U is the transformation matrix (inverse of the LLL reduction).
         let mut dual_cols = dual_gram.columns();
         let mut dual_gram_reduced = dual_gram;
-        l2_reduce::<8>(&mut dual_cols, &mut dual_gram_reduced);
+        l2_reduce::<W>(&mut dual_cols, &mut dual_gram_reduced);
 
         // Reconstruct U: the LLL reduction implicitly applies U to the
         // columns. We need U^{-T} for mapping samples back. Since LLL
@@ -452,7 +454,7 @@ impl Lattice<4> {
         // bounding box, and sample in the original basis with those bounds.
 
         // Compute per-axis bounding box from the reduced diagonal.
-        let mut bounds = [BigInt::<8>::ZERO; 4];
+        let mut bounds = [BigInt::<W>::ZERO; 4];
         let mut all_zero = true;
         for i in 0..4 {
             // box[i] = √(dual_gram_reduced[i][i] * radius / det_g)
@@ -468,9 +470,11 @@ impl Lattice<4> {
         }
 
         // Step 3: Rejection sampling.
+        // Byte buffer for random sampling — sized for BigInt<W>.
+        let byte_cap = W * 8;
         for _ in 0..10_000 {
             // Sample uniform x[i] in [-bounds[i], bounds[i]].
-            let mut x = [BigInt::<8>::ZERO; 4];
+            let mut x = [BigInt::<W>::ZERO; 4];
             for i in 0..4 {
                 if bool::from(bounds[i].is_zero()) {
                     continue;
@@ -480,11 +484,10 @@ impl Lattice<4> {
                 // Simple rejection sampling for uniform in [0, 2b].
                 let bitlen = two_b.bitsize();
                 loop {
-                    let mut bytes = [0u8; 64]; // BigInt<8> = 512 bits
-                    OsRng.fill_bytes(&mut bytes[..(bitlen as usize).div_ceil(8)]);
-                    let val = BigInt::<8>::from_bytes_le_unsigned(
-                        &bytes[..(bitlen as usize).div_ceil(8)],
-                    );
+                    let mut bytes = vec![0u8; byte_cap];
+                    let needed = (bitlen as usize).div_ceil(8);
+                    OsRng.fill_bytes(&mut bytes[..needed]);
+                    let val = BigInt::<W>::from_bytes_le_unsigned(&bytes[..needed]);
                     let val = val.abs(); // ensure positive
                     if val.bitsize() <= bitlen {
                         // Check val <= 2*bounds[i]
@@ -502,7 +505,7 @@ impl Lattice<4> {
             // still correct for rejection sampling).
 
             // Evaluate quadratic form: nrd = x^T · G · x.
-            let mut nrd = BigInt::<8>::ZERO;
+            let mut nrd = BigInt::<W>::ZERO;
             for i in 0..4 {
                 for j in 0..4 {
                     nrd = nrd.ct_add(&x[i].ct_mul(&x[j]).ct_mul(&gram[i][j]));
@@ -524,19 +527,20 @@ impl Lattice<4> {
 
             // Step 4: Convert to quaternion element.
             // result = Σ x[i] · col_i, with the lattice denominator.
-            let mut coords = [BigInt::<8>::ZERO; 4];
+            let mut coords = [BigInt::<W>::ZERO; 4];
             for i in 0..4 {
                 for (k, coord) in coords.iter_mut().enumerate() {
-                    *coord = coord.ct_add(&x[i].ct_mul(&cols_8[i][k]));
+                    *coord = coord.ct_add(&x[i].ct_mul(&cols_w[i][k]));
                 }
             }
 
-            // Narrow to BigInt<4> (should fit after sampling).
-            let narrow = |v: BigInt<8>| -> BigInt<4> {
-                v.narrow().expect("sampled element fits in BigInt<4>")
+            // Narrow back to BigInt<N> (should fit after sampling).
+            let narrow = |v: BigInt<W>| -> BigInt<N> {
+                v.narrow_to::<N>()
+                    .expect("sampled element fits in BigInt<N>")
             };
 
-            return Some(Element::<4>::new(
+            return Some(Element::<N>::new(
                 Coordinate::from(narrow(coords[0])),
                 Coordinate::from(narrow(coords[1])),
                 Coordinate::from(narrow(coords[2])),
@@ -614,7 +618,7 @@ impl<const N: usize> HnfLattice<N> {
     }
 }
 
-impl HnfLattice<4> {
+impl<const N: usize> HnfLattice<N> {
     /// Checks if a quaternion element is contained in this lattice.
     ///
     /// An element α is in the lattice L/d if the system
@@ -627,14 +631,14 @@ impl HnfLattice<4> {
     /// See [§3.1.5.2] (Containment) of the spec.
     ///
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
-    pub fn contains(&self, elem: &Element<4>) -> Option<Vector<4>> {
-        let coords: [BigInt<4>; 4] = [
+    pub fn contains(&self, elem: &Element<N>) -> Option<Vector<N>> {
+        let coords: [BigInt<N>; 4] = [
             *elem.a.as_bigint(),
             *elem.b.as_bigint(),
             *elem.c.as_bigint(),
             *elem.d.as_bigint(),
         ];
-        let ed: BigInt<4> = *elem.denom.as_bigint();
+        let ed: BigInt<N> = *elem.denom.as_bigint();
 
         // rhs = elem.coord * self.denom / elem.denom
         let rhs = [
@@ -680,9 +684,6 @@ impl HnfLattice<4> {
 
         Some(Vector::new(x[0], x[1], x[2], x[3]))
     }
-}
-
-impl<const N: usize> HnfLattice<N> {
     /// Conjugate this lattice (negate the i, j, k coordinates).
     ///
     /// Result is re-reduced to HNF since negation breaks the form.
@@ -717,21 +718,20 @@ impl<const N: usize> HnfLattice<N> {
         let lat_b = Lattice::<N>::from(*other);
         lat_a.intersection(&lat_b)
     }
-}
 
-impl HnfLattice<4> {
     /// Lattice product: `self · other`.
     ///
     /// Multiplies each pair of basis elements (4×4 = 16 products),
-    /// then takes HNF. Requires N=4 for quaternion multiplication.
+    /// then takes HNF. Delegates to [`Lattice::product`] which uses
+    /// [`Element::mul_direct`] at width N.
     ///
     /// See [§3.1.5.2] (Multiplication) of the spec.
     ///
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
     #[must_use]
     pub fn product(&self, other: &Self) -> Self {
-        let lat_a = Lattice::<4>::from(*self);
-        let lat_b = Lattice::<4>::from(*other);
+        let lat_a = Lattice::<N>::from(*self);
+        let lat_b = Lattice::<N>::from(*other);
         lat_a.product(&lat_b)
     }
 }
@@ -786,13 +786,81 @@ impl<const N: usize> core::fmt::Debug for HnfLattice<N> {
 }
 
 // ---------------------------------------------------------------------------
+// Order<N>: maximal order in B_{p,∞}
+// ---------------------------------------------------------------------------
+
+/// A maximal order in B_{p,∞}.
+///
+/// An order is a lattice that is also a subring of B_{p,∞} (closed under
+/// multiplication, contains 1). This newtype over [`Lattice`] enforces
+/// the order invariant at the type level: values are only constructed by
+/// operations that guarantee the result is an order:
+///
+/// - [`ExtremalOrder::order`] — precomputed extremal orders
+/// - [`LeftIdeal::right_order`] — O_R(I) = I⁻¹ · I
+/// - [`Order::from_lattice_unchecked`] — internal use when the lattice is known
+///   to be an order (e.g., narrowing after `reduce_to_prime_norm`)
+///
+/// Implements [`Deref<Target = Lattice<N>>`](core::ops::Deref) so all
+/// lattice methods are available transparently. Use `From<Order<N>>` to
+/// unwrap into the underlying [`Lattice`].
+///
+/// See [§3.1.5.1] of the SQIsign specification.
+///
+/// [§3.1.5.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.1
+#[derive(Clone)]
+pub struct Order<const N: usize>(Lattice<N>);
+
+impl<const N: usize> Order<N> {
+    /// Constructs an order from a lattice that is known to be an order.
+    ///
+    /// # Safety (logical)
+    ///
+    /// The caller must ensure the lattice is actually a maximal order
+    /// (closed under multiplication, contains 1). This is not checked.
+    pub(crate) const fn from_lattice_unchecked(lattice: Lattice<N>) -> Self {
+        Self(lattice)
+    }
+
+    /// Returns the underlying lattice.
+    #[inline]
+    pub const fn lattice(&self) -> &Lattice<N> {
+        &self.0
+    }
+}
+
+impl<const N: usize> core::ops::Deref for Order<N> {
+    type Target = Lattice<N>;
+
+    #[inline]
+    fn deref(&self) -> &Lattice<N> {
+        &self.0
+    }
+}
+
+impl<const N: usize> Copy for Order<N> where BigInt<N>: Copy {}
+
+/// Unwrap an order into its underlying lattice.
+impl<const N: usize> From<Order<N>> for Lattice<N> {
+    fn from(order: Order<N>) -> Self {
+        order.0
+    }
+}
+
+impl<const N: usize> core::fmt::Debug for Order<N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Order({:?})", self.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // LeftIdeal<N>: left ideal of a maximal order
 // ---------------------------------------------------------------------------
 
 /// A left ideal of a maximal order in B_{p,∞}.
 ///
 /// An ideal I = O⟨α, N⟩ is represented by its lattice (in HNF), its
-/// norm nrd(I), and the parent order O_L(I).
+/// norm nrd(I), and the parent (left) order O_L(I).
 ///
 /// See [§3.1.6] of the SQIsign specification.
 ///
@@ -803,15 +871,11 @@ pub struct LeftIdeal<const N: usize> {
     lattice: HnfLattice<N>,
     /// The norm of the ideal: nrd(I) = gcd of norms of elements.
     norm: BigInt<N>,
-    /// The parent (left) order as a lattice.
-    parent_order: Lattice<N>,
+    /// The parent (left) order.
+    parent_order: Order<N>,
 }
 
 impl<const N: usize> LeftIdeal<N> {
-    // Ideal creation and other Element-dependent methods are in
-    // the impl LeftIdeal<4> block below (requires Lattice<4> for
-    // basis_elem to produce Element values).
-
     /// Assemble a left ideal from pre-built components.
     ///
     /// The caller is responsible for ensuring the lattice is the
@@ -820,7 +884,7 @@ impl<const N: usize> LeftIdeal<N> {
     pub const fn from_parts(
         lattice: HnfLattice<N>,
         norm: BigInt<N>,
-        parent_order: Lattice<N>,
+        parent_order: Order<N>,
     ) -> Self {
         Self {
             lattice,
@@ -849,21 +913,80 @@ impl<const N: usize> LeftIdeal<N> {
 
     /// Returns the parent (left) order.
     #[inline]
-    pub const fn parent_order(&self) -> &Lattice<N> {
+    pub const fn parent_order(&self) -> &Order<N> {
         &self.parent_order
+    }
+
+    /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
+    ///
+    /// Returns the conjugate lattice scaled by 1/nrd(I). Used for
+    /// pushforward: `[J]_* I = J⁻¹(J ∩ I)`.
+    ///
+    /// See [§3.1.6.1] (Ideal inverse) of the spec.
+    ///
+    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
+    pub fn inverse(&self) -> HnfLattice<N> {
+        let mut conj = self.lattice.conjugate();
+        // Scale by 1/nrd(I) — multiply the denominator by nrd(I).
+        conj.denom = conj.denom.ct_mul(&self.norm);
+        conj
+    }
+
+    /// Compute the right order O_R(I) = (1/nrd(I)) · Ī · I.
+    ///
+    /// The right order of a left ideal I is the set {α ∈ B : Iα ⊆ I}.
+    /// For a left O-ideal, O_R(I) is a maximal order isomorphic to
+    /// End(E_I) under the Deuring correspondence.
+    ///
+    /// See [§3.1.5.1] (Right order) of the spec.
+    ///
+    /// [§3.1.5.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.1
+    #[must_use]
+    pub fn right_order(&self) -> Order<N> {
+        // O_R(I) = I⁻¹ · I = (1/nrd(I)) · Ī · I
+        let i_inv = self.inverse();
+        let product = i_inv.product(self.lattice());
+        Order::from_lattice_unchecked(Lattice::from(product))
+    }
+
+    /// Pushforward of an ideal: `[J]_* I = J⁻¹(J ∩ I)`.
+    ///
+    /// Given `self = J` and `other = I` (with coprime norms),
+    /// computes the pushforward ideal. The result has norm `nrd(I)`
+    /// and left order `O_R(J)` (provided by `right_order_j`).
+    ///
+    /// See [§3.1.6.1] (Pushforward and pullback of ideals) of the spec.
+    ///
+    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
+    pub fn pushforward(&self, other: &Self, right_order_j: &Order<N>) -> Self {
+        let j_inter_i = self.lattice.intersection(&other.lattice);
+        let j_inv = self.inverse();
+        let result_lattice = j_inv.product(&j_inter_i);
+
+        Self {
+            lattice: result_lattice,
+            norm: *other.norm(),
+            parent_order: *right_order_j,
+        }
     }
 }
 
 impl<const N: usize> Copy for LeftIdeal<N> where BigInt<N>: Copy {}
 
-// Methods that bridge between Lattice<4> and concrete Element.
+// Methods requiring Element<4>::mul() / norm() (widen to BigInt<8>).
 impl LeftIdeal<4> {
     /// Create the left ideal I = O⟨α, N⟩ = Oα + ON.
+    ///
+    /// Uses [`Element<4>::mul`] which widens to `BigInt<8>` internally.
+    /// For ideals at wider N, use [`from_parts`](Self::from_parts) with
+    /// pre-computed lattice, or the direct quaternion multiplication
+    /// approach in
+    /// [`random_prime_norm_wide`](LeftIdeal::<9>::random_prime_norm_wide).
     ///
     /// See [§3.1.6.1] of the spec.
     ///
     /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
-    pub fn new(alpha: &Element<4>, norm: &BigInt<4>, order: &Lattice<4>) -> Self {
+    pub fn new(alpha: &Element<4>, norm: &BigInt<4>, order: &Order<4>) -> Self {
         // Compute Oα: multiply each basis element of O by α.
         let mut o_alpha_cols = [Vector::ZERO; 4];
         for (j, o_alpha_col) in o_alpha_cols.iter_mut().enumerate() {
@@ -876,60 +999,22 @@ impl LeftIdeal<4> {
                 *product.d.as_bigint(),
             );
         }
-        let o_alpha_denom = order.denom.ct_mul(&BigInt::<4>::from(alpha.denom));
+        let o_alpha_denom = order.denom().ct_mul(&BigInt::<4>::from(alpha.denom));
         let o_alpha = Lattice::new(Matrix::from_columns(&o_alpha_cols), o_alpha_denom);
 
         // Compute ON: scale each basis vector of O by N.
-        let mut o_n_cols = order.basis.columns();
+        let mut o_n_cols = order.basis().columns();
         for col in &mut o_n_cols {
             for row in 0..4 {
                 col[row] = col[row].ct_mul(norm);
             }
         }
-        let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), order.denom);
+        let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), *order.denom());
 
         Self {
             lattice: o_alpha.sum(&o_n),
             norm: *norm,
             parent_order: *order,
-        }
-    }
-
-    /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
-    ///
-    /// Returns the conjugate lattice scaled by 1/nrd(I). Used for
-    /// pushforward: `[J]_* I = J⁻¹(J ∩ I)`.
-    ///
-    /// See [§3.1.6.1] (Ideal inverse) of the spec.
-    ///
-    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
-    pub fn inverse(&self) -> HnfLattice<4> {
-        let mut conj = self.lattice.conjugate();
-        // Scale by 1/nrd(I) — multiply the denominator by nrd(I).
-        conj.denom = conj
-            .denom
-            .ct_mul(&BigInt::<4>::from_sign_and_limbs(0, *self.norm.as_limbs()));
-        conj
-    }
-
-    /// Pushforward of an ideal: `[J]_* I = J⁻¹(J ∩ I)`.
-    ///
-    /// Given `self = J` and `other = I` (with coprime norms),
-    /// computes the pushforward ideal. The result has norm `nrd(I)`
-    /// and left order `O_R(J)` (provided by `right_order_j`).
-    ///
-    /// See [§3.1.6.1] (Pushforward and pullback of ideals) of the spec.
-    ///
-    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
-    pub fn pushforward(&self, other: &Self, right_order_j: &Lattice<4>) -> Self {
-        let j_inter_i = self.lattice.intersection(&other.lattice);
-        let j_inv = self.inverse();
-        let result_lattice = j_inv.product(&j_inter_i);
-
-        Self {
-            lattice: result_lattice,
-            norm: *other.norm(),
-            parent_order: *right_order_j,
         }
     }
 
@@ -1326,7 +1411,7 @@ impl LeftIdeal<9> {
             return Some(LeftIdeal {
                 lattice: o_alpha.sum(&o_n),
                 norm: *n,
-                parent_order: order_lat.clone(),
+                parent_order: *order_lat,
             });
         }
 
@@ -1394,10 +1479,10 @@ impl<const N: usize> LeftIdeal<N> {
                 denom: denom_4,
             },
             norm: norm_4,
-            parent_order: Lattice {
+            parent_order: Order::from_lattice_unchecked(Lattice {
                 basis: to_matrix(order_basis_4),
                 denom: order_denom_4,
-            },
+            }),
         })
     }
 }
@@ -1425,7 +1510,7 @@ where
         // Step 1: L2-reduce the basis and compute the Gram matrix.
         let basis = self.lattice.basis();
         let mut cols = basis.columns();
-        let mut gram = crate::quaternions::ideal::gram_matrix_nrd::<N>(&cols);
+        let mut gram = gram_matrix_nrd::<N>(&cols);
         l2_reduce::<N>(&mut cols, &mut gram);
 
         let denom = self.lattice.denom();
@@ -1579,8 +1664,8 @@ impl<const N: usize> core::fmt::Debug for LeftIdeal<N> {
 /// [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
 #[derive(Clone)]
 pub struct ExtremalOrder<const N: usize> {
-    /// The order as a lattice.
-    order: Lattice<N>,
+    /// The order.
+    order: Order<N>,
     /// Element z with z² = -q (small discriminant).
     z: Element<4>,
     /// Element t with nrd(t) = p, orthogonal to z.
@@ -1590,15 +1675,26 @@ pub struct ExtremalOrder<const N: usize> {
 }
 
 impl<const N: usize> ExtremalOrder<N> {
-    /// Creates an extremal order from its components.
+    /// Creates an extremal order from typed components.
+    ///
+    /// The lattice must be a maximal order (closed under multiplication,
+    /// contains 1). This is not checked — the lattice is wrapped in
+    /// [`Order`] unconditionally. Prefer
+    /// [`from_raw_limbs`](ExtremalOrder::from_raw_limbs) for constructing from
+    /// precomputed raw data.
     #[inline]
     pub const fn new(order: Lattice<N>, z: Element<4>, t: Element<4>, q: u32) -> Self {
-        Self { order, z, t, q }
+        Self {
+            order: Order::from_lattice_unchecked(order),
+            z,
+            t,
+            q,
+        }
     }
 
-    /// Returns the order as a lattice.
+    /// Returns the maximal order as an [`Order`].
     #[inline]
-    pub const fn order(&self) -> &Lattice<N> {
+    pub const fn order(&self) -> &Order<N> {
         &self.order
     }
 
@@ -1621,43 +1717,129 @@ impl<const N: usize> ExtremalOrder<N> {
     }
 }
 
+impl ExtremalOrder<4> {
+    /// Construct from raw sign+limbs data, matching the C reference's
+    /// `quat_p_extremal_maximal_order_t` layout.
+    ///
+    /// # Data format
+    ///
+    /// All integer values are `(sign, [u64; 4])` where `sign = 0` means
+    /// non-negative and `sign = 1` means negative. The `[u64; 4]` array
+    /// holds the absolute value in little-endian 64-bit limbs. This
+    /// matches GMP's `_mp_size` (sign) + `_mp_d` (limbs) representation
+    /// used by the C reference's `quaternion_data.c`.
+    ///
+    /// - `basis`: 4×4 matrix of the order's lattice basis in HNF, expressed in
+    ///   the `{1, i, j, k}` basis. Columns divided by the lattice denominator
+    ///   give elements of B_{p,∞}.
+    /// - `z`: the element z with z² = −q, as four coordinates `[a, b, c, d]` in
+    ///   the `{1, i, j, k}` basis.
+    /// - `q`: the absolute value |z²|.
+    ///
+    /// Both the lattice denominator and the z denominator are deduced
+    /// from `basis[0][0]` (the top-left HNF entry), which equals both
+    /// for all NIST-I extremal orders. All orders have `t = j`.
+    ///
+    /// # Divergence from internal `Element` representation
+    ///
+    /// The z data here stores all four coordinates explicitly, matching
+    /// the C reference's `quat_alg_elem_t` (which always has four
+    /// coordinates + denominator). In practice, for all NIST-I extremal
+    /// orders, z has the form `(0, b, 0, d)/denom` — the `a` and `c`
+    /// coordinates are zero. However, this constructor does not assume
+    /// that: it passes all four coordinates through to `Element::new`,
+    /// so the Sage precomputation script can output z in the same
+    /// format as the C reference without special-casing.
+    pub const fn from_raw_limbs(
+        basis: [[(u64, [u64; 4]); 4]; 4],
+        z: [(u64, [u64; 4]); 4],
+        q: u32,
+    ) -> Self {
+        const fn bi(sl: (u64, [u64; 4])) -> BigInt<4> {
+            BigInt::from_sign_and_limbs(sl.0, sl.1)
+        }
+        // Both lattice denom and z denom = basis[0][0] (all 7 NIST-I orders).
+        let denom = bi(basis[0][0]);
+        Self::new(
+            Lattice::new(
+                Matrix::from_rows(
+                    Vector::new(
+                        bi(basis[0][0]),
+                        bi(basis[0][1]),
+                        bi(basis[0][2]),
+                        bi(basis[0][3]),
+                    ),
+                    Vector::new(
+                        bi(basis[1][0]),
+                        bi(basis[1][1]),
+                        bi(basis[1][2]),
+                        bi(basis[1][3]),
+                    ),
+                    Vector::new(
+                        bi(basis[2][0]),
+                        bi(basis[2][1]),
+                        bi(basis[2][2]),
+                        bi(basis[2][3]),
+                    ),
+                    Vector::new(
+                        bi(basis[3][0]),
+                        bi(basis[3][1]),
+                        bi(basis[3][2]),
+                        bi(basis[3][3]),
+                    ),
+                ),
+                denom,
+            ),
+            Element::new(
+                Coordinate::from_bigint(bi(z[0])),
+                Coordinate::from_bigint(bi(z[1])),
+                Coordinate::from_bigint(bi(z[2])),
+                Coordinate::from_bigint(bi(z[3])),
+                Denominator::from_bigint_unchecked(denom),
+            ),
+            Element::J,
+            q,
+        )
+    }
+}
+
 impl<const N: usize> Copy for ExtremalOrder<N> where BigInt<N>: Copy {}
 
-/// Widen an `ExtremalOrder<4>` to `ExtremalOrder<8>` for lattice
-/// arithmetic that needs wider matrix entries.
+impl ExtremalOrder<4> {
+    /// Widen to `ExtremalOrder<M>` by zero-extending all `BigInt<4>`
+    /// limbs in the lattice basis and denominator to `BigInt<M>`.
+    ///
+    /// The z and t elements remain at width 4 (they are always small).
+    /// Used when lattice arithmetic needs wider intermediates (e.g.,
+    /// `LeftIdeal<8>` for `represent_integer`, `LeftIdeal<9>` for
+    /// D_MIX commitment).
+    #[must_use]
+    pub fn widen<const M: usize>(&self) -> ExtremalOrder<M> {
+        let basis4 = self.order().basis();
+        let denom4 = self.order().denom();
+
+        let mut basis_m = Matrix::<M>::ZERO;
+        for row in 0..4 {
+            for col in 0..4 {
+                basis_m[row][col] = basis4[row][col].widen::<M>();
+            }
+        }
+        let order_lat = Lattice::new(basis_m, denom4.widen::<M>());
+
+        ExtremalOrder::new(order_lat, *self.z(), *self.t(), self.q())
+    }
+}
+
 impl From<ExtremalOrder<4>> for ExtremalOrder<8> {
     fn from(order: ExtremalOrder<4>) -> Self {
-        widen_extremal_order(&order)
+        order.widen()
     }
 }
 
 impl From<ExtremalOrder<4>> for ExtremalOrder<9> {
     fn from(order: ExtremalOrder<4>) -> Self {
-        widen_extremal_order(&order)
+        order.widen()
     }
-}
-
-/// Widen an `ExtremalOrder<4>` to `ExtremalOrder<M>` by zero-extending limbs.
-fn widen_extremal_order<const M: usize>(order: &ExtremalOrder<4>) -> ExtremalOrder<M> {
-    let basis4 = order.order().basis();
-    let denom4 = order.order().denom();
-
-    let widen_int = |v: &BigInt<4>| -> BigInt<M> {
-        let mut limbs = [0u64; M];
-        limbs[..4].copy_from_slice(v.as_limbs());
-        let sign = if bool::from(v.is_negative()) { 1 } else { 0 };
-        BigInt::from_sign_and_limbs(sign, limbs)
-    };
-
-    let mut basis_m = Matrix::<M>::ZERO;
-    for row in 0..4 {
-        for col in 0..4 {
-            basis_m[row][col] = widen_int(&basis4[row][col]);
-        }
-    }
-    let order_lat = Lattice::new(basis_m, widen_int(denom4));
-
-    ExtremalOrder::new(order_lat, *order.z(), *order.t(), order.q())
 }
 
 impl<const N: usize> core::fmt::Debug for ExtremalOrder<N> {
@@ -2009,7 +2191,7 @@ mod tests {
 
     #[test]
     fn left_ideal_construction() {
-        let order = L::from_matrix(Matrix::IDENTITY);
+        let order = Order::from_lattice_unchecked(L::from_matrix(Matrix::IDENTITY));
         let ideal_lat = H::from(L::from_matrix(Matrix::IDENTITY));
         let ideal = LeftIdeal::from_parts(ideal_lat, i(1), order);
         assert_eq!(*ideal.norm(), i(1));
@@ -2094,7 +2276,7 @@ mod tests {
     #[test]
     fn ideal_creation() {
         // Create O₀⟨1, 1⟩ which should equal O₀ itself.
-        let order = L::new(
+        let order = Order::from_lattice_unchecked(L::new(
             Matrix::from_rows(
                 V::new(i(2), i(0), i(0), i(1)),
                 V::new(i(0), i(2), i(1), i(0)),
@@ -2102,9 +2284,9 @@ mod tests {
                 V::new(i(0), i(0), i(0), i(1)),
             ),
             i(2),
-        );
+        ));
         let one = Element::<4>::from_i64(1, 0, 0, 0);
-        let p = i(3);
+        let _p = i(3);
         let ideal = LeftIdeal::new(&one, &i(1), &order);
         assert_eq!(*ideal.norm(), i(1));
     }
@@ -2113,7 +2295,7 @@ mod tests {
     fn ideal_generator() {
         // Create an ideal I = O₀⟨i, 2⟩ with p = 3.
         // The generator should be an element γ with gcd(nrd(γ)/2, 2) = 1.
-        let order = L::new(
+        let order = Order::from_lattice_unchecked(L::new(
             Matrix::from_rows(
                 V::new(i(2), i(0), i(0), i(1)),
                 V::new(i(0), i(2), i(1), i(0)),
@@ -2121,9 +2303,9 @@ mod tests {
                 V::new(i(0), i(0), i(0), i(1)),
             ),
             i(2),
-        );
+        ));
         let alpha = Element::<4>::from_i64(0, 1, 0, 0); // i
-        let p = i(3);
+        let _p = i(3);
         let ideal = LeftIdeal::new(&alpha, &i(2), &order);
 
         let gamma = ideal.generator().expect("generator should be found");
