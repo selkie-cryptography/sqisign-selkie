@@ -8,6 +8,17 @@
 //! - [`chain`]: chains of isogenies of degree 2^e
 //! - Torsion basis hints and ladders ([§2.2.3], [§8.2])
 //!
+//! # Divergences from spec / C reference
+//!
+//! - **Basis slot convention**: the C reference stores `(P, P−Q, Q)` not `(P,
+//!   Q, P−Q)`, so [`scalar_mul_add`](TorsionBasis::scalar_mul_add) computes `P
+//!   + [m](P−Q)`. We match this convention. See the comment on
+//!   [`TorsionBasis::from_hint`].
+//! - **P−Q never recomputed**: after scaling, matrix application, or isogeny
+//!   evaluation, the third basis point P−Q is propagated, not recomputed via
+//!   [`projective_difference`](montgomery::ProjectiveXOnlyPoint::projective_difference).
+//!   Recomputing invokes Fp2 sqrt which may pick a different branch.
+//!
 //! [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
 //! [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 
@@ -139,22 +150,6 @@ impl BasisHint {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct VerifyingKeyHint(BasisHint);
 
-/// Hint for the auxiliary curve torsion basis on E_aux.
-///
-/// Serialized as part of the [signature][§4.6] (1 byte).
-///
-/// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct AuxiliaryHint(BasisHint);
-
-/// Hint for the challenge curve torsion basis on E_chl.
-///
-/// Serialized as part of the [signature][§4.6] (1 byte).
-///
-/// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct ChallengeHint(BasisHint);
-
 impl From<u8> for VerifyingKeyHint {
     fn from(b: u8) -> Self {
         VerifyingKeyHint(BasisHint::from_byte(b))
@@ -167,6 +162,14 @@ impl From<VerifyingKeyHint> for u8 {
     }
 }
 
+/// Hint for the auxiliary curve torsion basis on E_aux.
+///
+/// Serialized as part of the [signature][§4.6] (1 byte).
+///
+/// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct AuxiliaryHint(BasisHint);
+
 impl From<u8> for AuxiliaryHint {
     fn from(b: u8) -> Self {
         AuxiliaryHint(BasisHint::from_byte(b))
@@ -178,6 +181,14 @@ impl From<AuxiliaryHint> for u8 {
         h.0.to_byte()
     }
 }
+
+/// Hint for the challenge curve torsion basis on E_chl.
+///
+/// Serialized as part of the [signature][§4.6] (1 byte).
+///
+/// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ChallengeHint(BasisHint);
 
 impl From<u8> for ChallengeHint {
     fn from(b: u8) -> Self {
@@ -711,21 +722,19 @@ impl TorsionBasis {
     }
 }
 
-/// A 2×2 change-of-basis matrix over Z/2^f Z.
+/// A 2×2 change-of-basis matrix over Z/2^e Z.
 ///
 /// Represents the matrix M such that M · (P₁, P₂)ᵀ = (Q₁, Q₂)ᵀ,
 /// i.e., Q₁ = [x₁]P₁ + [x₂]P₂ and Q₂ = [x₃]P₁ + [x₄]P₂.
-///
-/// Used as M_sk (secret, in [`SigningKey`](crate::keys::SigningKey)) and
-/// M_chl (public, in [`Signature`](crate::keys::Signature)).
+/// The entries are reduced mod 2^e where `e` is the torsion exponent.
 ///
 /// No `PartialEq`/`Eq`: M_sk in the signing key is secret.
-// TODO: explore unifying ActionMatrix, ChallengeMatrix, ChangeOfBasisMatrix,
-// and mat_sk into a common Matrix2x2<Scalar> type.
 #[derive(Copy, Clone, Debug)]
 pub struct ChangeOfBasisMatrix {
     /// Matrix entries as Scalars: [[x₁, x₂], [x₃, x₄]].
     pub entries: [[scalar::Scalar; 2]; 2],
+    /// Torsion exponent: entries are reduced mod 2^e.
+    pub e: TorsionExponent,
 }
 
 impl ChangeOfBasisMatrix {
@@ -802,25 +811,35 @@ impl ChangeOfBasisMatrix {
                     Scalar::from_limbs(*x4.as_limbs()),
                 ],
             ],
+            e,
         }
     }
 
     /// Multiply this matrix by a [`TorsionBasis`]: `(P', Q') = M · (P, Q)`.
     ///
-    /// - `P' = [M[0][0]]P + [M[0][1]]Q`
-    /// - `Q' = [M[1][0]]P + [M[1][1]]Q`
-    /// - `P'-Q'` via a third biscalar call (avoids sqrt branch instability)
+    /// Applies the matrix by **columns** (matching the C reference):
+    /// - `R' = [a]P + [c]Q` where `a = M[0][0]`, `c = M[1][0]` (column 0)
+    /// - `S' = [b]P + [d]Q` where `b = M[0][1]`, `d = M[1][1]` (column 1)
+    /// - `R'-S'` via a third biscalar call (avoids sqrt branch instability)
     ///
-    /// The `e` parameter is the torsion exponent for the biscalar ladder.
-    pub(crate) fn mul(&self, basis: &TorsionBasis, e: TorsionExponent) -> TorsionBasis {
-        let p_prime = basis.biscalar_mul(&self.entries[0][0], &self.entries[0][1], e);
-        let q_prime = basis.biscalar_mul(&self.entries[1][0], &self.entries[1][1], e);
+    /// # Divergence from spec
+    ///
+    /// The C reference applies by columns, not rows. See the comment
+    /// on `ChallengeMatrix` in `keys/mod.rs`.
+    pub(crate) fn mul(&self, basis: &TorsionBasis) -> TorsionBasis {
+        let a = &self.entries[0][0];
+        let b = &self.entries[0][1];
+        let c = &self.entries[1][0];
+        let d = &self.entries[1][1];
 
-        // P'-Q' = [(a-c)]P + [(b-d)]Q
-        let k = e.value();
-        let a_minus_c = self.entries[0][0].sub_mod2k(&self.entries[1][0], k);
-        let b_minus_d = self.entries[0][1].sub_mod2k(&self.entries[1][1], k);
-        let pmq_prime = basis.biscalar_mul(&a_minus_c, &b_minus_d, e);
+        let p_prime = basis.biscalar_mul(a, c, self.e);
+        let q_prime = basis.biscalar_mul(b, d, self.e);
+
+        // R'-S' = [(a-b)]P + [(c-d)]Q
+        let k = self.e.value();
+        let a_minus_b = a.sub_mod2k(b, k);
+        let c_minus_d = c.sub_mod2k(d, k);
+        let pmq_prime = basis.biscalar_mul(&a_minus_b, &c_minus_d, self.e);
 
         TorsionBasis::new(p_prime, q_prime, pmq_prime)
     }

@@ -75,7 +75,7 @@ pub trait DeuringAction {
     -> ActionMatrix;
 }
 
-impl DeuringAction for Element {
+impl DeuringAction for Element<4> {
     fn action_matrix(
         &self,
         basis_matrices: &[ActionMatrix; 4],
@@ -181,7 +181,7 @@ pub fn compute_even_response(
     _curve: &Curve,
     P: &ProjectiveXOnlyPoint,
     Q: &ProjectiveXOnlyPoint,
-    alpha: &Element,
+    alpha: &Element<4>,
     e_prime: TorsionExponent,
     r_rsp: TorsionExponent,
 ) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
@@ -249,7 +249,7 @@ pub fn compute_even_response(
 ///
 /// M_α = c₀ · I + c₁ · M_{gen2} + c₂ · M_{gen3} + c₃ · M_{gen4}  (mod 2^f)
 fn action_matrix(
-    elem: &Element,
+    elem: &Element<4>,
     order: &Lattice<4>,
     gen_matrices: &[ActionMatrix; 3],
     f: TorsionExponent,

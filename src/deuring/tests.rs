@@ -7,7 +7,7 @@ use super::*;
 
 #[test]
 fn action_matrix_via_trait() {
-    let elem = Element::from_i64(1, 0, 0, 0);
+    let elem = Element::<4>::from_i64(1, 0, 0, 0);
     let basis_matrices: [ActionMatrix; 4] = [
         ACTION_MATRICES[0][0],
         ACTION_MATRICES[0][1],
@@ -22,9 +22,9 @@ fn action_matrix_via_trait() {
 
 #[test]
 fn action_matrix_linear_combination() {
-    let a = Element::from_i64(1, 0, 0, 0);
-    let b = Element::from_i64(0, 1, 0, 0);
-    let ab = Element::from_i64(1, 1, 0, 0);
+    let a = Element::<4>::from_i64(1, 0, 0, 0);
+    let b = Element::<4>::from_i64(0, 1, 0, 0);
+    let ab = Element::<4>::from_i64(1, 1, 0, 0);
 
     let basis_matrices: [ActionMatrix; 4] = [
         ACTION_MATRICES[0][0],

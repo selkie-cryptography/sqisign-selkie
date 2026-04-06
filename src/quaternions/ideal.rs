@@ -35,7 +35,7 @@ use crate::curves::{TorsionExponent, isogeny::IsogenyDegree};
 /// TODO(ct): Make constant-time before production use. Called on
 /// secret-derived norms during signing (via FixedDegreeIsogeny,
 /// Algorithm 4.2 lines 21–24).
-pub fn represent_integer_any_order(m: &BigInt<8>) -> Option<Element> {
+pub fn represent_integer_any_order(m: &BigInt<8>) -> Option<Element<4>> {
     for order in &EXTREMAL_ORDERS {
         let order_wide = ExtremalOrder::<8>::from(*order);
         if let Some(gamma) = represent_integer(m, &order_wide, false) {
@@ -60,7 +60,7 @@ pub fn represent_integer(
     m: &BigInt<8>,
     order: &ExtremalOrder<8>,
     isogeny_cond: bool,
-) -> Option<Element> {
+) -> Option<Element<4>> {
     let p: BigInt<8> = P_WIDE;
     let q_val = order.q();
     let q = BigInt::<8>::from_u64(q_val as u64);
@@ -141,7 +141,7 @@ pub fn represent_integer(
 
             // Construct γ = (x·1 + y·ω + z·j + t·ωj) / d.
             let omega = order.z();
-            let omega_j = omega.mul(&Element::J);
+            let omega_j = omega.mul(&Element::<4>::J);
 
             // Widen omega coordinates to BigInt<8> for the linear combination.
             let omega_coords = [
@@ -190,7 +190,7 @@ pub fn represent_integer(
             }
 
             // Divide by two and construct Element via from_wide.
-            let gamma = Element::new(
+            let gamma = Element::<4>::new(
                 Coordinate::from_bigint(BigInt::from_sign_and_limbs(
                     if bool::from(gamma_coords[0].is_negative()) {
                         1
@@ -280,7 +280,7 @@ pub struct IdealFactor {
     /// The extremal order that produced this factor.
     pub order: &'static ExtremalOrder<4>,
     /// The element β (a short vector in J_t · I).
-    pub beta: Element,
+    pub beta: Element<4>,
     /// Degree d = nrd(β) / nrd(J_t · I).
     pub degree: IsogenyDegree,
 }
@@ -312,7 +312,7 @@ pub struct SuitableIdealResult {
 /// degree (reduced norm divided by the ideal norm).
 struct ShortVector {
     /// Quaternion element β (linear combination of reduced basis).
-    elem: Element,
+    elem: Element<4>,
     /// Degree: nrd(β) / nrd(I), as a positive odd integer.
     degree: IsogenyDegree,
     /// Approximate norm for sorting (f64 precision, 53-bit mantissa).
@@ -325,9 +325,17 @@ struct ShortVector {
 /// G_{ij} = a_i · a_j + b_i · b_j + p · (c_i · c_j + d_i · d_j)
 ///
 /// where (a, b, c, d) are the {1, i, j, k} coordinates.
-pub(crate) fn gram_matrix_nrd(cols: &[Vector<8>; 4]) -> Matrix<8> {
-    let p: BigInt<8> = P_WIDE;
-    let mut gram = Matrix::<8>::ZERO;
+pub(crate) fn gram_matrix_nrd<const N: usize>(cols: &[Vector<N>; 4]) -> Matrix<N> {
+    // Widen p into BigInt<N>.
+    let p: BigInt<N> = {
+        let p8: BigInt<8> = P_WIDE;
+        let mut limbs = [0u64; N];
+        let src = p8.as_limbs();
+        let len = src.len().min(N);
+        limbs[..len].copy_from_slice(&src[..len]);
+        BigInt::from_sign_and_limbs(0, limbs)
+    };
+    let mut gram = Matrix::<N>::ZERO;
     for i in 0..4 {
         for j in i..4 {
             let scalar = cols[i][0]
@@ -419,7 +427,7 @@ fn enumerate_short_vectors(
                     };
 
                     vectors.push(ShortVector {
-                        elem: Element::new(
+                        elem: Element::<4>::new(
                             Coordinate::from_bigint(a),
                             Coordinate::from_bigint(b),
                             Coordinate::from_bigint(c),

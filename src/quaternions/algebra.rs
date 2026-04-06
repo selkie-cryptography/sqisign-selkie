@@ -8,6 +8,29 @@
 //! Since all quaternion algebras ramified at p and ∞ are isomorphic,
 //! there is a unique such algebra for each p. See [§3.1] of the spec.
 //!
+//! The types [`Coordinate`], [`Denominator`], and [`Element`] are generic
+//! over a const parameter `N` (the number of `u64` limbs in `BigInt<N>`).
+//! Use `Element<4>` for verification/torsion (256-bit) and `Element<110>`
+//! for signing (7040-bit, per Kim et al. ePrint 2025/1649).
+//!
+//! # Divergence from spec and C reference
+//!
+//! The spec and C reference use GMP (arbitrary-precision integers) for
+//! quaternion arithmetic. We use fixed-width `BigInt<N>` following the
+//! bounds proven by Kim et al. (ePrint 2025/1649): all intermediates
+//! during NIST-I signing fit in 7,026 bits (110 u64 limbs). This
+//! enables constant-time arithmetic without dynamic allocation.
+//!
+//! `Element::mul` and `Element::norm` are currently only implemented
+//! for `Element<4>` (they widen to `BigInt<8>` internally). For
+//! `Element<110>`, these operations will use modular arithmetic
+//! per Kim et al.'s modified IdealMultiplication (Appendix B).
+// TODO: `N: usize` allows arbitrarily large values, but Kim et al.
+// prove N=110 is the worst-case for NIST-I signing. We'd like to
+// restrict N at the type level (e.g., a sealed trait or a bounded
+// const generic when Rust supports `where N <= 110`) to prevent
+// accidentally using oversized types. For now, the valid values
+// are: N=4 (verification), N=9 (D_MIX commitment), N=110 (signing).
 //! [§3.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.1
 
 use core::fmt;
@@ -20,13 +43,14 @@ use super::{bigint::BigInt, precomputed::P_WIDE};
 
 /// A coefficient of a quaternion element in the basis {1, i, j, k}.
 ///
-/// Wraps a 256-bit signed integer. This is the storage size for
-/// quaternion coordinates; arithmetic that produces wider intermediates
-/// uses `BigInt<8>` internally and narrows back after normalization.
+/// Wraps a `BigInt<N>` signed integer. The limb count `N` determines
+/// the maximum magnitude: `N = 4` gives 256-bit coordinates (sufficient
+/// for verification and torsion basis), `N = 110` gives 7040-bit
+/// coordinates (sufficient for signing intermediates).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Coordinate(BigInt<4>);
+pub struct Coordinate<const N: usize>(BigInt<N>);
 
-impl Coordinate {
+impl<const N: usize> Coordinate<N> {
     /// Zero.
     pub const ZERO: Self = Self(BigInt::ZERO);
 
@@ -39,36 +63,45 @@ impl Coordinate {
         Self(BigInt::from_i64(val))
     }
 
-    /// Creates a coordinate from a `BigInt<4>`.
+    /// Creates a coordinate from a `BigInt<N>`.
     #[inline]
-    pub const fn from_bigint(val: BigInt<4>) -> Self {
+    pub const fn from_bigint(val: BigInt<N>) -> Self {
         Self(val)
     }
 
-    /// Creates a coordinate from a sign and four little-endian u64 limbs.
+    /// Creates a coordinate from a sign and `N` little-endian u64 limbs.
     #[inline]
-    pub const fn from_sign_and_limbs(sign: u64, limbs: [u64; 4]) -> Self {
+    pub const fn from_sign_and_limbs(sign: u64, limbs: [u64; N]) -> Self {
         Self(BigInt::from_sign_and_limbs(sign, limbs))
     }
 
-    /// Returns the inner `BigInt<4>`.
+    /// Returns the inner `BigInt<N>`.
     #[inline]
-    pub const fn as_bigint(&self) -> &BigInt<4> {
+    pub const fn as_bigint(&self) -> &BigInt<N> {
         &self.0
     }
 
+    /// Consumes `self` and returns the inner `BigInt<N>`.
+    #[inline]
+    pub fn to_bigint(self) -> BigInt<N> {
+        self.0
+    }
+}
+
+/// Widening methods available only for `Coordinate<4>`.
+impl Coordinate<4> {
     /// Widens to `BigInt<8>` for intermediate arithmetic.
     #[inline]
     pub fn wide(&self) -> BigInt<8> {
         self.0.into()
     }
 
-    /// Widens to `BigInt<N>` by zero-extending the four limbs.
+    /// Widens to `BigInt<M>` by zero-extending the four limbs.
     ///
-    /// Works for any `N >= 4`. The upper limbs are zeroed.
+    /// Works for any `M >= 4`. The upper limbs are zeroed.
     #[inline]
-    pub fn to_bigint<const N: usize>(self) -> BigInt<N> {
-        let mut limbs = [0u64; N];
+    pub fn widen<const M: usize>(self) -> BigInt<M> {
+        let mut limbs = [0u64; M];
         limbs[0] = self.0.as_limbs()[0];
         limbs[1] = self.0.as_limbs()[1];
         limbs[2] = self.0.as_limbs()[2];
@@ -84,25 +117,25 @@ impl Coordinate {
     }
 }
 
-impl From<i64> for Coordinate {
+impl<const N: usize> From<i64> for Coordinate<N> {
     fn from(val: i64) -> Self {
         Self::from_i64(val)
     }
 }
 
-impl From<BigInt<4>> for Coordinate {
-    fn from(val: BigInt<4>) -> Self {
+impl<const N: usize> From<BigInt<N>> for Coordinate<N> {
+    fn from(val: BigInt<N>) -> Self {
         Self(val)
     }
 }
 
-impl fmt::Debug for Coordinate {
+impl<const N: usize> fmt::Debug for Coordinate<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl fmt::Display for Coordinate {
+impl<const N: usize> fmt::Display for Coordinate<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -117,18 +150,18 @@ impl fmt::Display for Coordinate {
 /// Always > 0. Can only be constructed via [`Denominator::new`] (which
 /// checks positivity) or the constant [`Denominator::ONE`].
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Denominator(BigInt<4>);
+pub struct Denominator<const N: usize>(BigInt<N>);
 
-impl Denominator {
+impl<const N: usize> Denominator<N> {
     /// The trivial denominator (1).
     pub const ONE: Self = Self(BigInt::ONE);
 
     /// The denominator 2 (common for O₀ basis elements).
     pub const TWO: Self = Self(BigInt::TWO);
 
-    /// Creates a denominator from a `BigInt<4>`, returning `None` if
+    /// Creates a denominator from a `BigInt<N>`, returning `None` if
     /// the value is not positive.
-    pub fn new(val: BigInt<4>) -> Option<Self> {
+    pub fn new(val: BigInt<N>) -> Option<Self> {
         if bool::from(val.is_positive()) {
             Some(Self(val))
         } else {
@@ -142,42 +175,25 @@ impl Denominator {
         Self(BigInt::from_u64(val))
     }
 
-    /// Creates a denominator from four little-endian u64 limbs.
+    /// Creates a denominator from `N` little-endian u64 limbs.
     /// The value must be positive (unchecked in const context).
-    pub const fn from_limbs(limbs: [u64; 4]) -> Self {
+    pub const fn from_limbs(limbs: [u64; N]) -> Self {
         Self(BigInt::from_limbs(limbs))
     }
 
-    /// Creates a denominator from a `BigInt<4>` without checking.
+    /// Creates a denominator from a `BigInt<N>` without checking.
     ///
     /// # Safety (logical)
     ///
     /// The caller must ensure `val > 0`.
-    pub const fn from_bigint_unchecked(val: BigInt<4>) -> Self {
+    pub const fn from_bigint_unchecked(val: BigInt<N>) -> Self {
         Self(val)
     }
 
-    /// Returns the inner `BigInt<4>`.
+    /// Returns the inner `BigInt<N>`.
     #[inline]
-    pub const fn as_bigint(&self) -> &BigInt<4> {
+    pub const fn as_bigint(&self) -> &BigInt<N> {
         &self.0
-    }
-
-    /// Widens to `BigInt<8>` for intermediate arithmetic.
-    #[inline]
-    pub fn wide(&self) -> BigInt<8> {
-        self.0.into()
-    }
-
-    /// Widens to `BigInt<N>` by zero-extending the four limbs.
-    #[inline]
-    pub fn to_bigint<const N: usize>(self) -> BigInt<N> {
-        let mut limbs = [0u64; N];
-        limbs[0] = self.0.as_limbs()[0];
-        limbs[1] = self.0.as_limbs()[1];
-        limbs[2] = self.0.as_limbs()[2];
-        limbs[3] = self.0.as_limbs()[3];
-        BigInt::from_sign_and_limbs(0, limbs) // denominator is always positive
     }
 
     /// Multiply two denominators. The result is always positive.
@@ -186,19 +202,39 @@ impl Denominator {
     }
 }
 
-impl From<Denominator> for BigInt<4> {
-    fn from(d: Denominator) -> Self {
+/// Widening methods available only for `Denominator<4>`.
+impl Denominator<4> {
+    /// Widens to `BigInt<8>` for intermediate arithmetic.
+    #[inline]
+    pub fn wide(&self) -> BigInt<8> {
+        self.0.into()
+    }
+
+    /// Widens to `BigInt<M>` by zero-extending the four limbs.
+    #[inline]
+    pub fn widen<const M: usize>(self) -> BigInt<M> {
+        let mut limbs = [0u64; M];
+        limbs[0] = self.0.as_limbs()[0];
+        limbs[1] = self.0.as_limbs()[1];
+        limbs[2] = self.0.as_limbs()[2];
+        limbs[3] = self.0.as_limbs()[3];
+        BigInt::from_sign_and_limbs(0, limbs) // denominator is always positive
+    }
+}
+
+impl<const N: usize> From<Denominator<N>> for BigInt<N> {
+    fn from(d: Denominator<N>) -> Self {
         d.0
     }
 }
 
-impl fmt::Debug for Denominator {
+impl<const N: usize> fmt::Debug for Denominator<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl fmt::Display for Denominator {
+impl<const N: usize> fmt::Display for Denominator<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -220,20 +256,20 @@ impl fmt::Display for Denominator {
 ///
 /// [fig1]: https://sqisign.org/spec/sqisign-20250707.pdf#figure.3.1
 #[derive(Clone, Copy)]
-pub struct Element {
+pub struct Element<const N: usize> {
     /// Coordinate of 1.
-    pub(crate) a: Coordinate,
+    pub(crate) a: Coordinate<N>,
     /// Coordinate of i.
-    pub(crate) b: Coordinate,
+    pub(crate) b: Coordinate<N>,
     /// Coordinate of j.
-    pub(crate) c: Coordinate,
+    pub(crate) c: Coordinate<N>,
     /// Coordinate of k = ij.
-    pub(crate) d: Coordinate,
+    pub(crate) d: Coordinate<N>,
     /// Common positive denominator.
-    pub(crate) denom: Denominator,
+    pub(crate) denom: Denominator<N>,
 }
 
-impl Element {
+impl<const N: usize> Element<N> {
     /// The zero element.
     pub const ZERO: Self = Self {
         a: Coordinate::ZERO,
@@ -272,7 +308,12 @@ impl Element {
 
     /// Creates an element from integer coordinates (denominator = 1).
     #[inline]
-    pub const fn from_coords(a: Coordinate, b: Coordinate, c: Coordinate, d: Coordinate) -> Self {
+    pub const fn from_coords(
+        a: Coordinate<N>,
+        b: Coordinate<N>,
+        c: Coordinate<N>,
+        d: Coordinate<N>,
+    ) -> Self {
         Self {
             a,
             b,
@@ -299,11 +340,11 @@ impl Element {
     /// Creates an element from coordinates and a denominator.
     #[inline]
     pub const fn new(
-        a: Coordinate,
-        b: Coordinate,
-        c: Coordinate,
-        d: Coordinate,
-        denom: Denominator,
+        a: Coordinate<N>,
+        b: Coordinate<N>,
+        c: Coordinate<N>,
+        d: Coordinate<N>,
+        denom: Denominator<N>,
     ) -> Self {
         Self { a, b, c, d, denom }
     }
@@ -333,88 +374,12 @@ impl Element {
 
     /// Reduced trace: tr(α) = α + ᾱ = 2a / r.
     ///
-    /// Returns (numerator, denominator) as `BigInt<4>` values.
-    pub fn trace(&self) -> (BigInt<4>, BigInt<4>) {
+    /// Returns (numerator, denominator) as `BigInt<N>` values.
+    pub fn trace(&self) -> (BigInt<N>, BigInt<N>) {
         let two_a = self.a.0.ct_mul(&BigInt::TWO);
         (two_a, self.denom.0)
     }
 
-    /// Reduced norm: nrd(α) = α·ᾱ = (a² + b² + p(c² + d²)) / r².
-    ///
-    /// Returns (numerator, denominator) as `BigInt<8>` values, using
-    /// wide arithmetic to avoid overflow.
-    pub fn norm(&self) -> (BigInt<8>, BigInt<8>) {
-        let a = self.a.wide();
-        let b = self.b.wide();
-        let c = self.c.wide();
-        let d = self.d.wide();
-        let p: BigInt<8> = P_WIDE;
-
-        let numer = a
-            .ct_mul(&a)
-            .ct_add(&b.ct_mul(&b))
-            .ct_add(&p.ct_mul(&c.ct_mul(&c).ct_add(&d.ct_mul(&d))));
-
-        let r = self.denom.wide();
-        let denom_sq = r.ct_mul(&r);
-        (numer, denom_sq)
-    }
-
-    /// Quaternion multiplication: self · rhs.
-    ///
-    /// Uses the [multiplication table][fig1] for B_{p,∞}:
-    ///
-    /// ```text
-    ///       1    i     j     k
-    ///   1 | 1    i     j     k
-    ///   i | i   -1     k    -j
-    ///   j | j   -k    -p    pi
-    ///   k | k    j   -pi    -p
-    /// ```
-    ///
-    /// Computed in `BigInt<8>` to accommodate intermediate products,
-    /// then narrowed back to `Coordinate` storage via normalization.
-    ///
-    /// [fig1]: https://sqisign.org/spec/sqisign-20250707.pdf#figure.3.1
-    pub fn mul(&self, rhs: &Self) -> Self {
-        let (a1, b1, c1, d1) = (self.a.wide(), self.b.wide(), self.c.wide(), self.d.wide());
-        let (a2, b2, c2, d2) = (rhs.a.wide(), rhs.b.wide(), rhs.c.wide(), rhs.d.wide());
-        let p: BigInt<8> = P_WIDE;
-
-        // a = a1*a2 - b1*b2 - p*(c1*c2 + d1*d2)
-        let a = a1
-            .ct_mul(&a2)
-            .ct_sub(&b1.ct_mul(&b2))
-            .ct_sub(&p.ct_mul(&c1.ct_mul(&c2).ct_add(&d1.ct_mul(&d2))));
-
-        // b = a1*b2 + b1*a2 + p*(c1*d2 - d1*c2)
-        let b = a1
-            .ct_mul(&b2)
-            .ct_add(&b1.ct_mul(&a2))
-            .ct_add(&p.ct_mul(&c1.ct_mul(&d2).ct_sub(&d1.ct_mul(&c2))));
-
-        // c = a1*c2 - b1*d2 + c1*a2 + d1*b2
-        let c = a1
-            .ct_mul(&c2)
-            .ct_sub(&b1.ct_mul(&d2))
-            .ct_add(&c1.ct_mul(&a2))
-            .ct_add(&d1.ct_mul(&b2));
-
-        // d = a1*d2 + b1*c2 - c1*b2 + d1*a2
-        let d = a1
-            .ct_mul(&d2)
-            .ct_add(&b1.ct_mul(&c2))
-            .ct_sub(&c1.ct_mul(&b2))
-            .ct_add(&d1.ct_mul(&a2));
-
-        let new_denom = self.denom.wide().ct_mul(&rhs.denom.wide());
-
-        // Normalize in wide representation, then narrow.
-        Self::from_wide(a, b, c, d, new_denom)
-    }
-}
-
-impl Element {
     /// Normalize: reduce gcd(a, b, c, d, r) to 1, ensure r > 0.
     pub fn normalize(&mut self) {
         let mut g = self.a.0.abs().gcd(&self.b.0.abs());
@@ -450,6 +415,214 @@ impl Element {
         let mut result = *self;
         result.normalize();
         result
+    }
+
+    /// Addition: self + rhs.
+    pub fn add(&self, rhs: &Self) -> Self {
+        if self.denom == rhs.denom {
+            Self {
+                a: Coordinate(self.a.0.ct_add(&rhs.a.0)),
+                b: Coordinate(self.b.0.ct_add(&rhs.b.0)),
+                c: Coordinate(self.c.0.ct_add(&rhs.c.0)),
+                d: Coordinate(self.d.0.ct_add(&rhs.d.0)),
+                denom: self.denom,
+            }
+        } else {
+            Self {
+                a: Coordinate(
+                    self.a
+                        .0
+                        .ct_mul(&rhs.denom.0)
+                        .ct_add(&rhs.a.0.ct_mul(&self.denom.0)),
+                ),
+                b: Coordinate(
+                    self.b
+                        .0
+                        .ct_mul(&rhs.denom.0)
+                        .ct_add(&rhs.b.0.ct_mul(&self.denom.0)),
+                ),
+                c: Coordinate(
+                    self.c
+                        .0
+                        .ct_mul(&rhs.denom.0)
+                        .ct_add(&rhs.c.0.ct_mul(&self.denom.0)),
+                ),
+                d: Coordinate(
+                    self.d
+                        .0
+                        .ct_mul(&rhs.denom.0)
+                        .ct_add(&rhs.d.0.ct_mul(&self.denom.0)),
+                ),
+                denom: self.denom.mul(&rhs.denom),
+            }
+        }
+    }
+
+    /// Subtraction: self - rhs.
+    pub fn sub(&self, rhs: &Self) -> Self {
+        let neg = Self {
+            a: Coordinate(rhs.a.0.wrapping_neg()),
+            b: Coordinate(rhs.b.0.wrapping_neg()),
+            c: Coordinate(rhs.c.0.wrapping_neg()),
+            d: Coordinate(rhs.d.0.wrapping_neg()),
+            denom: rhs.denom,
+        };
+        self.add(&neg)
+    }
+
+    /// Scalar multiplication: α · s.
+    pub fn scalar_mul(&self, s: &BigInt<N>) -> Self {
+        Self {
+            a: Coordinate(self.a.0.ct_mul(s)),
+            b: Coordinate(self.b.0.ct_mul(s)),
+            c: Coordinate(self.c.0.ct_mul(s)),
+            d: Coordinate(self.d.0.ct_mul(s)),
+            denom: self.denom,
+        }
+    }
+}
+
+impl<const N: usize> Element<N> {
+    /// Embed p into `BigInt<N>`.
+    fn p_at_width() -> BigInt<N> {
+        let p8: BigInt<8> = P_WIDE;
+        let mut limbs = [0u64; N];
+        let len = p8.as_limbs().len().min(N);
+        limbs[..len].copy_from_slice(&p8.as_limbs()[..len]);
+        BigInt::from_sign_and_limbs(0, limbs)
+    }
+
+    /// Reduced norm: nrd(α) = (a² + b² + p(c² + d²)) / r².
+    ///
+    /// Returns `(numerator, denominator²)` as `BigInt<N>`.
+    ///
+    /// **Precondition:** coordinates must use at most N/2 limbs so
+    /// that products don't overflow `BigInt<N>`. This is guaranteed
+    /// for L2-reduced lattice elements at N ≥ 8.
+    pub fn norm_direct(&self) -> (BigInt<N>, BigInt<N>) {
+        let (a, b, c, d) = (&self.a.0, &self.b.0, &self.c.0, &self.d.0);
+        let p = Self::p_at_width();
+
+        let numer = a
+            .ct_mul(a)
+            .ct_add(&b.ct_mul(b))
+            .ct_add(&p.ct_mul(&c.ct_mul(c).ct_add(&d.ct_mul(d))));
+
+        let r = &self.denom.0;
+        let denom_sq = r.ct_mul(r);
+        (numer, denom_sq)
+    }
+
+    /// Quaternion multiplication: self · rhs.
+    ///
+    /// Uses the [multiplication table][fig1] for B_{p,∞} = (-1, -p):
+    /// ```text
+    ///       1    i     j     k
+    ///   1 | 1    i     j     k
+    ///   i | i   -1     k    -j
+    ///   j | j   -k    -p    pi
+    ///   k | k    j   -pi    -p
+    /// ```
+    ///
+    /// Multiplies directly at `BigInt<N>` width — no widening.
+    ///
+    /// **Precondition:** coordinates must use at most N/2 limbs so
+    /// that products don't overflow `BigInt<N>`.
+    ///
+    /// [fig1]: https://sqisign.org/spec/sqisign-20250707.pdf#figure.3.1
+    pub fn mul_direct(&self, rhs: &Self) -> Self {
+        let (a1, b1, c1, d1) = (&self.a.0, &self.b.0, &self.c.0, &self.d.0);
+        let (a2, b2, c2, d2) = (&rhs.a.0, &rhs.b.0, &rhs.c.0, &rhs.d.0);
+        let p = Self::p_at_width();
+
+        let a = a1
+            .ct_mul(a2)
+            .ct_sub(&b1.ct_mul(b2))
+            .ct_sub(&p.ct_mul(&c1.ct_mul(c2).ct_add(&d1.ct_mul(d2))));
+        let b = a1
+            .ct_mul(b2)
+            .ct_add(&b1.ct_mul(a2))
+            .ct_add(&p.ct_mul(&c1.ct_mul(d2).ct_sub(&d1.ct_mul(c2))));
+        let c = a1
+            .ct_mul(c2)
+            .ct_sub(&b1.ct_mul(d2))
+            .ct_add(&c1.ct_mul(a2))
+            .ct_add(&d1.ct_mul(b2));
+        let d = a1
+            .ct_mul(d2)
+            .ct_add(&b1.ct_mul(c2))
+            .ct_sub(&c1.ct_mul(b2))
+            .ct_add(&d1.ct_mul(a2));
+
+        let new_denom = self.denom.0.ct_mul(&rhs.denom.0);
+
+        Self {
+            a: Coordinate(a),
+            b: Coordinate(b),
+            c: Coordinate(c),
+            d: Coordinate(d),
+            denom: Denominator::from_bigint_unchecked(new_denom),
+        }
+    }
+}
+
+/// Methods that require widening to `BigInt<8>` intermediates.
+///
+/// `norm` and `mul` widen to `BigInt<8>` then narrow back. For
+/// `Element<4>` this avoids overflow. For larger N, use the generic
+/// versions on `impl<N> Element<N>` which multiply directly at
+/// width N (safe when coordinates use at most N/2 limbs).
+impl Element<4> {
+    /// Reduced norm: nrd(α) = α·ᾱ = (a² + b² + p(c² + d²)) / r².
+    ///
+    /// Returns (numerator, denominator) as `BigInt<8>` values, using
+    /// wide arithmetic to avoid overflow.
+    pub fn norm(&self) -> (BigInt<8>, BigInt<8>) {
+        let a = self.a.wide();
+        let b = self.b.wide();
+        let c = self.c.wide();
+        let d = self.d.wide();
+        let p: BigInt<8> = P_WIDE;
+
+        let numer = a
+            .ct_mul(&a)
+            .ct_add(&b.ct_mul(&b))
+            .ct_add(&p.ct_mul(&c.ct_mul(&c).ct_add(&d.ct_mul(&d))));
+
+        let r = self.denom.wide();
+        let denom_sq = r.ct_mul(&r);
+        (numer, denom_sq)
+    }
+
+    /// Quaternion multiplication: self · rhs (widening to `BigInt<8>`).
+    ///
+    /// [fig1]: https://sqisign.org/spec/sqisign-20250707.pdf#figure.3.1
+    pub fn mul(&self, rhs: &Self) -> Self {
+        let (a1, b1, c1, d1) = (self.a.wide(), self.b.wide(), self.c.wide(), self.d.wide());
+        let (a2, b2, c2, d2) = (rhs.a.wide(), rhs.b.wide(), rhs.c.wide(), rhs.d.wide());
+        let p: BigInt<8> = P_WIDE;
+
+        let a = a1
+            .ct_mul(&a2)
+            .ct_sub(&b1.ct_mul(&b2))
+            .ct_sub(&p.ct_mul(&c1.ct_mul(&c2).ct_add(&d1.ct_mul(&d2))));
+        let b = a1
+            .ct_mul(&b2)
+            .ct_add(&b1.ct_mul(&a2))
+            .ct_add(&p.ct_mul(&c1.ct_mul(&d2).ct_sub(&d1.ct_mul(&c2))));
+        let c = a1
+            .ct_mul(&c2)
+            .ct_sub(&b1.ct_mul(&d2))
+            .ct_add(&c1.ct_mul(&a2))
+            .ct_add(&d1.ct_mul(&b2));
+        let d = a1
+            .ct_mul(&d2)
+            .ct_add(&b1.ct_mul(&c2))
+            .ct_sub(&c1.ct_mul(&b2))
+            .ct_add(&d1.ct_mul(&a2));
+
+        let new_denom = self.denom.wide().ct_mul(&rhs.denom.wide());
+        Self::from_wide(a, b, c, d, new_denom)
     }
 
     /// Compute backtracking and normalize.
@@ -525,71 +698,7 @@ impl Element {
         (elem, n)
     }
 
-    /// Addition: self + rhs.
-    pub fn add(&self, rhs: &Self) -> Self {
-        if self.denom == rhs.denom {
-            Self {
-                a: Coordinate(self.a.0.ct_add(&rhs.a.0)),
-                b: Coordinate(self.b.0.ct_add(&rhs.b.0)),
-                c: Coordinate(self.c.0.ct_add(&rhs.c.0)),
-                d: Coordinate(self.d.0.ct_add(&rhs.d.0)),
-                denom: self.denom,
-            }
-        } else {
-            Self {
-                a: Coordinate(
-                    self.a
-                        .0
-                        .ct_mul(&rhs.denom.0)
-                        .ct_add(&rhs.a.0.ct_mul(&self.denom.0)),
-                ),
-                b: Coordinate(
-                    self.b
-                        .0
-                        .ct_mul(&rhs.denom.0)
-                        .ct_add(&rhs.b.0.ct_mul(&self.denom.0)),
-                ),
-                c: Coordinate(
-                    self.c
-                        .0
-                        .ct_mul(&rhs.denom.0)
-                        .ct_add(&rhs.c.0.ct_mul(&self.denom.0)),
-                ),
-                d: Coordinate(
-                    self.d
-                        .0
-                        .ct_mul(&rhs.denom.0)
-                        .ct_add(&rhs.d.0.ct_mul(&self.denom.0)),
-                ),
-                denom: self.denom.mul(&rhs.denom),
-            }
-        }
-    }
-
-    /// Subtraction: self - rhs.
-    pub fn sub(&self, rhs: &Self) -> Self {
-        let neg = Self {
-            a: Coordinate(rhs.a.0.wrapping_neg()),
-            b: Coordinate(rhs.b.0.wrapping_neg()),
-            c: Coordinate(rhs.c.0.wrapping_neg()),
-            d: Coordinate(rhs.d.0.wrapping_neg()),
-            denom: rhs.denom,
-        };
-        self.add(&neg)
-    }
-
-    /// Scalar multiplication: α · s.
-    pub fn scalar_mul(&self, s: &BigInt<4>) -> Self {
-        Self {
-            a: Coordinate(self.a.0.ct_mul(s)),
-            b: Coordinate(self.b.0.ct_mul(s)),
-            c: Coordinate(self.c.0.ct_mul(s)),
-            d: Coordinate(self.d.0.ct_mul(s)),
-            denom: self.denom,
-        }
-    }
-
-    /// Construct an `Element` from wide (`BigInt<8>`) intermediates,
+    /// Construct an `Element<4>` from wide (`BigInt<8>`) intermediates,
     /// normalizing and narrowing back to `Coordinate` storage.
     fn from_wide(a: BigInt<8>, b: BigInt<8>, c: BigInt<8>, d: BigInt<8>, r: BigInt<8>) -> Self {
         // GCD-normalize in wide representation.
@@ -657,7 +766,7 @@ impl Element {
     }
 }
 
-impl PartialEq for Element {
+impl<const N: usize> PartialEq for Element<N> {
     fn eq(&self, other: &Self) -> bool {
         // Cross-multiply: a1/r1 == a2/r2 iff a1*r2 == a2*r1.
         self.a.0.ct_mul(&other.denom.0) == other.a.0.ct_mul(&self.denom.0)
@@ -667,9 +776,9 @@ impl PartialEq for Element {
     }
 }
 
-impl Eq for Element {}
+impl<const N: usize> Eq for Element<N> {}
 
-impl fmt::Debug for Element {
+impl<const N: usize> fmt::Debug for Element<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -689,12 +798,12 @@ mod tests {
 
     #[test]
     fn zero() {
-        assert!(Element::ZERO.is_zero());
+        assert!(Element::<4>::ZERO.is_zero());
     }
 
     #[test]
     fn conjugate() {
-        let e = Element::from_i64(1, 2, 3, 4);
+        let e = Element::<4>::from_i64(1, 2, 3, 4);
         let conj = e.conjugate();
         assert_eq!(conj.a, Coordinate::from_i64(1));
         assert_eq!(conj.b, Coordinate::from_i64(-2));
@@ -704,7 +813,7 @@ mod tests {
 
     #[test]
     fn trace() {
-        let e = Element::from_i64(5, 2, 3, 4);
+        let e = Element::<4>::from_i64(5, 2, 3, 4);
         let (tr_num, tr_den) = e.trace();
         assert_eq!(tr_num, BigInt::from(10i64));
         assert_eq!(tr_den, BigInt::ONE);
@@ -714,7 +823,7 @@ mod tests {
     fn norm() {
         // nrd(1 + 2i + 3j + 4k) with p from NIST-I.
         // = 1 + 4 + p*(9 + 16) = 5 + 25p
-        let e = Element::from_i64(1, 2, 3, 4);
+        let e = Element::<4>::from_i64(1, 2, 3, 4);
         let (n_num, n_den) = e.norm();
         let p: BigInt<8> = P_WIDE;
         let expected = BigInt::<8>::from(5i64).ct_add(&BigInt::<8>::from(25i64).ct_mul(&p));
@@ -725,33 +834,33 @@ mod tests {
     #[test]
     fn mul_i_squared() {
         // i² = -1
-        let unit_i = Element::from_i64(0, 1, 0, 0);
+        let unit_i = Element::<4>::from_i64(0, 1, 0, 0);
         let result = unit_i.mul(&unit_i);
-        assert_eq!(result, Element::from_i64(-1, 0, 0, 0));
+        assert_eq!(result, Element::<4>::from_i64(-1, 0, 0, 0));
     }
 
     #[test]
     fn mul_ij_eq_k() {
         // ij = k
-        let unit_i = Element::from_i64(0, 1, 0, 0);
-        let unit_j = Element::from_i64(0, 0, 1, 0);
+        let unit_i = Element::<4>::from_i64(0, 1, 0, 0);
+        let unit_j = Element::<4>::from_i64(0, 0, 1, 0);
         let result = unit_i.mul(&unit_j);
-        assert_eq!(result, Element::from_i64(0, 0, 0, 1));
+        assert_eq!(result, Element::<4>::from_i64(0, 0, 0, 1));
     }
 
     #[test]
     fn mul_ji_eq_neg_k() {
         // ji = -k
-        let unit_i = Element::from_i64(0, 1, 0, 0);
-        let unit_j = Element::from_i64(0, 0, 1, 0);
+        let unit_i = Element::<4>::from_i64(0, 1, 0, 0);
+        let unit_j = Element::<4>::from_i64(0, 0, 1, 0);
         let result = unit_j.mul(&unit_i);
-        assert_eq!(result, Element::from_i64(0, 0, 0, -1));
+        assert_eq!(result, Element::<4>::from_i64(0, 0, 0, -1));
     }
 
     #[test]
     fn norm_is_multiplicative() {
-        let alpha = Element::from_i64(1, 2, 0, 1);
-        let beta = Element::from_i64(3, 0, 1, 0);
+        let alpha = Element::<4>::from_i64(1, 2, 0, 1);
+        let beta = Element::<4>::from_i64(3, 0, 1, 0);
         let product = alpha.mul(&beta);
 
         let (na, da) = alpha.norm();
@@ -766,7 +875,7 @@ mod tests {
 
     #[test]
     fn mul_by_conjugate_is_norm() {
-        let e = Element::from_i64(1, 2, 3, 4);
+        let e = Element::<4>::from_i64(1, 2, 3, 4);
         let conj = e.conjugate();
         let product = e.mul(&conj).normalized();
 
@@ -780,23 +889,23 @@ mod tests {
 
     #[test]
     fn addition() {
-        let a = Element::from_i64(1, 2, 3, 4);
-        let b = Element::from_i64(5, 6, 7, 8);
+        let a = Element::<4>::from_i64(1, 2, 3, 4);
+        let b = Element::<4>::from_i64(5, 6, 7, 8);
         let sum = a.add(&b);
-        assert_eq!(sum, Element::from_i64(6, 8, 10, 12));
+        assert_eq!(sum, Element::<4>::from_i64(6, 8, 10, 12));
     }
 
     #[test]
     fn subtraction() {
-        let a = Element::from_i64(5, 6, 7, 8);
-        let b = Element::from_i64(1, 2, 3, 4);
+        let a = Element::<4>::from_i64(5, 6, 7, 8);
+        let b = Element::<4>::from_i64(1, 2, 3, 4);
         let diff = a.sub(&b);
-        assert_eq!(diff, Element::from_i64(4, 4, 4, 4));
+        assert_eq!(diff, Element::<4>::from_i64(4, 4, 4, 4));
     }
 
     #[test]
     fn normalize_gcd() {
-        let mut e = Element::new(
+        let mut e = Element::<4>::new(
             Coordinate::from_i64(2),
             Coordinate::from_i64(4),
             Coordinate::from_i64(6),
@@ -804,20 +913,20 @@ mod tests {
             Denominator::TWO,
         );
         e.normalize();
-        assert_eq!(e, Element::from_i64(1, 2, 3, 4));
+        assert_eq!(e, Element::<4>::from_i64(1, 2, 3, 4));
         assert_eq!(e.denom, Denominator::ONE);
     }
 
     #[test]
     fn equality_across_denominators() {
-        let a = Element::new(
+        let a = Element::<4>::new(
             Coordinate::from_i64(2),
             Coordinate::from_i64(4),
             Coordinate::from_i64(0),
             Coordinate::from_i64(0),
             Denominator::TWO,
         );
-        let b = Element::from_i64(1, 2, 0, 0);
+        let b = Element::<4>::from_i64(1, 2, 0, 0);
         assert_eq!(a, b);
     }
 }

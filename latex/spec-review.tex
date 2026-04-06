@@ -321,4 +321,42 @@ and $Q$; the third point $P{-}Q$ is not discussed.
   additions.
 \end{quote}
 
+% -------------------------------------------------------------------
+\section{Change-of-basis matrix application convention}
+
+\finding{Affects \algo{4.8} (\textsc{SetChangeOfBasisMatrix}),
+  \algo{4.9} (verification, line~14).}{\high}
+
+The spec does not specify whether the change-of-basis matrix
+$\mathbf{M}_\mathrm{chl}$ is applied to a torsion basis $(P, Q)$
+by rows or by columns.
+
+\paragraph{What the spec says.}
+\algo{4.8} line~6 writes $(P_2, Q_2) \leftarrow \mathbf{M}_1 \cdot (P_2, Q_2)$
+without specifying the convention.
+\algo{4.9} line~14 writes
+$(P_\mathrm{chl}, Q_\mathrm{chl}) \leftarrow \mathbf{M}_\mathrm{chl} \cdot (P_\mathrm{chl}, Q_\mathrm{chl})$,
+again without specifying.
+
+\paragraph{What the C reference does.}
+\texttt{matrix\_scalar\_application\_even\_basis} in \texttt{verify.c}
+applies the matrix by \emph{columns}:
+\begin{align*}
+  R' &= [a]\,P + [c]\,Q  &&\text{(column 0: \texttt{mat[0][0]}, \texttt{mat[1][0]})} \\
+  S' &= [b]\,P + [d]\,Q  &&\text{(column 1: \texttt{mat[0][1]}, \texttt{mat[1][1]})}
+\end{align*}
+where $\mathbf{M} = \bigl(\begin{smallmatrix} a & b \\ c & d \end{smallmatrix}\bigr)$.
+An implementor who applies by rows (the natural reading of
+``$\mathbf{M} \cdot (P, Q)^T$'') will produce wrong results.
+
+\paragraph{Impact.}
+Applying by rows instead of columns silently produces the wrong
+torsion basis, causing the (2,2)-isogeny chain in verification to
+fail (typically a panic in the splitting step).
+
+\paragraph{Recommendation.}
+State explicitly in \algo{4.8} and \algo{4.9} that the matrix is
+applied by columns, or equivalently define the multiplication as
+$(P', Q') = (P, Q) \cdot \mathbf{M}^T$.
+
 \end{document}
