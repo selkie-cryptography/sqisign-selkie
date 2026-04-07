@@ -7,11 +7,13 @@
 
 use subtle::ConstantTimeEq;
 
+#[cfg(test)]
+use crate::curves::montgomery::ProjectiveXOnlyPoint;
 use crate::{
     curves::{
         BasisHint, TorsionBasis, TorsionExponent, VerifyingKeyHint,
         isogeny::Kernel as CurveKernel,
-        montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint},
+        montgomery::{Coefficient, Curve},
     },
     fields::Fp2,
     hash,
@@ -382,7 +384,7 @@ impl VerifyingKey {
                 sig.r_rsp.value()
             );
             eprintln!("VERIFY: curve_chl j={}", fp2_hex(&curve_chl.j_invariant()));
-            let aux_A = Fp2::from(*sig.curve_aux.coefficient().as_fp2());
+            let aux_A = *sig.curve_aux.coefficient().as_fp2();
             eprintln!("VERIFY: curve_aux A={}", fp2_hex(&aux_A));
             eprintln!("VERIFY: P_chl.X={}", fp2_hex(&P_chl.X));
             eprintln!("VERIFY: P_chl.Z={}", fp2_hex(&P_chl.Z));

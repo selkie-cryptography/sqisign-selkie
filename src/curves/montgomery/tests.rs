@@ -78,7 +78,7 @@ fn jacobian_double_matches_montgomery() {
     let p2_x_mont = &p2_mont.X * &p2_mont.Z.invert();
 
     // Jacobian: lift, double, convert, check.
-    let A = Fp2::from(*curve.coefficient().as_fp2());
+    let A = *curve.coefficient().as_fp2();
     let y = recover_y(&(&p.X * &p.Z.invert()), &A).expect("P₀ should be on E₀");
     let p_jac = JacobianPoint::new(&p.X * &p.Z.invert(), y, Fp2::ONE, &curve);
     let p2_jac = p_jac.double();
@@ -123,7 +123,7 @@ fn lift_basis_round_trip() {
     );
 
     // Check P_jac is on curve.
-    let A = Fp2::from(*curve.coefficient().as_fp2());
+    let A = *curve.coefficient().as_fp2();
     let z_inv = p_jac.Z.invert();
     let xa = &p_jac.X * &z_inv.square();
     let ya = &p_jac.Y * &(&z_inv.square() * &z_inv);
@@ -148,7 +148,7 @@ fn jac_to_xz_round_trip() {
     let curve = Curve::E0;
     let p = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, &curve);
 
-    let A = Fp2::from(*curve.coefficient().as_fp2());
+    let A = *curve.coefficient().as_fp2();
     let y = recover_y(&(&p.X * &p.Z.invert()), &A).expect("P₀ should be on E₀");
     let p_jac = JacobianPoint::new(&p.X * &p.Z.invert(), y, Fp2::ONE, &curve);
 

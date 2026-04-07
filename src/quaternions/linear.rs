@@ -475,8 +475,8 @@ pub fn hnf_from_columns<const N: usize>(cols: &[Vector<N>]) -> Matrix<N> {
 
         // Ensure pivot is positive.
         if bool::from(a[pivot][pivot].is_negative()) {
-            for r in 0..d {
-                a[pivot][r] = a[pivot][r].wrapping_neg();
+            for elem in &mut a[pivot] {
+                *elem = elem.wrapping_neg();
             }
         }
         let piv = a[pivot][pivot];

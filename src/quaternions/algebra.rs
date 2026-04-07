@@ -896,7 +896,7 @@ mod tests {
         let conj = e.conjugate();
         let product = e.mul(&conj).normalized();
 
-        let (n_num, n_den) = e.norm();
+        let (_n_num, _n_den) = e.norm();
         // product should be scalar: (nrd, 0, 0, 0).
         // The product denom is r², and n_den is also r².
         assert_eq!(product.b, Coordinate::from_i64(0));

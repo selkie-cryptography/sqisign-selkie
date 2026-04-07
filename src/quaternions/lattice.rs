@@ -1462,7 +1462,7 @@ impl<const N: usize> LeftIdeal<N> {
                 order_basis_4[row][col] = narrow_int(&order_basis_8[row][col])?;
             }
         }
-        let order_denom_4 = narrow_int(&order_8.denom())?;
+        let order_denom_4 = narrow_int(order_8.denom())?;
 
         let to_matrix = |rows: [[BigInt<4>; 4]; 4]| -> Matrix<4> {
             Matrix::from_rows(
@@ -1944,10 +1944,12 @@ pub(crate) fn l2_reduce<const N: usize>(basis: &mut [Vector<N>; D], gram: &mut M
                         gram[j][k] = gram[j][k].ct_sub(&update);
                     }
 
-                    // Update μ
+                    // Update μ. Snapshot row ii first (it's `Copy`) so we
+                    // can iterate row k mutably without aliasing.
                     let x_f = x as f64;
-                    for j in 0..ii {
-                        mu[k][j] -= x_f * mu[ii][j];
+                    let mu_ii = mu[ii];
+                    for (slot, &v) in mu[k].iter_mut().take(ii).zip(mu_ii.iter()) {
+                        *slot -= x_f * v;
                     }
                     mu[k][ii] -= x_f;
 

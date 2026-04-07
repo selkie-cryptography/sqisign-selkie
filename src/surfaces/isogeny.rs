@@ -1167,9 +1167,7 @@ fn get_index_splitting(null: &ThetaNullPoint) -> SplittingIndex {
             null.a, null.b, null.c, null.d
         );
         // Check if any coordinate is zero (degenerate point)
-        let any_zero = [&null.a, &null.b, &null.c, &null.d]
-            .iter()
-            .any(|x| *x == &Fp2::ZERO);
+        let any_zero = [&null.a, &null.b, &null.c, &null.d].contains(&&Fp2::ZERO);
         eprintln!("  any_zero_coord={any_zero}");
     }
     debug_assert!(
