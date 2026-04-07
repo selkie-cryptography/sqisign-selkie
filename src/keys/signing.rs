@@ -339,7 +339,7 @@ impl SigningKey {
             // For now, use 2^f as a placeholder (too small — will reject
             // valid elements, reducing success probability but not
             // breaking correctness of accepted samples).
-            let i_sk_i_chl = self.ideal.lattice().product(&i_chl.lattice());
+            let i_sk_i_chl = self.ideal.lattice().product(i_chl.lattice());
             let intersection = self.ideal.lattice().intersection(&i_sk_i_chl);
             let intersection_lat = Lattice::<4>::from(intersection);
             let radius = BigInt::<4>::ONE.shl(f);
