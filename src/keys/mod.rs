@@ -407,6 +407,11 @@ impl core::error::Error for SignatureError {}
 mod tests {
     use super::*;
 
+    /// Known-good KAT vector 0 (pk, sm hex) from the C reference
+    /// implementation, used by the wire-format round-trip tests below.
+    const KAT0_PK: &str = "07CCD21425136F6E865E497D2D4D208F0054AD81372066E817480787AAF7B2029550C89E892D618CE3230F23510BFBE68FCCDDAEA51DB1436B462ADFAF008A010B";
+    const KAT0_SM: &str = "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010202D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8";
+
     /// Helper: parse a NIST PQC KAT entry and verify the signature.
     fn verify_kat(pk_hex: &str, sm_hex: &str) {
         let pk_bytes = hex::decode(pk_hex).unwrap();
@@ -423,6 +428,101 @@ mod tests {
         let sig = Signature::from_bytes(sig_bytes).expect("signature should parse");
 
         vk.verify(msg, &sig).expect("signature should verify");
+    }
+
+    // ---------------- wire-format round-trip tests ----------------
+
+    /// Parse a KAT signature and re-serialize it: the bytes must be
+    /// byte-identical.
+    #[test]
+    fn signature_to_bytes_matches_kat_input() {
+        let sm_bytes = hex::decode(KAT0_SM).unwrap();
+        let sig_bytes: &[u8; SIGNATURE_BYTES] = sm_bytes[..SIGNATURE_BYTES].try_into().unwrap();
+        let sig = Signature::from_bytes(sig_bytes).unwrap();
+        assert_eq!(sig.to_bytes(), *sig_bytes);
+    }
+
+    /// Parse a KAT verifying key and re-serialize it: byte-identical.
+    #[test]
+    fn verifying_key_to_bytes_matches_kat_input() {
+        let pk_bytes = hex::decode(KAT0_PK).unwrap();
+        let pk_array: &[u8; VERIFYING_KEY_BYTES] = pk_bytes.as_slice().try_into().unwrap();
+        let vk = VerifyingKey::from_bytes(pk_array).unwrap();
+        assert_eq!(vk.to_bytes(), *pk_array);
+    }
+
+    /// Double round-trip: parse → serialize → re-parse → serialize again.
+    /// Guards against any stateful drift between the two calls.
+    #[test]
+    fn signature_double_roundtrip() {
+        let sm_bytes = hex::decode(KAT0_SM).unwrap();
+        let sig_bytes: &[u8; SIGNATURE_BYTES] = sm_bytes[..SIGNATURE_BYTES].try_into().unwrap();
+        let sig1 = Signature::from_bytes(sig_bytes).unwrap();
+        let bytes1 = sig1.to_bytes();
+        let sig2 = Signature::from_bytes(&bytes1).unwrap();
+        let bytes2 = sig2.to_bytes();
+        assert_eq!(bytes1, bytes2);
+        assert_eq!(bytes1, *sig_bytes);
+    }
+
+    // ---------------- wire-format error paths ----------------
+
+    /// Slices shorter than `SIGNATURE_BYTES` must produce
+    /// `InvalidLength`, not panic or `NonCanonical`.
+    #[test]
+    fn signature_try_from_short_slice_rejected() {
+        let short = [0u8; SIGNATURE_BYTES - 1];
+        match Signature::try_from(&short[..]) {
+            Err(SignatureError::InvalidLength {
+                expected, actual, ..
+            }) => {
+                assert_eq!(expected, SIGNATURE_BYTES);
+                assert_eq!(actual, SIGNATURE_BYTES - 1);
+            }
+            other => panic!("expected InvalidLength, got {:?}", other),
+        }
+    }
+
+    /// Slices longer than `SIGNATURE_BYTES` must also be rejected.
+    #[test]
+    fn signature_try_from_long_slice_rejected() {
+        let long = [0u8; SIGNATURE_BYTES + 1];
+        match Signature::try_from(&long[..]) {
+            Err(SignatureError::InvalidLength {
+                expected, actual, ..
+            }) => {
+                assert_eq!(expected, SIGNATURE_BYTES);
+                assert_eq!(actual, SIGNATURE_BYTES + 1);
+            }
+            other => panic!("expected InvalidLength, got {:?}", other),
+        }
+    }
+
+    /// `n_bt` greater than the bound f=248 must be rejected as
+    /// non-canonical rather than producing an invalid `TorsionExponent`.
+    #[test]
+    fn signature_out_of_range_n_bt_rejected() {
+        let sm_bytes = hex::decode(KAT0_SM).unwrap();
+        let mut sig_bytes = [0u8; SIGNATURE_BYTES];
+        sig_bytes.copy_from_slice(&sm_bytes[..SIGNATURE_BYTES]);
+        sig_bytes[64] = 249; // n_bt > TORSION_EVEN_POWER
+        assert!(matches!(
+            Signature::from_bytes(&sig_bytes),
+            Err(SignatureError::NonCanonical)
+        ));
+    }
+
+    /// Same check for `r_rsp`.
+    #[test]
+    fn signature_out_of_range_r_rsp_rejected() {
+        let sm_bytes = hex::decode(KAT0_SM).unwrap();
+        let mut sig_bytes = [0u8; SIGNATURE_BYTES];
+        sig_bytes.copy_from_slice(&sm_bytes[..SIGNATURE_BYTES]);
+        sig_bytes[65] = 255; // r_rsp way out of range
+        assert!(matches!(
+            Signature::from_bytes(&sig_bytes),
+            Err(SignatureError::NonCanonical)
+        ));
     }
 
     /// Verify all 100 hardcoded KAT vectors from the C reference
