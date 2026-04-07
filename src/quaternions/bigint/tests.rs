@@ -1,0 +1,500 @@
+use super::*;
+
+type I256 = BigInt<4>;
+
+#[test]
+fn zero_is_zero() {
+    let z = I256::ZERO;
+    assert!(bool::from(z.is_zero()));
+    assert!(!bool::from(z.is_negative()));
+    assert!(!bool::from(z.is_positive()));
+}
+
+#[test]
+fn from_i64_positive() {
+    let x = I256::from(42i64);
+    assert!(!bool::from(x.is_zero()));
+    assert!(bool::from(x.is_positive()));
+    assert!(!bool::from(x.is_negative()));
+    assert_eq!(x.as_limbs()[0], 42);
+}
+
+#[test]
+fn from_i64_negative() {
+    let x = I256::from(-7i64);
+    assert!(bool::from(x.is_negative()));
+    assert!(!bool::from(x.is_positive()));
+    assert_eq!(x.as_limbs()[0], 7);
+}
+
+#[test]
+fn negation() {
+    let x = I256::from(5i64);
+    let neg_x = -x;
+    assert!(bool::from(neg_x.is_negative()));
+    assert_eq!(neg_x.as_limbs()[0], 5);
+    assert_eq!(x, -neg_x);
+}
+
+#[test]
+fn negation_of_zero() {
+    let z = I256::ZERO;
+    assert_eq!(z, -z);
+}
+
+#[test]
+fn add_positive() {
+    assert_eq!(I256::from(10i64) + I256::from(20i64), I256::from(30i64));
+}
+
+#[test]
+fn add_negative() {
+    assert_eq!(I256::from(-10i64) + I256::from(-20i64), I256::from(-30i64));
+}
+
+#[test]
+fn add_mixed_signs() {
+    assert_eq!(I256::from(30i64) + I256::from(-10i64), I256::from(20i64));
+    assert_eq!(I256::from(-30i64) + I256::from(10i64), I256::from(-20i64));
+}
+
+#[test]
+fn add_to_zero() {
+    let c = I256::from(42i64) + I256::from(-42i64);
+    assert!(bool::from(c.is_zero()));
+    assert!(!bool::from(c.is_negative()));
+}
+
+#[test]
+fn subtraction() {
+    assert_eq!(I256::from(10i64) - I256::from(3i64), I256::from(7i64));
+    assert_eq!(I256::from(3i64) - I256::from(10i64), I256::from(-7i64));
+}
+
+#[test]
+fn multiplication() {
+    assert_eq!(I256::from(6i64) * I256::from(7i64), I256::from(42i64));
+}
+
+#[test]
+fn multiplication_mixed_signs() {
+    assert_eq!(I256::from(-6i64) * I256::from(7i64), I256::from(-42i64));
+    assert_eq!(I256::from(-6i64) * I256::from(-7i64), I256::from(42i64));
+}
+
+#[test]
+fn multiplication_by_zero() {
+    let r = I256::from(12345i64) * I256::ZERO;
+    assert!(bool::from(r.is_zero()));
+    assert!(!bool::from(r.is_negative()));
+}
+
+#[test]
+fn ordering() {
+    let a = I256::from(10i64);
+    let b = I256::from(20i64);
+    let c = I256::from(-5i64);
+    assert!(a < b);
+    assert!(c < a);
+    assert!(c < b);
+    assert!(b > a);
+    assert!(a > c);
+}
+
+#[test]
+fn ordering_negatives() {
+    assert!(I256::from(-20i64) < I256::from(-10i64));
+}
+
+#[test]
+fn bitsize_single_limb() {
+    assert_eq!(nbits64(0), 0);
+    assert_eq!(nbits64(1), 1);
+    assert_eq!(nbits64(2), 2);
+    assert_eq!(nbits64(255), 8);
+    assert_eq!(nbits64(256), 9);
+    assert_eq!(nbits64(u64::MAX), 64);
+}
+
+#[test]
+fn bitsize_bigint() {
+    assert_eq!(I256::ZERO.bitsize(), 0);
+    assert_eq!(I256::ONE.bitsize(), 1);
+    assert_eq!(I256::from(255i64).bitsize(), 8);
+    assert_eq!(I256::from(-255i64).bitsize(), 8);
+}
+
+#[test]
+fn even_odd() {
+    assert!(bool::from(I256::ZERO.is_even()));
+    assert!(bool::from(I256::from(2i64).is_even()));
+    assert!(bool::from(I256::from(-4i64).is_even()));
+    assert!(bool::from(I256::ONE.is_odd()));
+    assert!(bool::from(I256::from(3i64).is_odd()));
+    assert!(bool::from(I256::from(-7i64).is_odd()));
+}
+
+#[test]
+fn carry_propagation() {
+    let a = BigInt::<2>::from_sign_and_limbs(0, [u64::MAX, 0]);
+    let b = BigInt::<2>::from(1i64);
+    let c = a + b;
+    assert_eq!(c.as_limbs()[0], 0);
+    assert_eq!(c.as_limbs()[1], 1);
+}
+
+#[test]
+fn mul_carry_propagation() {
+    let a = BigInt::<2>::from_sign_and_limbs(0, [u64::MAX, 0]);
+    let b = BigInt::<2>::from(2i64);
+    let c = a * b;
+    assert_eq!(c.as_limbs()[0], u64::MAX - 1);
+    assert_eq!(c.as_limbs()[1], 1);
+}
+
+#[test]
+fn display() {
+    assert_eq!(format!("{}", I256::ZERO), "0x0");
+    assert_eq!(format!("{}", I256::from(255i64)), "0xff");
+    assert_eq!(format!("{}", I256::from(-255i64)), "-0xff");
+}
+
+#[test]
+fn constants() {
+    assert_eq!(I256::ONE, I256::from(1i64));
+    assert_eq!(I256::MINUS_ONE, I256::from(-1i64));
+    assert_eq!(I256::TWO, I256::from(2i64));
+    assert_eq!(I256::THREE, I256::from(3i64));
+}
+
+#[test]
+fn widen_4_to_8() {
+    let small = BigInt::<4>::from(42i64);
+    let wide: BigInt<8> = small.into();
+    assert_eq!(wide.as_limbs()[0], 42);
+    assert_eq!(wide, BigInt::<8>::from(42i64));
+}
+
+#[test]
+fn widen_preserves_sign() {
+    let small = BigInt::<4>::from(-7i64);
+    let wide: BigInt<8> = small.into();
+    assert!(bool::from(wide.is_negative()));
+    assert_eq!(wide, BigInt::<8>::from(-7i64));
+}
+
+#[test]
+fn narrow_8_to_4() {
+    let wide = BigInt::<8>::from(99i64);
+    let ct: subtle::CtOption<BigInt<4>> = wide.into();
+    assert!(bool::from(ct.is_some()));
+    assert_eq!(ct.unwrap(), BigInt::<4>::from(99i64));
+}
+
+#[test]
+fn narrow_overflow_fails() {
+    let mut wide = BigInt::<8>::from(1i64);
+    wide.as_limbs_mut()[4] = 1;
+    let ct: subtle::CtOption<BigInt<4>> = wide.into();
+    assert!(!bool::from(ct.is_some()));
+}
+
+#[test]
+fn generic_widen_4_to_9() {
+    let small = BigInt::<4>::from(-99i64);
+    let wide: BigInt<9> = small.widen();
+    assert_eq!(wide.as_limbs()[0], 99);
+    assert_eq!(wide.as_limbs()[4], 0);
+    assert!(bool::from(wide.is_negative()));
+}
+
+#[test]
+fn generic_narrow_to() {
+    let wide = BigInt::<9>::from(123i64);
+    let narrow: BigInt<4> = wide.narrow_to().unwrap();
+    assert_eq!(narrow, BigInt::<4>::from(123i64));
+}
+
+#[test]
+fn generic_narrow_to_overflow() {
+    let mut wide = BigInt::<9>::from(1i64);
+    wide.as_limbs_mut()[5] = 1;
+    assert!(wide.narrow_to::<4>().is_none());
+}
+
+#[test]
+fn widen_narrow_roundtrip() {
+    let orig = BigInt::<4>::from(-12345i64);
+    let wide: BigInt<8> = orig.widen();
+    let back: BigInt<4> = wide.narrow_to().unwrap();
+    assert_eq!(orig, back);
+}
+
+#[test]
+fn shl_small() {
+    let a = I256::from(1i64);
+    assert_eq!(a.shl(0), I256::from(1i64));
+    assert_eq!(a.shl(1), I256::from(2i64));
+    assert_eq!(a.shl(8), I256::from(256i64));
+}
+
+#[test]
+fn shl_across_limbs() {
+    let a = I256::from(1i64);
+    let shifted = a.shl(64);
+    assert_eq!(shifted.as_limbs()[0], 0);
+    assert_eq!(shifted.as_limbs()[1], 1);
+}
+
+#[test]
+fn shl_preserves_sign() {
+    let a = I256::from(-3i64);
+    let shifted = a.shl(4);
+    assert!(bool::from(shifted.is_negative()));
+    assert_eq!(shifted.as_limbs()[0], 48); // 3 << 4 = 48
+}
+
+#[test]
+fn shr_small() {
+    let a = I256::from(256i64);
+    assert_eq!(a.shr(0), I256::from(256i64));
+    assert_eq!(a.shr(1), I256::from(128i64));
+    assert_eq!(a.shr(8), I256::from(1i64));
+    assert_eq!(a.shr(9), I256::ZERO);
+}
+
+#[test]
+fn shr_across_limbs() {
+    let a = I256::from_sign_and_limbs(0, [0, 1, 0, 0]); // 2^64
+    let shifted = a.shr(64);
+    assert_eq!(shifted, I256::from(1i64));
+}
+
+#[test]
+fn div_rem_basic() {
+    let a = I256::from(17i64);
+    let b = I256::from(5i64);
+    let (q, r) = a.div_rem(&b);
+    assert_eq!(q, I256::from(3i64));
+    assert_eq!(r, I256::from(2i64));
+}
+
+#[test]
+fn div_rem_exact() {
+    let a = I256::from(42i64);
+    let b = I256::from(6i64);
+    let (q, r) = a.div_rem(&b);
+    assert_eq!(q, I256::from(7i64));
+    assert_eq!(r, I256::ZERO);
+}
+
+#[test]
+fn div_rem_negative_dividend() {
+    // Euclidean: -17 = (-4) * 5 + 3
+    let a = I256::from(-17i64);
+    let b = I256::from(5i64);
+    let (q, r) = a.div_rem(&b);
+    assert_eq!(q, I256::from(-4i64));
+    assert_eq!(r, I256::from(3i64));
+    assert!(bool::from(r.is_positive()) || bool::from(r.is_zero()));
+}
+
+#[test]
+fn div_rem_negative_divisor() {
+    // 17 = (-3) * (-5) + 2
+    let a = I256::from(17i64);
+    let b = I256::from(-5i64);
+    let (q, r) = a.div_rem(&b);
+    assert_eq!(q, I256::from(-3i64));
+    assert_eq!(r, I256::from(2i64));
+}
+
+#[test]
+fn div_rem_both_negative() {
+    // -17 = 4 * (-5) + 3
+    let a = I256::from(-17i64);
+    let b = I256::from(-5i64);
+    let (q, r) = a.div_rem(&b);
+    assert_eq!(q, I256::from(4i64));
+    assert_eq!(r, I256::from(3i64));
+}
+
+#[test]
+fn ct_mod_basic() {
+    assert_eq!(
+        I256::from(17i64).ct_mod(&I256::from(5i64)),
+        I256::from(2i64)
+    );
+    assert_eq!(
+        I256::from(-17i64).ct_mod(&I256::from(5i64)),
+        I256::from(3i64)
+    );
+}
+
+#[test]
+fn two_adic_val_tests() {
+    assert_eq!(I256::from(1i64).two_adic_val(), 0);
+    assert_eq!(I256::from(2i64).two_adic_val(), 1);
+    assert_eq!(I256::from(8i64).two_adic_val(), 3);
+    assert_eq!(I256::from(12i64).two_adic_val(), 2); // 12 = 4 * 3
+    assert_eq!(I256::from(-24i64).two_adic_val(), 3); // 24 = 8 * 3
+}
+
+#[test]
+fn pow_tests() {
+    assert_eq!(I256::from(2i64).pow(10), I256::from(1024i64));
+    assert_eq!(I256::from(3i64).pow(0), I256::ONE);
+    assert_eq!(I256::from(-2i64).pow(3), I256::from(-8i64));
+    assert_eq!(I256::from(-2i64).pow(4), I256::from(16i64));
+}
+
+#[test]
+fn divides_tests() {
+    assert!(bool::from(I256::from(3i64).divides(&I256::from(12i64))));
+    assert!(!bool::from(I256::from(5i64).divides(&I256::from(12i64))));
+    assert!(bool::from(I256::from(1i64).divides(&I256::from(7i64))));
+}
+
+#[test]
+fn gcd_basic() {
+    assert_eq!(I256::from(12i64).gcd(&I256::from(8i64)), I256::from(4i64));
+    assert_eq!(I256::from(17i64).gcd(&I256::from(13i64)), I256::from(1i64));
+    assert_eq!(I256::from(0i64).gcd(&I256::from(5i64)), I256::from(5i64));
+    assert_eq!(I256::from(5i64).gcd(&I256::from(0i64)), I256::from(5i64));
+}
+
+#[test]
+fn gcd_negative() {
+    // GCD should always return non-negative.
+    assert_eq!(I256::from(-12i64).gcd(&I256::from(8i64)), I256::from(4i64));
+    assert_eq!(I256::from(-12i64).gcd(&I256::from(-8i64)), I256::from(4i64));
+}
+
+#[test]
+fn xgcd_basic() {
+    let a = I256::from(35i64);
+    let b = I256::from(15i64);
+    let (g, x, y) = a.xgcd(&b);
+    assert_eq!(g, I256::from(5i64));
+    // Verify Bezout identity: a*x + b*y == g.
+    let lhs = a.ct_mul(&x).ct_add(&b.ct_mul(&y));
+    assert_eq!(lhs, g);
+}
+
+#[test]
+fn xgcd_coprime() {
+    let a = I256::from(17i64);
+    let b = I256::from(13i64);
+    let (g, x, y) = a.xgcd(&b);
+    assert_eq!(g, I256::ONE);
+    let lhs = a.ct_mul(&x).ct_add(&b.ct_mul(&y));
+    assert_eq!(lhs, g);
+}
+
+#[test]
+fn xgcd_negative() {
+    let a = I256::from(-35i64);
+    let b = I256::from(15i64);
+    let (g, x, y) = a.xgcd(&b);
+    assert_eq!(g, I256::from(5i64));
+    let lhs = a.ct_mul(&x).ct_add(&b.ct_mul(&y));
+    assert_eq!(lhs, g);
+}
+
+#[test]
+fn invert_mod_basic() {
+    // 3^{-1} mod 7 = 5, since 3*5 = 15 = 1 mod 7.
+    let inv = I256::from(3i64).invert_mod(&I256::from(7i64));
+    assert_eq!(inv, Some(I256::from(5i64)));
+}
+
+#[test]
+fn invert_mod_no_inverse() {
+    // 6 and 9 share factor 3, no inverse.
+    let inv = I256::from(6i64).invert_mod(&I256::from(9i64));
+    assert_eq!(inv, None);
+}
+
+#[test]
+fn invert_mod_verify() {
+    let a = I256::from(11i64);
+    let m = I256::from(23i64);
+    let inv = a.invert_mod(&m).expect("inverse should exist");
+    let product = a.ct_mul(&inv).ct_mod(&m);
+    assert_eq!(product, I256::ONE);
+}
+
+#[test]
+fn sqrt_floor_basic() {
+    assert_eq!(I256::ZERO.sqrt_floor(), I256::ZERO);
+    assert_eq!(I256::ONE.sqrt_floor(), I256::ONE);
+    assert_eq!(I256::from(4i64).sqrt_floor(), I256::from(2i64));
+    assert_eq!(I256::from(9i64).sqrt_floor(), I256::from(3i64));
+    assert_eq!(I256::from(10i64).sqrt_floor(), I256::from(3i64));
+    assert_eq!(I256::from(99i64).sqrt_floor(), I256::from(9i64));
+    assert_eq!(I256::from(100i64).sqrt_floor(), I256::from(10i64));
+}
+
+#[test]
+fn pow_mod_basic() {
+    // 2^10 mod 1000 = 1024 mod 1000 = 24
+    let r = I256::pow_mod(&I256::from(2i64), &I256::from(10i64), &I256::from(1000i64));
+    assert_eq!(r, I256::from(24i64));
+}
+
+#[test]
+fn pow_mod_fermat() {
+    // Fermat's little theorem: a^(p-1) = 1 mod p for prime p.
+    let a = I256::from(3i64);
+    let p = I256::from(17i64);
+    let exp = I256::from(16i64); // p - 1
+    let r = I256::pow_mod(&a, &exp, &p);
+    assert_eq!(r, I256::ONE);
+}
+
+#[test]
+fn modular_sqrt_3mod4() {
+    // 4 is a QR mod 7 (7 ≡ 3 mod 4). sqrt(4) mod 7 = 2.
+    let r = I256::modular_sqrt(&I256::from(4i64), &I256::from(7i64));
+    let r = r.expect("4 is a QR mod 7");
+    assert_eq!(r.ct_mul(&r).ct_mod(&I256::from(7i64)), I256::from(4i64));
+}
+
+#[test]
+fn modular_sqrt_5mod8() {
+    // 3 is a QR mod 13 (13 ≡ 5 mod 8). Check sqrt(3)² ≡ 3 mod 13.
+    let r = I256::modular_sqrt(&I256::from(3i64), &I256::from(13i64));
+    let r = r.expect("3 is a QR mod 13");
+    assert_eq!(r.ct_mul(&r).ct_mod(&I256::from(13i64)), I256::from(3i64));
+}
+
+#[test]
+fn modular_sqrt_non_residue() {
+    // 3 is not a QR mod 7.
+    let r = I256::modular_sqrt(&I256::from(3i64), &I256::from(7i64));
+    assert!(r.is_none());
+}
+
+#[test]
+fn cornacchia_basic() {
+    // Solve x² + y² = 5 (q=1, m=5). Solution: (1, 2) or (2, 1).
+    let result = I256::cornacchia(&I256::ONE, &I256::from(5i64));
+    let (x, y) = result.expect("5 = x² + y² should have a solution");
+    assert_eq!(x.ct_mul(&x).ct_add(&y.ct_mul(&y)), I256::from(5i64));
+}
+
+#[test]
+fn cornacchia_with_q() {
+    // Solve x² + 3y² = 7 (q=3, m=7). Solution: (2, 1).
+    let result = I256::cornacchia(&I256::from(3i64), &I256::from(7i64));
+    let (x, y) = result.expect("7 = x² + 3y² should have a solution");
+    let check = x.ct_mul(&x).ct_add(&I256::from(3i64).ct_mul(&y.ct_mul(&y)));
+    assert_eq!(check, I256::from(7i64));
+}
+
+#[test]
+fn cornacchia_no_solution() {
+    // x² + y² = 3 has no solution (3 ≡ 3 mod 4, not sum of two squares).
+    let result = I256::cornacchia(&I256::ONE, &I256::from(3i64));
+    assert!(result.is_none());
+}
