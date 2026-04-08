@@ -582,62 +582,10 @@ impl TorsionBasis {
         let mut P = ProjectiveXOnlyPoint::from_affine_x(x_P, curve);
         let mut Q = ProjectiveXOnlyPoint::from_affine_x(x_Q, curve);
 
-        #[cfg(test)]
-        {
-            let fp2_hex = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re}+i*0x{im}")
-            };
-            eprintln!("FROM_HINT: h_A={h_A} h={h} x_P={}", fp2_hex(&x_P));
-            eprintln!("FROM_HINT: curve_normalized={}", curve.is_normalized());
-        }
-
         // Clear odd cofactor to get points of order 2^e.
         // Multiply by (p+1)/2^e = cofactor.
         P = P.clear_cofactor();
         Q = Q.clear_cofactor();
-
-        #[cfg(test)]
-        {
-            let fp2_hex = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re}+i*0x{im}")
-            };
-            eprintln!("FROM_HINT: P_after_cofactor X={}", fp2_hex(&P.X));
-            eprintln!("FROM_HINT: P_after_cofactor Z={}", fp2_hex(&P.Z));
-            // Cross-check: compute [5]P using scalar_mul
-            let five = scalar::Scalar::from_u64(5);
-            let P_orig = ProjectiveXOnlyPoint::from_affine_x(x_P, curve);
-            let P_5_ladder = P_orig.scalar_mul(&five);
-            eprintln!("FROM_HINT: P_5_ladder X={}", fp2_hex(&P_5_ladder.X));
-            eprintln!("FROM_HINT: P_5_ladder Z={}", fp2_hex(&P_5_ladder.Z));
-            // Affine comparison
-            let p_aff = &P.X * &P.Z.invert();
-            let p5_aff = &P_5_ladder.X * &P_5_ladder.Z.invert();
-            eprintln!("FROM_HINT: P affine x={}", fp2_hex(&p_aff));
-            eprintln!("FROM_HINT: P_5_ladder affine x={}", fp2_hex(&p5_aff));
-            eprintln!("FROM_HINT: affine match={}", p_aff == p5_aff);
-        }
 
         let PmQ = P.projective_difference(&Q);
 
