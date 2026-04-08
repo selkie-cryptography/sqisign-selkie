@@ -977,14 +977,66 @@ impl<const N: usize> LeftIdeal<N> {
 impl<const N: usize> Copy for LeftIdeal<N> where BigInt<N>: Copy {}
 
 // Methods requiring Element<4>::mul() / norm() (widen to BigInt<8>).
-impl LeftIdeal<4> {
+impl<const N: usize> LeftIdeal<N> {
     /// Create the left ideal I = O⟨α, N⟩ = Oα + ON.
     ///
-    /// Uses [`Element<4>::mul`] which widens to `BigInt<8>` internally.
-    /// For ideals at wider N, use [`from_parts`](Self::from_parts) with
-    /// pre-computed lattice, or the direct quaternion multiplication
-    /// approach in
-    /// [`random_prime_norm_wide`](LeftIdeal::<9>::random_prime_norm_wide).
+    /// Uses [`Element::mul_direct`] at width `N`, which performs the
+    /// quaternion multiplication without widening. This is correct
+    /// iff the intermediate products fit in `BigInt<N>` — roughly,
+    /// `2 * bits(max coordinate of α or order basis) + bits(p) ≤ 64 * N`.
+    /// For the NIST-I response phase at `N = 22`, coordinates are
+    /// bounded by ~2^575, products are ~2^1150, and the
+    /// `p · (c² + d²)` term tops out near ~2^1400 — just within
+    /// `BigInt<22>` (1408 bits).
+    ///
+    /// For callers working at narrow widths on small moduli, the
+    /// `LeftIdeal<4>::new` inherent version (which widens internally
+    /// to `BigInt<8>`) remains available.
+    ///
+    /// See [§3.1.6.1] of the spec.
+    ///
+    /// [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
+    pub fn from_generator(alpha: &Element<N>, norm: &BigInt<N>, order: &Order<N>) -> Self {
+        // Compute Oα: multiply each basis element of O by α.
+        let mut o_alpha_cols = [Vector::<N>::ZERO; 4];
+        for (j, o_alpha_col) in o_alpha_cols.iter_mut().enumerate() {
+            let basis_j = order.basis_elem(j);
+            let product = basis_j.mul_direct(alpha);
+            *o_alpha_col = Vector::new(
+                *product.a.as_bigint(),
+                *product.b.as_bigint(),
+                *product.c.as_bigint(),
+                *product.d.as_bigint(),
+            );
+        }
+        let o_alpha_denom = order.denom().ct_mul(alpha.denom.as_bigint());
+        let o_alpha = Lattice::new(Matrix::from_columns(&o_alpha_cols), o_alpha_denom);
+
+        // Compute ON: scale each basis vector of O by N.
+        let mut o_n_cols = order.basis().columns();
+        for col in &mut o_n_cols {
+            for row in 0..4 {
+                col[row] = col[row].ct_mul(norm);
+            }
+        }
+        let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), *order.denom());
+
+        Self {
+            lattice: o_alpha.sum(&o_n),
+            norm: *norm,
+            parent_order: *order,
+        }
+    }
+}
+
+impl LeftIdeal<4> {
+    /// Create the left ideal I = O⟨α, N⟩ = Oα + ON at width 4.
+    ///
+    /// Uses [`Element<4>::mul`] which widens to `BigInt<8>`
+    /// internally, so this is the safe choice for small moduli
+    /// (up to ~128 bits) where direct multiplication would overflow.
+    /// For wider widths, use
+    /// [`LeftIdeal::from_generator`](LeftIdeal::from_generator).
     ///
     /// See [§3.1.6.1] of the spec.
     ///
