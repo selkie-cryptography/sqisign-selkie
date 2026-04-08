@@ -322,31 +322,28 @@ impl SigningKey {
     ///
     /// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
     pub fn sign(&self, msg: &[u8]) -> Result<Signature, SignatureError> {
-        // Status: partially correct.
+        // Status: response phase operates at `LeftIdeal<N_RESP>`
+        // (= 22 limbs, enough for the 1399-bit sampling radius).
         //
-        // What's right: commitment and challenge phases; response
-        // phase widens to `LeftIdeal<N_RESP>` (= 22 limbs, enough for
-        // the 1399-bit sampling radius), computes the correct
-        // intersection `I_com ∩ (I_sk · I_chl)`, samples α_rsp with
-        // the correct radius `D²_mix · 2^{e_rsp + f + 1}`, and does
-        // the full `d_rsp = nrd(α_rsp) / (D²_mix · 2^{f - n_bt})`
-        // division at wide width.
+        // - Intersection is `I_com ∩ (I_sk · I_chl)` — corrected from the earlier bug
+        //   where it was `I_sk ∩ (I_sk · I_chl)`.
+        // - Sampling uses the full spec radius `D²_mix · 2^{e_rsp + f + 1}`.
+        // - `d_rsp = nrd(α_rsp) / (D²_mix · 2^{f - n_bt})` is computed at wide width
+        //   with the full `D²_mix` division.
+        // - `I_com,rsp = O₀·α_rsp + O₀·(q_rsp · D_mix)` is built via
+        //   [`LeftIdeal::from_generator`] at `LeftIdeal<N_RESP>` with the full ~513-bit
+        //   norm, then reduced to a prime-norm equivalent and narrowed to
+        //   `LeftIdeal<4>` for `to_isogeny`.
+        // - `compute_even_response` is invoked with `α_rsp mod 2^r_rsp` (since that
+        //   generates the same even-response ideal), narrowed to `Element<4>`.
         //
-        // What's still wrong:
+        // Known remaining issues:
         //
-        // - After `compute_backtracking`, α_rsp has coordinates of ~575 bits
-        //   (Element<22>), which does NOT fit in `Element<4>`. We try to narrow and
-        //   `continue` on failure, which essentially always triggers, so the loop gives
-        //   up with `SigningFailed`.
-        //
-        // - `I_com,rsp` is built via `LeftIdeal::<4>::new` which truncates `q_rsp ·
-        //   D_mix` (~513 bits) to `BigInt<4>` (256 bits). Temporary placeholder.
-        //
-        // - `compute_even_response` takes `Element<4>`.
-        //
-        // Full fix requires generic `Element::mul`, generic
-        // `LeftIdeal::new`, and a wider `compute_even_response`.
-        // See §5 of the paper for the pattern.
+        // - `q_rsp` is still extracted as a single `u64` from the odd part of `d_rsp`.
+        //   The spec allows `q_rsp` up to `D_rsp ≈ 2^126`, so a `u64` is insufficient
+        //   in general. TODO: widen `q_rsp` to `BigInt<4>`.
+        // - Not yet tested end-to-end against KATs — correctness of the wide-width
+        //   response phase depends on every step above and needs integration testing.
 
         let f = TORSION_EVEN_POWER;
         let e_rsp = E_RSP;
@@ -445,19 +442,10 @@ impl SigningKey {
             };
 
             // Line 15: α_rsp, n_bt ← ComputeBacktrackingAndNormalize(α_rsp).
-            // Compute the norm at wide width while the element is
-            // still at `Element<N_RESP>`; we will need it for d_rsp.
+            // Keep `alpha_rsp_w` at `Element<N_RESP>` for the wide
+            // degree-computation and ideal construction below.
             let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
             let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
-
-            // Try to narrow to `Element<4>` for the downstream code
-            // (`LeftIdeal::new`, `compute_even_response`). For "nice"
-            // samples this succeeds; otherwise, retry the sign loop.
-            // A fully wide response phase is future work.
-            let alpha_rsp = match alpha_rsp_w.narrow_to::<4>() {
-                Some(a) => a,
-                None => continue,
-            };
 
             // Lines 16–20: degree computations.
             //
@@ -495,24 +483,27 @@ impl SigningKey {
             let e_rsp_prime_te = TorsionExponent::try_from(e_rsp_prime)
                 .map_err(|_| SignatureError::SigningFailed)?;
 
-            // Line 19: I_com,rsp = O₀·α_rsp + O₀(q_rsp·D_mix)
+            // Line 19: I_com,rsp = O₀·α_rsp + O₀·(q_rsp · D_mix).
             //
-            // `q_rsp·D_mix` has ~513 + log2(q_rsp) bits, which does
-            // not fit in `BigInt<4>`. We construct `LeftIdeal<4>` with
-            // a truncated norm here as a temporary placeholder: this
-            // will not produce valid signatures, but keeps the rest
-            // of the flow compilable. See the corresponding TODO in
-            // the paper's §5 (Bugs from Fixed-Width Arithmetic).
-            // TODO: construct `I_com,rsp` via a width-generic
-            // `LeftIdeal::new` (future work, requires generic
-            // `Element::mul`).
-            let i_com_rsp_norm = BigInt::<4>::from_u64(q_rsp).ct_mul(&BigInt::<4>::from_limbs({
-                let mut l = [0u64; 4];
-                l.copy_from_slice(&D_MIX.as_limbs()[..4]);
-                l
-            }));
-            let i_com_rsp =
-                LeftIdeal::<4>::new(&alpha_rsp, &i_com_rsp_norm, EXTREMAL_ORDERS[0].order());
+            // Built at the wide width `LeftIdeal<N_RESP>` via
+            // [`LeftIdeal::from_generator`]. The norm `q_rsp · D_mix`
+            // has ~513 + log2(q_rsp) bits and does not fit in
+            // `BigInt<4>`, but does fit in `BigInt<N_RESP>`.
+            // After construction we reduce to an equivalent
+            // prime-norm ideal and narrow to `LeftIdeal<4>` for the
+            // downstream `to_isogeny` call.
+            let o0_w = EXTREMAL_ORDERS[0].widen::<N_RESP>();
+            let q_rsp_wide = BigInt::<N_RESP>::from_u64(q_rsp);
+            let i_com_rsp_norm_w = q_rsp_wide.ct_mul(&d_mix_22);
+            let mut i_com_rsp_w =
+                LeftIdeal::from_generator(&alpha_rsp_w, &i_com_rsp_norm_w, o0_w.order());
+            if !i_com_rsp_w.reduce_to_prime_norm::<44>() {
+                continue;
+            }
+            let i_com_rsp = match i_com_rsp_w.narrow() {
+                Some(i) => i,
+                None => continue,
+            };
 
             // Lines 21–33: compute response isogeny
             let (mut e_chl, mut p_chl, mut q_chl);
@@ -533,9 +524,10 @@ impl SigningKey {
                 // Line 24: E_aux, P_aux, Q_aux ← IdealToIsogeny(I_{com,rsp} ∩ I_aux)
                 //
                 // The intersection of two O₀-ideals with coprime norms N₁, N₂
-                // is an O₀-ideal of norm N₁·N₂.
+                // is an O₀-ideal of norm N₁·N₂. `i_com_rsp.norm()` is the
+                // narrowed prime norm after reduction.
                 let inter_lattice = i_com_rsp.lattice().intersection(i_aux.lattice());
-                let inter_norm = i_com_rsp_norm.ct_mul(i_aux.norm());
+                let inter_norm = i_com_rsp.norm().ct_mul(i_aux.norm());
                 let i_inter =
                     LeftIdeal::from_parts(inter_lattice, inter_norm, *EXTREMAL_ORDERS[0].order());
                 let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_inter.to_isogeny() {
@@ -577,13 +569,34 @@ impl SigningKey {
                 q_aux = q_chl;
             }
 
-            // Lines 34–35: even response
+            // Lines 34–35: even response.
+            //
+            // `compute_even_response` constructs the ideal
+            // `I = O₀·α + O₀·(2^r_rsp)` internally. Two elements that
+            // differ by a member of `2^r_rsp · O₀` generate the same
+            // ideal, so we can replace `α_rsp` with
+            // `α_rsp mod (2^r_rsp · O₀)` — coordinate-wise reduction
+            // mod `2^r_rsp` — and then narrow to `Element<4>`.
+            // For `r_rsp ≤ 126`, the reduced coordinates fit easily.
             if r_rsp_val > 0 {
+                let two_to_r: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(r_rsp_val);
+                let mod_coord = |c: &BigInt<N_RESP>| c.ct_mod(&two_to_r);
+                let reduced_w = Element::<N_RESP>::new(
+                    Coordinate::from_bigint(mod_coord(alpha_rsp_w.a.as_bigint())),
+                    Coordinate::from_bigint(mod_coord(alpha_rsp_w.b.as_bigint())),
+                    Coordinate::from_bigint(mod_coord(alpha_rsp_w.c.as_bigint())),
+                    Coordinate::from_bigint(mod_coord(alpha_rsp_w.d.as_bigint())),
+                    alpha_rsp_w.denom,
+                );
+                let alpha_narrow = match reduced_w.narrow_to::<4>() {
+                    Some(a) => a,
+                    None => continue,
+                };
                 let (ec, pc, qc) = match deuring::compute_even_response(
                     &e_chl,
                     &p_chl,
                     &q_chl,
-                    &alpha_rsp,
+                    &alpha_narrow,
                     e_rsp_prime_te,
                     r_rsp,
                 ) {
