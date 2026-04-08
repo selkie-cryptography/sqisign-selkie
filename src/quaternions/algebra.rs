@@ -509,6 +509,110 @@ impl<const N: usize> Element<N> {
         BigInt::from_sign_and_limbs(0, limbs)
     }
 
+    /// Compute backtracking and normalize.
+    ///
+    /// Converts α from the {1, i, j, k} basis to the O₀ basis
+    /// (1, i, (i+j)/2, (1+k)/2), finds the largest power of 2
+    /// dividing all O₀-basis coordinates, and divides it out.
+    ///
+    /// Returns the normalized α and the backtracking exponent n
+    /// (the 2-adic valuation of the GCD).
+    ///
+    /// Implements [ComputeBacktrackingAndNormalize][Alg. 4.4].
+    ///
+    /// [Alg. 4.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.4
+    pub fn compute_backtracking(&self) -> (Self, u32) {
+        // Convert to O₀ basis: for O₀ = Z⟨1, i, (i+j)/2, (1+k)/2⟩,
+        // if α = (a + bi + cj + dk)/r in {1,i,j,k}, then in O₀:
+        //   α'₀ = a - d,  α'₁ = b - c,  α'₂ = c,  α'₃ = d
+        // (all divided by r, which must give integers).
+        let mut elem = self.normalized();
+        let a = &elem.a.0;
+        let b = &elem.b.0;
+        let c = &elem.c.0;
+        let d = &elem.d.0;
+
+        let c0 = a.ct_sub(d); // α'₀ = a - d
+        let c1 = b.ct_sub(c); // α'₁ = b - c
+        let c2 = *c; // α'₂ = c
+        let c3 = *d; // α'₃ = d
+
+        // g = gcd(α'₀, α'₁, α'₂, α'₃)
+        let g = c0.abs().gcd(&c1.abs()).gcd(&c2.abs()).gcd(&c3.abs());
+
+        // n = 2-adic valuation of g
+        let n = if bool::from(g.is_zero()) {
+            0
+        } else {
+            g.two_adic_val()
+        };
+
+        // Divide α by 2^n: scale the denominator up by 2^n.
+        if n > 0 {
+            let divisor = BigInt::<N>::ONE.shl(n);
+            let new_denom = elem.denom.0.ct_mul(&divisor);
+            elem.denom = Denominator::new(new_denom).expect("denom > 0");
+            elem.normalize();
+        }
+
+        (elem, n)
+    }
+
+    /// Narrow all coordinates and denominator to `BigInt<M>`, returning
+    /// `None` if any of them overflow.
+    ///
+    /// Useful after sampling at a wide width (for radius headroom)
+    /// when subsequent operations need a narrower representative.
+    /// Succeeds only when every individual limb above position `M` is
+    /// zero in each of the five `BigInt<N>` fields.
+    pub fn narrow_to<const M: usize>(&self) -> Option<Element<M>> {
+        const { assert!(M <= N, "Element::narrow_to: M must be <= N") };
+        Some(Element {
+            a: Coordinate(self.a.0.narrow_to::<M>()?),
+            b: Coordinate(self.b.0.narrow_to::<M>()?),
+            c: Coordinate(self.c.0.narrow_to::<M>()?),
+            d: Coordinate(self.d.0.narrow_to::<M>()?),
+            denom: Denominator(self.denom.0.narrow_to::<M>()?),
+        })
+    }
+
+    /// Reduced norm at a wider working width `W`.
+    ///
+    /// Returns `(numerator, denominator²)` at `BigInt<W>`. Computes
+    /// nrd(α) = (a² + b² + p(c² + d²)) / r² after widening the
+    /// coordinates to `BigInt<W>`, so there is no overflow provided
+    /// `W` is large enough for the squared sum.
+    ///
+    /// # Width requirement
+    ///
+    /// `W >= N` (compile-time enforced). For correctness of the inner
+    /// arithmetic, `W` must also satisfy
+    /// `64*W >= 2*bits(max_coord) + bits(p)` where `max_coord` is the
+    /// largest magnitude among `a, b, c, d, r`. For NIST-I with
+    /// coordinates up to ~2^574 and `p ~ 2^251`, pick `W >= 22`.
+    pub fn norm_w<const W: usize>(&self) -> (BigInt<W>, BigInt<W>) {
+        const { assert!(W >= N, "norm_w: W must be >= N") };
+        let a: BigInt<W> = self.a.0.widen();
+        let b: BigInt<W> = self.b.0.widen();
+        let c: BigInt<W> = self.c.0.widen();
+        let d: BigInt<W> = self.d.0.widen();
+        let r: BigInt<W> = self.denom.0.widen();
+        let p = {
+            let p8: BigInt<8> = P_WIDE;
+            let mut limbs = [0u64; W];
+            let len = p8.as_limbs().len().min(W);
+            limbs[..len].copy_from_slice(&p8.as_limbs()[..len]);
+            BigInt::<W>::from_sign_and_limbs(0, limbs)
+        };
+
+        let numer = a
+            .ct_mul(&a)
+            .ct_add(&b.ct_mul(&b))
+            .ct_add(&p.ct_mul(&c.ct_mul(&c).ct_add(&d.ct_mul(&d))));
+        let denom_sq = r.ct_mul(&r);
+        (numer, denom_sq)
+    }
+
     /// Reduced norm: nrd(α) = (a² + b² + p(c² + d²)) / r².
     ///
     /// Returns `(numerator, denominator²)` as `BigInt<N>`.
@@ -642,79 +746,6 @@ impl Element<4> {
         Self::from_wide(a, b, c, d, new_denom)
     }
 
-    /// Compute backtracking and normalize.
-    ///
-    /// Converts α from the {1, i, j, k} basis to the O₀ basis
-    /// (1, i, (i+j)/2, (1+k)/2), finds the largest power of 2
-    /// dividing all O₀-basis coordinates, and divides it out.
-    ///
-    /// Returns the normalized α and the backtracking exponent n
-    /// (the 2-adic valuation of the GCD).
-    ///
-    /// Implements [ComputeBacktrackingAndNormalize][Alg. 4.4].
-    ///
-    /// [Alg. 4.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.4
-    pub fn compute_backtracking(&self) -> (Self, u32) {
-        // Write α = α₀ + α₁i + α₂j + α₃k (with common denom r).
-        // The O₀ basis is (1, i, (i+j)/2, (1+k)/2), so:
-        //   α'₀ = α₀ − α₃
-        //   α'₁ = α₁ − α₂
-        //   α'₂ = α₂ / 2   (must be exact since α ∈ O₀)
-        //   α'₃ = α₃ / 2
-        //
-        // Actually, if denom r = 2 (common for O₀ elements), the
-        // coords are already doubled. The spec assumes integer coords
-        // in the O₀ basis. We need to ensure exactness.
-        //
-        // For now, work with the raw {1,i,j,k} coords and denom.
-        // The O₀-basis coords (before dividing by denom) are:
-        //   α'₀ = a - d,  α'₁ = b - c,  α'₂ = c,  α'₃ = d
-        // where (a,b,c,d) are the numerator coords and denom = 2
-        // for a typical O₀ element. Then the true O₀ coords are
-        // (α'₀, α'₁, α'₂, α'₃) / denom, which must be integers.
-        //
-        // The spec's lines 2-5 assume denom = 1 (integer coords in
-        // {1,i,j,k}). The C ref calls `quat_alg_make_primitive`
-        // which normalizes first, then does the basis change.
-        let mut elem = self.normalized();
-
-        // Convert to O₀ basis: for O₀ = Z⟨1, i, (i+j)/2, (1+k)/2⟩,
-        // if α = (a + bi + cj + dk)/r in {1,i,j,k}, then in O₀:
-        //   α'₀ = a - d,  α'₁ = b - c,  α'₂ = c,  α'₃ = d
-        // (all divided by r, which must give integers).
-        let a = &elem.a.0;
-        let b = &elem.b.0;
-        let c = &elem.c.0;
-        let d = &elem.d.0;
-
-        let c0 = a.ct_sub(d); // α'₀ = a - d
-        let c1 = b.ct_sub(c); // α'₁ = b - c
-        let c2 = *c; // α'₂ = c
-        let c3 = *d; // α'₃ = d
-
-        // g = gcd(α'₀, α'₁, α'₂, α'₃)
-        let g = c0.abs().gcd(&c1.abs()).gcd(&c2.abs()).gcd(&c3.abs());
-
-        // n = 2-adic valuation of g
-        let n = if bool::from(g.is_zero()) {
-            0
-        } else {
-            g.two_adic_val()
-        };
-
-        // Divide α by 2^n: scale the denominator up by 2^n.
-        // α/2^n means each coord is divided by 2^n, equivalently
-        // denom is multiplied by 2^n.
-        if n > 0 {
-            let divisor = BigInt::<4>::ONE.shl(n);
-            let new_denom = elem.denom.0.ct_mul(&divisor);
-            elem.denom = Denominator::new(new_denom).expect("denom > 0");
-            elem.normalize();
-        }
-
-        (elem, n)
-    }
-
     /// Construct an `Element<4>` from wide (`BigInt<8>`) intermediates,
     /// normalizing and narrowing back to `Coordinate` storage.
     fn from_wide(a: BigInt<8>, b: BigInt<8>, c: BigInt<8>, d: BigInt<8>, r: BigInt<8>) -> Self {
@@ -846,6 +877,16 @@ mod tests {
         let expected = BigInt::<8>::from(5i64).ct_add(&BigInt::<8>::from(25i64).ct_mul(&p));
         assert_eq!(n_num, expected);
         assert_eq!(n_den, BigInt::<8>::ONE);
+    }
+
+    #[test]
+    fn norm_w_matches_norm() {
+        // `norm_w::<W>` at W = N' > 8 should match `norm` (widened).
+        let e = Element::<4>::from_i64(1, 2, 3, 4);
+        let (num8, den8) = e.norm();
+        let (num22, den22) = e.norm_w::<22>();
+        assert_eq!(num22, num8.widen::<22>());
+        assert_eq!(den22, den8.widen::<22>());
     }
 
     #[test]

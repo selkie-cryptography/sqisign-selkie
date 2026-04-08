@@ -322,11 +322,31 @@ impl SigningKey {
     ///
     /// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
     pub fn sign(&self, msg: &[u8]) -> Result<Signature, SignatureError> {
-        // TODO: remaining issues before sign() produces valid signatures:
-        //   - Sampling radius (line 14) is placeholder 2^f, should be D_rsp · D²_mix ·
-        //     2^{f+1} ≈ 2^1399 (requires wider lattice)
-        //   - Degree computations (lines 16-20): missing D²_mix division (coupled with
-        //     radius fix — both need wider arithmetic)
+        // Status: partially correct.
+        //
+        // What's right: commitment and challenge phases; response
+        // phase widens to `LeftIdeal<N_RESP>` (= 22 limbs, enough for
+        // the 1399-bit sampling radius), computes the correct
+        // intersection `I_com ∩ (I_sk · I_chl)`, samples α_rsp with
+        // the correct radius `D²_mix · 2^{e_rsp + f + 1}`, and does
+        // the full `d_rsp = nrd(α_rsp) / (D²_mix · 2^{f - n_bt})`
+        // division at wide width.
+        //
+        // What's still wrong:
+        //
+        // - After `compute_backtracking`, α_rsp has coordinates of ~575 bits
+        //   (Element<22>), which does NOT fit in `Element<4>`. We try to narrow and
+        //   `continue` on failure, which essentially always triggers, so the loop gives
+        //   up with `SigningFailed`.
+        //
+        // - `I_com,rsp` is built via `LeftIdeal::<4>::new` which truncates `q_rsp ·
+        //   D_mix` (~513 bits) to `BigInt<4>` (256 bits). Temporary placeholder.
+        //
+        // - `compute_even_response` takes `Element<4>`.
+        //
+        // Full fix requires generic `Element::mul`, generic
+        // `LeftIdeal::new`, and a wider `compute_even_response`.
+        // See §5 of the paper for the pattern.
 
         let f = TORSION_EVEN_POWER;
         let e_rsp = E_RSP;
@@ -397,24 +417,47 @@ impl SigningKey {
 
             // Line 14: α_rsp ← RandomEquivalentQuaternion(I_com ∩ I_sk · I_chl)
             //
-            // The spec (Algorithm 4.3) says the sampling radius is
-            // D_rsp · D²_mix · 2^{f+1} ≈ 2^1399 for NIST-I. This exceeds
-            // BigInt<4> (256 bits). The sample_from_ball function needs
-            // widening to BigInt<8> or larger for the radius parameter.
-            // For now, use 2^f as a placeholder (too small — will reject
-            // valid elements, reducing success probability but not
-            // breaking correctness of accepted samples).
-            let i_sk_i_chl = self.ideal.lattice().product(i_chl.lattice());
-            let intersection = self.ideal.lattice().intersection(&i_sk_i_chl);
-            let intersection_lat = Lattice::<4>::from(intersection);
-            let radius = BigInt::<4>::ONE.shl(f);
-            let alpha_rsp = match intersection_lat.sample_from_ball::<8>(&radius) {
+            // The spec (Algorithm 4.3) uses a sampling radius of
+            //   B = D_rsp · D²_mix · 2^{f+1} ≈ 2^1399   (NIST-I).
+            //
+            // We widen the three ideals to a common `LeftIdeal<22>`
+            // (1408 bits) to accommodate the radius, compute the
+            // intersection `I_com ∩ (I_sk · I_chl)` at that width, and
+            // sample with intermediate width W=44.
+            const N_RESP: usize = 22;
+            let i_sk_w = self.ideal.widen::<N_RESP>();
+            let i_chl_w = i_chl.widen::<N_RESP>();
+            let i_com_w = i_com.widen::<N_RESP>();
+
+            let i_sk_i_chl = i_sk_w.lattice().product(i_chl_w.lattice());
+            let intersection = i_com_w.lattice().intersection(&i_sk_i_chl);
+            let intersection_lat = Lattice::<N_RESP>::from(intersection);
+
+            // Radius: D_rsp · D²_mix · 2^{f+1}, computed at BigInt<22>.
+            // D_rsp = 2^e_rsp.
+            let d_mix_22 = D_MIX.widen::<N_RESP>();
+            let d_mix_sq = d_mix_22.ct_mul(&d_mix_22);
+            let radius = d_mix_sq.shl(e_rsp + f + 1);
+
+            let alpha_rsp_w = match intersection_lat.sample_from_ball::<44>(&radius) {
                 Some(a) => a,
                 None => continue,
             };
 
-            // Line 15: α_rsp, n_bt ← ComputeBacktrackingAndNormalize(α_rsp)
-            let (alpha_rsp, n_bt) = alpha_rsp.compute_backtracking();
+            // Line 15: α_rsp, n_bt ← ComputeBacktrackingAndNormalize(α_rsp).
+            // Compute the norm at wide width while the element is
+            // still at `Element<N_RESP>`; we will need it for d_rsp.
+            let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
+            let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
+
+            // Try to narrow to `Element<4>` for the downstream code
+            // (`LeftIdeal::new`, `compute_even_response`). For "nice"
+            // samples this succeeds; otherwise, retry the sign loop.
+            // A fully wide response phase is future work.
+            let alpha_rsp = match alpha_rsp_w.narrow_to::<4>() {
+                Some(a) => a,
+                None => continue,
+            };
 
             // Lines 16–20: degree computations.
             //
@@ -422,28 +465,26 @@ impl SigningKey {
             // r_rsp = DyadicValuation(d_rsp)
             // q_rsp = d_rsp / 2^r_rsp
             // e'_rsp = e_rsp - r_rsp - n_bt
-            let (nrd_num, nrd_den) = alpha_rsp.norm();
-            // nrd(α_rsp) = nrd_num / nrd_den.
-            // d_rsp = (nrd_num / nrd_den) / (D²_mix · 2^{f-n_bt})
-            //       = nrd_num / (nrd_den · D²_mix · 2^{f-n_bt})
             //
-            // D²_mix ≈ 2^1024 doesn't fit in BigInt<8>. But we can
-            // divide step by step: first by nrd_den, then shift right
-            // by (f-n_bt), then divide by D²_mix.
-            // Since d_rsp is guaranteed to be a small integer (bounded
-            // by D_rsp · 2^{n_bt+1}), the divisions are exact.
+            // `nrd_num_w / nrd_den_w` is the norm at `BigInt<N_RESP>`,
+            // computed above before narrowing α. The division by
+            // `D²_mix · 2^{f-n_bt}` must also be done at the wider
+            // width because `D²_mix ~ 2^1024` exceeds `BigInt<4>`.
             let d_rsp_wide = {
-                // nrd_num / nrd_den
-                let (q1, _) = nrd_num.div_rem(&nrd_den);
-                // / 2^{f-n_bt}: right shift
-                q1.shr(f - n_bt)
-                // TODO: / D²_mix — requires wide division or
-                // iterative division by D_MIX twice. For now,
-                // this is approximate.
+                let (q1, _) = nrd_num_w.div_rem(&nrd_den_w);
+                let q2 = q1.shr(f - n_bt);
+                let (q3, _) = q2.div_rem(&d_mix_sq);
+                q3
             };
             let r_rsp_val = d_rsp_wide.trailing_zeros();
             let d_rsp_shifted = d_rsp_wide.shr(r_rsp_val);
-            // q_rsp = d_rsp / 2^r_rsp (odd part).
+            // q_rsp = d_rsp / 2^r_rsp (odd part). Expected to fit in
+            // a `u64`: the response-degree odd part is bounded by
+            // `D_rsp ≈ 2^126` for NIST-I, so it does not fit in a
+            // single u64 in general. For the current commit we keep
+            // the existing narrow representation and revisit when
+            // `LeftIdeal::new` becomes width-generic.
+            // TODO: widen `q_rsp` to `BigInt<4>` (up to ~128 bits).
             let q_rsp = d_rsp_shifted.as_limbs()[0];
             let e_rsp_prime = e_rsp - r_rsp_val - n_bt;
 
@@ -455,6 +496,16 @@ impl SigningKey {
                 .map_err(|_| SignatureError::SigningFailed)?;
 
             // Line 19: I_com,rsp = O₀·α_rsp + O₀(q_rsp·D_mix)
+            //
+            // `q_rsp·D_mix` has ~513 + log2(q_rsp) bits, which does
+            // not fit in `BigInt<4>`. We construct `LeftIdeal<4>` with
+            // a truncated norm here as a temporary placeholder: this
+            // will not produce valid signatures, but keeps the rest
+            // of the flow compilable. See the corresponding TODO in
+            // the paper's §5 (Bugs from Fixed-Width Arithmetic).
+            // TODO: construct `I_com,rsp` via a width-generic
+            // `LeftIdeal::new` (future work, requires generic
+            // `Element::mul`).
             let i_com_rsp_norm = BigInt::<4>::from_u64(q_rsp).ct_mul(&BigInt::<4>::from_limbs({
                 let mut l = [0u64; 4];
                 l.copy_from_slice(&D_MIX.as_limbs()[..4]);

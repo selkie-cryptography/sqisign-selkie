@@ -1511,6 +1511,53 @@ impl<const N: usize> LeftIdeal<N> {
             }),
         })
     }
+
+    /// Widen this ideal to `LeftIdeal<M>` by zero-extending all
+    /// `BigInt<N>` limbs in the lattice basis, norm, denominator, and
+    /// parent order.
+    ///
+    /// `M` must be `>= N`, enforced at compile time.
+    ///
+    /// Used in signing to lift `LeftIdeal<4>` (typical secret/challenge
+    /// ideals) and `LeftIdeal<9>` (the commitment ideal at D_mix width)
+    /// to a common wide type for the response-phase lattice arithmetic.
+    #[must_use]
+    pub fn widen<const M: usize>(&self) -> LeftIdeal<M> {
+        const { assert!(M >= N, "LeftIdeal::widen: M must be >= N") };
+
+        // Widen the HNF lattice.
+        let basis_n = self.lattice().basis();
+        let mut basis_m = Matrix::<M>::ZERO;
+        for row in 0..4 {
+            for col in 0..4 {
+                basis_m[row][col] = basis_n[row][col].widen::<M>();
+            }
+        }
+        let lat_wide = HnfLattice {
+            basis: basis_m,
+            denom: self.lattice().denom().widen::<M>(),
+        };
+
+        // Widen the parent order.
+        let order_n = self.parent_order();
+        let order_basis_n = order_n.basis();
+        let mut order_basis_m = Matrix::<M>::ZERO;
+        for row in 0..4 {
+            for col in 0..4 {
+                order_basis_m[row][col] = order_basis_n[row][col].widen::<M>();
+            }
+        }
+        let order_wide = Order::from_lattice_unchecked(Lattice::new(
+            order_basis_m,
+            order_n.denom().widen::<M>(),
+        ));
+
+        LeftIdeal {
+            lattice: lat_wide,
+            norm: self.norm().widen::<M>(),
+            parent_order: order_wide,
+        }
+    }
 }
 
 impl<const N: usize> LeftIdeal<N>
