@@ -1320,21 +1320,16 @@ impl LeftIdeal<9> {
         let n_bits = n.bitsize() as usize;
         let n_bytes = n_bits.div_ceil(8);
 
-        // Widened copies of N and p for the norm + modular arithmetic.
+        // Widened copies of N and p for the norm computation.
+        // nrd(γ) = g₁² + p(g₂² + g₃²) with g_i ~ 2^513 and p ~ 2^251
+        // reaches ~2^1279 bits, wider than `BigInt<9>`. We widen to
+        // `BigInt<22>` (1408 bits) for the norm, then reduce mod N.
         //
-        // `pow_mod`/`legendre`/`modular_sqrt` on `BigInt<N>` only work
-        // correctly when `2 * bits(modulus) ≤ 64 * N` — the intermediate
-        // squarings (`result * result`) otherwise overflow and wrap.
-        // For N = D_MIX (513 bits), squaring needs ~1026 bits = 17
-        // limbs, so `BigInt<9>` is too narrow. We widen to `BigInt<18>`
-        // (1152 bits) for the Legendre + sqrt, then narrow back.
-        //
-        // The norm computation itself (`g² + p(g² + g²)`) reaches
-        // ~2^1279 bits, also wider than `BigInt<9>`. We widen to
-        // `BigInt<22>` (1408 bits) for that.
+        // The `Legendre` check and `modular_sqrt` are routed through
+        // `*_w::<18>` variants, which widen internally to the minimum
+        // working width required for a 513-bit modulus.
         let n_w22: BigInt<22> = n.widen();
         let p_w22: BigInt<22> = p_wide.widen();
-        let n_w18: BigInt<18> = n.widen();
 
         for _ in 0..10_000 {
             // Sample g₁, g₂, g₃ uniform in [0, N-1].
@@ -1369,30 +1364,23 @@ impl LeftIdeal<9> {
 
             let nrd_mod_w22 = nrd_w.ct_mod(&n_w22);
             let neg_nrd_w22 = n_w22.ct_sub(&nrd_mod_w22);
-
-            // Re-widen the reduced residue to BigInt<18> for Legendre
-            // and modular_sqrt. (We could also stay at <22>, but <18>
-            // is the minimum correct width and a bit faster.)
-            let neg_nrd_w18: BigInt<18> = {
-                let tmp: BigInt<9> = neg_nrd_w22
-                    .narrow_to()
-                    .expect("residue < N < 2^513 fits in BigInt<9>");
-                tmp.widen()
-            };
+            let neg_nrd: BigInt<9> = neg_nrd_w22
+                .narrow_to()
+                .expect("residue < N < 2^513 fits in BigInt<9>");
 
             // Check Legendre(-nrd(γ), N) = 1.
-            if BigInt::<18>::legendre(&neg_nrd_w18, &n_w18) != 1 {
+            // D_MIX is 513 bits, so BigInt<9>::legendre (which needs
+            // 64*N >= 2*bits(modulus) = 1026) silently truncates.
+            // Use the wide variant with W = 18 (1152 bits).
+            if BigInt::<9>::legendre_w::<18>(&neg_nrd, n) != 1 {
                 continue;
             }
 
-            // a = √(-nrd(γ)) mod N.
-            let a_w18 = match BigInt::<18>::modular_sqrt(&neg_nrd_w18, &n_w18) {
+            // a = √(-nrd(γ)) mod N. Same width issue as Legendre.
+            let a = match BigInt::<9>::modular_sqrt_w::<18>(&neg_nrd, n) {
                 Some(s) => s,
                 None => continue,
             };
-            let a: BigInt<9> = a_w18
-                .narrow_to()
-                .expect("sqrt result < N < 2^513 fits in BigInt<9>");
 
             // Construct I = O₀⟨γ, N⟩ as a lattice using wide arithmetic.
             //
@@ -1537,12 +1525,30 @@ where
     ///
     /// Implements [RandomEquivalentPrimeIdeal][Alg. 3.9].
     ///
+    /// # Width requirement
+    ///
+    /// The const generic `PRIME_W` is the working width for the
+    /// Miller-Rabin primality check on the candidate norm. For
+    /// correctness, `64 * PRIME_W >= 2 * bits(norm)` — otherwise
+    /// [`BigInt::pow_mod`] inside Miller-Rabin silently truncates
+    /// and rejects genuine primes. Callers should pass `PRIME_W >=
+    /// ceil(bits(norm) / 32)`.
+    ///
+    /// For the SQIsign v2 commitment phase (`LeftIdeal<9>`, norms
+    /// up to ~2^513), pass `PRIME_W = 18`.
+    ///
     /// WARNING: Not constant-time.
     ///
     /// TODO(ct): Make constant-time before production use.
     ///
     /// [Alg. 3.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.9
-    pub fn reduce_to_prime_norm(&mut self) -> bool {
+    pub fn reduce_to_prime_norm<const PRIME_W: usize>(&mut self) -> bool {
+        const {
+            assert!(
+                PRIME_W >= N,
+                "reduce_to_prime_norm: PRIME_W must be >= storage width N"
+            )
+        };
         let bound = crate::params::EQUIV_BOUND_COEFF;
         let primality_rounds = crate::params::PRIMALITY_NUM_ITER;
         // Step 1: L2-reduce the basis and compute the Gram matrix.
@@ -1575,7 +1581,7 @@ where
             // Norm of equivalent ideal = nrd / denom².
             let (norm, _rem) = nrd.div_rem(&denom_sq);
 
-            if norm.is_probable_prime(primality_rounds) {
+            if norm.is_probable_prime_w::<PRIME_W>(primality_rounds) {
                 // Reconstruct α = Σ c_i · col_i in the reduced basis.
                 let mut alpha = [BigInt::<N>::ZERO; 4];
                 for i in 0..4 {

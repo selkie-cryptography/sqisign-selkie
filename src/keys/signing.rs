@@ -167,7 +167,9 @@ impl SigningKey {
                 };
 
             // Line 4: I_sk ← RandomEquivalentPrimeIdeal(I_sk).
-            if !i_sk.reduce_to_prime_norm() {
+            // PRIME_W = 18 matches the working width in
+            // `random_prime_norm_wide` for 513-bit D_mix norms.
+            if !i_sk.reduce_to_prime_norm::<18>() {
                 continue;
             }
             let i_sk_narrow = match i_sk.narrow() {
@@ -351,8 +353,9 @@ impl SigningKey {
                     None => continue,
                 };
 
-            // Lines 5–6: RandomEquivalentPrimeIdeal
-            if !i_com.reduce_to_prime_norm() {
+            // Lines 5–6: RandomEquivalentPrimeIdeal.
+            // PRIME_W = 18 for 513-bit D_mix norms; see keygen.
+            if !i_com.reduce_to_prime_norm::<18>() {
                 continue;
             }
 

@@ -805,6 +805,14 @@ impl<const N: usize> BigInt<N> {
     /// the spec, with fast paths for m ≡ 3 (mod 4) and m ≡ 5 (mod 8),
     /// and Tonelli-Shanks for the general case m ≡ 1 (mod 8).
     ///
+    /// # Width requirement
+    ///
+    /// All internal operations use [`pow_mod`](Self::pow_mod) and
+    /// direct `ct_mul`/`ct_mod` at width `N`. The caller must ensure
+    /// `64*N >= 2*bits(m)` — otherwise the squarings silently
+    /// truncate and the result is wrong. For larger moduli use
+    /// [`modular_sqrt_w`](Self::modular_sqrt_w).
+    ///
     /// [Algorithm 3.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.1
     pub fn modular_sqrt(n: &Self, m: &Self) -> Option<Self> {
         let n_mod = n.ct_mod(m);
@@ -883,9 +891,38 @@ impl<const N: usize> BigInt<N> {
         if check == n_mod { Some(x) } else { None }
     }
 
+    /// Modular square root at a wider working width `W`.
+    ///
+    /// Widens `n` and `m` to `BigInt<W>` and runs
+    /// [`modular_sqrt`](Self::modular_sqrt) at that width. Use when
+    /// `64*N < 2*bits(m)` would otherwise silently truncate the
+    /// Tonelli-Shanks exponentiations.
+    ///
+    /// See [`pow_mod_w`](Self::pow_mod_w) for the width constraints.
+    pub fn modular_sqrt_w<const W: usize>(n: &Self, m: &Self) -> Option<Self> {
+        const {
+            assert!(
+                W >= N,
+                "modular_sqrt_w: working width W must be >= storage width N"
+            )
+        };
+        let n_w: BigInt<W> = n.widen();
+        let m_w: BigInt<W> = m.widen();
+        let r_w = BigInt::<W>::modular_sqrt(&n_w, &m_w)?;
+        r_w.narrow_to::<N>()
+    }
+
     /// Modular exponentiation: `base^exp mod modulus`.
     ///
     /// Uses square-and-multiply. The exponent is scanned from MSB to LSB.
+    ///
+    /// # Width requirement
+    ///
+    /// The inner squaring `result * result` can reach `(modulus - 1)²`
+    /// before the `ct_mod` reduction. For the result to not silently
+    /// truncate, `BigInt<N>` must satisfy `64*N >= 2*bits(modulus)`.
+    /// If `modulus` is larger than that bound (bits-wise), use
+    /// [`pow_mod_w`](Self::pow_mod_w) with a wider working type.
     pub fn pow_mod(base: &Self, exp: &Self, modulus: &Self) -> Self {
         let mut result = Self::ONE;
         let bs = exp.bitsize();
@@ -903,6 +940,39 @@ impl<const N: usize> BigInt<N> {
         result
     }
 
+    /// Modular exponentiation at a wider working width `W`.
+    ///
+    /// Widens the operands to `BigInt<W>`, runs [`pow_mod`](Self::pow_mod)
+    /// at that width, then narrows the result back to `BigInt<N>`.
+    /// Use this when the storage width `N` is not big enough for the
+    /// squarings inside `pow_mod` to fit without truncation — that is,
+    /// whenever `64*N < 2*bits(modulus)`.
+    ///
+    /// # Width requirements
+    ///
+    /// - Compile-time: `W >= N` (enforced by a const assertion).
+    /// - Runtime invariant: `64*W >= 2*bits(modulus)`. The caller is
+    ///   responsible for choosing `W` large enough for their modulus. If this
+    ///   is violated, the wider `pow_mod` will also silently truncate.
+    ///
+    /// For the SQIsign v2 commitment modulus
+    /// `D_mix = 2^512 + 75` (513 bits), use at least `W = 18`.
+    pub fn pow_mod_w<const W: usize>(base: &Self, exp: &Self, modulus: &Self) -> Self {
+        const {
+            assert!(
+                W >= N,
+                "pow_mod_w: working width W must be >= storage width N"
+            )
+        };
+        let base_w: BigInt<W> = base.widen();
+        let exp_w: BigInt<W> = exp.widen();
+        let modulus_w: BigInt<W> = modulus.widen();
+        let result_w = BigInt::<W>::pow_mod(&base_w, &exp_w, &modulus_w);
+        result_w
+            .narrow_to::<N>()
+            .expect("pow_mod_w result < modulus < 2^(64N) fits in BigInt<N>")
+    }
+
     /// Miller-Rabin probabilistic primality test.
     ///
     /// Returns `true` if `self` is probably prime. Uses `rounds`
@@ -916,6 +986,15 @@ impl<const N: usize> BigInt<N> {
     /// (J. Number Theory 12(1), 1980).
     ///
     /// [Miller76]: https://en.wikipedia.org/wiki/Miller%E2%80%93Rabin_primality_test
+    ///
+    /// # Width requirement
+    ///
+    /// Miller-Rabin uses [`pow_mod`](Self::pow_mod) and direct
+    /// `ct_mul` on values up to `self`. The caller must ensure
+    /// `64*N >= 2*bits(self)` — otherwise the squarings silently
+    /// truncate and the test returns wrong answers (in practice,
+    /// false negatives on primes). For larger candidates use
+    /// [`is_probable_prime_w`](Self::is_probable_prime_w).
     ///
     /// WARNING: Not constant-time — the number of iterations and
     /// modular exponentiations depend on the value.
@@ -972,8 +1051,34 @@ impl<const N: usize> BigInt<N> {
         true
     }
 
+    /// Miller-Rabin primality test at a wider working width `W`.
+    ///
+    /// Widens `self` to `BigInt<W>` and runs
+    /// [`is_probable_prime`](Self::is_probable_prime) at that width.
+    /// Use when `64*N < 2*bits(self)` would otherwise silently
+    /// truncate the Miller-Rabin witness exponentiations (producing
+    /// false negatives on actual primes).
+    ///
+    /// See [`pow_mod_w`](Self::pow_mod_w) for the width constraints.
+    pub fn is_probable_prime_w<const W: usize>(&self, rounds: u32) -> bool {
+        const {
+            assert!(
+                W >= N,
+                "is_probable_prime_w: working width W must be >= storage width N"
+            )
+        };
+        let self_w: BigInt<W> = self.widen();
+        self_w.is_probable_prime(rounds)
+    }
+
     /// Legendre symbol: returns 1 if `a` is a quadratic residue mod
     /// `p`, -1 if not, 0 if a ≡ 0 mod p. Requires `p` odd prime.
+    ///
+    /// # Width requirement
+    ///
+    /// Uses Euler's criterion via [`pow_mod`](Self::pow_mod), which
+    /// requires `64*N >= 2*bits(p)`. For larger primes use
+    /// [`legendre_w`](Self::legendre_w).
     pub fn legendre(a: &Self, p: &Self) -> i32 {
         let a_mod = a.ct_mod(p);
         if bool::from(a_mod.is_zero()) {
@@ -982,6 +1087,24 @@ impl<const N: usize> BigInt<N> {
         let exp = p.ct_sub(&Self::ONE).shr(1);
         let result = Self::pow_mod(&a_mod, &exp, p);
         if result == Self::ONE { 1 } else { -1 }
+    }
+
+    /// Legendre symbol at a wider working width `W`.
+    ///
+    /// Widens `a` and `p` to `BigInt<W>` and runs [`legendre`](Self::legendre)
+    /// at that width. See [`pow_mod_w`](Self::pow_mod_w) for the width
+    /// constraints. Use when `64*N < 2*bits(p)` would otherwise
+    /// silently truncate the Euler exponentiation.
+    pub fn legendre_w<const W: usize>(a: &Self, p: &Self) -> i32 {
+        const {
+            assert!(
+                W >= N,
+                "legendre_w: working width W must be >= storage width N"
+            )
+        };
+        let a_w: BigInt<W> = a.widen();
+        let p_w: BigInt<W> = p.widen();
+        BigInt::<W>::legendre(&a_w, &p_w)
     }
 
     // -----------------------------------------------------------------------
