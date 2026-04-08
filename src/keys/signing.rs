@@ -466,14 +466,14 @@ impl SigningKey {
             };
             let r_rsp_val = d_rsp_wide.trailing_zeros();
             let d_rsp_shifted = d_rsp_wide.shr(r_rsp_val);
-            // q_rsp = d_rsp / 2^r_rsp (odd part). Expected to fit in
-            // a `u64`: the response-degree odd part is bounded by
-            // `D_rsp ≈ 2^126` for NIST-I, so it does not fit in a
-            // single u64 in general. For the current commit we keep
-            // the existing narrow representation and revisit when
-            // `LeftIdeal::new` becomes width-generic.
-            // TODO: widen `q_rsp` to `BigInt<4>` (up to ~128 bits).
-            let q_rsp = d_rsp_shifted.as_limbs()[0];
+            // q_rsp = d_rsp / 2^r_rsp (odd part). For NIST-I the
+            // response-degree odd part is bounded by `D_rsp ≈ 2^126`,
+            // so it fits in `BigInt<4>` (256 bits) with room to
+            // spare. Narrow from the wide working width.
+            let q_rsp: BigInt<4> = match d_rsp_shifted.narrow_to::<4>() {
+                Some(q) => q,
+                None => continue,
+            };
             let e_rsp_prime = e_rsp - r_rsp_val - n_bt;
 
             let n_bt_te =
@@ -493,7 +493,7 @@ impl SigningKey {
             // prime-norm ideal and narrow to `LeftIdeal<4>` for the
             // downstream `to_isogeny` call.
             let o0_w = EXTREMAL_ORDERS[0].widen::<N_RESP>();
-            let q_rsp_wide = BigInt::<N_RESP>::from_u64(q_rsp);
+            let q_rsp_wide: BigInt<N_RESP> = q_rsp.widen();
             let i_com_rsp_norm_w = q_rsp_wide.ct_mul(&d_mix_22);
             let mut i_com_rsp_w =
                 LeftIdeal::from_generator(&alpha_rsp_w, &i_com_rsp_norm_w, o0_w.order());
@@ -513,9 +513,7 @@ impl SigningKey {
 
             if e_rsp_prime > 0 {
                 // Lines 22–27: auxiliary isogeny path
-                let aux_norm = BigInt::<4>::ONE
-                    .shl(e_rsp_prime)
-                    .ct_sub(&BigInt::<4>::from_u64(q_rsp));
+                let aux_norm = BigInt::<4>::ONE.shl(e_rsp_prime).ct_sub(&q_rsp);
                 let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0]) {
                     Some(i) => i,
                     None => continue,
@@ -782,7 +780,7 @@ pub(crate) fn split_auxiliary_isogeny(
     q1: &ProjectiveXOnlyPoint,
     p2: &ProjectiveXOnlyPoint,
     q2: &ProjectiveXOnlyPoint,
-    q_rsp: u64,
+    q_rsp: BigInt<4>,
     e_prime: TorsionExponent,
     r_rsp: TorsionExponent,
 ) -> Option<(
@@ -813,7 +811,7 @@ pub(crate) fn split_auxiliary_isogeny(
 
     // Line 3: q_inv ← q^{-1} (mod 2^{f-e'-2})
     let mod_bits = f - e_prime_val - 2;
-    let q_scalar = Scalar::from_u64(q_rsp);
+    let q_scalar = Scalar::from_limbs(*q_rsp.as_limbs());
     let q_inv = q_scalar.inv_mod2k(mod_bits)?;
 
     // Line 4: P'₂, Q'₂ ← [q_inv·2^{f-e'-2}]P₂, [q_inv·2^{f-e'-2}]Q₂
