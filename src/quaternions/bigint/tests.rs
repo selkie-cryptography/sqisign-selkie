@@ -475,6 +475,51 @@ fn modular_sqrt_non_residue() {
     assert!(r.is_none());
 }
 
+// ------------------------------------------------------------------
+// Width-aware regression tests (see paper §5 "Bugs from Fixed-Width
+// Arithmetic"). Confirm the `_w` variants give correct answers on
+// moduli where the plain versions would silently truncate.
+// ------------------------------------------------------------------
+
+#[test]
+fn pow_mod_w_dmix_fermat() {
+    // Fermat's little theorem: 2^(D_mix - 1) ≡ 1 (mod D_mix) for the
+    // 513-bit prime D_mix = 2^512 + 75. Requires working width W ≥ 17.
+    use crate::params::D_MIX;
+    let two = BigInt::<9>::from_u64(2);
+    let exp = D_MIX.ct_sub(&BigInt::<9>::ONE);
+    let r = BigInt::<9>::pow_mod_w::<18>(&two, &exp, &D_MIX);
+    assert_eq!(r, BigInt::<9>::ONE, "2^(D_mix - 1) must be 1 mod D_mix");
+}
+
+#[test]
+fn legendre_w_dmix_square() {
+    // `4 = 2²` is a perfect square, so `Legendre(4, N) = 1` for any
+    // odd prime N. Requires the wide variant for 513-bit D_mix.
+    use crate::params::D_MIX;
+    let four = BigInt::<9>::from_u64(4);
+    assert_eq!(BigInt::<9>::legendre_w::<18>(&four, &D_MIX), 1);
+}
+
+#[test]
+fn is_probable_prime_w_dmix_is_prime() {
+    // D_mix = 2^512 + 75 is the smallest prime greater than 2^512.
+    // Requires the wide variant; the plain version returns false.
+    use crate::params::D_MIX;
+    assert!(D_MIX.is_probable_prime_w::<18>(12));
+}
+
+#[test]
+fn modular_sqrt_w_dmix_roundtrip() {
+    // For a random perfect square n² mod D_mix, sqrt(n²) must equal
+    // n or D_mix − n.
+    use crate::params::D_MIX;
+    let n = BigInt::<9>::from_u64(12345);
+    let n_sq = n.ct_mul(&n).ct_mod(&D_MIX);
+    let r = BigInt::<9>::modular_sqrt_w::<18>(&n_sq, &D_MIX).expect("n² is a QR mod D_mix");
+    assert!(r == n || r == D_MIX.ct_sub(&n));
+}
+
 #[test]
 fn cornacchia_basic() {
     // Solve x² + y² = 5 (q=1, m=5). Solution: (1, 2) or (2, 1).
