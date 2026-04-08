@@ -25,7 +25,7 @@ fp2_mul(&null.t, &T->P1.z, &T->P2.z); // Z1 * Z2
 \end{lstlisting}
 
 \noindent
-\textbf{Lesson:} When the spec is abstract about coordinate
+\textbf{Takeaway:} When the spec is abstract about coordinate
 representations, the C reference is the ground truth.
 
 \subsection{Squared theta means square then Hadamard}
@@ -39,7 +39,7 @@ computed $\mathcal{H}(\mathrm{inv} \cdot P^2)$ instead of
 $\mathcal{H}(\mathrm{inv} \cdot \mathcal{H}(P^2))$.
 
 \noindent
-\textbf{Lesson:} Read the body of helper functions in the C reference,
+\textbf{Takeaway:} Read the body of helper functions in the C reference,
 not just their names.  ``Squared theta'' is not just squaring.
 
 \subsection{Cross-product index errors in GluingEval}
@@ -52,7 +52,7 @@ should be $u_1 \cdot w_2$ (cross-curve), but we wrote $u_1 \cdot w_1$
 (same-curve).
 
 \noindent
-\textbf{Lesson:} In product-curve formulas, every multiplication
+\textbf{Takeaway:} In product-curve formulas, every multiplication
 involves one factor from each curve.  Two factors with the same
 subscript are almost certainly wrong.
 
@@ -66,7 +66,7 @@ Our code called \texttt{Fp2::invert()}, which is both wrong and
 expensive.
 
 \noindent
-\textbf{Lesson:} In projective or theta coordinates, ``inverse''
+\textbf{Takeaway:} In projective or theta coordinates, ``inverse''
 almost always means projective inverse via cross-products.  Actual
 field inversion is a red flag.
 
@@ -80,7 +80,7 @@ $(x : x : y : y)$.  Storing this in a generic 4-coordinate
 and \texttt{J.y} for the two distinct values, but both hold $x$.
 
 \noindent
-\textbf{Lesson:} Do not reuse a generic $n$-coordinate type to store
+\textbf{Takeaway:} Do not reuse a generic $n$-coordinate type to store
 a value with a special pattern.  Use a dedicated type, or at minimum
 document which fields hold which logical values.
 
@@ -100,7 +100,7 @@ $P + [m]Q$.  The swap ensures the multiplied point avoids $(0,0)$
 for differential addition.  This is not documented in the spec.
 
 \noindent
-\textbf{Lesson:} Undocumented conventions in reference code can look
+\textbf{Takeaway:} Undocumented conventions in reference code can look
 like bugs in your own code.  Verify against the reference before
 ``fixing'' something that isn't broken.
 
@@ -129,7 +129,7 @@ Hadamard-transformed null point that has no zero $U_{i,j}(0)$ entry.
 The chain ran correctly for 125 steps and produced nonsense at the end.
 
 \noindent
-\textbf{Lesson:} The last few steps of an isogeny chain often need
+\textbf{Takeaway:} The last few steps of an isogeny chain often need
 special handling.  The spec describes the generic step uniformly; the
 \texttt{hadamard\_bool} optimization is an implementation-level choice
 in the C reference that avoids redundant Hadamard transforms at the
@@ -178,7 +178,7 @@ that computes torsion bases via \texttt{difference\_point} must
 canonicalize its $\mathbb{F}_{p^2}$ square root.
 
 \noindent
-\textbf{Lesson:}  Any time a specification says ``compute a square
+\textbf{Takeaway:}  Any time a specification says ``compute a square
 root'' in $\mathbb{F}_{p^2}$, the implementation \emph{must} specify
 and enforce a canonical choice.  The even-real-part convention used by
 the C reference is simple and should be the default for any SQIsign
@@ -218,10 +218,95 @@ Each fix was individually necessary; all three together were sufficient
 to make KAT vector~0 verify.
 
 \noindent
-\textbf{Lesson:} In $x$-only Montgomery arithmetic, $P{-}Q$ is a
+\textbf{Takeaway:} In $x$-only Montgomery arithmetic, $P{-}Q$ is a
 \emph{derived value} that cannot be reconstructed from $x(P)$ and
 $x(Q)$ alone (because $x(P{-}Q) = x(P{+}Q)$ on the Kummer line, and
 \texttt{DifferencePoint} resolves this ambiguity via a square root
 whose sign is fragile).  Treat $P{-}Q$ as a first-class member of the
 basis triple and propagate it through every transformation.
+
+\section{Bugs from Fixed-Width Arithmetic}
+\label{sec:fixed-width-bugs}
+
+The C reference uses GMP, so its BigInts grow as needed.  We use a
+fixed-width \texttt{BigInt<N>} type with $N$ 64-bit limbs, sized per
+Kim et al.~\cite{EPRINT:Kim25fixedprec} for NIST-I worst-case bounds.
+Fixed widths give us constant-time execution and stack allocation, but
+they add a new failure mode: \emph{silent overflow}.  \texttt{ct\_mul}
+at width $N$ returns a \texttt{BigInt<N>} and drops any bits above
+limb $N$.  If the caller doesn't check, later code sees a wrapped
+value and produces wrong answers with no warning.
+
+\subsection{\texttt{pow\_mod} silently overflows for large moduli}
+\label{sec:bug-pow-mod}
+
+\texttt{pow\_mod} does modular exponentiation by square-and-multiply:
+\begin{lstlisting}[language=Rust]
+pub fn pow_mod(base: &Self, exp: &Self, modulus: &Self) -> Self {
+    let mut result = Self::ONE;
+    for bit in exp.bits().rev() {
+        result = result.ct_mul(&result).ct_mod(modulus);
+        if bit { result = result.ct_mul(base).ct_mod(modulus); }
+    }
+    result
+}
+\end{lstlisting}
+After each reduction, $\texttt{result} < \texttt{modulus}$.  But
+before the reduction, the product $\texttt{result} \cdot
+\texttt{result}$ can be as large as $(\texttt{modulus}-1)^2$.  For
+this to fit without truncation, we need
+\[
+    64N \geq 2 \cdot \mathrm{bits}(\texttt{modulus}).
+\]
+Our commitment modulus $D_{\mathrm{mix}} = 2^{512} + 75$ is 513 bits.
+Squaring needs 1026 bits, or about 17 limbs.  The natural storage is
+\texttt{BigInt<9>} (576 bits), which is one limb above the
+bit-length.  Called at that width, \texttt{pow\_mod} truncates every
+squaring to 576 bits and returns garbage.
+
+The bug is deceptive because \texttt{is\_probable\_prime},
+\texttt{legendre}, and \texttt{modular\_sqrt} all call
+\texttt{pow\_mod}.  One wrong arithmetic result at the bottom makes
+all three lie:
+\begin{itemize}
+  \item \texttt{is\_probable\_prime(D\_mix)} returns \texttt{false},
+    even though $D_{\mathrm{mix}}$ is prime.
+  \item \texttt{legendre(4, D\_mix)} returns $-1$, even though $4$ is
+    a perfect square (so the answer must be $1$).
+  \item \texttt{modular\_sqrt} never finds a root.
+    \texttt{RandomIdealGivenNorm} rejects every sample.  Key
+    generation hangs.
+\end{itemize}
+
+It stayed hidden because earlier tests only called these functions at
+\texttt{BigInt<4>} with inputs under 128 bits---small enough that the
+squares fit.  It surfaced the first time we ran
+\texttt{SigningKey::generate} and evaluated Euler's criterion at
+$D_{\mathrm{mix}}$ scale.
+
+\paragraph{Immediate fix.}
+In \texttt{random\_prime\_norm\_wide}, widen the inputs to
+\texttt{BigInt<18>} (1152 bits) before the Legendre check and square
+root, then narrow the result back to \texttt{BigInt<9>}.  18 is the
+smallest width where $64N \geq 2 \cdot 513$, with room to spare.
+
+\paragraph{Proper fix (tracked).}
+\texttt{pow\_mod} and its three callers should take a method-level
+const generic $W$ for the working width, separate from the storage
+width $N$.  Callers pass $W \geq 2N$ explicitly, enforced by a
+\texttt{const} assertion.  The current single-width entry points
+still work for small moduli (under $32N$ bits), where $N$ is already
+enough.  Until we do this, every call site that passes a near-full
+modulus is potentially wrong and will fail silently.
+
+\noindent
+\textbf{Takeaway:} With fixed-width arithmetic, every call site that
+chains multiplications needs a width budget.  A function that takes a
+\texttt{BigInt<N>} is not self-contained: its correctness depends on
+$N$ being big enough for its internal operations.  Document the
+requirement in the rustdoc, and enforce it at compile time with const
+generics or a sealed trait when it's nontrivial.  The worst bugs are
+the ones where a wrong value at the bottom of the stack flips a
+cryptographic predicate---``is this prime?'', ``is this a square?''---
+with no other symptom.
 
