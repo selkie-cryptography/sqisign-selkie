@@ -1320,6 +1320,22 @@ impl LeftIdeal<9> {
         let n_bits = n.bitsize() as usize;
         let n_bytes = n_bits.div_ceil(8);
 
+        // Widened copies of N and p for the norm + modular arithmetic.
+        //
+        // `pow_mod`/`legendre`/`modular_sqrt` on `BigInt<N>` only work
+        // correctly when `2 * bits(modulus) ≤ 64 * N` — the intermediate
+        // squarings (`result * result`) otherwise overflow and wrap.
+        // For N = D_MIX (513 bits), squaring needs ~1026 bits = 17
+        // limbs, so `BigInt<9>` is too narrow. We widen to `BigInt<18>`
+        // (1152 bits) for the Legendre + sqrt, then narrow back.
+        //
+        // The norm computation itself (`g² + p(g² + g²)`) reaches
+        // ~2^1279 bits, also wider than `BigInt<9>`. We widen to
+        // `BigInt<22>` (1408 bits) for that.
+        let n_w22: BigInt<22> = n.widen();
+        let p_w22: BigInt<22> = p_wide.widen();
+        let n_w18: BigInt<18> = n.widen();
+
         for _ in 0..10_000 {
             // Sample g₁, g₂, g₃ uniform in [0, N-1].
             let sample_mod_n = || -> BigInt<9> {
@@ -1342,22 +1358,41 @@ impl LeftIdeal<9> {
 
             // nrd(γ) = g₁² + p(g₂² + g₃²) for γ = g₁i + g₂j + g₃ij
             // in the quaternion algebra B_{p,∞} = (-1, -p).
-            let g1_sq = g1.ct_mul(&g1);
-            let g2_sq = g2.ct_mul(&g2);
-            let g3_sq = g3.ct_mul(&g3);
-            let nrd = g1_sq.ct_add(&p_wide.ct_mul(&g2_sq.ct_add(&g3_sq)));
+            // Compute at BigInt<22> to avoid overflow, then reduce mod N.
+            let g1_w: BigInt<22> = g1.widen();
+            let g2_w: BigInt<22> = g2.widen();
+            let g3_w: BigInt<22> = g3.widen();
+            let g1_sq_w = g1_w.ct_mul(&g1_w);
+            let g2_sq_w = g2_w.ct_mul(&g2_w);
+            let g3_sq_w = g3_w.ct_mul(&g3_w);
+            let nrd_w = g1_sq_w.ct_add(&p_w22.ct_mul(&g2_sq_w.ct_add(&g3_sq_w)));
+
+            let nrd_mod_w22 = nrd_w.ct_mod(&n_w22);
+            let neg_nrd_w22 = n_w22.ct_sub(&nrd_mod_w22);
+
+            // Re-widen the reduced residue to BigInt<18> for Legendre
+            // and modular_sqrt. (We could also stay at <22>, but <18>
+            // is the minimum correct width and a bit faster.)
+            let neg_nrd_w18: BigInt<18> = {
+                let tmp: BigInt<9> = neg_nrd_w22
+                    .narrow_to()
+                    .expect("residue < N < 2^513 fits in BigInt<9>");
+                tmp.widen()
+            };
 
             // Check Legendre(-nrd(γ), N) = 1.
-            let neg_nrd = n.ct_sub(&nrd.ct_mod(n));
-            if BigInt::<9>::legendre(&neg_nrd, n) != 1 {
+            if BigInt::<18>::legendre(&neg_nrd_w18, &n_w18) != 1 {
                 continue;
             }
 
             // a = √(-nrd(γ)) mod N.
-            let a = match BigInt::<9>::modular_sqrt(&neg_nrd, n) {
+            let a_w18 = match BigInt::<18>::modular_sqrt(&neg_nrd_w18, &n_w18) {
                 Some(s) => s,
                 None => continue,
             };
+            let a: BigInt<9> = a_w18
+                .narrow_to()
+                .expect("sqrt result < N < 2^513 fits in BigInt<9>");
 
             // Construct I = O₀⟨γ, N⟩ as a lattice using wide arithmetic.
             //

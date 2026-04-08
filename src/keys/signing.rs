@@ -13,10 +13,13 @@
 #[cfg(feature = "zeroize")]
 use zeroize::ZeroizeOnDrop;
 
+#[cfg(test)]
+mod tests;
+
 use crate::{
     curves::{
         AuxiliaryHint, BasisHint, ChallengeHint, ChangeOfBasisMatrix, TorsionBasis,
-        TorsionExponent,
+        TorsionExponent, VerifyingKeyHint,
         isogeny::Kernel,
         montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
@@ -140,11 +143,70 @@ impl SigningKey {
     /// [§3.1.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.1
     /// [§3.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.2
     /// [§4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.3
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time. `TODO(ct)`: every step touches the secret ideal
+    /// `I_sk`. `random_prime_norm_wide` is rejection sampling,
+    /// `reduce_to_prime_norm` is non-CT LLL, and `to_isogeny` is
+    /// non-CT (variable-time SuitableIdeals/RepresentInteger). Must be
+    /// hardened before production use.
     pub fn generate(
         _rng: &mut impl rand_core::CryptoRngCore,
     ) -> Result<SigningKey, SignatureError> {
-        // Requires: quaternion algebra, id2iso, pairings.
-        todo!()
+        // Bound the retry loop. Each iteration may fail in
+        // reduce_to_prime_norm, narrow, or to_isogeny.
+        for _ in 0..1000 {
+            // Line 2: I_sk ← RandomIdealGivenNorm(D_mix, true).
+            // D_MIX = 2^512 + 75 fits in BigInt<9>.
+            let d_mix_wide = BigInt::<9>::from_limbs(*D_MIX.as_limbs());
+            let mut i_sk =
+                match LeftIdeal::<9>::random_prime_norm_wide(&d_mix_wide, &EXTREMAL_ORDERS[0]) {
+                    Some(i) => i,
+                    None => continue,
+                };
+
+            // Line 4: I_sk ← RandomEquivalentPrimeIdeal(I_sk).
+            if !i_sk.reduce_to_prime_norm() {
+                continue;
+            }
+            let i_sk_narrow = match i_sk.narrow() {
+                Some(i) => i,
+                None => continue,
+            };
+
+            // Line 5: E_pk, φ_sk(P₀), φ_sk(Q₀) ← IdealToIsogeny(I_sk).
+            let (e_pk, phi_p, phi_q) = match i_sk_narrow.to_isogeny() {
+                Some(r) => r,
+                None => continue,
+            };
+
+            // Line 8: (P_pk, Q_pk), hint_pk ← TorsionBasisToHint(E_pk).
+            let (basis_pk, basis_hint) = TorsionBasis::to_hint(&e_pk);
+
+            // Line 9: M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk, Q_pk)).
+            let phi_pmq = phi_p.projective_difference(&phi_q);
+            let eval_basis = TorsionBasis::new(phi_p, phi_pmq, phi_q);
+            let mat_sk = SecretKeyMatrix::encode(&eval_basis, &basis_pk);
+
+            // Assemble the verifying key with its cached byte form.
+            let hint_pk = VerifyingKeyHint::from(basis_hint.to_byte());
+            let mut vk_bytes = [0u8; VERIFYING_KEY_BYTES];
+            vk_bytes[..64].copy_from_slice(&e_pk.coefficient().to_bytes());
+            vk_bytes[64] = u8::from(hint_pk);
+            let verifying_key = VerifyingKey {
+                curve: e_pk,
+                hint: hint_pk,
+                bytes: vk_bytes,
+            };
+
+            return Ok(SigningKey {
+                verifying_key,
+                ideal: i_sk_narrow,
+                mat_sk,
+            });
+        }
+        Err(SignatureError::KeyGenFailed)
     }
 
     /// Construct a signing key from its byte representation.
