@@ -154,16 +154,11 @@ impl ProjectiveXOnlyPoint {
         // B_ZZ = (X_P · Z_Q − Z_P · X_Q)²
         let B_ZZ = (&xpzq - &zpxq).square();
 
-        // Normalize so the discriminant is a fourth power in Fp,
-        // making the Fp2 square root deterministic. The C reference
-        // (`difference_point`, basis.c:48-64) uses the factor
-        // C · conj(C)² · conj(Z_P)² · conj(Z_Q)². With C = 1 this
-        // reduces to conj(Z_P)² · conj(Z_Q)².
-        //
-        // NOTE: We previously used γ = (Z_P · Z_Q)², which is WRONG
-        // because conj(z)² ≠ z² for complex z. The conjugate
-        // normalization ensures B_XZ² − B_XX·B_ZZ lies in Fp (up to
-        // a fourth-power factor), so the square root is well-defined.
+        // Normalize so the discriminant is a fourth power in Fp, making
+        // the Fp2 square root deterministic. With C = 1 the C reference's
+        // C·conj(C)²·conj(Z_P)²·conj(Z_Q)² factor reduces to
+        // conj(Z_P)²·conj(Z_Q)². The conjugates are essential — γ = (Z_P·Z_Q)²
+        // does not work because conj(z)² ≠ z² in Fp2.
         let gamma = &Z_P.conjugate().square() * &Z_Q.conjugate().square();
 
         // Scale: B_XX *= γ, B_XZ *= γ, B_ZZ *= γ

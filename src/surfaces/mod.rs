@@ -21,16 +21,12 @@
 //!
 //! # Divergences from spec / C reference
 //!
-//! - **Jacobian coordinates for gluing**: the spec (§8.2) only describes x-only
-//!   Montgomery arithmetic. The gluing step requires full (x,y,z) coordinates
-//!   to distinguish P+Q from P−Q, and the C reference uses Jacobian doubling
-//!   with `z₃ = 2y·z²` (not standard `2y·z`). The conversion `jac_to_xz:
-//!   (x,y,z) ↦ (x, z²)` produces a specific projective representative that
-//!   `product_to_theta` depends on. See §4 (Bug Catalog) of the sqisign-selkie
-//!   paper for the bugs found during this work.
-//! - **Squared theta definition**: the spec's `product_to_theta` uses `X·Z`
-//!   products (not `X²` and `Z²` separately). The C reference confirms this
-//!   convention.
+//! - **Jacobian gluing.** The spec only specifies x-only Montgomery
+//!   arithmetic, but gluing needs full (x,y,z) to distinguish P+Q from P−Q.
+//!   We follow the C reference's nonstandard Jacobian doubling z₃ = 2y·z²
+//!   so that `jac_to_xz: (x,y,z) ↦ (x, z²)` agrees with `product_to_theta`.
+//! - **Squared theta.** `product_to_theta` uses X·Z products, not X² and
+//!   Z² separately.
 //!
 //! [§2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.4
 //! [§8.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5

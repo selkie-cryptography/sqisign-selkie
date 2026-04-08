@@ -19,14 +19,6 @@ use crate::fields::fp2::Fp2;
 /// theta-coordinate `JacobianPoint` in [`crate::surfaces`]. The name
 /// collision is unfortunate; we keep both because they serve different
 /// layers (curves vs surfaces).
-///
-/// # Coordinate representation TODOs
-///
-/// TODO: The `x`, `y` fields are bare `Fp2` — they should eventually
-/// be newtypes (`AffineX`, `AffineY`) to prevent mixing with the
-/// Montgomery coefficient `A` or other `Fp2` values. Similarly, the
-/// Montgomery coefficient `A` should be a newtype distinct from field
-/// elements. This is tracked as a future type-safety improvement.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct JacobianPoint {
     pub(crate) X: Fp2,
