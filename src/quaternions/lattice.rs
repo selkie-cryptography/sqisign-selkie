@@ -1677,10 +1677,23 @@ where
                 }
             }
 
-            // Norm of equivalent ideal = nrd / denom².
-            let (norm, _rem) = nrd.div_rem(&denom_sq);
+            // `nrd = c^T·G·c` is nrd(α_int) where
+            // α_int = Σ c_i · cols[i] is the integer-coordinate
+            // quaternion. The actual element of I is
+            // α_elt = α_int / d, so nrd(α_elt) = nrd / d².
+            let (nrd_alpha, rem1) = nrd.div_rem(&denom_sq);
+            if !bool::from(rem1.is_zero()) {
+                continue;
+            }
+            // The equivalent ideal J = I · ᾱ_elt / N(I) has norm
+            // m = nrd(α_elt) / N(I). Reject α unless N(I) divides
+            // nrd(α_elt) exactly and m is prime.
+            let (m, rem2) = nrd_alpha.div_rem(&self.norm);
+            if !bool::from(rem2.is_zero()) {
+                continue;
+            }
 
-            if norm.is_probable_prime_w::<PRIME_W>(primality_rounds) {
+            if m.is_probable_prime_w::<PRIME_W>(primality_rounds) {
                 // Reconstruct α = Σ c_i · col_i in the reduced basis.
                 let mut alpha = [BigInt::<N>::ZERO; 4];
                 for i in 0..4 {
@@ -1738,15 +1751,15 @@ where
                     new_cols[col_idx] = Vector::new(r[0], r[1], r[2], r[3]);
                 }
 
-                // New denom = old_denom * alpha_denom.
-                // α was built from lattice coords (integer), so
-                // alpha_denom = lattice denom (already in self.lattice).
-                let new_denom = denom.ct_mul(denom);
-
-                // New norm = old_norm * nrd(α) / denom².
-                // But nrd(α)/denom² = norm (which we already computed).
-                let new_norm = self.norm.ct_mul(&norm);
-                let (new_norm, _) = new_norm.div_rem(&denom_sq);
+                // J = I · ᾱ_elt / N(I), with α_elt = α_int / d.
+                // A basis element of I is cols[i] / d, so a basis
+                // element of J is
+                //   (cols[i] / d) · (ᾱ_int / d) / N(I)
+                //   = (cols[i] · ᾱ_int) / (d² · N(I)).
+                // Stored as integer columns `new_cols = cols · ᾱ_int`
+                // with denominator `d² · N(I)`.
+                let new_denom = denom_sq.ct_mul(&self.norm);
+                let new_norm = m;
 
                 // Assemble new lattice and reduce to HNF.
                 let new_basis = Matrix::from_columns(&new_cols);
