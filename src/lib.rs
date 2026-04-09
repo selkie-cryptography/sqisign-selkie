@@ -69,6 +69,9 @@ pub(crate) mod quaternions;
 // Deuring correspondence: ideal ↔ isogeny bridge
 pub(crate) mod deuring;
 
+// AES256-CTR-DRBG (SP 800-90A) used by _derand entry points
+pub(crate) mod drbg;
+
 // Key types and signatures
 pub mod keys;
 

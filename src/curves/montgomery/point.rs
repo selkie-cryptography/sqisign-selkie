@@ -19,7 +19,7 @@ use crate::{curves::scalar::Scalar, fields::fp2::Fp2};
 ///
 /// See [§8.2.1] for the projective coordinate conventions.
 ///
-/// [§8.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
+/// [§8.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.2.1
 #[derive(Copy, Clone, Debug)]
 pub struct ProjectiveXOnlyPoint {
     /// Projective X coordinate.
@@ -130,7 +130,7 @@ impl ProjectiveXOnlyPoint {
     ///
     /// Implements `ProjectiveDifference` ([§8.2.3], Algorithm 8.10).
     ///
-    /// [§8.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
+    /// [§8.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.2.3
     #[must_use]
     pub fn projective_difference(&self, other: &ProjectiveXOnlyPoint) -> ProjectiveXOnlyPoint {
         let (X_P, Z_P) = (&self.X, &self.Z);

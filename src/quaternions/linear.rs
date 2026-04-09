@@ -323,9 +323,9 @@ impl<const N: usize> Matrix<N> {
     /// elements to the left of pivots are zero, and elements to the
     /// right of pivots are in `[0, pivot)`.
     ///
-    /// [Algorithm 3.2] of the SQIsign specification.
+    /// [Alg. 3.2] of the SQIsign specification.
     ///
-    /// [Algorithm 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
+    /// [Alg. 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
     pub fn hnf(&self) -> Self {
         hnf_from_columns(&self.columns())
     }
@@ -413,12 +413,12 @@ impl<const N: usize> fmt::Debug for Matrix<N> {
 /// Compute the column-style Hermite Normal Form from a set of 4-element
 /// column vectors (generators). The output is always a 4×4 matrix.
 ///
-/// This implements [Algorithm 3.2] from the SQIsign specification.
+/// This implements [Alg. 3.2] from the SQIsign specification.
 /// The input can have more than 4 columns (e.g., 8 columns when computing
 /// the sum of two lattices); the HNF reduction produces 4 independent
 /// columns.
 ///
-/// [Algorithm 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
+/// [Alg. 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
 pub fn hnf_from_columns<const N: usize>(cols: &[Vector<N>]) -> Matrix<N> {
     let c = cols.len();
     assert!(c >= 4, "need at least 4 columns for rank-4 HNF");
@@ -427,11 +427,12 @@ pub fn hnf_from_columns<const N: usize>(cols: &[Vector<N>]) -> Matrix<N> {
     // Work with a mutable array of columns. a[col][row].
     let mut a: Vec<[BigInt<N>; 4]> = cols.iter().map(|v| [v[0], v[1], v[2], v[3]]).collect();
 
-    // [Algorithm 3.2] — 0-based indexing.
+    // [Alg. 3.2] — 0-based indexing.
     // Spec's 1-based "i" maps to 0-based "pivot".
     //
-    // [Algorithm 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
+    // [Alg. 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
     let mut pivot = d;
+
     while pivot > 0 {
         pivot -= 1;
 

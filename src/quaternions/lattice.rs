@@ -100,9 +100,9 @@ impl<const N: usize> Lattice<N> {
     ///
     /// Prefer using `HnfLattice::from(lattice)` or `lattice.into()`.
     ///
-    /// [Algorithm 3.2] of the SQIsign specification.
+    /// [Alg. 3.2] of the SQIsign specification.
     ///
-    /// [Algorithm 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
+    /// [Alg. 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
     fn hnf(self) -> HnfLattice<N> {
         HnfLattice {
             basis: self.basis.hnf(),
@@ -188,6 +188,7 @@ impl<const N: usize> Lattice<N> {
     // when both lattices are `Lattice<4>` (to access `basis_elem`).
     //
     // See [§3.1.5.2] (Multiplication) of the spec.
+    //
     // [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
     //
     // TODO: Implement lattice product. Requires Element::mul on each
@@ -1075,7 +1076,7 @@ impl LeftIdeal<4> {
 
     /// Construct a random left ideal of a given prime norm.
     ///
-    /// [Algorithm 3.10] from the spec (prime case).
+    /// [Alg. 3.10] from the spec (prime case).
     ///
     /// WARNING: Not constant-time — brute-force search with
     /// data-dependent Legendre symbol and modular sqrt.
@@ -1084,7 +1085,7 @@ impl LeftIdeal<4> {
     /// argument may be secret-derived during signing (Algorithm 4.2
     /// line 23, where the norm depends on α_rsp).
     ///
-    /// [Algorithm 3.10]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.10
+    /// [Alg. 3.10]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.10
     pub fn random_prime_norm(n: &BigInt<4>, order: &ExtremalOrder<4>) -> Option<Self> {
         // Algorithm 3.10, prime case: sample γ = g₁i + g₂j + g₃ij
         // with g₁, g₂, g₃ uniform in [0, N-1], check Legendre
@@ -1164,7 +1165,7 @@ impl LeftIdeal<4> {
 
     /// Construct a random left ideal of a given (not necessarily prime) norm.
     ///
-    /// [Algorithm 3.10][Alg. 3.10] from the spec (non-prime case).
+    /// [Alg. 3.10][Alg. 3.10] from the spec (non-prime case).
     /// Uses [`represent_integer`](crate::quaternions::ideal::represent_integer)
     /// to find γ with nrd(γ) = m·N, then samples random β with
     /// gcd(nrd(β), N) = 1.
@@ -1258,7 +1259,7 @@ impl LeftIdeal<4> {
 
     /// Find a primitive generator γ of this ideal.
     ///
-    /// [Algorithm 3.8] from the spec.
+    /// [Alg. 3.8] from the spec.
     ///
     /// WARNING: Not constant-time — bounded brute-force search with
     /// data-dependent norm checks and GCD.
@@ -1266,7 +1267,7 @@ impl LeftIdeal<4> {
     /// TODO(ct): Make constant-time before production use. Called on
     /// secret-derived ideals via IdealToKernel during signing.
     ///
-    /// [Algorithm 3.8]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.8
+    /// [Alg. 3.8]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.8
     pub fn generator(&self) -> Option<Element<4>> {
         let basis = self.lattice.basis();
         let n_i = &self.norm;
@@ -1344,97 +1345,84 @@ impl LeftIdeal<4> {
     // TorsionBasis::kernel_to_ideal() in curves/mod.rs.
 }
 
-impl LeftIdeal<9> {
+impl LeftIdeal<30> {
     /// Construct a random left ideal of a given prime norm (wide version).
     ///
     /// For the commitment phase (Algorithm 4.2 line 4), the norm D_MIX
-    /// = 2^512 + 75 is 513 bits (9 limbs). This method works with
-    /// `BigInt<9>` throughout and constructs the ideal lattice directly
-    /// without going through `Element` (whose `Coordinate` is limited
-    /// to `BigInt<4>`).
+    /// = 2^512 + 75 is 513 bits. This method stores the resulting
+    /// ideal at `BigInt<30>` (1920 bits) so that:
+    /// - Column entries `p·g_i ≈ 2^769` fit without truncation.
+    /// - The downstream [`reduce_to_prime_norm`] gram computation `c^T·G·c ≈
+    ///   2^1806` fits without overflow.
     ///
-    /// After construction, call [`reduce_to_prime_norm`] to get a small
-    /// prime norm, then [`narrow`] to convert to `LeftIdeal<4>` for
-    /// [`to_isogeny`].
+    /// After construction, call [`reduce_to_prime_norm`] to get a
+    /// small prime norm, then [`narrow`] to convert to `LeftIdeal<4>`
+    /// for [`to_isogeny`].
     ///
-    /// [Algorithm 3.10][Alg. 3.10] from the spec (prime case).
+    /// [Alg. 3.10][Alg. 3.10] from the spec (prime case).
     ///
     /// WARNING: Not constant-time.
     ///
     /// [Alg. 3.10]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.10
-    pub fn random_prime_norm_wide(n: &BigInt<9>, order: &ExtremalOrder<4>) -> Option<Self> {
-        let p_wide: BigInt<9> = {
+    pub fn random_prime_norm_wide<R: RngCore>(
+        n: &BigInt<30>,
+        order: &ExtremalOrder<4>,
+        rng: &mut R,
+    ) -> Option<Self> {
+        let p_wide: BigInt<30> = {
             let p8: BigInt<8> = crate::quaternions::precomputed::P_WIDE;
-            let mut limbs = [0u64; 9];
+            let mut limbs = [0u64; 30];
             limbs[..8].copy_from_slice(p8.as_limbs());
             BigInt::from_sign_and_limbs(0, limbs)
         };
         let n_bits = n.bitsize() as usize;
         let n_bytes = n_bits.div_ceil(8);
 
-        // Widened copies of N and p for the norm computation.
-        // nrd(γ) = g₁² + p(g₂² + g₃²) with g_i ~ 2^513 and p ~ 2^251
-        // reaches ~2^1279 bits, wider than `BigInt<9>`. We widen to
-        // `BigInt<22>` (1408 bits) for the norm, then reduce mod N.
-        //
-        // The `Legendre` check and `modular_sqrt` are routed through
-        // `*_w::<18>` variants, which widen internally to the minimum
-        // working width required for a 513-bit modulus.
-        let n_w22: BigInt<22> = n.widen();
-        let p_w22: BigInt<22> = p_wide.widen();
+        let sample_mod_n = |rng: &mut R| -> BigInt<30> {
+            loop {
+                let mut bytes = [0u8; 240]; // 30 × 8
+                rng.fill_bytes(&mut bytes[..n_bytes]);
+                if n_bits % 8 != 0 {
+                    bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
+                }
+                let val = BigInt::<30>::from_bytes_le_unsigned(&bytes[..n_bytes]);
+                if val.ct_mod(n) == val {
+                    return val;
+                }
+            }
+        };
 
         for _ in 0..10_000 {
-            // Sample g₁, g₂, g₃ uniform in [0, N-1].
-            let sample_mod_n = || -> BigInt<9> {
-                loop {
-                    let mut bytes = [0u8; 72]; // 9 × 8 = 72 bytes
-                    OsRng.fill_bytes(&mut bytes[..n_bytes]);
-                    if n_bits % 8 != 0 {
-                        bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
-                    }
-                    let val = BigInt::<9>::from_bytes_le_unsigned(&bytes[..n_bytes]);
-                    if val.ct_mod(n) == val {
-                        return val;
-                    }
-                }
-            };
-
-            let g1 = sample_mod_n();
-            let g2 = sample_mod_n();
-            let g3 = sample_mod_n();
+            let g1 = sample_mod_n(rng);
+            let g2 = sample_mod_n(rng);
+            let g3 = sample_mod_n(rng);
 
             // nrd(γ) = g₁² + p(g₂² + g₃²) for γ = g₁i + g₂j + g₃ij
-            // in the quaternion algebra B_{p,∞} = (-1, -p).
-            // Compute at BigInt<22> to avoid overflow, then reduce mod N.
-            let g1_w: BigInt<22> = g1.widen();
-            let g2_w: BigInt<22> = g2.widen();
-            let g3_w: BigInt<22> = g3.widen();
-            let g1_sq_w = g1_w.ct_mul(&g1_w);
-            let g2_sq_w = g2_w.ct_mul(&g2_w);
-            let g3_sq_w = g3_w.ct_mul(&g3_w);
-            let nrd_w = g1_sq_w.ct_add(&p_w22.ct_mul(&g2_sq_w.ct_add(&g3_sq_w)));
+            // in the quaternion algebra B_{p,∞} = (-1, -p). With
+            // g_i < 2^513 and p ≈ 2^256 the result is ≈ 2^1282 bits,
+            // well within `BigInt<30>` (1920 bits).
+            let g1_sq = g1.ct_mul(&g1);
+            let g2_sq = g2.ct_mul(&g2);
+            let g3_sq = g3.ct_mul(&g3);
+            let nrd = g1_sq.ct_add(&p_wide.ct_mul(&g2_sq.ct_add(&g3_sq)));
 
-            let nrd_mod_w22 = nrd_w.ct_mod(&n_w22);
-            let neg_nrd_w22 = n_w22.ct_sub(&nrd_mod_w22);
-            let neg_nrd: BigInt<9> = neg_nrd_w22
-                .narrow_to()
-                .expect("residue < N < 2^513 fits in BigInt<9>");
+            let nrd_mod = nrd.ct_mod(n);
+            let neg_nrd = n.ct_sub(&nrd_mod);
 
-            // Check Legendre(-nrd(γ), N) = 1.
-            // D_MIX is 513 bits, so BigInt<9>::legendre (which needs
-            // 64*N >= 2*bits(modulus) = 1026) silently truncates.
-            // Use the wide variant with W = 18 (1152 bits).
-            if BigInt::<9>::legendre_w::<18>(&neg_nrd, n) != 1 {
+            // Check Legendre(-nrd(γ), N) = 1. The `_w::<30>` variants
+            // keep the primality/sqrt arithmetic at the storage width
+            // (well above the 1026-bit `pow_mod` requirement).
+            if BigInt::<30>::legendre_w::<30>(&neg_nrd, n) != 1 {
                 continue;
             }
 
-            // a = √(-nrd(γ)) mod N. Same width issue as Legendre.
-            let a = match BigInt::<9>::modular_sqrt_w::<18>(&neg_nrd, n) {
+            // a = √(-nrd(γ)) mod N.
+            let a = match BigInt::<30>::modular_sqrt_w::<30>(&neg_nrd, n) {
                 Some(s) => s,
                 None => continue,
             };
 
-            // Construct I = O₀⟨γ, N⟩ as a lattice using wide arithmetic.
+            // Construct I = O₀⟨γ, N⟩ as a lattice.
             //
             // Precompute the 4 products of basis quaternions with γ:
             //   1·γ = ( a,    g₁,   g₂,   g₃)
@@ -1442,7 +1430,9 @@ impl LeftIdeal<9> {
             //   j·γ = (-pg₂,  pg₃,  a,   -g₁)
             //   k·γ = (-pg₃, -pg₂,  g₁,   a )
             //
-            // For B_{p,∞} = (-1,-p): i²=-1, j²=-p, k=ij.
+            // For B_{p,∞} = (-1,-p): i²=-1, j²=-p, k=ij. These
+            // `pg_i` products reach ≈ 2^769 and required the 1920-bit
+            // storage width.
             let pg2 = p_wide.ct_mul(&g2);
             let pg3 = p_wide.ct_mul(&g3);
             let prod_1 = [a, g1, g2, g3];
@@ -1452,11 +1442,11 @@ impl LeftIdeal<9> {
 
             // For each order basis element e = (e₀,e₁,e₂,e₃)/denom,
             // compute e·γ = (e₀·(1·γ) + e₁·(i·γ) + e₂·(j·γ) + e₃·(k·γ))/denom.
-            let order_wide = ExtremalOrder::<9>::from(*order);
+            let order_wide = ExtremalOrder::<30>::from(*order);
             let order_lat = order_wide.order();
             let order_denom = *order_lat.denom();
 
-            let mut o_alpha_cols = [Vector::<9>::ZERO; 4];
+            let mut o_alpha_cols = [Vector::<30>::ZERO; 4];
             for (col, o_alpha_col) in o_alpha_cols.iter_mut().enumerate() {
                 let e = [
                     order_lat.basis()[0][col],
@@ -1474,7 +1464,7 @@ impl LeftIdeal<9> {
             }
 
             // O₀·N: scale each order basis column by N.
-            let mut o_n_cols = [Vector::<9>::ZERO; 4];
+            let mut o_n_cols = [Vector::<30>::ZERO; 4];
             for (col, o_n_col) in o_n_cols.iter_mut().enumerate() {
                 for row in 0..4 {
                     o_n_col[row] = order_lat.basis()[row][col].ct_mul(n);
@@ -1485,7 +1475,6 @@ impl LeftIdeal<9> {
             let o_alpha = Lattice::new(Matrix::from_columns(&o_alpha_cols), order_denom);
             let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), order_denom);
 
-            // Widen n to BigInt<8> for the norm field.
             return Some(LeftIdeal {
                 lattice: o_alpha.sum(&o_n),
                 norm: *n,
@@ -1641,7 +1630,7 @@ where
     /// TODO(ct): Make constant-time before production use.
     ///
     /// [Alg. 3.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.9
-    pub fn reduce_to_prime_norm<const PRIME_W: usize>(&mut self) -> bool {
+    pub fn reduce_to_prime_norm<const PRIME_W: usize, R: RngCore>(&mut self, rng: &mut R) -> bool {
         const {
             assert!(
                 PRIME_W >= N,
@@ -1663,10 +1652,10 @@ where
         let limit = (2 * bound as i64 + 1).pow(4);
         for _ in 0..limit {
             let c: [BigInt<N>; 4] = [
-                BigInt::from_i64(Self::rand_interval(bound)),
-                BigInt::from_i64(Self::rand_interval(bound)),
-                BigInt::from_i64(Self::rand_interval(bound)),
-                BigInt::from_i64(Self::rand_interval(bound)),
+                BigInt::from_i64(Self::rand_interval(rng, bound)),
+                BigInt::from_i64(Self::rand_interval(rng, bound)),
+                BigInt::from_i64(Self::rand_interval(rng, bound)),
+                BigInt::from_i64(Self::rand_interval(rng, bound)),
             ];
 
             // Evaluate quadratic form: nrd = c^T · G · c.
@@ -1779,14 +1768,12 @@ where
     ///
     /// WARNING: Not constant-time (rejection loop). The bound `m` is
     /// public, so this is acceptable for SQIsign.
-    fn rand_interval(m: i32) -> i64 {
-        use rand_core::{OsRng, RngCore};
-
+    fn rand_interval<R: RngCore>(rng: &mut R, m: i32) -> i64 {
         assert!(m >= 0);
         let range = 2 * (m as u32) + 1;
         let threshold = u32::MAX - (u32::MAX % range);
         loop {
-            let val = OsRng.next_u32();
+            let val = rng.next_u32();
             if val < threshold {
                 return (val % range) as i64 - m as i64;
             }
@@ -1998,6 +1985,12 @@ impl From<ExtremalOrder<4>> for ExtremalOrder<9> {
     }
 }
 
+impl From<ExtremalOrder<4>> for ExtremalOrder<30> {
+    fn from(order: ExtremalOrder<4>) -> Self {
+        order.widen()
+    }
+}
+
 impl<const N: usize> core::fmt::Debug for ExtremalOrder<N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
@@ -2036,13 +2029,13 @@ const DELTA: f64 = 0.99;
 /// secret-derived ideal bases during signing (via SuitableIdeals
 /// and RandomEquivalentQuaternion).
 ///
-/// [Algorithm 3.3] from the spec.
+/// [Alg. 3.3] from the spec.
 ///
-/// [Algorithm 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
+/// [Alg. 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
 pub(crate) fn l2_reduce<const N: usize>(basis: &mut [Vector<N>; D], gram: &mut Matrix<N>) {
-    /// Extend the GSO family from row k-1 to row k ([Algorithm 3.4]).
+    /// Extend the GSO family from row k-1 to row k ([Alg. 3.4]).
     ///
-    /// [Algorithm 3.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.4
+    /// [Alg. 3.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.4
     fn extend_gso_family<const N: usize>(
         gram: &Matrix<N>,
         k: usize,
@@ -2060,9 +2053,9 @@ pub(crate) fn l2_reduce<const N: usize>(basis: &mut [Vector<N>; D], gram: &mut M
         }
     }
 
-    /// Size-reduce the basis at index k ([Algorithm 3.5]).
+    /// Size-reduce the basis at index k ([Alg. 3.5]).
     ///
-    /// [Algorithm 3.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.5
+    /// [Alg. 3.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.5
     fn size_reduce<const N: usize>(
         basis: &mut [Vector<N>; D],
         gram: &mut Matrix<N>,
@@ -2123,9 +2116,9 @@ pub(crate) fn l2_reduce<const N: usize>(basis: &mut [Vector<N>; D], gram: &mut M
         }
     }
 
-    /// Insert basis vector k before position s ([Algorithm 3.6]).
+    /// Insert basis vector k before position s ([Alg. 3.6]).
     ///
-    /// [Algorithm 3.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.6
+    /// [Alg. 3.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.6
     fn insert_before<const N: usize>(
         basis: &mut [Vector<N>; D],
         gram: &mut Matrix<N>,

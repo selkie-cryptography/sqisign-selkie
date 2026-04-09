@@ -81,7 +81,7 @@ fn sign_kat_roundtrip() {
         .expect("pk has correct length");
     let vk = VerifyingKey::from_bytes(pk_array).expect("pk should parse");
 
-    let sig = match sk.sign(&msg) {
+    let sig = match sk.sign(&msg, &mut OsRng) {
         Ok(s) => s,
         Err(SignatureError::SigningFailed) => {
             // The sign() loop exhausted its retries without producing

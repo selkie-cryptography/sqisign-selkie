@@ -2,7 +2,7 @@
 //!
 //! Contains the seven p-extremal maximal orders and their associated
 //! elements, as described in [§3.1.7.2] of the SQIsign specification.
-//! These are used by `RepresentInteger` ([Algorithm 3.12]) to solve
+//! These are used by `RepresentInteger` ([Alg. 3.12]) to solve
 //! norm equations in the quaternion algebra B_{p,∞} = (-1, -p)_Q
 //! where p = 5 · 2²⁴⁸ − 1.
 //!
@@ -12,7 +12,7 @@
 //! to re-verify.
 //!
 //! [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
-//! [Algorithm 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
+//! [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
 
 use super::{bigint::BigInt, lattice::ExtremalOrder};
 

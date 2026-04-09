@@ -19,7 +19,7 @@
 //!   [`projective_difference`](montgomery::ProjectiveXOnlyPoint::projective_difference).
 //!   Recomputing invokes Fp2 sqrt which may pick a different branch.
 //!
-//! [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
+//! [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
 //! [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 
 pub mod isogeny;
@@ -108,7 +108,7 @@ impl TryFrom<u32> for TorsionExponent {
 ///
 /// See [§2.2.3], [§4.6].
 ///
-/// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
+/// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
 /// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BasisHint(u8);
@@ -216,7 +216,7 @@ impl From<ChallengeHint> for u8 {
 ///
 /// See [§2.2.3] (torsion subgroups and deterministic basis computation).
 ///
-/// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
+/// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct TorsionBasis {
     /// First basis element R.
@@ -341,7 +341,7 @@ impl TorsionBasis {
     /// `S` is actually P−Q and `RS` is Q. So this computes
     /// P + \[m\](P−Q), not P + \[m\]Q. See [`from_hint`](Self::from_hint).
     ///
-    /// Implements `Ladder3pt` ([§8.2], [Algorithm 8.7][Alg. 8.7]).
+    /// Implements `Ladder3pt` ([§8.2], [Alg. 8.7][Alg. 8.7]).
     ///
     /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
     /// [Alg. 8.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.7
@@ -350,7 +350,7 @@ impl TorsionBasis {
     /// The scalar `m` is a [`Scalar`] (256-bit unsigned integer in
     /// four u64 limbs). The ladder always processes exactly 256 bits.
     ///
-    /// Implements [Ladder3pt][Alg. 8.7] ([Algorithm 8.7][Alg. 8.7]).
+    /// Implements [Ladder3pt][Alg. 8.7] ([Alg. 8.7][Alg. 8.7]).
     ///
     /// [Alg. 8.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.7
     pub fn scalar_mul_add(&self, m: &scalar::Scalar) -> ProjectiveXOnlyPoint {
@@ -394,7 +394,7 @@ impl TorsionBasis {
     /// Both scalars are [`Scalar`]s reduced mod 2^e, where `e` is the
     /// torsion exponent of the basis. Constant-time in the scalar values.
     ///
-    /// Implements [LadderBiscalar][Alg. 8.8] ([Algorithm 8.8][Alg. 8.8]).
+    /// Implements [LadderBiscalar][Alg. 8.8] ([Alg. 8.8][Alg. 8.8]).
     ///
     /// [Alg. 8.8]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.8
     pub fn biscalar_mul(
@@ -529,7 +529,7 @@ impl TorsionBasis {
     ///
     /// Implements `TorsionBasisFromHint` ([§2.2.3], Algorithm 2.2).
     ///
-    /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
+    /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
     pub(crate) fn from_hint(curve: &Curve, hint: BasisHint) -> TorsionBasis {
         let _e = TORSION_EVEN_POWER;
@@ -618,7 +618,7 @@ impl TorsionBasis {
     ///
     /// Implements `TorsionBasisToHint` ([§2.2.3], Algorithm 2.1).
     ///
-    /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
+    /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
     pub(crate) fn to_hint(curve: &Curve) -> (TorsionBasis, BasisHint) {
         let _e = TORSION_EVEN_POWER;
@@ -693,7 +693,7 @@ impl ChangeOfBasisMatrix {
     ///   Q₁ = [x₁]P₁ + [x₂]P₂
     ///   Q₂ = [x₃]P₁ + [x₄]P₂
     ///
-    /// Implements [ChangeOfBasis][Alg. 2.5] ([Algorithm 2.5][Alg. 2.5]).
+    /// Implements [ChangeOfBasis][Alg. 2.5] ([Alg. 2.5][Alg. 2.5]).
     ///
     /// # Panics
     ///
