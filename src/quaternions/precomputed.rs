@@ -40,6 +40,58 @@ pub const P_WIDE: BigInt<8> = BigInt::from_limbs([
     0,
 ]);
 
+/// Modulus `D = 4 · d⁴ · D_MIX² · p` for mod-HNF on commitment
+/// ideals (see [`Matrix::from_hnf_columns_mod`]).
+///
+/// For NIST-I with d = 2 (O₀'s stored basis denominator),
+/// D_MIX = 2⁵¹² + 75, and p = 5 · 2²⁴⁸ − 1, this evaluates to a
+/// 1281-bit integer that is a positive multiple of the integer-
+/// column covolume of the lattice `d · I` for any commitment
+/// ideal I = O₀⟨γ, D_MIX⟩. That is exactly what
+/// [`Matrix::from_hnf_columns_mod`]'s bounding modulus needs.
+///
+/// Stored as a literal [`BigInt<30>`] — matching the working
+/// width of `LeftIdeal<30>::random_prime_norm_wide` — because
+/// `BigInt::ct_mul` is not `const fn`, so we cannot write
+/// `4 * d⁴ * D_MIX² * p` as a compile-time expression. The limbs
+/// below were precomputed in Python; a `#[test]` in this module
+/// re-derives them at runtime and asserts equality, guarding
+/// against silent drift if the parameter set ever changes.
+///
+/// [`Matrix::from_hnf_columns_mod`]: crate::quaternions::linear::Matrix::from_hnf_columns_mod
+pub const D_HNF_MODULUS_COMMITMENT: BigInt<30> = BigInt::from_limbs([
+    0xFFFFFFFFFFFA81C0,
+    0xFFFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFFFF,
+    0x3FFFFFFFFFFFFFFF,
+    0x0000000000001B77,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0xFFFFFFFFFFFFDA80,
+    0xFFFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFFFF,
+    0x7FFFFFFFFFFFFFFF,
+    0x00000000000000BB,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0xFFFFFFFFFFFFFFC0,
+    0xFFFFFFFFFFFFFFFF,
+    0xFFFFFFFFFFFFFFFF,
+    0x3FFFFFFFFFFFFFFF,
+    0x0000000000000001,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+]);
+
 /// The seven precomputed p-extremal maximal orders for NIST-I.
 ///
 /// Each order has a distinguished element z with z² = −q (small q),
@@ -146,6 +198,25 @@ mod tests {
     #[test]
     fn standard_order_q_is_one() {
         assert_eq!(STANDARD_ORDER.q(), 1);
+    }
+
+    /// Re-derive `D_HNF_MODULUS_COMMITMENT = 4 · d⁴ · D_MIX² · p`
+    /// at runtime and assert the precomputed limbs still match the
+    /// NIST-I parameter set. Catches silent drift if D_MIX or p
+    /// ever change without the literal being regenerated.
+    #[test]
+    fn d_hnf_modulus_commitment_matches_formula() {
+        // d = 2, d⁴ = 16, 4 · d⁴ = 64.
+        let d_mix: BigInt<30> = crate::params::D_MIX.widen();
+        let p: BigInt<30> = {
+            let mut limbs = [0u64; 30];
+            limbs[..8].copy_from_slice(P_WIDE.as_limbs());
+            BigInt::from_sign_and_limbs(0, limbs)
+        };
+        let d_mix_sq = d_mix.ct_mul(&d_mix);
+        let sixty_four = BigInt::<30>::from_u64(64);
+        let expected = sixty_four.ct_mul(&d_mix_sq).ct_mul(&p);
+        assert_eq!(expected, D_HNF_MODULUS_COMMITMENT);
     }
 
     #[test]
