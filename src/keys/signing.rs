@@ -151,25 +151,50 @@ impl SigningKey {
     /// `reduce_to_prime_norm` is non-CT LLL, and `to_isogeny` is
     /// non-CT (variable-time SuitableIdeals/RepresentInteger). Must be
     /// hardened before production use.
-    pub fn generate(
-        _rng: &mut impl rand_core::CryptoRngCore,
+    pub fn generate<R: rand_core::CryptoRngCore>(
+        rng: &mut R,
     ) -> Result<SigningKey, SignatureError> {
+        // Sample a 48-byte seed from the caller's RNG, then hand it
+        // off to [`generate_derand`], which instantiates its own
+        // AES256-CTR-DRBG from it.
+        let mut randomness = [0u8; crate::drbg::SEEDLEN];
+        rng.fill_bytes(&mut randomness);
+        Self::generate_derand(&randomness)
+    }
+
+    /// Derandomized keygen from a 48-byte seed. The seed is used to
+    /// instantiate an AES256-CTR-DRBG (NIST SP 800-90A), which in
+    /// turn drives every random sampling step in key generation.
+    /// Passing the same seed yields the same key; useful for KATs
+    /// and reproducible tests.
+    pub fn generate_derand(
+        randomness: &[u8; crate::drbg::SEEDLEN],
+    ) -> Result<SigningKey, SignatureError> {
+        let mut drbg = crate::drbg::Aes256CtrDrbg::new(randomness);
+        let rng = &mut drbg;
         // Bound the retry loop. Each iteration may fail in
         // reduce_to_prime_norm, narrow, or to_isogeny.
         for _ in 0..1000 {
             // Line 2: I_sk ← RandomIdealGivenNorm(D_mix, true).
-            // D_MIX = 2^512 + 75 fits in BigInt<9>.
-            let d_mix_wide = BigInt::<9>::from_limbs(*D_MIX.as_limbs());
-            let mut i_sk =
-                match LeftIdeal::<9>::random_prime_norm_wide(&d_mix_wide, &EXTREMAL_ORDERS[0]) {
-                    Some(i) => i,
-                    None => continue,
-                };
+            // D_MIX = 2^512 + 75. The ideal is stored at `BigInt<30>`
+            // so that `p · g_i ≈ 2^769` entries and the downstream
+            // raw gram `c^T·G·c ≈ 2^1806` fit without truncation.
+            let d_mix_wide: BigInt<30> = D_MIX.widen();
+            let mut i_sk = match LeftIdeal::<30>::random_prime_norm_wide(
+                &d_mix_wide,
+                &EXTREMAL_ORDERS[0],
+                rng,
+            ) {
+                Some(i) => i,
+                None => continue,
+            };
 
             // Line 4: I_sk ← RandomEquivalentPrimeIdeal(I_sk).
-            // PRIME_W = 18 matches the working width in
-            // `random_prime_norm_wide` for 513-bit D_mix norms.
-            if !i_sk.reduce_to_prime_norm::<18>() {
+            // `reduce_to_prime_norm` operates at the ideal's storage
+            // width `N=30`; `PRIME_W=30` keeps the internal pow_mod
+            // in the Miller-Rabin check well above the 1026-bit
+            // bound for a 513-bit modulus.
+            if !i_sk.reduce_to_prime_norm::<30, _>(rng) {
                 continue;
             }
             let i_sk_narrow = match i_sk.narrow() {
@@ -321,7 +346,31 @@ impl SigningKey {
     /// Implements [SQIsign.Sign][Alg. 4.2] ([Algorithm 4.2][Alg. 4.2]).
     ///
     /// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
-    pub fn sign(&self, msg: &[u8]) -> Result<Signature, SignatureError> {
+    pub fn sign<R: rand_core::CryptoRngCore>(
+        &self,
+        msg: &[u8],
+        rng: &mut R,
+    ) -> Result<Signature, SignatureError> {
+        let mut randomness = [0u8; crate::drbg::SEEDLEN];
+        rng.fill_bytes(&mut randomness);
+        self.sign_derand(msg, &randomness)
+    }
+
+    /// Derandomized sign from a 48-byte seed. The seed is used to
+    /// instantiate an AES256-CTR-DRBG (NIST SP 800-90A), which in
+    /// turn drives every random sampling step in the commitment
+    /// and response phases. For a fixed `(self, msg, randomness)`
+    /// triple the output is deterministic, so this is the entry
+    /// point used for KATs and reproducible tests. Different
+    /// signing keys (or different messages) yield different
+    /// signatures even when seeded with the same 48 bytes.
+    pub fn sign_derand(
+        &self,
+        msg: &[u8],
+        randomness: &[u8; crate::drbg::SEEDLEN],
+    ) -> Result<Signature, SignatureError> {
+        let mut drbg = crate::drbg::Aes256CtrDrbg::new(randomness);
+        let rng = &mut drbg;
         // Status: response phase operates at `LeftIdeal<N_RESP>`
         // (= 22 limbs, enough for the 1399-bit sampling radius).
         //
@@ -358,35 +407,56 @@ impl SigningKey {
         );
 
         // Line 3: while true do
-        for _ in 0..1000 {
+        for _iter in 0..1000 {
+            eprintln!("sign iter {_iter}");
             // --- Commitment (lines 4–9) ---
 
-            // Line 4: I_com ← RandomIdealGivenNorm(D_mix, true)
-            // D_MIX is BigInt<9> (513 bits = 9 limbs).
-            let d_mix_wide = BigInt::<9>::from_limbs(*D_MIX.as_limbs());
-            let mut i_com =
-                match LeftIdeal::<9>::random_prime_norm_wide(&d_mix_wide, &EXTREMAL_ORDERS[0]) {
-                    Some(i) => i,
-                    None => continue,
-                };
+            // Line 4: I_com ← RandomIdealGivenNorm(D_mix, true).
+            // Stored at `BigInt<30>` for the same reason as keygen:
+            // `p·g_i` and raw gram entries exceed narrower widths.
+            let d_mix_wide: BigInt<30> = D_MIX.widen();
+            let mut i_com = match LeftIdeal::<30>::random_prime_norm_wide(
+                &d_mix_wide,
+                &EXTREMAL_ORDERS[0],
+                rng,
+            ) {
+                Some(i) => i,
+                None => {
+                    eprintln!("  skip: rand");
+                    continue;
+                }
+            };
+            eprintln!("  rand ok");
 
             // Lines 5–6: RandomEquivalentPrimeIdeal.
-            // PRIME_W = 18 for 513-bit D_mix norms; see keygen.
-            if !i_com.reduce_to_prime_norm::<18>() {
+            if !i_com.reduce_to_prime_norm::<30, _>(rng) {
+                eprintln!("  skip: reduce");
                 continue;
             }
+            eprintln!(
+                "  reduce ok, norm_limbs[0..4]={:x?}",
+                &i_com.norm().as_limbs()[..4]
+            );
 
             // Narrow to LeftIdeal<4> for to_isogeny.
             let i_com_narrow = match i_com.narrow() {
                 Some(i) => i,
-                None => continue,
+                None => {
+                    eprintln!("  skip: narrow");
+                    continue;
+                }
             };
+            eprintln!("  narrow ok");
 
             // Line 7: E_com, P_com, Q_com ← IdealToIsogeny(I_com)
             let (e_com, p_com, q_com) = match i_com_narrow.to_isogeny() {
                 Some(r) => r,
-                None => continue,
+                None => {
+                    eprintln!("  skip: to_isogeny");
+                    continue;
+                }
             };
+            eprintln!("  to_isogeny ok");
 
             // --- Challenge (line 10) ---
             let chl = Challenge::derive(&self.verifying_key, &e_com, msg);
@@ -421,7 +491,7 @@ impl SigningKey {
             // (1408 bits) to accommodate the radius, compute the
             // intersection `I_com ∩ (I_sk · I_chl)` at that width, and
             // sample with intermediate width W=44.
-            const N_RESP: usize = 22;
+            const N_RESP: usize = 30;
             let i_sk_w = self.ideal.widen::<N_RESP>();
             let i_chl_w = i_chl.widen::<N_RESP>();
             let i_com_w = i_com.widen::<N_RESP>();
@@ -497,7 +567,7 @@ impl SigningKey {
             let i_com_rsp_norm_w = q_rsp_wide.ct_mul(&d_mix_22);
             let mut i_com_rsp_w =
                 LeftIdeal::from_generator(&alpha_rsp_w, &i_com_rsp_norm_w, o0_w.order());
-            if !i_com_rsp_w.reduce_to_prime_norm::<44>() {
+            if !i_com_rsp_w.reduce_to_prime_norm::<44, _>(rng) {
                 continue;
             }
             let i_com_rsp = match i_com_rsp_w.narrow() {

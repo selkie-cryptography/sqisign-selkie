@@ -8,7 +8,7 @@
 //! cubical ladder (Algorithm 8.15) replaces Miller's loop, and the
 //! final exponentiation uses the Frobenius endomorphism.
 //!
-//! [§8.3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.3
+//! [§8.3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.3.2
 
 use core::ops::{Div, Mul};
 

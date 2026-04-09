@@ -31,7 +31,7 @@ pub struct Isomorphism {
 impl Isomorphism {
     /// Apply this isomorphism to a projective x-only point.
     ///
-    /// Implements lines 5–6 of [Algorithm 8.9][Alg. 8.9]:
+    /// Implements lines 5–6 of [Alg. 8.9][Alg. 8.9]:
     /// ```text
     /// X' ← λ_x(3X·CC' + AC'·Z) − λ_z·A'C·Z
     /// Z' ← 3λ_z·CC'·Z

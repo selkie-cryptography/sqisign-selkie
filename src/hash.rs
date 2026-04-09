@@ -15,8 +15,8 @@
 //!
 //! See [§4.2.1] and [§10.2.5].
 //!
-//! [§4.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.2
-//! [§10.2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.10.2
+//! [§4.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.4.2.1
+//! [§10.2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.10.2.5
 //! [`E_CHL`]: crate::params::E_CHL
 //! [`HASH_ITERATIONS`]: crate::params::HASH_ITERATIONS
 
@@ -85,8 +85,8 @@ const _: () = assert!(
 ///
 /// See [§4.2.1] and [§4.4.2].
 ///
-/// [§4.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.2
-/// [§4.4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
+/// [§4.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.4.2.1
+/// [§4.4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.4.4.2
 /// [`E_CHL`]: crate::params::E_CHL
 pub(crate) fn hash(pk: &VerifyingKey, j: &Fp2, msg: &[u8]) -> [u8; CHALLENGE_BYTES] {
     // Serialize: j(pk) ‖ j(E) ‖ msg

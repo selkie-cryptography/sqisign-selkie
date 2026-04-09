@@ -3,13 +3,11 @@
 //! Algorithms that operate across multiple quaternion types (elements,
 //! orders, ideals) and don't naturally belong to a single type.
 //!
-//! - [`represent_integer`]: find γ ∈ O with nrd(γ) = M ([Algorithm 3.12][Alg.
-//!   3.12])
+//! - [`represent_integer`]: find γ ∈ O with nrd(γ) = M ([Alg. 3.12][Alg. 3.12])
 //! - [`represent_integer_any_order`]: same, trying all precomputed orders
 //! - [`equivalent_prime_ideal`]: find J ∼ I with prime norm ([Algorithm
 //!   3.9][Alg. 3.9])
-//! - [`SuitableIdealResult`]: output of SuitableIdeals ([Algorithm 3.16][Alg.
-//!   3.16])
+//! - [`SuitableIdealResult`]: output of SuitableIdeals ([Alg. 3.16][Alg. 3.16])
 //!
 //! [Alg. 3.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.9
 //! [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
@@ -47,7 +45,7 @@ pub fn represent_integer_any_order(m: &BigInt<8>) -> Option<Element<4>> {
 
 /// Find γ ∈ O with nrd(γ) = M using a specific extremal order.
 ///
-/// Implements [Algorithm 3.12][Alg. 3.12] from the spec.
+/// Implements [Alg. 3.12][Alg. 3.12] from the spec.
 ///
 /// WARNING: Not constant-time — brute-force search with data-dependent
 /// loop bounds, primality testing, and Cornacchia calls.
@@ -285,7 +283,7 @@ pub struct IdealFactor {
     pub degree: IsogenyDegree,
 }
 
-/// Result of [Algorithm 3.16][Alg. 3.16] (SuitableIdeals).
+/// Result of [Alg. 3.16][Alg. 3.16] (SuitableIdeals).
 ///
 /// Contains integers u, v and exponent e such that
 /// u · d₁ + v · d₂ = 2^e with gcd(u · d₁, v · d₂) = 1 and e ≤ f,
@@ -511,7 +509,7 @@ fn try_find_uv(
 }
 
 impl super::lattice::LeftIdeal<4> {
-    /// Decompose this ideal for id2iso via [Algorithm 3.16][Alg. 3.16]
+    /// Decompose this ideal for id2iso via [Alg. 3.16][Alg. 3.16]
     /// (SuitableIdeals).
     ///
     /// Finds elements β₁, β₂ and integers u, v, e such that

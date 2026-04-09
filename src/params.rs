@@ -64,7 +64,7 @@ pub const SIGNATURE_BYTES: usize = 148;
 // SuitableIdeals / id2iso parameters
 // ---------------------------------------------------------------------------
 
-/// Half-width of the enumeration box in [Algorithm 3.16][Alg. 3.16]
+/// Half-width of the enumeration box in [Alg. 3.16][Alg. 3.16]
 /// (SuitableIdeals).
 ///
 /// For NIST-I: m = 2 + ⌊(⌈log₂ p⌉ − f) / 4⌋ = 2 + ⌊3/4⌋ = 2.
@@ -76,7 +76,7 @@ pub const FINDUV_BOX_SIZE: i64 = 2;
 /// Bound on the RepresentInteger search window.
 ///
 /// Controls the dimension of the isogeny kernel needed for
-/// [Algorithm 3.15][Alg. 3.15] (FixedDegreeIsogeny) to succeed.
+/// [Alg. 3.15][Alg. 3.15] (FixedDegreeIsogeny) to succeed.
 ///
 /// [Alg. 3.15]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
 pub const QUAT_REPRES_BOUND_INPUT: u32 = 20;
@@ -110,7 +110,7 @@ pub const QUAT_PRIME_COFACTOR: BigInt<4> = BigInt::from_limbs([0x41, 0, 0, 0x080
 ///
 /// See [§4.2.1] of the spec.
 ///
-/// [§4.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.2
+/// [§4.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.4.2.1
 pub const D_MIX: BigInt<9> = BigInt::from_limbs([0x4B, 0, 0, 0, 0, 0, 0, 0, 1]);
 
 // ---------------------------------------------------------------------------

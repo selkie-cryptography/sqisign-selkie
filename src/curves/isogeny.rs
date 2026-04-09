@@ -35,7 +35,7 @@ use crate::{
 ///
 /// Stored as an unsigned 256-bit integer (`[u64; 4]`, little-endian).
 /// For NIST-I, isogeny degrees are bounded by 2^{f−2} = 2^{246},
-/// so 256 bits is always sufficient (see [Algorithm 3.15][Alg. 3.15]
+/// so 256 bits is always sufficient (see [Alg. 3.15][Alg. 3.15]
 /// and Kim et al., ePrint 2025/1649, Table 2).
 ///
 /// Positive by construction (no sign bit). Always odd — enforced by
@@ -210,7 +210,7 @@ impl Kernel {
     /// For small exponents. Handles the singular kernel case P = (0 : 1)
     /// when `is_signing` is true.
     ///
-    /// Implements `TwoIsogenyChainSmall` ([§8.4], [Algorithm 8.26][Alg. 8.26]).
+    /// Implements `TwoIsogenyChainSmall` ([§8.4], [Alg. 8.26][Alg. 8.26]).
     ///
     /// # Singular kernels
     ///

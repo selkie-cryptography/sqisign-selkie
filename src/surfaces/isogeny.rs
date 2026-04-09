@@ -16,9 +16,9 @@
 //!
 //! See [§2.4.1] and [§8.5.3] through [§8.5.8].
 //!
-//! [§2.4.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.4
-//! [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
-//! [§8.5.8]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+//! [§2.4.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.4.1
+//! [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.3
+//! [§8.5.8]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.8
 //!
 //! [`Kernel::isogeny`]: super::Kernel::isogeny
 
@@ -79,7 +79,7 @@ impl GluingKernel {
     ///
     /// Implements `GluingCodomain` ([§8.5.5], Algorithm 8.38).
     ///
-    /// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5
     pub(crate) fn codomain(&self) -> GluingData {
         // Algorithm 8.38:
         // 1. T₁' ← [2](T₁'')    T₂' ← [2](T₂'')
@@ -225,7 +225,7 @@ impl GluingKernel {
     ///
     /// Implements `GluingEval` ([§8.5.6], Algorithm 8.39).
     ///
-    /// [§8.5.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.6]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.6
     /// Evaluate the gluing at a general point P ∈ E₁ × E₂.
     ///
     /// Implements `GluingEval` ([§8.5.6], Algorithm 8.39).
@@ -233,7 +233,7 @@ impl GluingKernel {
     /// of P with the kernel generator T₁'', then combines via
     /// the change-of-basis matrix and Hadamard.
     ///
-    /// [§8.5.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.6]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.6
     pub(crate) fn eval(
         P: &(CurveJacobianPoint, CurveJacobianPoint),
         T1: &(CurveJacobianPoint, CurveJacobianPoint),
@@ -290,7 +290,7 @@ impl GluingKernel {
     ///
     /// Implements `GluingEvalSpecial` ([§8.5.6], Algorithm 8.40).
     ///
-    /// [§8.5.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.6]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.6
     pub(crate) fn eval_special(
         P: &(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint),
         data: &GluingData,
@@ -335,7 +335,7 @@ impl GluingKernel {
 /// and the Z coordinate of P'. The inversions of δ and Z are deferred
 /// for batching.
 ///
-/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5
 struct TranslationData {
     WX: Fp2,
     WZ: Fp2,
@@ -349,7 +349,7 @@ struct TranslationData {
 /// Compute the pre-inversion data for `ActionByTranslation`
 /// ([§8.5.5], Algorithm 8.35).
 ///
-/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5
 fn translation_pre_invert(P_prime: &ProjectiveXOnlyPoint) -> TranslationData {
     let P = P_prime.double();
     let (X, Z) = (P_prime.X, P_prime.Z);
@@ -373,7 +373,7 @@ fn translation_pre_invert(P_prime: &ProjectiveXOnlyPoint) -> TranslationData {
 /// Complete `ActionByTranslation` ([§8.5.5], Algorithm 8.35)
 /// given batched inverses of δ and Z.
 ///
-/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5
 fn translation_finish(d: &TranslationData, delta_inv: &Fp2, Z_inv: &Fp2) -> [[Fp2; 2]; 2] {
     let m00 = &(-&d.UZ) * delta_inv;
     let m01 = &(-&d.WZ) * delta_inv;
@@ -423,7 +423,7 @@ fn batch_invert(elems: &[Fp2]) -> Vec<Fp2> {
 /// 8 inversions (δ⁻¹ and Z⁻¹ each), batched into 1 inversion + 21
 /// multiplications.
 ///
-/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5
 fn theta_change_of_basis(
     T1: &(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint),
     T2: &(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint),
@@ -536,7 +536,7 @@ fn theta_change_of_basis(
 /// θ₀ = a·(X−Z), θ₁ = b·(X+Z), where (a : b) is the theta null
 /// point of the component curve.
 ///
-/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5
 fn product_to_theta(
     pts: &[(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)],
     N: &GluingMatrix,
@@ -575,7 +575,7 @@ fn product_to_theta(
 /// (`ec_jac.c:305`). The Montgomery x-only version was incorrect
 /// for the gluing — see BUG 10 in project_theta_bugs.md.
 ///
-/// [§8.2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
+/// [§8.2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.2.4
 fn add_sub_components_jac(
     P: &CurveJacobianPoint,
     Q: &CurveJacobianPoint,
@@ -624,7 +624,7 @@ fn squared_hadamard4(x: &Fp2, y: &Fp2, z: &Fp2, w: &Fp2) -> (Fp2, Fp2, Fp2, Fp2)
 ///
 /// See [§8.5.3], Algorithm 8.30.
 ///
-/// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.3
 pub(crate) struct GenericKernel8 {
     /// 8-torsion point T₁'' on the domain Jacobian.
     pub T1: JacobianPoint,
@@ -640,8 +640,8 @@ impl GenericKernel8 {
     /// Implements `GenericCodomainWith8Torsion` + `GenericEval`
     /// ([§8.5.3], Algorithm 8.30; [§8.5.4], Algorithm 8.34).
     ///
-    /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
-    /// [§8.5.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.3
+    /// [§8.5.4]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.4
     pub(crate) fn isogeny(&self, pts: &[JacobianPoint]) -> (Jacobian, Vec<JacobianPoint>) {
         let (dual, codomain) = codomain_8torsion(&self.T1, &self.T2);
         let images = pts.iter().map(|p| eval(p, &dual, &codomain)).collect();
@@ -661,7 +661,7 @@ impl GenericKernel8 {
 ///
 /// See [§8.5.3], Algorithm 8.32.
 ///
-/// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.3
 pub(crate) struct GenericKernel4 {
     /// 4-torsion point T₁' on the domain Jacobian.
     pub T1: JacobianPoint,
@@ -673,7 +673,7 @@ impl GenericKernel4 {
     /// Implements `GenericCodomainWith4Torsion` + `GenericEval`
     /// ([§8.5.3], Algorithm 8.32).
     ///
-    /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.3
     pub(crate) fn isogeny(
         &self,
         domain: &Jacobian,
@@ -697,7 +697,7 @@ impl GenericKernel4 {
 ///
 /// See [§8.5.3], Algorithm 8.33.
 ///
-/// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.3
 pub(crate) struct GenericKernel2;
 
 impl GenericKernel2 {
@@ -706,7 +706,7 @@ impl GenericKernel2 {
     /// Implements `GenericCodomain` + `GenericEval`
     /// ([§8.5.3], Algorithm 8.33).
     ///
-    /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.3
     pub(crate) fn isogeny(
         domain: &Jacobian,
         pts: &[JacobianPoint],
@@ -729,7 +729,7 @@ impl GenericKernel2 {
 ///
 /// See [§8.5.7].
 ///
-/// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.7
 pub(crate) struct SplittingKernel {
     /// The domain Jacobian (whose null point has product structure).
     pub domain: Jacobian,
@@ -744,7 +744,7 @@ impl SplittingKernel {
     /// Implements `SplittingIsomorphism` + `ThetaToProduct` +
     /// `ThetaProductPointToMontgomery` ([§8.5.7]).
     ///
-    /// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.7
     pub(crate) fn isogeny(&self, pts: &[JacobianPoint]) -> (EllipticProduct, Vec<ProductPoint>) {
         // 1. SplittingIsomorphism: find the matrix M (Algorithm 8.42).
         let M = splitting_isomorphism(&self.domain.null);
@@ -1060,7 +1060,7 @@ fn hadamard_null(dual: &DualThetaNullPoint) -> ThetaNullPoint {
 /// [`splitting_isomorphism`] covers all variants, so adding a new
 /// variant requires adding its matrix — enforced at compile time.
 ///
-/// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.7
 #[derive(Copy, Clone, Debug)]
 enum SplittingIndex {
     /// (i, j) = (0, 0)

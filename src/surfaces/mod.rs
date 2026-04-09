@@ -21,12 +21,12 @@
 //!
 //! # Divergences from spec / C reference
 //!
-//! - **Jacobian gluing.** The spec only specifies x-only Montgomery
-//!   arithmetic, but gluing needs full (x,y,z) to distinguish P+Q from P−Q.
-//!   We follow the C reference's nonstandard Jacobian doubling z₃ = 2y·z²
-//!   so that `jac_to_xz: (x,y,z) ↦ (x, z²)` agrees with `product_to_theta`.
-//! - **Squared theta.** `product_to_theta` uses X·Z products, not X² and
-//!   Z² separately.
+//! - **Jacobian gluing.** The spec only specifies x-only Montgomery arithmetic,
+//!   but gluing needs full (x,y,z) to distinguish P+Q from P−Q. We follow the C
+//!   reference's nonstandard Jacobian doubling z₃ = 2y·z² so that `jac_to_xz:
+//!   (x,y,z) ↦ (x, z²)` agrees with `product_to_theta`.
+//! - **Squared theta.** `product_to_theta` uses X·Z products, not X² and Z²
+//!   separately.
 //!
 //! [§2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.4
 //! [§8.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
@@ -71,7 +71,7 @@ impl ThetaNullPoint {
     ///
     /// Implements `ThetaPrecomp` ([§8.5.2], Algorithm 8.28).
     ///
-    /// [§8.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.2
     pub(crate) fn precompute(&self) -> ThetaPrecomp {
         let (a, b, c, d) = (&self.a, &self.b, &self.c, &self.d);
         let h = hadamard4(&a.square(), &b.square(), &c.square(), &d.square());
@@ -135,8 +135,8 @@ pub(crate) fn hadamard4(x: &Fp2, y: &Fp2, z: &Fp2, w: &Fp2) -> (Fp2, Fp2, Fp2, F
 /// `SplittingIsomorphism` ([§8.5.7], Algorithm 8.42), and
 /// `ProductToTheta` ([§8.5.5], Algorithm 8.37).
 ///
-/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
-/// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5
+/// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.7
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct GluingMatrix(pub(crate) [[Fp2; 4]; 4]);
 
@@ -245,7 +245,7 @@ pub type ProductPoint = (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint);
 /// See [§2.4] and [§8.5.1].
 ///
 /// [§2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.4
-/// [§8.5.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+/// [§8.5.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.1
 #[derive(Clone, Debug)]
 pub(crate) struct Jacobian {
     pub(crate) null: ThetaNullPoint,
@@ -329,7 +329,7 @@ impl JacobianPoint {
     ///
     /// Implements `ThetaDBL` ([§8.5.2], Algorithm 8.29).
     ///
-    /// [§8.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.2
     #[must_use]
     pub(crate) fn double(&self) -> JacobianPoint {
         let c = &self.surface.precomp;
@@ -432,13 +432,13 @@ impl Kernel {
     /// e_{2^(e+2)}(P, Q) = 1; see [§2.2.5] and [§2.4]).
     /// These properties are assumed by construction.
     ///
-    /// [§2.2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
+    /// [§2.2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.5
     /// [§2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.4
-    /// [§3.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.2
+    /// [§3.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.3.2.3
     /// [§4.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
     /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
-    /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
-    /// [§8.5.8]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
+    /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.3
+    /// [§8.5.8]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.8
     pub fn isogeny(
         &self,
         e: crate::curves::TorsionExponent,

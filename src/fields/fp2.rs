@@ -6,7 +6,7 @@
 //!
 //! See [§2.1.2] of the SQIsign spec.
 //!
-//! [§2.1.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.1
+//! [§2.1.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.1.2
 
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 

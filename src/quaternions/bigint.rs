@@ -683,7 +683,7 @@ impl<const N: usize> BigInt<N> {
     ///
     /// # Algorithm
     ///
-    /// This implements [Algorithm 3.11] from the SQIsign specification,
+    /// This implements [Alg. 3.11] from the SQIsign specification,
     /// following the standard Cornacchia algorithm as described in
     /// Cohen's "A Course in Computational Algebraic Number Theory"
     /// and [Morain-Nicolas][MN90]:
@@ -721,7 +721,7 @@ impl<const N: usize> BigInt<N> {
     /// - q = 0: checks if m is a perfect square.
     /// - m = 2, q = 1: returns (1, 1) since 1² + 1² = 2.
     ///
-    /// [Algorithm 3.11]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.11
+    /// [Alg. 3.11]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.11
     /// [MN90]: https://doi.org/10.1016/0022-314X(90)90136-F
     pub fn cornacchia(q: &Self, m: &Self) -> Option<(Self, Self)> {
         // Special case: q = 0 reduces to x² = m.
@@ -801,7 +801,7 @@ impl<const N: usize> BigInt<N> {
     /// Modular square root: returns x such that x² ≡ n (mod m),
     /// or `None` if n is not a quadratic residue mod m.
     ///
-    /// Requires m to be an odd prime. Implements [Algorithm 3.1] from
+    /// Requires m to be an odd prime. Implements [Alg. 3.1] from
     /// the spec, with fast paths for m ≡ 3 (mod 4) and m ≡ 5 (mod 8),
     /// and Tonelli-Shanks for the general case m ≡ 1 (mod 8).
     ///
@@ -813,7 +813,7 @@ impl<const N: usize> BigInt<N> {
     /// truncate and the result is wrong. For larger moduli use
     /// [`modular_sqrt_w`](Self::modular_sqrt_w).
     ///
-    /// [Algorithm 3.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.1
+    /// [Alg. 3.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.1
     pub fn modular_sqrt(n: &Self, m: &Self) -> Option<Self> {
         let n_mod = n.ct_mod(m);
         if bool::from(n_mod.is_zero()) {

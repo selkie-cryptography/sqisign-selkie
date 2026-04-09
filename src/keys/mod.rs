@@ -40,7 +40,7 @@ impl Challenge {
     /// Derive the challenge via Fiat-Shamir: hash the public key,
     /// commitment curve, and message.
     ///
-    /// `chl ← HASH(pk ∥ j(E_com) ∥ msg)` ([Algorithm 4.2][Alg. 4.2], line 10).
+    /// `chl ← HASH(pk ∥ j(E_com) ∥ msg)` ([Alg. 4.2][Alg. 4.2], line 10).
     ///
     /// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
     pub(crate) fn derive(pk: &VerifyingKey, e_com: &Curve, msg: &[u8]) -> Self {
@@ -265,7 +265,7 @@ impl core::ops::Deref for ChallengeMatrix {
 
 impl ChallengeMatrix {
     /// Compute the challenge matrix from two torsion bases via the
-    /// Tate pairing ([Algorithm 2.5][Alg. 2.5]).
+    /// Tate pairing ([Alg. 2.5][Alg. 2.5]).
     ///
     /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
     pub(crate) fn encode(
@@ -327,7 +327,7 @@ impl ChallengeMatrix {
     /// Whether both first-column entries (a, c) are even.
     ///
     /// Used during verification to select the kernel point for the even
-    /// response isogeny ([Algorithm 4.9][Alg. 4.9], line 16): if both
+    /// response isogeny ([Alg. 4.9][Alg. 4.9], line 16): if both
     /// are even, the kernel comes from Q; otherwise from P.
     ///
     /// The C reference checks `mat[0][0]` and `mat[1][0]`

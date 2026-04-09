@@ -7,19 +7,19 @@
 //! End(E) ≅ O.
 //!
 //! The main algorithms are:
-//! - [`IdealToIsogeny`][alg313] (Algorithm 3.13): convert an O₀-ideal to an
+//! - [`IdealToIsogeny`][Alg. 3.13] (Algorithm 3.13): convert an O₀-ideal to an
 //!   isogeny and its images on torsion points
-//! - [`FixedDegreeIsogeny`][alg315] (Algorithm 3.15): compute an isogeny of
+//! - [`FixedDegreeIsogeny`][Alg. 3.15] (Algorithm 3.15): compute an isogeny of
 //!   prescribed degree from precomputed data
-//! - [`SuitableIdeals`][alg316] (Algorithm 3.16): decompose an ideal into
+//! - [`SuitableIdeals`][Alg. 3.16] (Algorithm 3.16): decompose an ideal into
 //!   pieces with coprime odd norms
 //!
 //! See [§3.2] of the SQIsign specification.
 //!
 //! [§3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.2
-//! [alg313]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.13
-//! [alg315]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
-//! [alg316]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
+//! [Alg. 3.13]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.13
+//! [Alg. 3.15]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
+//! [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
 
 pub(crate) mod endomorphism;
 pub(crate) mod precomputed;
@@ -98,9 +98,9 @@ impl DeuringAction for Element<4> {
 /// Extension trait for converting an ideal to a kernel generator
 /// via the Deuring correspondence.
 ///
-/// See [Algorithm 3.14] from the spec.
+/// See [Alg. 3.14] from the spec.
 ///
-/// [Algorithm 3.14]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.14
+/// [Alg. 3.14]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.14
 pub trait IdealKernel {
     /// Compute the kernel decomposition for this ideal of norm 2^e.
     ///

@@ -17,3 +17,48 @@ The implementation is organized into five layers:
     \texttt{IdealToIsogeny}, \texttt{FixedDegreeIsogeny},
     \texttt{SuitableIdeals}, action matrices.
 \end{description}
+
+\subsection{Randomness and the \texttt{\_derand} entry points}
+\label{sec:randomness}
+
+The SQIsign specification (Chapter~8) mandates
+\textbf{AES256-CTR-DRBG} (NIST SP 800-90A, \S10.2.1) as the
+pseudo-random number generator for optimized implementations.  The
+C reference follows this verbatim: its NIST PQC test harness
+(\texttt{PQCgenKAT\_sign.c}) instantiates CTR\_DRBG via
+\texttt{randombytes\_init} with a 48-byte \texttt{entropy\_input}
+and then services every call to \texttt{randombytes} from that
+state.  Each KAT record in the \texttt{.rsp} files begins
+\texttt{seed = <96 hex chars>} -- that 48-byte seed is the
+CTR\_DRBG entropy input.
+
+The 48 bytes are not arbitrary: for AES-256 the DRBG
+\texttt{seedlen} equals $\text{keylen} + \text{blocklen} =
+32 + 16 = 48$.  A shorter seed would leave part of the initial
+CTR\_DRBG\_Update state at zero and diverge from the NIST harness.
+
+We expose two parallel APIs for keygen and signing:
+\begin{itemize}
+  \item \texttt{SigningKey::generate<R: CryptoRngCore>(rng)} and
+    \texttt{SigningKey::sign<R>(msg, rng)} sample 48 bytes of entropy
+    from the caller's RNG and delegate to the derandomized entry
+    points below.  Production callers pass \texttt{OsRng}.
+  \item \texttt{SigningKey::generate\_derand(randomness: \&[u8;
+    48])} and \texttt{SigningKey::sign\_derand(msg, randomness)}
+    take the 48-byte seed directly, instantiate a local
+    \texttt{Aes256CtrDrbg} from it, and drive all internal sampling
+    from that DRBG.  These are the entry points that consume KAT
+    seeds byte-for-byte.
+\end{itemize}
+
+Our \texttt{drbg} module implements AES256-CTR-DRBG directly on the
+RustCrypto \texttt{aes} crate, which provides AES-NI intrinsics on
+\texttt{x86\_64} and ARMv8 cryptographic-extension intrinsics on
+\texttt{aarch64} out of the box.  The module is a direct
+translation of the NIST reference (\texttt{CTR\_DRBG\_Instantiate},
+\texttt{CTR\_DRBG\_Update}, \texttt{CTR\_DRBG\_Generate}): no
+derivation function, no reseed counter, no additional input.  The
+DRBG is exposed as an \texttt{rand\_core::RngCore}, so all
+generic sampling code in \texttt{quaternions::lattice} (rejection
+sampling, \texttt{rand\_interval} inside \texttt{reduce\_to\_prime\_norm},
+\texttt{sample\_from\_ball}) drives it without further glue.

@@ -13,7 +13,7 @@
 //! addition. These are never serialized — on the wire, bases are compressed
 //! to 1-byte hints and reconstructed via `TorsionBasisFromHint` ([§2.2.3]).
 //!
-//! [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
+//! [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
 //!
 //! See also [§2.2] (elliptic curves) and [§8.2] (curve arithmetic).
 //!
@@ -24,13 +24,13 @@
 //!   [`DoublingConstants`] `(A₂₄, C₂₄)`. The spec uses `(A:C)`; the C ref uses
 //!   `(A₂₄, C₂₄)` internally. We store all three to avoid recomputation and
 //!   inversions.
-//! - **Isomorphism**: [`Isomorphism`] implements [Algorithm 8.9][Alg89]
-//!   directly from the spec with projective `(A:C)` coefficients — no
-//!   inversions. The C ref converts through Short Weierstrass.
+//! - **Isomorphism**: [`Isomorphism`] implements [Alg. 8.9][Alg. 8.9] directly
+//!   from the spec with projective `(A:C)` coefficients — no inversions. The C
+//!   ref converts through Short Weierstrass.
 //! - **Curve normalization**: the C ref normalizes `(A₂₄/C₂₄ : 1)` before
 //!   torsion basis generation. We match this via [`Curve::normalize`].
 //!
-//! [Alg89]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.9
+//! [Alg. 8.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.9
 //! [§2.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
 //! [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 
@@ -57,7 +57,7 @@ use crate::fields::{fp::Fp, fp2::Fp2};
 ///
 /// See [§2.2.1] (Montgomery curves) and [§4.6] (binary format).
 ///
-/// [§2.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
+/// [§2.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.1
 /// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Coefficient(Fp2);
@@ -340,7 +340,7 @@ impl Curve {
     /// Both curves must have the same j-invariant. Returns `None` if
     /// λ_x = 0 or λ_z = 0 (degenerate case, see Remark 1 in the spec).
     ///
-    /// Implements lines 1–3 of [Algorithm 8.9][Alg. 8.9].
+    /// Implements lines 1–3 of [Alg. 8.9][Alg. 8.9].
     ///
     /// [Alg. 8.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.9
     #[must_use]
