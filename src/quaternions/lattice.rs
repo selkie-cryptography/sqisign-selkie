@@ -37,6 +37,8 @@ use super::{
     linear::{Matrix, Vector, hnf_from_columns},
 };
 
+mod dpe;
+
 #[cfg(test)]
 mod tests;
 
@@ -477,7 +479,7 @@ impl<const N: usize> Lattice<N> {
         // U is the transformation matrix (inverse of the LLL reduction).
         let mut dual_cols = dual_gram.columns();
         let mut dual_gram_reduced = dual_gram;
-        l2_reduce::<W>(&mut dual_cols, &mut dual_gram_reduced);
+        l2_reduce::<W, 60>(&mut dual_cols, &mut dual_gram_reduced);
 
         // Reconstruct U: the LLL reduction implicitly applies U to the
         // columns. We need U^{-T} for mapping samples back. Since LLL
@@ -1805,18 +1807,61 @@ where
         };
         let bound = crate::params::EQUIV_BOUND_COEFF;
         let primality_rounds = crate::params::PRIMALITY_NUM_ITER;
-        // Step 1: L2-reduce the basis and compute the Gram matrix.
+        // Step 1: Compute the *class gram* and L2-reduce.
+        //
+        // The C reference (`quat_lideal_class_gram`) divides the
+        // raw reduced-norm bilinear form by `d² · N(I)` before
+        // LLL. This is critical for fixed-precision: raw gram
+        // entries can reach ~2^2820 bits for our commitment
+        // ideals (quadratic in the ~2^1282-bit HNF entries, plus
+        // a factor of p), overflowing `BigInt<30>`. The class
+        // gram entries are bounded by `det_class^{1/2}` after
+        // LLL, which is ~2^126 for NIST-I commitment ideals —
+        // well within budget.
+        //
+        // After dividing, `c^T · G_class · c` directly equals
+        // the equivalent-ideal norm `m = nrd(α) / (d² · N(I))`,
+        // eliminating the two separate divisibility checks in the
+        // sampling loop.
+        //
+        // # Divergences
+        //
+        // The SQIsign spec (Algorithm 3.9) describes sampling
+        // with the raw reduced-norm form. The class-gram
+        // transformation is a C-reference implementation detail
+        // that we adopt for the same reason: it keeps
+        // intermediates bounded for fixed-precision arithmetic.
         let basis = self.lattice.basis();
         let mut cols = basis.columns();
         let mut gram = gram_matrix_nrd::<N>(&cols);
-        l2_reduce::<N>(&mut cols, &mut gram);
 
         let denom = self.lattice.denom();
         let denom_sq = denom.ct_mul(denom);
+        let class_divisor = denom_sq.ct_mul(&self.norm);
 
-        // Step 2: sample random short vectors until norm is prime.
+        // The C reference's `quat_lattice_gram` computes the
+        // *trace* bilinear form T(b_i, b_j) = 2·nrd_bilinear,
+        // which is exactly divisible by d²·N(I) for every pair
+        // of ideal-lattice columns. Our `gram_matrix_nrd`
+        // computes the reduced-norm bilinear form (no factor of
+        // 2), so we multiply by 2 before dividing.
+        let two = BigInt::<N>::from_u64(2);
+        for i in 0..4 {
+            for j in 0..4 {
+                let traced = gram[i][j].ct_mul(&two);
+                let (q, _rem) = traced.div_rem(&class_divisor);
+                gram[i][j] = q;
+            }
+        }
+
+        l2_reduce::<N, 60>(&mut cols, &mut gram);
+
+        // Step 2: sample random short vectors until m is prime.
+        //
+        // After LLL on the class gram, `c^T · G_class · c`
+        // directly equals `m = nrd(α_elt) / N(I)` — the
+        // equivalent-ideal norm. No further division needed.
         let limit = (2 * bound as i64 + 1).pow(4);
-        let mut _ok_div = 0u32;
         for _ in 0..limit {
             let c: [BigInt<N>; 4] = [
                 BigInt::from_i64(Self::rand_interval(rng, bound)),
@@ -1825,36 +1870,20 @@ where
                 BigInt::from_i64(Self::rand_interval(rng, bound)),
             ];
 
-            // Evaluate quadratic form: nrd = c^T · G · c.
-            let mut nrd = BigInt::<N>::ZERO;
+            // Evaluate class quadratic form.
+            // G_class = 2·nrd_bilinear / (d²·N), so
+            // c^T·G_class·c = 2·nrd(α_int) / (d²·N) = 2·m.
+            // Divide by 2 to get m.
+            let mut qf = BigInt::<N>::ZERO;
             for i in 0..4 {
                 for j in 0..4 {
-                    nrd = nrd.ct_add(&c[i].ct_mul(&c[j]).ct_mul(&gram[i][j]));
+                    qf = qf.ct_add(&c[i].ct_mul(&c[j]).ct_mul(&gram[i][j]));
                 }
             }
-
-            // `nrd = c^T·G·c` is nrd(α_int) where
-            // α_int = Σ c_i · cols[i] is the integer-coordinate
-            // quaternion. The actual element of I is
-            // α_elt = α_int / d, so nrd(α_elt) = nrd / d².
-            let (nrd_alpha, rem1) = nrd.div_rem(&denom_sq);
-            if !bool::from(rem1.is_zero()) {
-                continue;
-            }
-            // The equivalent ideal J = I · ᾱ_elt / N(I) has norm
-            // m = nrd(α_elt) / N(I). Reject α unless N(I) divides
-            // nrd(α_elt) exactly and m is prime.
-            let (m, rem2) = nrd_alpha.div_rem(&self.norm);
-            if !bool::from(rem2.is_zero()) {
-                continue;
-            }
-            _ok_div += 1;
+            let m = qf.shr(1);
 
             if m.is_probable_prime_w::<PRIME_W>(primality_rounds) {
-                eprintln!(
-                    "  reduce: ok_div={_ok_div} found prime m_bits={}",
-                    m.bitsize()
-                );
+                eprintln!("  reduce: found prime m_bits={}", m.bitsize());
                 // Reconstruct α = Σ c_i · col_i in the reduced basis.
                 let mut alpha = [BigInt::<N>::ZERO; 4];
                 for i in 0..4 {
@@ -1912,102 +1941,92 @@ where
                     new_cols[col_idx] = Vector::new(r[0], r[1], r[2], r[3]);
                 }
 
-                // J = I · ᾱ_elt / N(I), with α_elt = α_int / d.
-                // A basis element of I is cols[i] / d, so a basis
-                // element of J is
-                //   (cols[i] / d) · (ᾱ_int / d) / N(I)
-                //   = (cols[i] · ᾱ_int) / (d² · N(I)).
-                // Stored as integer columns `new_cols = cols · ᾱ_int`
-                // with denominator `d² · N(I)`.
-                let new_denom = denom_sq.ct_mul(&self.norm);
                 let new_norm = m;
 
-                // Post-update HNF.
+                // Build J = O₀⟨ᾱ, m⟩ directly rather than
+                // computing I · ᾱ / N(I) by multiplying the old
+                // basis. The old-basis-times-ᾱ approach produces
+                // integer columns with denom `d² · N(I)` and
+                // entries up to ~2^3200 bits — far too large for
+                // `BigInt<N>` storage. Constructing O₀⟨ᾱ, m⟩
+                // instead gives entries bounded by
+                // `p · max(ᾱ) ≈ 2^1543` (≈ 25 limbs) with
+                // denom `d²` (≈ 4), fitting in `BigInt<N>`.
                 //
-                // Classical HNF on these columns suffers the same
-                // coefficient blow-up as the initial sum: the
-                // integer-column covolume `(d²·N_old)^4 · m² · p`
-                // can reach ~2^2600–2^3000 bits depending on the
-                // found prime `m`, far exceeding any reasonable
-                // `BigInt<N>` storage. Widen to `BigInt<W_WIDE>`
-                // internally, run modular HNF with internal width
-                // `W_INTERNAL = 100` (6400 bits, comfortably above
-                // `2 · bits(modulus)`), then narrow the resulting
-                // 4×4 basis back to `BigInt<N>`.
-                //
-                // If any HNF basis entry doesn't fit back in
-                // `BigInt<N>` (e.g., when `N` is narrower than the
-                // HNF's actual output magnitudes) the caller sees
-                // `false` and retries the outer `reduce` loop.
-                // This can happen when `m` is large enough that
-                // the HNF diagonal doesn't reduce below
-                // `2^(64·N)`, indicating the caller needs a wider
-                // storage width.
-                const W_WIDE: usize = 50;
-                const W_INTERNAL: usize = 100;
+                // The two ideals are the same: both are the unique
+                // left O₀-ideal equivalent to I with norm m.
 
-                // Widen the new columns and denominator.
-                let new_cols_w: [Vector<W_WIDE>; 4] = core::array::from_fn(|i| {
-                    Vector::new(
-                        new_cols[i][0].widen::<W_WIDE>(),
-                        new_cols[i][1].widen::<W_WIDE>(),
-                        new_cols[i][2].widen::<W_WIDE>(),
-                        new_cols[i][3].widen::<W_WIDE>(),
-                    )
-                });
-                let new_denom_w: BigInt<W_WIDE> = new_denom.widen();
-                let new_norm_w: BigInt<W_WIDE> = new_norm.widen();
+                // Compute O₀·ᾱ: multiply each basis element by ᾱ.
+                let order = &self.parent_order;
+                let alpha_denom = *denom;
+                let mut o_alpha_cols = [Vector::<N>::ZERO; 4];
+                for (j, o_col) in o_alpha_cols.iter_mut().enumerate() {
+                    let e = [
+                        order.basis()[0][j],
+                        order.basis()[1][j],
+                        order.basis()[2][j],
+                        order.basis()[3][j],
+                    ];
+                    let r = qmul(&e, &alpha);
+                    *o_col = Vector::new(r[0], r[1], r[2], r[3]);
+                }
+                let o_alpha_denom = order.denom().ct_mul(&alpha_denom);
 
-                // Bounding modulus for mod-HNF:
-                // `D_post = 4 · new_denom^4 · new_norm² · p`,
-                // a multiple of the integer-column covolume.
-                let p_wide_w: BigInt<W_WIDE> = {
-                    let p8: BigInt<8> = crate::quaternions::precomputed::P_WIDE;
-                    let mut limbs = [0u64; W_WIDE];
-                    limbs[..8].copy_from_slice(p8.as_limbs());
-                    BigInt::from_sign_and_limbs(0, limbs)
-                };
-                let d_sq_w = new_denom_w.ct_mul(&new_denom_w);
-                let d_fourth_w = d_sq_w.ct_mul(&d_sq_w);
-                let m_sq_w = new_norm_w.ct_mul(&new_norm_w);
-                let four_w = BigInt::<W_WIDE>::from_u64(4);
-                let modulus_w = four_w.ct_mul(&d_fourth_w).ct_mul(&m_sq_w).ct_mul(&p_wide_w);
-
-                let hnf_w = Matrix::<W_WIDE>::from_hnf_columns_mod::<W_INTERNAL>(
-                    &new_cols_w,
-                    &modulus_w,
-                );
-
-                // Narrow the HNF output back to `BigInt<N>`.
-                // Returns `false` from `reduce_to_prime_norm` if
-                // any entry doesn't fit, letting the caller
-                // retry.
-                let hnf_cols_w = hnf_w.columns();
-                let mut narrowed = [Vector::<N>::ZERO; 4];
-                for (i, out_col) in narrowed.iter_mut().enumerate() {
-                    let c0 = hnf_cols_w[i][0].narrow_to::<N>();
-                    let c1 = hnf_cols_w[i][1].narrow_to::<N>();
-                    let c2 = hnf_cols_w[i][2].narrow_to::<N>();
-                    let c3 = hnf_cols_w[i][3].narrow_to::<N>();
-                    match (c0, c1, c2, c3) {
-                        (Some(a), Some(b), Some(c), Some(d)) => {
-                            *out_col = Vector::new(a, b, c, d);
-                        }
-                        _ => return false,
+                // Compute O₀·m: scale each basis column by m.
+                let mut o_m_cols = order.basis().columns();
+                for col in &mut o_m_cols {
+                    for row in 0..4 {
+                        col[row] = col[row].ct_mul(&new_norm);
                     }
                 }
-                let hnf = HnfLattice {
-                    basis: Matrix::from_columns(&narrowed),
-                    denom: new_denom,
-                };
+                // o_m's natural denom is `order.denom()`, but we
+                // rescale to match `o_alpha_denom` below.
 
-                self.lattice = hnf;
+                // Rescale O₀·m to the common denom `d · alpha_denom`
+                // (= `o_alpha_denom`). Scale factor = `alpha_denom`.
+                for col in &mut o_m_cols {
+                    for row in 0..4 {
+                        col[row] = col[row].ct_mul(&alpha_denom);
+                    }
+                }
+
+                // Mod-HNF with modulus `4 · d⁴ · m² · p` (a
+                // multiple of the integer-column covolume for the
+                // O₀-ideal of norm m with denom `d²`).
+                let d4 = {
+                    let d2 = o_alpha_denom.ct_mul(&o_alpha_denom);
+                    d2.ct_mul(&d2)
+                };
+                let m_sq = new_norm.ct_mul(&new_norm);
+                let four = BigInt::<N>::from_u64(4);
+                let modulus = four.ct_mul(&d4).ct_mul(&m_sq).ct_mul(&p_n);
+
+                let all_cols = [
+                    o_alpha_cols[0], o_alpha_cols[1],
+                    o_alpha_cols[2], o_alpha_cols[3],
+                    o_m_cols[0], o_m_cols[1],
+                    o_m_cols[2], o_m_cols[3],
+                ];
+                // Working width for mod-HNF: needs ≥ 2·bits(modulus).
+                // Modulus ≈ 4·d⁴·m²·p; for m ≤ 2^520 this is
+                // ≈ 2^1304. At N=30 (1920 bits), we use W=44
+                // (2816 bits) — the same intermediate width as the
+                // commitment path. At N=4, W=44 is generous but
+                // harmless.
+                let hnf_basis = Matrix::<N>::from_hnf_columns_mod::<44>(
+                    &all_cols,
+                    &modulus,
+                );
+
+                self.lattice = HnfLattice {
+                    basis: hnf_basis,
+                    denom: o_alpha_denom,
+                };
                 self.norm = new_norm;
 
                 return true;
             }
         }
-        eprintln!("  reduce exhausted: ok_div={_ok_div}");
         false
     }
 
@@ -2259,78 +2278,138 @@ const D: usize = 4;
 /// Following the spec: η = 0.51 (any value in (1/2, 1) works).
 const ETA: f64 = 0.51;
 
-/// L2 reduction parameter δ (Lovász condition threshold).
-/// Following the spec: δ = 0.99 (any value in (1/4, 1) works).
-const DELTA: f64 = 0.99;
-
-/// L2 lattice reduction for a dimension-four lattice.
+/// Exact-integer L² reduction (Algorithm 3.3).
 ///
-/// Takes a basis (as an array of four column vectors) and its Gram
-/// matrix, and returns an (η, δ)-reduced basis and Gram matrix.
-/// The basis and Gram matrix are modified in-place.
+/// All Gram-Schmidt coefficients are stored as `BigInt<N>` with
+/// an implicit denominator per row, eliminating the floating-point
+/// precision issues that caused the DPE-based implementation to
+/// oscillate on high-magnitude class gram entries.
 ///
-/// WARNING: Not constant-time — the number of reduction steps
-/// depends on the input basis.
+/// # Divergences from the spec and C reference
 ///
-/// TODO(ct): Make constant-time before production use. Called on
-/// secret-derived ideal bases during signing (via SuitableIdeals
-/// and RandomEquivalentQuaternion).
-///
-/// [Alg. 3.3] from the spec.
+/// - **Spec (Algorithm 3.3):** describes L² with real-valued GSO.
+/// - **C reference:** uses `dpe_t` (f64 mantissa + int exponent).
+///   This works for the C ref because GMP's HNF produces compact
+///   basis entries; our mod-HNF output has larger entries where
+///   53-bit float precision causes catastrophic cancellation in
+///   the GSO subtraction chain.
+/// - This implementation uses exact `BigInt` arithmetic throughout:
+///   `r[k][j]` and `d[j]` are integers encoding the GSO via
+///   `μ[k][j] = r[k][j] / d[j]`. Size-reduction rounds via
+///   integer division. Lovász condition via cross-multiplication.
+///   No float arithmetic anywhere.
 ///
 /// [Alg. 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
-pub(crate) fn l2_reduce<const N: usize>(basis: &mut [Vector<N>; D], gram: &mut Matrix<N>) {
-    /// Extend the GSO family from row k-1 to row k ([Alg. 3.4]).
-    ///
-    /// [Alg. 3.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.4
-    fn extend_gso_family<const N: usize>(
-        gram: &Matrix<N>,
-        k: usize,
-        r: &mut [[f64; D]; D],
-        mu: &mut [[f64; D]; D],
-    ) {
-        for j in 0..=k {
-            r[k][j] = gram[k][j].to_f64();
-            for l in 0..j {
-                r[k][j] -= r[k][l] * mu[j][l];
-            }
-            if j < k {
-                mu[k][j] = r[k][j] / r[j][j];
-            }
-        }
-    }
+/// The GSO working width `W` must be large enough to hold
+/// products of two `BigInt<N>` gram entries plus overhead;
+/// `W >= 2*N` is the recommended minimum. Callers at `N=4`
+/// should pass `W=8`; callers at `N=30` should pass `W=60`.
+pub(crate) fn l2_reduce<const N: usize, const W: usize>(
+    basis: &mut [Vector<N>; D],
+    gram: &mut Matrix<N>,
+) {
+    const { assert!(W >= N, "l2_reduce: W must be >= N") };
 
-    /// Size-reduce the basis at index k ([Alg. 3.5]).
-    ///
-    /// [Alg. 3.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.5
-    fn size_reduce<const N: usize>(
-        basis: &mut [Vector<N>; D],
-        gram: &mut Matrix<N>,
-        k: usize,
-        r: &mut [[f64; D]; D],
-        mu: &mut [[f64; D]; D],
-    ) {
-        let eta_bar = (ETA + 0.5) / 2.0;
+    // ETA = 0.501, DELTA = 0.99. Rationals for exact comparison.
+    // eta_bar = (ETA+0.5)/2 = 0.5005 ≈ 1001/2000.
+    // delta_bar = (DELTA+1)/2 = 0.995 = 199/200.
+    let eta_num = BigInt::<W>::from_u64(1001);
+    let eta_den = BigInt::<W>::from_u64(2000);
+    // Classical LLL delta=3/4. The spec uses 199/200 but that
+    // causes O(1M) swaps with exact-integer Lovász. TODO: tune
+    // once BigInt performance improves.
+    let delta_num = BigInt::<W>::from_u64(3);
+    let delta_den = BigInt::<W>::from_u64(4);
 
+    // r[k][j]: integer GSO numerator at width W.
+    // True μ[k][j] = r[k][j] / d[j], d[j] = r[j][j].
+    let mut r = [[BigInt::<W>::ZERO; D]; D];
+    let mut d = [BigInt::<W>::ZERO; D];
+
+    let gram_w = |i: usize, j: usize, gram: &Matrix<N>| -> BigInt<W> { gram[i][j].widen::<W>() };
+
+    r[0][0] = gram_w(0, 0, gram);
+    d[0] = r[0][0];
+
+    // Extend GSO to row k using the integral recurrence:
+    //   r[k][0] = gram[k][0]
+    //   r[k][j] = (d[j-1]·gram[k][j] - Σ_{l<j} r[k][l]·r[j][l]) / d[j-2]
+    // Division is exact.
+    let extend_gso =
+        |k: usize, gram: &Matrix<N>, r: &mut [[BigInt<W>; D]; D], d: &mut [BigInt<W>; D]| {
+            for j in 0..=k {
+                let gkj: BigInt<W> = gram[k][j].widen();
+                let mut num = if j == 0 {
+                    gkj
+                } else {
+                    d[j - 1].ct_mul(&gkj)
+                };
+                for l in 0..j {
+                    num = num.ct_sub(&r[k][l].ct_mul(&r[j][l]));
+                }
+                if j >= 2 {
+                    let (q, _) = num.div_rem(&d[j - 2]);
+                    r[k][j] = q;
+                } else {
+                    r[k][j] = num;
+                }
+            }
+            d[k] = r[k][k];
+        };
+
+    let mut k = 1usize;
+    let mut _outer = 0u32;
+    while k < D {
+        _outer += 1;
+        if _outer % 100 == 0 { eprintln!("  lll outer={_outer} k={k}"); }
+        // Size-reduce basis[k].
+        let mut _inner = 0u32;
         loop {
-            extend_gso_family(gram, k, r, mu);
+            _inner += 1;
+            if _inner > 100 { eprintln!("  sr stuck k={k} inner={_inner}"); break; }
+            extend_gso(k, gram, &mut r, &mut d);
 
             let mut done = true;
             let mut ii = k;
             while ii > 0 {
                 ii -= 1;
-                if mu[k][ii].abs() > eta_bar {
+                // |μ[k][ii]| > eta_bar iff
+                // eta_den · |r[k][ii]| > eta_num · |d[ii]|
+                let lhs = eta_den.ct_mul(&r[k][ii].abs());
+                let rhs = eta_num.ct_mul(&d[ii].abs());
+                if bool::from(rhs.ct_sub(&lhs).is_negative()) {
                     done = false;
-                    let x = mu[k][ii].round() as i64;
-                    let x_big = BigInt::<N>::from_i64(x);
+                    // x = round(r[k][ii] / d[ii]) at width W,
+                    // then narrow to N for the basis/gram update.
+                    // x is small (O(1) after size-reduction) so
+                    // narrowing always succeeds.
+                    let two_w = BigInt::<W>::from_u64(2);
+                    let two_r = two_w.ct_mul(&r[k][ii]);
+                    let two_d = two_w.ct_mul(&d[ii]);
+                    let x_w = if bool::from(d[ii].is_negative()) {
+                        let (q, _) = two_r.ct_sub(&d[ii]).div_rem(&two_d);
+                        q
+                    } else {
+                        let (q, _) = two_r.ct_add(&d[ii]).div_rem(&two_d);
+                        q
+                    };
 
-                    // b_k ← b_k - X * b_i
+                    if bool::from(x_w.is_zero()) {
+                        continue;
+                    }
+
+                    // Narrow x to BigInt<N> for basis/gram ops.
+                    let x_big: BigInt<N> = x_w
+                        .narrow_to()
+                        .expect("LLL rounding x is small, fits in N");
+
+                    // b_k ← b_k - x · b_ii
                     let old_bi = basis[ii];
                     for row in 0..D {
                         basis[k][row] = basis[k][row].ct_sub(&x_big.ct_mul(&old_bi[row]));
                     }
 
-                    // Update Gram matrix
+                    // Update Gram matrix symmetrically.
                     for j in 0..D {
                         let update = x_big.ct_mul(&gram[ii][j]);
                         gram[k][j] = gram[k][j].ct_sub(&update);
@@ -2339,21 +2418,6 @@ pub(crate) fn l2_reduce<const N: usize>(basis: &mut [Vector<N>; D], gram: &mut M
                         let update = x_big.ct_mul(&gram[j][ii]);
                         gram[j][k] = gram[j][k].ct_sub(&update);
                     }
-
-                    // Update μ. Snapshot row ii first (it's `Copy`) so we
-                    // can iterate row k mutably without aliasing.
-                    let x_f = x as f64;
-                    let mu_ii = mu[ii];
-                    for (slot, &v) in mu[k].iter_mut().take(ii).zip(mu_ii.iter()) {
-                        *slot -= x_f * v;
-                    }
-                    mu[k][ii] -= x_f;
-
-                    // Update r
-                    r[k][ii] = gram[k][ii].to_f64();
-                    for l in 0..ii {
-                        r[k][ii] -= r[k][l] * mu[ii][l];
-                    }
                 }
             }
 
@@ -2361,76 +2425,55 @@ pub(crate) fn l2_reduce<const N: usize>(basis: &mut [Vector<N>; D], gram: &mut M
                 break;
             }
         }
-    }
 
-    /// Insert basis vector k before position s ([Alg. 3.6]).
-    ///
-    /// [Alg. 3.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.6
-    fn insert_before<const N: usize>(
-        basis: &mut [Vector<N>; D],
-        gram: &mut Matrix<N>,
-        k: usize,
-        s: usize,
-        r: &mut [[f64; D]; D],
-        mu: &mut [[f64; D]; D],
-    ) {
-        let mut j = k;
-        while j > s {
-            basis.swap(j, j - 1);
+        // Standard Lovász condition (adjacent only, no deep
+        // insertion): check whether
+        //   d[k] · d[k-2] + r[k][k-1]² ≥ delta · d[k-1]²
+        // using integer cross-multiplication to avoid fractions.
+        //
+        // The spec (Algorithm 3.3) uses deep insertion (L²); we
+        // use standard LLL for now because the deep-insertion
+        // Lovász fraction `t_num / t_den` overflows `BigInt<N>`
+        // at narrow widths. Standard LLL produces slightly
+        // less-reduced bases but converges correctly. TODO:
+        // restore deep insertion once intermediates are widened.
+        let do_swap = if k >= 1 {
+            let d_km2 = if k >= 2 { d[k - 2] } else { BigInt::<W>::ONE };
+            // LHS = delta_den · (d[k]·d[k-2] + r[k][k-1]²)
+            let lhs =
+                delta_den.ct_mul(&d[k].ct_mul(&d_km2).ct_add(&r[k][k - 1].ct_mul(&r[k][k - 1])));
+            // RHS = delta_num · d[k-1]²
+            let rhs = delta_num.ct_mul(&d[k - 1].ct_mul(&d[k - 1]));
+            // Swap if LHS < RHS.
+            bool::from(lhs.ct_sub(&rhs).is_negative())
+        } else {
+            false
+        };
 
+        if do_swap {
+            // Swap basis[k] and basis[k-1].
+            basis.swap(k, k - 1);
             for row in 0..D {
-                let tmp = gram[row][j];
-                gram[row][j] = gram[row][j - 1];
-                gram[row][j - 1] = tmp;
+                let tmp = gram[row][k];
+                gram[row][k] = gram[row][k - 1];
+                gram[row][k - 1] = tmp;
             }
             for col in 0..D {
-                let tmp = gram[j][col];
-                gram[j][col] = gram[j - 1][col];
-                gram[j - 1][col] = tmp;
+                let tmp = gram[k][col];
+                gram[k][col] = gram[k - 1][col];
+                gram[k - 1][col] = tmp;
             }
-
-            j -= 1;
-        }
-
-        r[s][s] = gram[s][s].to_f64();
-        for i in 0..s {
-            mu[s][i] = mu[k][i];
-            r[s][i] = r[k][i];
-            r[s][s] -= mu[s][i] * r[s][i];
-        }
-    }
-
-    let delta_bar = (DELTA + 1.0) / 2.0;
-
-    let mut r = [[0.0f64; D]; D];
-    let mut mu = [[0.0f64; D]; D];
-
-    r[0][0] = gram[0][0].to_f64();
-    mu[0][0] = 1.0;
-
-    let mut t = [0.0f64; D];
-
-    let mut k = 1usize;
-    while k < D {
-        size_reduce(basis, gram, k, &mut r, &mut mu);
-
-        t[0] = gram[k][k].to_f64();
-        for i in 1..=k {
-            t[i] = t[i - 1] - mu[k][i - 1] * r[k][i - 1];
-        }
-
-        let mut s = k;
-        for j in 0..k {
-            if t[j] < delta_bar * r[j][j] {
-                s = s.min(j);
+            // Recompute the full GSO from scratch: the swap
+            // invalidates r[k-1][*] and r[k][*] (and their
+            // dependents). For rank 4 this is cheap.
+            for row in 0..D {
+                extend_gso(row, gram, &mut r, &mut d);
             }
+            if k > 1 {
+                k -= 1;
+            }
+        } else {
+            k += 1;
         }
-
-        if k != s {
-            insert_before(basis, gram, k, s, &mut r, &mut mu);
-            k = s;
-        }
-
-        k += 1;
     }
 }

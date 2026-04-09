@@ -556,7 +556,7 @@ impl super::lattice::LeftIdeal<4> {
         let norm_8: BigInt<8> = (*self.norm()).into();
 
         let mut gram = gram_matrix_nrd(&cols_8);
-        l2_reduce(&mut cols_8, &mut gram);
+        l2_reduce::<8, 16>(&mut cols_8, &mut gram);
 
         let short_vecs = enumerate_short_vectors(&cols_8, &gram, &norm_8, &denom_8);
 
