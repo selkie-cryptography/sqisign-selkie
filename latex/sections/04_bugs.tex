@@ -310,3 +310,66 @@ the ones where a wrong value at the bottom of the stack flips a
 cryptographic predicate---``is this prime?'', ``is this a square?''---
 with no other symptom.
 
+\subsection{HNF coefficient blow-up at fixed precision}
+\label{sec:bug-hnf}
+
+The commitment phase constructs the left ideal
+$I = O_0\langle\gamma, N\rangle$ by concatenating the eight column
+vectors of $O_0 \cdot \gamma$ and $O_0 \cdot N$ and reducing to
+Hermite Normal Form (Algorithm~3.2).  The C reference uses GMP, so
+HNF intermediate entries grow without bound.  We use fixed-width
+\texttt{BigInt<30>} (1920~bits).
+
+Classical HNF's extended-GCD elimination produces intermediate
+column entries whose magnitude can grow exponentially in the rank.
+For our rank-4 ideal lattices with initial entries up to
+${\sim}2^{770}$ (the $p \cdot g_i$ products from
+\texttt{RandomIdealGivenNorm}), intermediate xgcd products exceed
+the 1920-bit budget after only a few elimination steps.  The
+overflowing limbs are silently truncated, and the resulting ``HNF''
+basis collapses: we observed basis columns with reduced norms of~4
+and~${\sim}2^{251}$---elements of the ambient order~$O_0$, not
+the intended ideal.  Every downstream operation then computes on
+a lattice unrelated to~$I$, and
+\texttt{reduce\_to\_prime\_norm} never finds a valid prime because
+the divisibility invariant $\mathrm{nrd}(\alpha) \in N(I) \cdot
+\mathbb{Z}$ no longer holds.
+
+The fix is the standard Domich--Kannan--Trotter modular HNF
+(Cohen, \emph{A Course in Computational Algebraic Number
+Theory},~\S2.4.2).  If $D$ is any positive multiple of the
+lattice determinant~$\det(L)$, then $L \supseteq D \cdot
+\mathbb{Z}^n$, so reducing every intermediate entry modulo~$D$
+after every arithmetic update preserves the HNF while bounding
+entries by~$D$.
+
+For the commitment ideal at NIST-I, $D = 4 d^4 N^2 p \approx
+2^{1282}$ (21~limbs) is a precomputed constant.  The modular HNF
+operates at a wider intermediate width ($W = 44$~limbs, 2816~bits)
+to hold products of two $D$-sized values before reduction, then
+narrows the result back to the storage width.  The same technique
+is applied to two additional HNF sites:
+\begin{itemize}
+  \item \textbf{Response-phase ideal construction}
+    (\texttt{from\_generator} at width~30): the generator
+    $\alpha_{\mathrm{rsp}}$ from the sampling step has coordinates
+    up to ${\sim}2^{1400}$~bits; the modulus is computed per call
+    as $4 d^4 \cdot (\mathit{norm})^2 \cdot p$.
+  \item \textbf{Post-reduce basis update} inside
+    \texttt{reduce\_to\_prime\_norm}: the new basis columns are
+    quaternion products with entries up to ${\sim}2^{900}$~bits
+    and integer-column covolume up to ${\sim}2^{3000}$~bits.  The
+    modulus and intermediate arithmetic are widened to
+    \texttt{BigInt<50>} and \texttt{BigInt<100>} respectively.
+\end{itemize}
+
+\noindent
+\textbf{Takeaway:} Algorithm~3.2 of the SQIsign specification
+describes HNF over arbitrary-precision integers; it does not
+discuss fixed-precision adaptations or coefficient-size bounds.
+Any fixed-width implementation of Algorithm~3.2 must either prove
+that intermediate growth stays within the budget for the specific
+input magnitudes, or use modular HNF with a known multiple of the
+lattice determinant as the bounding modulus.  The C reference
+sidesteps this entirely by using GMP.
+

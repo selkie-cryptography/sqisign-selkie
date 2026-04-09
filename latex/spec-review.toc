@@ -9,3 +9,13 @@
 \contentsline {section}{\numberline {9}Jacobian doubling for balanced strategy}{4}{section.9}%
 \contentsline {section}{\numberline {10}\textsc {DifferencePoint} normalization factor}{4}{section.10}%
 \contentsline {section}{\numberline {A}Never recompute $P{-}Q$ via \textsc {DifferencePoint}}{5}{appendix.A}%
+\contentsline {section}{\numberline {B}Change-of-basis matrix application convention}{5}{appendix.B}%
+\contentsline {paragraph}{What the spec says.}{5}{section*.3}%
+\contentsline {paragraph}{What the C reference does.}{5}{section*.4}%
+\contentsline {paragraph}{Impact.}{6}{section*.5}%
+\contentsline {paragraph}{Recommendation.}{6}{section*.6}%
+\contentsline {section}{\numberline {C}Fixed-precision Hermite Normal Form}{6}{appendix.C}%
+\contentsline {paragraph}{What goes wrong.}{6}{section*.7}%
+\contentsline {paragraph}{What the C reference does.}{6}{section*.8}%
+\contentsline {paragraph}{Fix.}{6}{section*.9}%
+\contentsline {paragraph}{Recommendation.}{6}{section*.10}%

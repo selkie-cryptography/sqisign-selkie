@@ -1083,6 +1083,96 @@ impl<const N: usize> LeftIdeal<N> {
     }
 }
 
+impl LeftIdeal<30> {
+    /// Construct a left ideal `I = O⟨α, N⟩` at storage width
+    /// `N = 30` via modular HNF, avoiding the classical HNF
+    /// coefficient blow-up that corrupts the generic
+    /// [`from_generator`][Self::from_generator] path at this
+    /// width.
+    ///
+    /// This is the response-phase analogue of the construction
+    /// path used by [`random_prime_norm_wide`][Self::random_prime_norm_wide]
+    /// for the commitment ideal. At `N = 30` the incoming
+    /// generator `α_rsp` from the sampling step has coordinates
+    /// up to ≈ 2^1400 bits; the classical HNF inside
+    /// [`Lattice::sum`] will silently overflow on products of
+    /// these entries, whereas [`Lattice::sum_mod`] bounds every
+    /// intermediate by the per-call modulus
+    /// `D = 4 · d⁴ · norm² · p`.
+    ///
+    /// Because the modulus depends on `norm` (which varies per
+    /// signature — it is `q_rsp · D_MIX` with `q_rsp` sampled
+    /// each iteration), it is computed at call time rather than
+    /// precomputed as a const.
+    ///
+    /// # Returns
+    ///
+    /// `None` if `α.denom` differs from `order.denom()` (which
+    /// would put the two sub-lattices at mismatched denominators
+    /// and force a rescale that is incompatible with the chosen
+    /// `sum_mod` width budget). The sole current caller
+    /// (`sign_derand`'s response phase) always passes `α` with
+    /// denom `1`, and the order is `O₀` with denom `2`, so the
+    /// denoms match by construction. The check is defensive.
+    pub fn from_generator_mod_hnf(
+        alpha: &Element<30>,
+        norm: &BigInt<30>,
+        order: &Order<30>,
+    ) -> Option<Self> {
+        // Compute Oα: multiply each basis element of O by α.
+        let mut o_alpha_cols = [Vector::<30>::ZERO; 4];
+        for (j, o_alpha_col) in o_alpha_cols.iter_mut().enumerate() {
+            let basis_j = order.basis_elem(j);
+            let product = basis_j.mul_direct(alpha);
+            *o_alpha_col = Vector::new(
+                *product.a.as_bigint(),
+                *product.b.as_bigint(),
+                *product.c.as_bigint(),
+                *product.d.as_bigint(),
+            );
+        }
+        let o_alpha_denom = order.denom().ct_mul(alpha.denom.as_bigint());
+        let o_alpha = Lattice::new(Matrix::from_columns(&o_alpha_cols), o_alpha_denom);
+
+        // Compute ON: scale each basis vector of O by N.
+        let mut o_n_cols = order.basis().columns();
+        for col in &mut o_n_cols {
+            for row in 0..4 {
+                col[row] = col[row].ct_mul(norm);
+            }
+        }
+        let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), *order.denom());
+
+        // Mod-HNF bounding modulus `D = 4 · d⁴ · norm² · p`.
+        //
+        // For the sign response phase, `norm = q_rsp · D_MIX`
+        // with `q_rsp ≤ 2^126` and `D_MIX ≈ 2^513`, so
+        // `norm ≲ 2^640` and `D ≲ 2^(2 + 4 + 1280 + 256) =
+        // 2^1542`. This fits comfortably in `BigInt<30>` (1920
+        // bits).
+        let p_wide: BigInt<30> = {
+            let p8: BigInt<8> = crate::quaternions::precomputed::P_WIDE;
+            let mut limbs = [0u64; 30];
+            limbs[..8].copy_from_slice(p8.as_limbs());
+            BigInt::from_sign_and_limbs(0, limbs)
+        };
+        let d = *order.denom();
+        let d_sq = d.ct_mul(&d);
+        let d_fourth = d_sq.ct_mul(&d_sq);
+        let norm_sq = norm.ct_mul(norm);
+        let four = BigInt::<30>::from_u64(4);
+        let modulus = four.ct_mul(&d_fourth).ct_mul(&norm_sq).ct_mul(&p_wide);
+
+        let lattice = o_alpha.sum_mod::<60>(&o_n, &modulus)?;
+
+        Some(Self {
+            lattice,
+            norm: *norm,
+            parent_order: *order,
+        })
+    }
+}
+
 impl LeftIdeal<4> {
     /// Create the left ideal I = O⟨α, N⟩ = Oα + ON at width 4.
     ///
@@ -1832,10 +1922,84 @@ where
                 let new_denom = denom_sq.ct_mul(&self.norm);
                 let new_norm = m;
 
-                // Assemble new lattice and reduce to HNF.
-                let new_basis = Matrix::from_columns(&new_cols);
-                let new_lat = Lattice::new(new_basis, new_denom);
-                let hnf = new_lat.hnf();
+                // Post-update HNF.
+                //
+                // Classical HNF on these columns suffers the same
+                // coefficient blow-up as the initial sum: the
+                // integer-column covolume `(d²·N_old)^4 · m² · p`
+                // can reach ~2^2600–2^3000 bits depending on the
+                // found prime `m`, far exceeding any reasonable
+                // `BigInt<N>` storage. Widen to `BigInt<W_WIDE>`
+                // internally, run modular HNF with internal width
+                // `W_INTERNAL = 100` (6400 bits, comfortably above
+                // `2 · bits(modulus)`), then narrow the resulting
+                // 4×4 basis back to `BigInt<N>`.
+                //
+                // If any HNF basis entry doesn't fit back in
+                // `BigInt<N>` (e.g., when `N` is narrower than the
+                // HNF's actual output magnitudes) the caller sees
+                // `false` and retries the outer `reduce` loop.
+                // This can happen when `m` is large enough that
+                // the HNF diagonal doesn't reduce below
+                // `2^(64·N)`, indicating the caller needs a wider
+                // storage width.
+                const W_WIDE: usize = 50;
+                const W_INTERNAL: usize = 100;
+
+                // Widen the new columns and denominator.
+                let new_cols_w: [Vector<W_WIDE>; 4] = core::array::from_fn(|i| {
+                    Vector::new(
+                        new_cols[i][0].widen::<W_WIDE>(),
+                        new_cols[i][1].widen::<W_WIDE>(),
+                        new_cols[i][2].widen::<W_WIDE>(),
+                        new_cols[i][3].widen::<W_WIDE>(),
+                    )
+                });
+                let new_denom_w: BigInt<W_WIDE> = new_denom.widen();
+                let new_norm_w: BigInt<W_WIDE> = new_norm.widen();
+
+                // Bounding modulus for mod-HNF:
+                // `D_post = 4 · new_denom^4 · new_norm² · p`,
+                // a multiple of the integer-column covolume.
+                let p_wide_w: BigInt<W_WIDE> = {
+                    let p8: BigInt<8> = crate::quaternions::precomputed::P_WIDE;
+                    let mut limbs = [0u64; W_WIDE];
+                    limbs[..8].copy_from_slice(p8.as_limbs());
+                    BigInt::from_sign_and_limbs(0, limbs)
+                };
+                let d_sq_w = new_denom_w.ct_mul(&new_denom_w);
+                let d_fourth_w = d_sq_w.ct_mul(&d_sq_w);
+                let m_sq_w = new_norm_w.ct_mul(&new_norm_w);
+                let four_w = BigInt::<W_WIDE>::from_u64(4);
+                let modulus_w = four_w.ct_mul(&d_fourth_w).ct_mul(&m_sq_w).ct_mul(&p_wide_w);
+
+                let hnf_w = Matrix::<W_WIDE>::from_hnf_columns_mod::<W_INTERNAL>(
+                    &new_cols_w,
+                    &modulus_w,
+                );
+
+                // Narrow the HNF output back to `BigInt<N>`.
+                // Returns `false` from `reduce_to_prime_norm` if
+                // any entry doesn't fit, letting the caller
+                // retry.
+                let hnf_cols_w = hnf_w.columns();
+                let mut narrowed = [Vector::<N>::ZERO; 4];
+                for (i, out_col) in narrowed.iter_mut().enumerate() {
+                    let c0 = hnf_cols_w[i][0].narrow_to::<N>();
+                    let c1 = hnf_cols_w[i][1].narrow_to::<N>();
+                    let c2 = hnf_cols_w[i][2].narrow_to::<N>();
+                    let c3 = hnf_cols_w[i][3].narrow_to::<N>();
+                    match (c0, c1, c2, c3) {
+                        (Some(a), Some(b), Some(c), Some(d)) => {
+                            *out_col = Vector::new(a, b, c, d);
+                        }
+                        _ => return false,
+                    }
+                }
+                let hnf = HnfLattice {
+                    basis: Matrix::from_columns(&narrowed),
+                    denom: new_denom,
+                };
 
                 self.lattice = hnf;
                 self.norm = new_norm;

@@ -565,8 +565,18 @@ impl SigningKey {
             let o0_w = EXTREMAL_ORDERS[0].widen::<N_RESP>();
             let q_rsp_wide: BigInt<N_RESP> = q_rsp.widen();
             let i_com_rsp_norm_w = q_rsp_wide.ct_mul(&d_mix_22);
-            let mut i_com_rsp_w =
-                LeftIdeal::from_generator(&alpha_rsp_w, &i_com_rsp_norm_w, o0_w.order());
+            // Use the mod-HNF variant: at storage width 30 the
+            // α_rsp-derived basis entries (~2^1400) would cause
+            // classical-HNF coefficient blow-up in the generic
+            // `from_generator` path.
+            let mut i_com_rsp_w = match LeftIdeal::<30>::from_generator_mod_hnf(
+                &alpha_rsp_w,
+                &i_com_rsp_norm_w,
+                o0_w.order(),
+            ) {
+                Some(i) => i,
+                None => continue,
+            };
             if !i_com_rsp_w.reduce_to_prime_norm::<44, _>(rng) {
                 continue;
             }
