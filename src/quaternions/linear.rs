@@ -350,6 +350,249 @@ impl<const N: usize> Matrix<N> {
             Vector::new(cols[0][3], cols[1][3], cols[2][3], cols[3][3]),
         )
     }
+
+    /// Modular Hermite Normal Form (mod-HNF) constructor for
+    /// fixed-precision arithmetic, computed with internal widening
+    /// to `BigInt<W>`.
+    ///
+    /// # Why this exists: HNF coefficient blow-up
+    ///
+    /// Classical integer HNF (as implemented by [`hnf_from_columns`]
+    /// and as written in Algorithm 3.2 of the SQIsign v2
+    /// specification) produces intermediate column entries whose
+    /// magnitude can grow substantially during the xgcd /
+    /// elimination phases. The worst-case bound is exponential in
+    /// the rank — for our rank-4 ideal lattices this can reach
+    /// $2^{3000}$ bits or more, well beyond any reasonable fixed
+    /// storage width.
+    ///
+    /// At our commitment-ideal working width of `N = 30` (1920
+    /// bits), classical HNF applied to the 8-column concatenation
+    /// `[O_0 \cdot \gamma \mid O_0 \cdot N]` silently truncates:
+    /// intermediate xgcd products exceed the storage budget and
+    /// wrap, and the resulting "HNF" basis collapses to contain
+    /// elements of the ambient order $O_0$ rather than representing
+    /// the ideal $I = O_0\langle\gamma, N\rangle$. Every downstream
+    /// step then operates on a lattice unrelated to the intended
+    /// ideal.
+    ///
+    /// # Algorithm
+    ///
+    /// This is the standard Domich--Kannan--Trotter modular HNF
+    /// (see also Cohen's *A Course in Computational Algebraic
+    /// Number Theory*, §2.4.2, and Storjohann's subsequent
+    /// refinements). The key observation is: if `D` is any
+    /// positive multiple of the lattice determinant $\det(L)$ in
+    /// the rank-$n$ case $L \subseteq \mathbb{Z}^n$, then
+    /// $L \supseteq D \cdot \mathbb{Z}^n$. Consequently, adding
+    /// $D \cdot e_i$ to any column preserves the lattice, and so
+    /// we may reduce every intermediate entry modulo `D` after
+    /// every arithmetic update without changing the resulting
+    /// HNF. Entries are then bounded by `D` rather than by the
+    /// exponential classical bound.
+    ///
+    /// The working width `W` must be at least large enough to
+    /// hold a product of two `D`-sized values before reduction:
+    /// `W * 64 >= 2 * bits(D) + slack`. A compile-time assertion
+    /// checks `W >= N`; callers are responsible for sizing `W`
+    /// against their specific modulus.
+    ///
+    /// # Divergences from the spec and the C reference
+    ///
+    /// - **Spec (Algorithm 3.2):** describes classical HNF over
+    ///   arbitrary-precision integers. It does not discuss fixed-precision
+    ///   adaptations or the coefficient-size bounds necessary for a safe
+    ///   fixed-width implementation. This is a spec gap at the "implementation
+    ///   guidance" level; documented in `latex/spec-review.tex`.
+    /// - **C reference:** uses GMP (`ibz_t`), so coefficient growth is absorbed
+    ///   by arbitrary-precision arithmetic and `quat_lattice_hnf` follows the
+    ///   classical algorithm directly. Our fixed-precision constraint forces
+    ///   the modular variant; this is an implementation-level advance over the
+    ///   C reference, not a mathematical one.
+    /// - **Output semantics:** identical to classical HNF in $\mathbb{Z}$,
+    ///   provided `modulus` is a valid multiple of `det(L(cols))`. Callers that
+    ///   pass a non-multiple produce an HNF of a different (possibly larger)
+    ///   lattice.
+    ///
+    /// # Parameters
+    ///
+    /// * `cols` - input generator columns. May have more than 4 entries; the
+    ///   HNF reduction produces a 4-column output.
+    /// * `modulus` - a positive multiple of the lattice determinant
+    ///   $\det(L(\mathtt{cols}))$. For a left $O_0$-ideal of norm $N$
+    ///   constructed as $O_0\gamma + O_0 N$, the integer-column covolume is
+    ///   $d^4 \cdot N^2 \cdot p / 4$; the caller typically passes $4 d^4 N^2 p$
+    ///   or any larger positive multiple.
+    ///
+    /// # Width requirement
+    ///
+    /// The `const W` working width must satisfy
+    /// `64 * W >= 2 * bits(modulus) + O(1)`. For `modulus ≈
+    /// 2^1282` (NIST-I commitment ideals) this needs `W >= 42`
+    /// with headroom.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cols.len() < 4` (need at least rank-4
+    /// generators), or at compile time if `W < N`.
+    ///
+    /// WARNING: Not constant-time. The xgcd / elimination
+    /// sequence is data-dependent. `TODO(ct)`: make constant-time
+    /// before production use — this path is on the secret-derived
+    /// signing ideal.
+    pub fn from_hnf_columns_mod<const W: usize>(cols: &[Vector<N>], modulus: &BigInt<N>) -> Self {
+        const {
+            assert!(
+                W >= N,
+                "Matrix::from_hnf_columns_mod: working width W must be >= storage width N"
+            )
+        };
+        let c = cols.len();
+        assert!(c >= 4, "need at least 4 columns for rank-4 HNF");
+        let d = 4usize;
+
+        let modulus_w: BigInt<W> = modulus.widen();
+
+        // Positive reduction mod D: returns r in [0, D).
+        let reduce = |x: &BigInt<W>| -> BigInt<W> {
+            let r = x.ct_mod(&modulus_w);
+            if bool::from(r.is_negative()) {
+                r.ct_add(&modulus_w)
+            } else {
+                r
+            }
+        };
+
+        // Widen every input column into the working width W and
+        // immediately reduce mod D.
+        let mut a: Vec<[BigInt<W>; 4]> = cols
+            .iter()
+            .map(|v| {
+                [
+                    reduce(&v[0].widen::<W>()),
+                    reduce(&v[1].widen::<W>()),
+                    reduce(&v[2].widen::<W>()),
+                    reduce(&v[3].widen::<W>()),
+                ]
+            })
+            .collect();
+
+        // Classical HNF, reducing every updated entry mod D.
+        let mut pivot = d;
+        while pivot > 0 {
+            pivot -= 1;
+
+            if pivot > 0 {
+                let mut j = pivot;
+                while j > 0 {
+                    j -= 1;
+                    let val_i = a[pivot][pivot];
+                    let val_j = a[j][pivot];
+                    if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
+                        let (_g, u, v) = val_i.xgcd(&val_j);
+                        let old_i = a[pivot];
+                        let old_j = a[j];
+                        for r in 0..d {
+                            let prod1 = u.ct_mul(&old_i[r]);
+                            let prod2 = v.ct_mul(&old_j[r]);
+                            a[pivot][r] = reduce(&prod1.ct_add(&prod2));
+                        }
+                    }
+                }
+            }
+
+            {
+                let mut j = d;
+                while j < c {
+                    let val_i = a[pivot][pivot];
+                    let val_j = a[j][pivot];
+                    if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
+                        let (_g, u, v) = val_i.xgcd(&val_j);
+                        let old_i = a[pivot];
+                        let old_j = a[j];
+                        for r in 0..d {
+                            let prod1 = u.ct_mul(&old_i[r]);
+                            let prod2 = v.ct_mul(&old_j[r]);
+                            a[pivot][r] = reduce(&prod1.ct_add(&prod2));
+                        }
+                    }
+                    j += 1;
+                }
+            }
+
+            let piv = a[pivot][pivot];
+            if bool::from(piv.is_zero()) {
+                continue;
+            }
+
+            // Eliminate a[j][pivot] for j < pivot.
+            {
+                let mut j = 0;
+                while j < pivot {
+                    let (g, _) = a[j][pivot].div_rem(&piv);
+                    if !bool::from(g.is_zero()) {
+                        let col_piv = a[pivot];
+                        for (r, col_piv_r) in col_piv.iter().enumerate().take(d) {
+                            let sub = g.ct_mul(col_piv_r);
+                            a[j][r] = reduce(&a[j][r].ct_sub(&sub));
+                        }
+                    }
+                    j += 1;
+                }
+            }
+
+            // Reduce a[j][pivot] for j > pivot into [0, piv).
+            {
+                let mut j = pivot + 1;
+                while j < c {
+                    let entry = a[j][pivot];
+                    let r = entry.ct_mod(&piv);
+                    let (g, _) = entry.ct_sub(&r).div_rem(&piv);
+                    if !bool::from(g.is_zero()) {
+                        let col_piv = a[pivot];
+                        for (row, col_piv_row) in col_piv.iter().enumerate().take(d) {
+                            let sub = g.ct_mul(col_piv_row);
+                            a[j][row] = reduce(&a[j][row].ct_sub(&sub));
+                        }
+                    }
+                    j += 1;
+                }
+            }
+        }
+
+        // Final narrow from W back to N. HNF entries are bounded
+        // by `modulus`, which fits in N by the caller's contract.
+        let narrow = |x: &BigInt<W>| -> BigInt<N> {
+            x.narrow_to::<N>()
+                .expect("mod-HNF output fits in N: entries are bounded by modulus < 2^(64 N)")
+        };
+        Self::from_columns(&[
+            Vector::new(
+                narrow(&a[0][0]),
+                narrow(&a[0][1]),
+                narrow(&a[0][2]),
+                narrow(&a[0][3]),
+            ),
+            Vector::new(
+                narrow(&a[1][0]),
+                narrow(&a[1][1]),
+                narrow(&a[1][2]),
+                narrow(&a[1][3]),
+            ),
+            Vector::new(
+                narrow(&a[2][0]),
+                narrow(&a[2][1]),
+                narrow(&a[2][2]),
+                narrow(&a[2][3]),
+            ),
+            Vector::new(
+                narrow(&a[3][0]),
+                narrow(&a[3][1]),
+                narrow(&a[3][2]),
+                narrow(&a[3][3]),
+            ),
+        ])
+    }
 }
 
 impl<const N: usize> Copy for Matrix<N> where BigInt<N>: Copy {}
