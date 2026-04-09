@@ -71,7 +71,7 @@ alone.
 \end{tabular}
 
 % =====================================================================
-\section{$\Fpii$ square root canonicalization}
+\section{\texorpdfstring{$\Fpii$}{Fp2} square root canonicalization}
 \label{sec:sqrt}
 
 \finding{Affects \algo{8.12} (\textsc{DifferencePoint}), and
@@ -358,5 +358,61 @@ fail (typically a panic in the splitting step).
 State explicitly in \algo{4.8} and \algo{4.9} that the matrix is
 applied by columns, or equivalently define the multiplication as
 $(P', Q') = (P, Q) \cdot \mathbf{M}^T$.
+
+% =====================================================================
+\section{Fixed-precision Hermite Normal Form}
+\label{sec:hnf}
+
+\finding{Affects \algo{3.2} (\textsc{HNF}), and transitively every
+algorithm that constructs or reduces an ideal lattice --- including
+\algo{3.9} (\textsc{RandomEquivalentPrimeIdeal}),
+\algo{3.10} (\textsc{RandomIdealGivenNorm}), and
+\algo{3.15} (\textsc{FixedDegreeIsogeny}).}{\high}
+
+\algo{3.2} describes the column-style Hermite Normal Form via
+extended-GCD elimination.  The pseudocode operates over
+$\mathbb{Z}$, i.e., arbitrary-precision integers.
+
+\paragraph{What goes wrong.}
+Classical HNF's intermediate entries can grow exponentially in
+the rank.  For rank-4 quaternion ideal lattices at NIST-I the
+initial column entries can reach ${\sim}2^{770}$~bits (the
+$p \cdot g_i$ products from \algo{3.10}).  After a few xgcd
+elimination steps, intermediate column entries exceed any
+reasonable fixed-width budget.  At our storage width of 1920~bits
+($30 \times 64$), the resulting ``HNF'' silently wraps: we
+observed basis columns collapse to elements of the ambient
+order~$O_0$ (reduced norms of~4 and~${\sim}2^{251}$) rather
+than the intended ideal~$I$.  Every subsequent operation ---
+\textsc{RandomEquivalentPrimeIdeal}, \textsc{IdealToIsogeny},
+the entire response phase --- then operates on a lattice unrelated
+to~$I$.
+
+\paragraph{What the C reference does.}
+The C reference uses GMP (\texttt{ibz\_t}), so coefficient growth
+is absorbed by arbitrary-precision arithmetic.  The classical
+algorithm works correctly there.
+
+\paragraph{Fix.}
+Use the standard Domich--Kannan--Trotter modular HNF (Cohen,
+\emph{A Course in Computational Algebraic Number Theory},
+\S2.4.2): given a positive multiple~$D$ of the lattice
+determinant~$\det(L)$, reduce every intermediate entry modulo~$D$
+after every arithmetic update.  This bounds entries by~$D$ instead
+of by the exponential classical bound, at the cost of computing
+at a wider intermediate width $W \geq 2 \cdot
+\lceil\log_2 D\rceil / 64$.  The result is identical to the
+classical HNF in~$\mathbb{Z}$.
+
+For NIST-I commitment ideals, $D = 4 d^4 N^2 p \approx 2^{1282}$
+is a compile-time constant.  For response-phase and post-reduce
+ideals the modulus varies and is computed per call.
+
+\paragraph{Recommendation.}
+Add a remark after \algo{3.2} noting that fixed-precision
+implementations must account for coefficient growth, and that the
+standard modular HNF technique (reducing modulo a known multiple
+of the lattice determinant) is sufficient to keep intermediates
+bounded.
 
 \end{document}
