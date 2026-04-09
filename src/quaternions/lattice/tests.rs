@@ -314,7 +314,7 @@ fn l2_identity_basis() {
     ];
     let mut gram = quat_gram(&basis, &p);
 
-    l2_reduce(&mut basis, &mut gram);
+    l2_reduce::<8, 16>(&mut basis, &mut gram);
 
     // Diagonal should be non-decreasing (short vectors first).
     for idx in 1..4 {
@@ -337,7 +337,7 @@ fn l2_reduces_bad_basis() {
     let mut gram = quat_gram(&basis, &p);
     let original_g00 = gram[0][0];
 
-    l2_reduce(&mut basis, &mut gram);
+    l2_reduce::<8, 16>(&mut basis, &mut gram);
 
     assert!(
         gram[0][0] <= original_g00,
@@ -356,7 +356,7 @@ fn l2_gram_stays_symmetric() {
     ];
     let mut gram = quat_gram(&basis, &p);
 
-    l2_reduce(&mut basis, &mut gram);
+    l2_reduce::<8, 16>(&mut basis, &mut gram);
 
     for row in 0..4 {
         for col in 0..4 {
