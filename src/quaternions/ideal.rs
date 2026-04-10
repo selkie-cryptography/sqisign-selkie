@@ -16,8 +16,8 @@
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
-    lattice::{ExtremalOrder, Lattice, l2_reduce},
-    linear::{Matrix, Vector},
+    lattice::{ExtremalOrder, Lattice, NrdBasis},
+    linear::Vector,
     precomputed::{EXTREMAL_ORDERS, P_WIDE},
 };
 use crate::curves::{TorsionExponent, isogeny::IsogenyDegree};
@@ -317,49 +317,13 @@ struct ShortVector {
     norm_approx: f64,
 }
 
-/// Compute the Gram matrix for column vectors in B_{p,∞} = (-1, -p)_Q
-/// using the reduced norm bilinear form.
-///
-/// G_{ij} = a_i · a_j + b_i · b_j + p · (c_i · c_j + d_i · d_j)
-///
-/// where (a, b, c, d) are the {1, i, j, k} coordinates.
-pub(crate) fn gram_matrix_nrd<const N: usize>(cols: &[Vector<N>; 4]) -> Matrix<N> {
-    // Widen p into BigInt<N>.
-    let p: BigInt<N> = {
-        let p8: BigInt<8> = P_WIDE;
-        let mut limbs = [0u64; N];
-        let src = p8.as_limbs();
-        let len = src.len().min(N);
-        limbs[..len].copy_from_slice(&src[..len]);
-        BigInt::from_sign_and_limbs(0, limbs)
-    };
-    let mut gram = Matrix::<N>::ZERO;
-    for i in 0..4 {
-        for j in i..4 {
-            let scalar = cols[i][0]
-                .ct_mul(&cols[j][0])
-                .ct_add(&cols[i][1].ct_mul(&cols[j][1]));
-            let jk = cols[i][2]
-                .ct_mul(&cols[j][2])
-                .ct_add(&cols[i][3].ct_mul(&cols[j][3]));
-            let val = scalar.ct_add(&p.ct_mul(&jk));
-            gram[i][j] = val;
-            if i != j {
-                gram[j][i] = val;
-            }
-        }
-    }
-    gram
-}
-
 /// Enumerate non-zero lattice vectors within the box \[-m, m\]⁴
 /// from an L2-reduced basis, compute their degrees, and sort by norm.
 ///
 /// For NIST-I with m = 2, this produces up to (2·2+1)⁴ − 1 = 624
 /// non-zero vectors.
 fn enumerate_short_vectors(
-    reduced_cols: &[Vector<8>; 4],
-    gram: &Matrix<8>,
+    basis: &NrdBasis<8>,
     ideal_norm: &BigInt<8>,
     lattice_denom: &BigInt<8>,
 ) -> Vec<ShortVector> {
@@ -386,12 +350,7 @@ fn enumerate_short_vectors(
                     }
 
                     // nrd(β) · denom² = Σ x_i x_j G_{ij}.
-                    let mut nrd_scaled = BigInt::<8>::ZERO;
-                    for i in 0..4 {
-                        for j in 0..4 {
-                            nrd_scaled = nrd_scaled.ct_add(&x[i].ct_mul(&x[j]).ct_mul(&gram[i][j]));
-                        }
-                    }
+                    let nrd_scaled = basis.eval_quadratic_form(&x);
 
                     if bool::from(nrd_scaled.is_zero()) || bool::from(nrd_scaled.is_negative()) {
                         continue;
@@ -412,7 +371,7 @@ fn enumerate_short_vectors(
                     // β = Σ x_k · col_k.
                     let coords: [BigInt<8>; 4] = core::array::from_fn(|row| {
                         (0..4).fold(BigInt::<8>::ZERO, |acc, k| {
-                            acc.ct_add(&x[k].ct_mul(&reduced_cols[k][row]))
+                            acc.ct_add(&x[k].ct_mul(&basis.cols()[k][row]))
                         })
                     });
 
@@ -551,14 +510,14 @@ impl super::lattice::LeftIdeal<4> {
         // all seven extremal orders (§3.1.7.2).
         let lattice: Lattice<4> = (*self.lattice()).into();
         let cols_4 = lattice.basis().columns();
-        let mut cols_8: [Vector<8>; 4] = core::array::from_fn(|j| cols_4[j].into());
+        let cols_8: [Vector<8>; 4] = core::array::from_fn(|j| cols_4[j].into());
         let denom_8: BigInt<8> = (*lattice.denom()).into();
         let norm_8: BigInt<8> = (*self.norm()).into();
 
-        let mut gram = gram_matrix_nrd(&cols_8);
-        l2_reduce::<8, 16>(&mut cols_8, &mut gram);
+        let mut nrd_basis = NrdBasis::new(cols_8);
+        nrd_basis.l2_reduce();
 
-        let short_vecs = enumerate_short_vectors(&cols_8, &gram, &norm_8, &denom_8);
+        let short_vecs = enumerate_short_vectors(&nrd_basis, &norm_8, &denom_8);
 
         // Phase 2: Search pairs (β₁, β₂) sorted by ascending norm.
         //
@@ -679,7 +638,7 @@ mod tests {
 
     #[test]
     fn gram_matrix_nrd_identity_basis() {
-        use super::super::linear::Vector;
+        use super::super::{lattice::NrdBasis, linear::Vector};
 
         // Standard basis {1, i, j, k} has Gram matrix diag(1, 1, p, p).
         let cols: [Vector<8>; 4] = [
@@ -688,7 +647,8 @@ mod tests {
             Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ONE, BigInt::ZERO),
             Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ZERO, BigInt::ONE),
         ];
-        let gram = gram_matrix_nrd(&cols);
+        let nrd = NrdBasis::new(cols);
+        let gram = nrd.gram();
         let p: BigInt<8> = P_WIDE;
 
         assert_eq!(gram[0][0], BigInt::ONE, "nrd(1) = 1");
