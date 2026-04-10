@@ -86,7 +86,7 @@ impl Dpe {
         }
         // Shift right to bring the top bits into f64 range,
         // then combine with the shift as exponent.
-        let shift = if bits > 53 { bits - 53 } else { 0 };
+        let shift = bits.saturating_sub(53);
         let truncated = v.shr(shift);
         let f = truncated.to_f64();
         let (frac, exp) = frexp(f);

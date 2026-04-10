@@ -306,20 +306,21 @@ fn quat_gram(basis: &[V8; 4], p: &I8) -> Matrix<8> {
 #[test]
 fn l2_identity_basis() {
     let p = i8(3);
-    let mut basis = [
+    let basis = [
         V8::new(i8(1), i8(0), i8(0), i8(0)),
         V8::new(i8(0), i8(1), i8(0), i8(0)),
         V8::new(i8(0), i8(0), i8(1), i8(0)),
         V8::new(i8(0), i8(0), i8(0), i8(1)),
     ];
-    let mut gram = quat_gram(&basis, &p);
+    let gram = quat_gram(&basis, &p);
 
-    l2_reduce::<8, 16>(&mut basis, &mut gram);
+    let mut nrd = NrdBasis::from_cols_and_gram(basis, gram);
+    nrd.l2_reduce();
 
     // Diagonal should be non-decreasing (short vectors first).
     for idx in 1..4 {
         assert!(
-            gram[idx][idx] >= gram[idx - 1][idx - 1],
+            nrd.gram()[idx][idx] >= nrd.gram()[idx - 1][idx - 1],
             "Gram diagonal not non-decreasing at position {idx}"
         );
     }
@@ -328,19 +329,20 @@ fn l2_identity_basis() {
 #[test]
 fn l2_reduces_bad_basis() {
     let p = i8(3);
-    let mut basis = [
+    let basis = [
         V8::new(i8(1), i8(0), i8(0), i8(0)),
         V8::new(i8(100), i8(1), i8(0), i8(0)),
         V8::new(i8(0), i8(0), i8(1), i8(0)),
         V8::new(i8(0), i8(0), i8(0), i8(1)),
     ];
-    let mut gram = quat_gram(&basis, &p);
+    let gram = quat_gram(&basis, &p);
     let original_g00 = gram[0][0];
 
-    l2_reduce::<8, 16>(&mut basis, &mut gram);
+    let mut nrd = NrdBasis::from_cols_and_gram(basis, gram);
+    nrd.l2_reduce();
 
     assert!(
-        gram[0][0] <= original_g00,
+        nrd.gram()[0][0] <= original_g00,
         "first vector got longer after reduction"
     );
 }
@@ -348,20 +350,22 @@ fn l2_reduces_bad_basis() {
 #[test]
 fn l2_gram_stays_symmetric() {
     let p = i8(3);
-    let mut basis = [
+    let basis = [
         V8::new(i8(3), i8(1), i8(0), i8(0)),
         V8::new(i8(1), i8(2), i8(0), i8(0)),
         V8::new(i8(0), i8(0), i8(1), i8(1)),
         V8::new(i8(0), i8(0), i8(2), i8(1)),
     ];
-    let mut gram = quat_gram(&basis, &p);
+    let gram = quat_gram(&basis, &p);
 
-    l2_reduce::<8, 16>(&mut basis, &mut gram);
+    let mut nrd = NrdBasis::from_cols_and_gram(basis, gram);
+    nrd.l2_reduce();
 
     for row in 0..4 {
         for col in 0..4 {
             assert_eq!(
-                gram[row][col], gram[col][row],
+                nrd.gram()[row][col],
+                nrd.gram()[col][row],
                 "Gram not symmetric at [{row}][{col}]"
             );
         }
