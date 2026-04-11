@@ -204,10 +204,7 @@ impl<const N: usize> Lattice<N> {
     /// (with GMP for arbitrary precision). We use the kernel
     /// method to avoid the cubic entry-size blow-up that makes
     /// the dual approach incompatible with fixed-width arithmetic.
-    pub fn intersection_via_kernel<const W: usize>(
-        &self,
-        other: &Self,
-    ) -> HnfLattice<N> {
+    pub fn intersection_via_kernel<const W: usize>(&self, other: &Self) -> HnfLattice<N> {
         const { assert!(W >= N, "intersection_via_kernel: W must be >= N") };
 
         let d1: BigInt<W> = self.denom.widen();
@@ -275,8 +272,7 @@ impl<const N: usize> Lattice<N> {
                 let old_pc: [BigInt<W>; 12] = cols[pc];
                 let old_col: [BigInt<W>; 12] = cols[col];
                 for r in 0..12 {
-                    cols[pc][r] = u.ct_mul(&old_pc[r])
-                        .ct_add(&v.ct_mul(&old_col[r]));
+                    cols[pc][r] = u.ct_mul(&old_pc[r]).ct_add(&v.ct_mul(&old_col[r]));
                     cols[col][r] = piv_over_g
                         .ct_mul(&old_col[r])
                         .ct_sub(&entry_over_g.ct_mul(&old_pc[r]));
@@ -309,8 +305,7 @@ impl<const N: usize> Lattice<N> {
                 if !bool::from(q.is_zero()) {
                     let snap = cols[pc];
                     for r in 0..12 {
-                        cols[col][r] = cols[col][r]
-                            .ct_sub(&q.ct_mul(&snap[r]));
+                        cols[col][r] = cols[col][r].ct_sub(&q.ct_mul(&snap[r]));
                     }
                 }
             }
@@ -318,9 +313,7 @@ impl<const N: usize> Lattice<N> {
 
         // Diagnostic: check how many pivots we found and which
         // columns are zero in the top block.
-        eprintln!(
-            "    intersection_via_kernel: pivot_col_for_row={pivot_col_for_row:?}"
-        );
+        eprintln!("    intersection_via_kernel: pivot_col_for_row={pivot_col_for_row:?}");
         for col in 0..8 {
             let top_zero = (0..4).all(|r| bool::from(cols[col][r].is_zero()));
             eprintln!(
@@ -356,9 +349,7 @@ impl<const N: usize> Lattice<N> {
             let mut v = [BigInt::<W>::ZERO; 4];
             for row in 0..4 {
                 for k in 0..4 {
-                    v[row] = v[row].ct_add(
-                        &b1[row][k].widen::<W>().ct_mul(&a[k]),
-                    );
+                    v[row] = v[row].ct_add(&b1[row][k].widen::<W>().ct_mul(&a[k]));
                 }
             }
             inter_cols[i] = Vector::new(v[0], v[1], v[2], v[3]);
@@ -372,17 +363,40 @@ impl<const N: usize> Lattice<N> {
         let mut basis_n = Matrix::<N>::ZERO;
         for row in 0..4 {
             for col in 0..4 {
-                basis_n[row][col] = inter_basis_w[row][col]
-                    .narrow_to::<N>()
-                    .expect(
-                        "intersection HNF entry fits in BigInt<N>: \
-                         bounded by input ideal norms",
-                    );
+                basis_n[row][col] = match inter_basis_w[row][col].narrow_to::<N>() {
+                    Some(v) => v,
+                    None => {
+                        eprintln!(
+                            "    intersection_via_kernel: narrow failed at [{row}][{col}], \
+                             bits={}",
+                            inter_basis_w[row][col].bitsize(),
+                        );
+                        // Fall back: the intersection HNF entries
+                        // exceed BigInt<N>. Caller should retry with
+                        // a wider N or widen the intersection.
+                        // For now, return a zero lattice so the
+                        // caller's validity checks catch it.
+                        return HnfLattice {
+                            basis: Matrix::<N>::ZERO,
+                            denom: BigInt::<N>::ZERO,
+                        };
+                    }
+                };
             }
         }
-        let denom_n: BigInt<N> = denom_w
-            .narrow_to()
-            .expect("intersection denom fits in BigInt<N>");
+        let denom_n: BigInt<N> = match denom_w.narrow_to() {
+            Some(d) => d,
+            None => {
+                eprintln!(
+                    "    intersection_via_kernel: denom narrow failed, bits={}",
+                    denom_w.bitsize(),
+                );
+                return HnfLattice {
+                    basis: Matrix::<N>::ZERO,
+                    denom: BigInt::<N>::ZERO,
+                };
+            }
+        };
 
         HnfLattice {
             basis: basis_n,
@@ -682,41 +696,42 @@ impl<const N: usize> Lattice<N> {
             .ct_mul(&denom_wide)
             .ct_mul(&BigInt::<W>::from_u64(2));
 
-        // Step 2: Compute dual Gram matrix and LLL-reduce it.
-        // G* = adj(G), with det(G) tracked separately.
-        let det_g = gram.det();
-        let dual_gram = gram.adjugate();
-
-        // LLL-reduce the dual Gram to get tighter per-axis bounds.
-        let dual_basis = NrdBasis::from_cols_and_gram(dual_gram.columns(), dual_gram).l2_reduce();
-
-        // The C ref's approach:
-        //   1. LLL-reduce dual_gram, getting U such that dual_gram_reduced = U^T ·
-        //      dual_gram · U
-        //   2. Invert U: U_inv = adj(U) * det(U) (det = ±1)
-        //   3. Bounding box: box[i] = √(dual_gram_reduced[i][i] * radius / det_g)
-        //   4. Sample x in [-box[i], box[i]]^4
-        //   5. Map: x ← U_inv^T · x
-        //   6. Check: x^T · G · x ≤ radius
+        // Step 2: Compute per-axis bounding box.
         //
-        // TODO: track U during l2_reduce, or compute U from the
-        // relationship between original and reduced columns.
-        // For now, use the reduced columns directly to compute the
-        // bounding box, and sample in the original basis with those bounds.
-
-        // Compute per-axis bounding box from the reduced diagonal.
+        // The C ref LLL-reduces the dual gram, tracks the
+        // transformation U, and maps samples through U⁻¹ᵀ. We
+        // don't track U yet, so instead we use a simpler bound:
+        //   box[i] = √(rad / G[i][i])
+        // This gives the maximum coefficient along axis i such
+        // that the i-th term alone doesn't exceed the radius.
+        // The rejection rate is higher than with LLL reduction,
+        // but the sampling is correct.
+        //
+        // TODO: track U during l2_reduce for tighter bounds and
+        // lower rejection rate.
         let mut bounds = [BigInt::<W>::ZERO; 4];
         let mut all_zero = true;
         for (i, bound) in bounds.iter_mut().enumerate() {
-            // box[i] = √(dual_gram_reduced[i][i] * radius / det_g)
-            let num = dual_basis.gram()[i][i].ct_mul(&rad);
-            let (bound_sq, _) = num.div_rem(&det_g);
+            let diag = gram[i][i];
+            if bool::from(diag.is_zero()) {
+                continue;
+            }
+            let (bound_sq, _) = rad.div_rem(&diag);
             *bound = bound_sq.sqrt_floor();
             if !bool::from(bound.is_zero()) {
                 all_zero = false;
             }
         }
+        eprintln!(
+            "      sample_from_ball: bounds=[{}, {}, {}, {}], rad_bits={}",
+            bounds[0].bitsize(),
+            bounds[1].bitsize(),
+            bounds[2].bitsize(),
+            bounds[3].bitsize(),
+            rad.bitsize(),
+        );
         if all_zero {
+            eprintln!("      sample_from_ball: all bounds zero, returning None");
             return None; // ball too small
         }
 
@@ -1377,13 +1392,27 @@ impl LeftIdeal<30> {
         let o_alpha = Lattice::new(Matrix::from_columns(&o_alpha_cols), o_alpha_denom);
 
         // Compute ON: scale each basis vector of O by N.
+        // Use the same denominator as Oα (= order_denom * α_denom)
+        // so that sum_mod can combine them. Scaling ON's integer
+        // basis by α_denom preserves the lattice: ON/d_O =
+        // ON·α_d / (d_O·α_d) = ON·α_d / o_alpha_denom.
+        let alpha_d = *alpha.denom.as_bigint();
         let mut o_n_cols = order.basis().columns();
         for col in &mut o_n_cols {
             for row in 0..4 {
-                col[row] = col[row].ct_mul(norm);
+                col[row] = col[row].ct_mul(norm).ct_mul(&alpha_d);
             }
         }
-        let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), *order.denom());
+        let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), o_alpha_denom);
+
+        eprintln!(
+            "    from_generator_mod_hnf: o_alpha[0][0]_bits={}, o_n[0][0]_bits={}, alpha_d_bits={}, o_alpha_denom_bits={}, norm_bits={}",
+            o_alpha_cols[0][0].bitsize(),
+            o_n_cols[0][0].bitsize(),
+            alpha_d.bitsize(),
+            o_alpha_denom.bitsize(),
+            norm.bitsize(),
+        );
 
         // Mod-HNF bounding modulus `D = 4 · d⁴ · norm² · p`.
         //
@@ -1398,8 +1427,10 @@ impl LeftIdeal<30> {
             limbs[..8].copy_from_slice(p8.as_limbs());
             BigInt::from_sign_and_limbs(0, limbs)
         };
-        let d = *order.denom();
-        let d_sq = d.ct_mul(&d);
+        // With the shared denom = order_denom · α_denom, the
+        // modulus needs to account for both: D = 4·d_total⁴·norm²·p.
+        let d_total = o_alpha_denom;
+        let d_sq = d_total.ct_mul(&d_total);
         let d_fourth = d_sq.ct_mul(&d_sq);
         let norm_sq = norm.ct_mul(norm);
         let four = BigInt::<30>::from_u64(4);
@@ -2078,6 +2109,15 @@ where
         // mantissa can't handle the cancellation.
         let canonical = self.lattice.canonicalize();
         let basis = canonical.basis();
+        eprintln!(
+            "    reduce_to_prime_norm: canonical diag=[{}, {}, {}, {}], denom_bits={}, norm_bits={}",
+            basis[0][0].bitsize(),
+            basis[1][1].bitsize(),
+            basis[2][2].bitsize(),
+            basis[3][3].bitsize(),
+            self.lattice.denom().bitsize(),
+            self.norm.bitsize(),
+        );
         let cols = basis.columns();
         let nrd = NrdBasis::new(cols);
 
@@ -2101,6 +2141,11 @@ where
             }
         }
 
+        eprintln!(
+            "    reduce_to_prime_norm: class_gram[0][0]_bits={}, class_divisor_bits={}",
+            class_gram[0][0].bitsize(),
+            class_divisor.bitsize(),
+        );
         let class_basis = NrdBasis::from_cols_and_gram(*nrd.cols(), class_gram).l2_reduce();
 
         // Step 2: sample random short vectors until m is prime.

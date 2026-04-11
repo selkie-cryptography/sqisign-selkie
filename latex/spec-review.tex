@@ -437,6 +437,56 @@ equivalently state the product order used by
 \texttt{quat\_order\_elem\_create}.
 
 % =====================================================================
+\section{Response lattice: product vs.\ intersection}
+\label{sec:response-lattice}
+
+\finding{Affects \algo{4.2} (\textsc{SQIsign.Sign}),
+line~14.}{\high}
+
+\algo{4.2} line~14 writes
+\[
+  \alpha_{\mathrm{rsp}} \leftarrow
+  \textsc{RandomEquivalentQuaternion}(
+    \overline{I_{\mathrm{com}}} \cap I_{\mathrm{sk}} \cdot I_{\mathrm{chl}})
+\]
+The notation ``$I_{\mathrm{sk}} \cdot I_{\mathrm{chl}}$'' is
+ambiguous: it could mean the \emph{ideal product} (the $\mathbb{Z}$-span
+of all $\alpha\beta$ with $\alpha \in I_{\mathrm{sk}}$,
+$\beta \in I_{\mathrm{chl}}$) or the \emph{intersection}
+$I_{\mathrm{sk}} \cap I_{\mathrm{chl}}$.
+
+The C reference (\texttt{sign.c:81--85}) computes:
+\begin{enumerate}[nosep]
+  \item $I_{\mathrm{chl,secret}} = I'_{\mathrm{chl}} \cap
+        I_{\mathrm{sk}}$ \quad (intersection, \textbf{not} product)
+  \item $\overline{I_{\mathrm{com}}}$ (conjugate of $I_{\mathrm{com}}$)
+  \item $\alpha_{\mathrm{rsp}} \leftarrow
+        \textsc{Sample}(I_{\mathrm{chl,secret}} \cap
+        \overline{I_{\mathrm{com}}})$
+\end{enumerate}
+
+Furthermore, the C ref intersects the \emph{raw} challenge ideal
+$I'_{\mathrm{chl}}$ (before pushforward) with $I_{\mathrm{sk}}$,
+not the pushed-forward $I_{\mathrm{chl}} = [I_{\mathrm{sk}}]_*
+I'_{\mathrm{chl}}$.
+
+An implementor who reads ``$I_{\mathrm{sk}} \cdot I_{\mathrm{chl}}$''
+as an ideal product will compute a completely different lattice.  The
+ideal product's norm is
+$\mathrm{nrd}(I_{\mathrm{sk}}) \cdot \mathrm{nrd}(I_{\mathrm{chl}})
+\approx 2^{381}$, while the intersection's norm divides
+$\mathrm{lcm}(\mathrm{nrd}(I_{\mathrm{sk}}),
+\mathrm{nrd}(I_{\mathrm{chl}}))$. Sampling from the wrong lattice
+produces elements that generate trivial ideals (the HNF collapses to
+a scaled copy of~$\mathcal{O}_0$), causing the response phase to
+fail silently.
+
+\paragraph{Recommendation.}
+Replace ``$I_{\mathrm{sk}} \cdot I_{\mathrm{chl}}$'' with explicit
+``$I_{\mathrm{sk}} \cap I'_{\mathrm{chl}}$'' and note that the
+intersection uses the pre-pushforward challenge ideal.
+
+% =====================================================================
 \section{Fixed-precision Hermite Normal Form}
 \label{sec:hnf}
 

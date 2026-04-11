@@ -549,12 +549,8 @@ impl LeftIdeal<4> {
             scale,
         );
         // Check if kernel points are on their curves.
-        let kp1_on = e_u.recover_y(
-            &kp_first.to_affine_x(),
-        );
-        let kp2_on = e_v.recover_y(
-            &kp_second.to_affine_x(),
-        );
+        let kp1_on = e_u.recover_y(&kp_first.to_affine_x());
+        let kp2_on = e_v.recover_y(&kp_second.to_affine_x());
         let kq1_on = e_u.recover_y(&kq_first.to_affine_x());
         let kq2_on = e_v.recover_y(&kq_second.to_affine_x());
         let pmq1_on = e_u.recover_y(&pmq1.to_affine_x());
