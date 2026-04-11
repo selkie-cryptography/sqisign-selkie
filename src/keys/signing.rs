@@ -479,17 +479,10 @@ impl SigningKey {
                     None => continue,
                 };
 
-            // Line 13: I_chl ← [I_sk]_* I'_chl
-            //
-            // Pushforward involves inverse, intersection, and product
-            // — all of which produce intermediate lattice entries that
-            // overflow BigInt<4>. Widen to N_RESP before pushforward.
             const N_RESP: usize = 30;
             let i_sk_w = self.ideal.widen::<N_RESP>();
             let i_com_w = i_com.widen::<N_RESP>();
             let i_chl_prime_w = i_chl_prime.widen::<N_RESP>();
-            let o_r_sk = i_sk_w.right_order();
-            let i_chl_w = i_sk_w.pushforward(&i_chl_prime_w, &o_r_sk);
 
             // Line 14: α_rsp ← RandomEquivalentQuaternion(I_com ∩ I_sk · I_chl)
             //
@@ -509,11 +502,31 @@ impl SigningKey {
             // ≈ 4 × 3438 ≈ 13752 bits. After B₁·a: ~15527 bits
             // ≈ 243 limbs. But the HNF of the result is bounded by
             // the ideal norms (~381 bits), so narrowing succeeds.
-            let i_sk_i_chl = i_sk_w.lattice().product(i_chl_w.lattice());
-            let i_prod_lat = Lattice::<N_RESP>::from(i_sk_i_chl);
-            let i_com_lat = Lattice::<N_RESP>::from(*i_com_w.lattice());
+            // Line 14: sample from (I_chl' ∩ I_sk) ∩ I̅_com.
+            //
+            // # Divergences
+            //
+            // The spec (Algorithm 4.2, line 14) writes
+            // `I̅_com ∩ I_sk · I_chl`. The C ref (sign.c:81-85)
+            // computes:
+            //   1. I_chl_secret = I_chl' ∩ I_sk (intersection)
+            //   2. conjugate I_com → I̅_com
+            //   3. intersect I_chl_secret with I̅_com
+            //
+            // Note: the C ref uses intersection (∩) of I_chl'
+            // with I_sk, not the ideal product (·). The spec's
+            // notation `I_sk · I_chl` is ambiguous between
+            // product and intersection; the C ref uses
+            // intersection throughout. We match the C ref.
+            let i_chl_lat = Lattice::<N_RESP>::from(*i_chl_prime_w.lattice());
+            let i_sk_lat = Lattice::<N_RESP>::from(*i_sk_w.lattice());
+            let i_chl_sk = i_chl_lat.intersection_via_kernel::<120>(&i_sk_lat);
 
-            let intersection = i_com_lat.intersection_via_kernel::<250>(&i_prod_lat);
+            let i_com_conj = i_com_w.lattice().conjugate();
+            let i_chl_sk_lat = Lattice::<N_RESP>::from(i_chl_sk);
+            let i_com_conj_lat = Lattice::<N_RESP>::from(i_com_conj);
+
+            let intersection = i_chl_sk_lat.intersection_via_kernel::<120>(&i_com_conj_lat);
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
 
             // Radius: D_rsp · D²_mix · 2^{f+1}, computed at BigInt<22>.
@@ -535,16 +548,39 @@ impl SigningKey {
                 );
             }
 
-            let alpha_rsp_w = match intersection_lat.sample_from_ball::<44>(&radius) {
-                Some(a) => a,
-                None => continue,
+            eprintln!("  response: radius_bits={}, sampling...", radius.bitsize(),);
+            // The intersection lattice has entries up to ~1920 bits
+            // (BigInt<30>). The gram computation squares these:
+            // ~3840 bits ≈ 60 limbs. Use W=64 for margin.
+            let alpha_rsp_w = match intersection_lat.sample_from_ball::<64>(&radius) {
+                Some(a) => {
+                    eprintln!("  response: sample_from_ball succeeded!");
+                    a
+                }
+                None => {
+                    eprintln!("  response: sample_from_ball returned None");
+                    continue;
+                }
             };
 
             // Line 15: α_rsp, n_bt ← ComputeBacktrackingAndNormalize(α_rsp).
             // Keep `alpha_rsp_w` at `Element<N_RESP>` for the wide
             // degree-computation and ideal construction below.
+            eprintln!(
+                "  response: alpha_rsp coord_bits=[{}, {}, {}, {}], denom_bits={}",
+                alpha_rsp_w.a.as_bigint().bitsize(),
+                alpha_rsp_w.b.as_bigint().bitsize(),
+                alpha_rsp_w.c.as_bigint().bitsize(),
+                alpha_rsp_w.d.as_bigint().bitsize(),
+                alpha_rsp_w.denom.as_bigint().bitsize(),
+            );
             let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
             let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
+            eprintln!(
+                "  response: nrd_bits={}, nrd_den_bits={}",
+                nrd_num_w.bitsize(),
+                nrd_den_w.bitsize(),
+            );
 
             // Lines 16–20: degree computations.
             //
@@ -571,9 +607,19 @@ impl SigningKey {
             // spare. Narrow from the wide working width.
             let q_rsp: BigInt<4> = match d_rsp_shifted.narrow_to::<4>() {
                 Some(q) => q,
-                None => continue,
+                None => {
+                    eprintln!(
+                        "  response: q_rsp narrow failed, bits={}",
+                        d_rsp_shifted.bitsize()
+                    );
+                    continue;
+                }
             };
             let e_rsp_prime = e_rsp - r_rsp_val - n_bt;
+            eprintln!(
+                "  response: n_bt={n_bt}, r_rsp={r_rsp_val}, e_rsp_prime={e_rsp_prime}, q_rsp_bits={}",
+                q_rsp.bitsize()
+            );
 
             let n_bt_te =
                 TorsionExponent::try_from(n_bt).map_err(|_| SignatureError::SigningFailed)?;
@@ -582,37 +628,49 @@ impl SigningKey {
             let e_rsp_prime_te = TorsionExponent::try_from(e_rsp_prime)
                 .map_err(|_| SignatureError::SigningFailed)?;
 
-            // Line 19: I_com,rsp = O₀·α_rsp + O₀·(q_rsp · D_mix).
+            // Line 19: I_com,rsp = O₀⟨ᾱ_rsp, N(I_com)·q_rsp⟩.
             //
-            // Built at the wide width `LeftIdeal<N_RESP>` via
-            // [`LeftIdeal::from_generator`]. The norm `q_rsp · D_mix`
-            // has ~513 + log2(q_rsp) bits and does not fit in
-            // `BigInt<4>`, but does fit in `BigInt<N_RESP>`.
-            // After construction we reduce to an equivalent
-            // prime-norm ideal and narrow to `LeftIdeal<4>` for the
-            // downstream `to_isogeny` call.
+            // # Divergences
+            //
+            // The spec writes `O₀·α_rsp + O₀·(q_rsp·D_mix)`.
+            // The C ref (sign.c:165-169):
+            //   1. Conjugates α_rsp (ᾱ_rsp)
+            //   2. Uses norm = N(I_com) · q_rsp (reduced norm, not the original D_mix)
+            //
+            // We match the C ref. N(I_com) is the prime norm from
+            // reduce_to_prime_norm (~2^133), not D_mix (~2^513).
             let o0_w = EXTREMAL_ORDERS[0].widen::<N_RESP>();
+            let alpha_rsp_conj = alpha_rsp_w.conjugate();
             let q_rsp_wide: BigInt<N_RESP> = q_rsp.widen();
-            let i_com_rsp_norm_w = q_rsp_wide.ct_mul(&d_mix_22);
-            // Use the mod-HNF variant: at storage width 30 the
-            // α_rsp-derived basis entries (~2^1400) would cause
-            // classical-HNF coefficient blow-up in the generic
-            // `from_generator` path.
+            let i_com_norm_w: BigInt<N_RESP> = i_com.norm().widen();
+            let i_com_rsp_norm_w = i_com_norm_w.ct_mul(&q_rsp_wide);
             let mut i_com_rsp_w = match LeftIdeal::<30>::from_generator_mod_hnf(
-                &alpha_rsp_w,
+                &alpha_rsp_conj,
                 &i_com_rsp_norm_w,
                 o0_w.order(),
             ) {
-                Some(i) => i,
-                None => continue,
+                Some(i) => {
+                    eprintln!("  response: from_generator_mod_hnf ok");
+                    i
+                }
+                None => {
+                    eprintln!("  response: from_generator_mod_hnf failed");
+                    continue;
+                }
             };
             if !i_com_rsp_w.reduce_to_prime_norm::<44, _>(rng) {
+                eprintln!("  response: reduce_to_prime_norm failed");
                 continue;
             }
+            eprintln!("  response: reduce_to_prime_norm ok");
             let i_com_rsp = match i_com_rsp_w.narrow() {
                 Some(i) => i,
-                None => continue,
+                None => {
+                    eprintln!("  response: narrow failed");
+                    continue;
+                }
             };
+            eprintln!("  response: i_com_rsp narrow ok, proceeding to response isogeny");
 
             // Lines 21–33: compute response isogeny
             let (mut e_chl, mut p_chl, mut q_chl);
