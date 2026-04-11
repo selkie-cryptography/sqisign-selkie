@@ -317,10 +317,7 @@ fn fixed_degree_isogeny(
         f.value() - 2,
         p_bits.saturating_sub(u.bit_length()) + QUAT_REPRES_BOUND_INPUT,
     );
-    eprintln!(
-        "      fdi: t={t}, u_bits={}, e_fdi={e_fdi}",
-        u.bit_length()
-    );
+    eprintln!("      fdi: t={t}, u_bits={}, e_fdi={e_fdi}", u.bit_length());
 
     // Step 2: θ ← RepresentInteger(u·(2^{e_FDI} − u), O_t, true)
     let u_wide = u.to_bigint_wide();
