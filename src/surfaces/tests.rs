@@ -1,6 +1,6 @@
 use super::*;
 use crate::curves::{
-    TorsionExponent,
+    TorsionBasis, TorsionExponent,
     montgomery::{Curve, ProjectiveXOnlyPoint},
 };
 
@@ -92,11 +92,14 @@ fn gluing_codomain_manual_check() {
     // 6. Hadamard for final codomain
 
     // Lift to Jacobian for gluing eval.
-    use crate::curves::montgomery::lift_basis;
     let pmq_0 = t1_0.projective_difference(&t2_0);
     let pmq_1 = t1_1.projective_difference(&t2_1);
-    let (t1_jac_0, t2_jac_0) = lift_basis(&t1_0, &t2_0, &pmq_0, &curve).expect("lift E0 failed");
-    let (t1_jac_1, t2_jac_1) = lift_basis(&t1_1, &t2_1, &pmq_1, &curve).expect("lift E0 failed");
+    let (t1_jac_0, t2_jac_0) = TorsionBasis::new(t1_0, t2_0, pmq_0)
+        .lift(&curve)
+        .expect("lift E0 failed");
+    let (t1_jac_1, t2_jac_1) = TorsionBasis::new(t1_1, t2_1, pmq_1)
+        .lift(&curve)
+        .expect("lift E0 failed");
 
     let gluing = GluingKernel {
         T1: (t1_0, t1_1),

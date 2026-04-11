@@ -39,8 +39,9 @@ mod tests;
 use core::ops::Mul;
 
 use crate::{
-    curves::montgomery::{
-        Curve, JacobianPoint as CurveJacobianPoint, ProjectiveXOnlyPoint, lift_basis,
+    curves::{
+        TorsionBasis,
+        montgomery::{Curve, JacobianPoint as CurveJacobianPoint, ProjectiveXOnlyPoint},
     },
     fields::fp2::Fp2,
     surfaces::isogeny::{GluingKernel, SplittingKernel},
@@ -390,16 +391,14 @@ impl Kernel {
     /// Requires the component-wise difference P−Q for y-recovery.
     ///
     /// Returns `None` if the y-recovery fails (points not on curve).
-    ///
-    /// [`lift_basis`]: crate::curves::montgomery::lift_basis
     pub fn from_montgomery(
         domain: EllipticProduct,
         P: ProductPoint,
         Q: ProductPoint,
         PmQ: ProductPoint,
     ) -> Option<Kernel> {
-        let (p1, q1) = lift_basis(&P.0, &Q.0, &PmQ.0, &domain.E1)?;
-        let (p2, q2) = lift_basis(&P.1, &Q.1, &PmQ.1, &domain.E2)?;
+        let (p1, q1) = TorsionBasis::new(P.0, Q.0, PmQ.0).lift(&domain.E1)?;
+        let (p2, q2) = TorsionBasis::new(P.1, Q.1, PmQ.1).lift(&domain.E2)?;
         Some(Kernel {
             domain,
             P: (p1, p2),

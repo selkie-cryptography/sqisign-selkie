@@ -42,7 +42,7 @@ mod point;
 mod tests;
 
 pub use isomorphism::Isomorphism;
-pub use jacobian::{JacobianPoint, lift_basis, recover_y};
+pub use jacobian::JacobianPoint;
 pub use point::ProjectiveXOnlyPoint;
 pub(crate) use point::differential_add_and_double;
 use subtle::{Choice, ConditionallySelectable};
@@ -333,6 +333,24 @@ impl Curve {
         let c256 = Fp2::from_fp(Fp::from_small(256));
         let num = &c256 * &t3;
         &num * &denom
+    }
+
+    /// Recover the y-coordinate for an affine x on this curve.
+    ///
+    /// Computes y = √(x³ + Ax² + x) on the Montgomery curve
+    /// By² = x³ + Ax² + x (with B = 1). Returns `None` if x
+    /// is not on the curve.
+    #[must_use]
+    pub fn recover_y(&self, x: &AffineX) -> Option<Fp2> {
+        let a = self.affine.as_fp2();
+        let x = x.as_fp2();
+        let x2 = x.square();
+        let rhs = &(&(&x2 * x) + &(&x2 * a)) + x;
+        if bool::from(rhs.is_square()) {
+            Some(rhs.sqrt())
+        } else {
+            None
+        }
     }
 
     /// Compute the isomorphism from `self` to `target`.

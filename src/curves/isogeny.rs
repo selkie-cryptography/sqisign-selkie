@@ -489,8 +489,6 @@ mod tests {
     /// the mapped point satisfies y² = x³ + A'x² + x on the target.
     #[test]
     fn isomorphism_maps_on_curve() {
-        use crate::curves::montgomery::recover_y;
-
         let curve = Curve::E0;
         let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, &curve);
         let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, &curve);
@@ -500,10 +498,8 @@ mod tests {
         let q_on_cod1 = &imgs1[0];
 
         // Verify source point is on cod1.
-        let x_src = q_on_cod1.to_affine_x();
-        let a_src = *cod1.coefficient().as_fp2();
         assert!(
-            recover_y(x_src.as_fp2(), &a_src).is_some(),
+            cod1.recover_y(&q_on_cod1.to_affine_x()).is_some(),
             "source point should be on source curve"
         );
 
@@ -516,10 +512,8 @@ mod tests {
         let q_mapped = iso.eval(q_on_cod1);
 
         // Verify mapped point is on cod2.
-        let x_dst = q_mapped.to_affine_x();
-        let a_dst = *cod2.coefficient().as_fp2();
         assert!(
-            recover_y(x_dst.as_fp2(), &a_dst).is_some(),
+            cod2.recover_y(&q_mapped.to_affine_x()).is_some(),
             "mapped point should be on target curve"
         );
     }
