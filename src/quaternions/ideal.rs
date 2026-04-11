@@ -17,8 +17,8 @@
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
-    lattice::{ExtremalOrder, Lattice, NrdBasis},
-    linear::Vector,
+    lattice::{ExtremalOrder, HnfLattice, Lattice, NrdBasis},
+    linear::{Matrix, Vector},
     precomputed::{EXTREMAL_ORDERS, P_WIDE},
 };
 use crate::curves::{TorsionExponent, isogeny::IsogenyDegree};
@@ -511,29 +511,167 @@ impl super::lattice::LeftIdeal<4> {
     /// oblivious sorting, and CT pair selection — an open problem for
     /// quaternion-based schemes.
     ///
+    /// Compute the equivalent ideal of smallest norm.
+    ///
+    /// LLL-reduces the basis, takes the first (shortest) basis
+    /// vector δ, and returns the equivalent ideal
+    /// `I · δ̄ / nrd(I)` of norm `nrd(δ) / nrd(I)`.
+    ///
+    /// # Divergences
+    ///
+    /// The spec does not describe this as a named algorithm. The C
+    /// reference performs this step inside `find_uv` (dim2id2iso.c,
+    /// lines 526-546) before enumerating short vectors, calling it
+    /// "replacing ideal by the equivalent ideal of smallest norm".
+    /// Without this step, large-norm ideals (~2^257) produce
+    /// short vectors with large degrees, and the `u·d₁ + v·d₂ =
+    /// 2^e` search fails.
+    #[must_use]
+    pub fn smallest_equiv(&self) -> Option<Self> {
+        // LLL-reduce the basis at BigInt<8> for headroom.
+        let lattice: Lattice<4> = (*self.lattice()).into();
+        let cols_4 = lattice.basis().columns();
+        let cols_8: [Vector<8>; 4] = core::array::from_fn(|j| cols_4[j].into());
+        let denom_8: BigInt<8> = (*lattice.denom()).into();
+
+        let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
+
+        // δ = first basis vector (shortest after LLL).
+        let delta = Element::<4>::new(
+            Coordinate::from_bigint(nrd_basis.cols()[0][0].narrow_to::<4>()?),
+            Coordinate::from_bigint(nrd_basis.cols()[0][1].narrow_to::<4>()?),
+            Coordinate::from_bigint(nrd_basis.cols()[0][2].narrow_to::<4>()?),
+            Coordinate::from_bigint(nrd_basis.cols()[0][3].narrow_to::<4>()?),
+            Denominator::from_bigint_unchecked(denom_8.narrow_to::<4>()?),
+        );
+
+        // nrd(δ) at BigInt<8> for precision.
+        let (nrd_num, nrd_den) = delta.norm();
+        let (new_norm, rem) = nrd_num.div_rem(&nrd_den);
+        if !bool::from(rem.is_zero()) {
+            return None;
+        }
+        // new_norm = nrd(δ), ideal norm = nrd(δ) / nrd(I)
+        let norm_8: BigInt<8> = (*self.norm()).into();
+        let (equiv_norm_8, rem2) = new_norm.div_rem(&norm_8);
+        if !bool::from(rem2.is_zero()) {
+            return None;
+        }
+        let equiv_norm: BigInt<4> = equiv_norm_8.narrow_to()?;
+
+        // Construct I · δ̄ / nrd(I).
+        // δ̄ = conjugate of δ. Each basis element of I multiplied
+        // by δ̄ via Element<4>::mul (widens to BigInt<8> internally).
+        let delta_conj = delta.conjugate();
+
+        // I · δ̄: multiply each basis element by δ̄ using
+        // mul_direct at BigInt<8> to avoid normalization (which
+        // changes the denominator unpredictably). The raw product
+        // denom is exactly lattice_denom * delta_denom.
+        let delta_conj_8 = Element::<8>::new(
+            Coordinate::from_bigint(delta_conj.a.as_bigint().widen::<8>()),
+            Coordinate::from_bigint(delta_conj.b.as_bigint().widen::<8>()),
+            Coordinate::from_bigint(delta_conj.c.as_bigint().widen::<8>()),
+            Coordinate::from_bigint(delta_conj.d.as_bigint().widen::<8>()),
+            Denominator::from_bigint_unchecked(delta_conj.denom.as_bigint().widen::<8>()),
+        );
+        let mut new_cols = [Vector::<8>::ZERO; 4];
+        for j in 0..4 {
+            let bj = lattice.basis_elem(j);
+            let bj_8 = Element::<8>::new(
+                Coordinate::from_bigint(bj.a.as_bigint().widen::<8>()),
+                Coordinate::from_bigint(bj.b.as_bigint().widen::<8>()),
+                Coordinate::from_bigint(bj.c.as_bigint().widen::<8>()),
+                Coordinate::from_bigint(bj.d.as_bigint().widen::<8>()),
+                Denominator::from_bigint_unchecked(bj.denom.as_bigint().widen::<8>()),
+            );
+            let product = bj_8.mul_direct(&delta_conj_8);
+            new_cols[j] = Vector::new(
+                *product.a.as_bigint(),
+                *product.b.as_bigint(),
+                *product.c.as_bigint(),
+                *product.d.as_bigint(),
+            );
+        }
+        // Raw product denom = lattice_denom * delta_denom.
+        // Dividing by nrd(I) multiplies denom by nrd(I).
+        let product_denom: BigInt<8> = {
+            let ld: BigInt<8> = lattice.denom().widen();
+            let dd: BigInt<8> = delta.denom.as_bigint().widen();
+            ld.ct_mul(&dd).ct_mul(&norm_8)
+        };
+
+        // HNF at width 8, simplify by GCD, then narrow to 4.
+        let hnf_8 = Matrix::<8>::from_hnf_columns(&new_cols);
+        let mut g = product_denom.abs();
+        for row in 0..4 {
+            for col in 0..4 {
+                if !bool::from(hnf_8[row][col].is_zero()) {
+                    g = g.gcd(&hnf_8[row][col].abs());
+                }
+            }
+        }
+        let mut basis_4 = Matrix::<4>::ZERO;
+        for row in 0..4 {
+            for col in 0..4 {
+                let (q, _) = hnf_8[row][col].div_rem(&g);
+                basis_4[row][col] = q.narrow_to::<4>()?;
+            }
+        }
+        let (denom_simplified, _) = product_denom.div_rem(&g);
+        let denom_4: BigInt<4> = denom_simplified.narrow_to()?;
+
+        let result_lattice = HnfLattice::from(Lattice::new(basis_4, denom_4));
+
+        Some(Self::from_parts(
+            result_lattice,
+            equiv_norm,
+            *self.parent_order(),
+        ))
+    }
+
     /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
     pub fn suitable_ideals(&self) -> Option<SuitableIdealResult> {
         let f = TorsionExponent::FULL;
         let two_f = BigInt::<8>::ONE.shl(f.value());
 
-        // Phase 1: L2-reduce the ideal basis and enumerate short vectors.
+        // Phase 0: Replace the ideal with its smallest equivalent.
+        //
+        // The C reference (dim2id2iso.c, find_uv lines 526-546)
+        // does this before enumerating short vectors: LLL-reduce,
+        // take the first basis vector δ (shortest), construct
+        // I · δ̄ / nrd(I). The result has norm ~√p instead of the
+        // original (potentially much larger) norm. This makes the
+        // short-vector degrees small enough for the u·d₁ + v·d₂ =
+        // 2^e search to succeed.
+        let ideal = match self.smallest_equiv() {
+            Some(eq) => {
+                eprintln!(
+                    "      suitable_ideals: smallest_equiv norm_bits={} (was {}), denom_bits={}",
+                    eq.norm().bitsize(),
+                    self.norm().bitsize(),
+                    eq.lattice().denom().bitsize(),
+                );
+                eq
+            }
+            None => {
+                eprintln!("      suitable_ideals: smallest_equiv failed, using original");
+                self.clone()
+            }
+        };
+
+        // Phase 1: L2-reduce and enumerate short vectors.
         //
         // For t = 0, the connecting ideal J_0 = O_0 and J_0 · I = I,
         // so we operate directly on the ideal's own lattice.
         //
         // TODO: Add connecting ideals for t = 1..6 to search across
         // all seven extremal orders (§3.1.7.2).
-        let lattice: Lattice<4> = (*self.lattice()).into();
+        let lattice: Lattice<4> = (*ideal.lattice()).into();
         let cols_4 = lattice.basis().columns();
         let cols_8: [Vector<8>; 4] = core::array::from_fn(|j| cols_4[j].into());
         let denom_8: BigInt<8> = (*lattice.denom()).into();
-        let norm_8: BigInt<8> = (*self.norm()).into();
-
-        eprintln!(
-            "      suitable_ideals: norm_bits={}, denom={:?}",
-            norm_8.bitsize(),
-            denom_8
-        );
+        let norm_8: BigInt<8> = (*ideal.norm()).into();
 
         let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
         let short_vecs = nrd_basis.enumerate_short_vectors(&norm_8, &denom_8);
