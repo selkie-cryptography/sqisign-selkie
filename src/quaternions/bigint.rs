@@ -816,10 +816,7 @@ impl<const N: usize> BigInt<N> {
         let q_w: BigInt<W> = q.widen();
         let m_w: BigInt<W> = m.widen();
         let (x_w, y_w) = BigInt::<W>::cornacchia(&q_w, &m_w)?;
-        Some((
-            x_w.narrow_to::<N>()?,
-            y_w.narrow_to::<N>()?,
-        ))
+        Some((x_w.narrow_to::<N>()?, y_w.narrow_to::<N>()?))
     }
 
     /// Modular square root: returns x such that x² ≡ n (mod m),

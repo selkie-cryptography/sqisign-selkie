@@ -487,11 +487,13 @@ fn canonicalize_reduces_off_diagonals() {
     // Inflate: col[2] += 5 * col[1] (makes col[2][1] = 1 + 5*3 = 16,
     // which should reduce to 16 mod 3 = 1).
     // Also col[3] += 3 * col[2] (inflates col[3] entries).
+    let col1_snap = cols[1];
     for row in 0..4 {
-        cols[2][row] = cols[2][row].ct_add(&i(5).ct_mul(&cols[1][row]));
+        cols[2][row] = cols[2][row].ct_add(&i(5).ct_mul(&col1_snap[row]));
     }
+    let col2_snap = cols[2];
     for row in 0..4 {
-        cols[3][row] = cols[3][row].ct_add(&i(3).ct_mul(&cols[2][row]));
+        cols[3][row] = cols[3][row].ct_add(&i(3).ct_mul(&col2_snap[row]));
     }
 
     let inflated_basis = Matrix::from_columns(&cols);
@@ -525,7 +527,10 @@ fn canonicalize_reduces_off_diagonals() {
         ]),
         I::ONE,
     ));
-    assert_eq!(canonical, original, "canonicalized lattice should equal original");
+    assert_eq!(
+        canonical, original,
+        "canonicalized lattice should equal original"
+    );
 }
 
 #[test]

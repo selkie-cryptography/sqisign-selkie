@@ -56,19 +56,25 @@ impl ExtremalOrder<8> {
     ///
     /// # Divergences
     ///
-    /// - **t range**: the spec samples t from `[-m', m']` (line 5),
-    ///   not `[0, m']`. Both signs must be tried because the isogeny
-    ///   condition (line 15) depends on the sign of t, even though
-    ///   M' = 4M - p(z² + qt²) depends only on t².
-    /// - **Divisibility check**: the spec's "largest d with γ/d ∈ O"
-    ///   (line 18) is divisibility in the *order*, not coordinate-wise
-    ///   in {1, i, j, k}. For orders with half-integer basis elements,
-    ///   this requires checking divisibility by 2·d_O (the order's
-    ///   common denominator), not just that all coordinates are even.
-    /// - **Arithmetic width**: primality testing and Cornacchia on
-    ///   ~273-bit candidates in `BigInt<8>` overflow the 512-bit
-    ///   storage during modular exponentiation. Uses widened variants
-    ///   (`_w::<16>`) for correctness.
+    /// - **t range**: t is sampled from `[-m', m']` (spec line 5), including
+    ///   negative values. Both signs must be tried because the isogeny
+    ///   condition (line 15) depends on the sign of t, even though M' = 4M -
+    ///   p(z² + qt²) depends only on t².
+    /// - **γ construction order**: the spec writes `ωjt` (line 17) but the C
+    ///   ref computes `j·ω·t` (reversed). For ω = i this gives `ji·t = -kt`
+    ///   instead of `ij·t = kt`. We match the C ref.
+    /// - **Divisibility check**: the spec's "largest d with γ/d ∈ O" (line 18)
+    ///   is checked by constructing γ as an `Element`, normalizing
+    ///   (GCD-reducing), and verifying the denominator was divided by exactly
+    ///   2. This matches the C ref's `quat_alg_make_primitive`. Hand-deriving
+    ///   the divisibility condition from coordinate parity is fragile and
+    ///   order- dependent.
+    /// - **Arithmetic width**: primality testing and Cornacchia on ~273-bit
+    ///   candidates in `BigInt<8>` overflow the 512-bit storage during modular
+    ///   exponentiation. Uses widened variants (`_w::<9>`, 576 bits ≥ 2×273)
+    ///   for correctness.
+    /// - **Search bound**: computed from the spec's formula `ceil(sqrt(4M /
+    ///   (p·sqrt(q))))`, not hardcoded.
     ///
     /// # Constant-time
     ///
@@ -95,9 +101,7 @@ impl ExtremalOrder<8> {
             approx as i64
         };
 
-        eprintln!(
-            "        represent_integer: bound={bound}, z_max={z_max}, q={q_val}"
-        );
+        eprintln!("        represent_integer: bound={bound}, z_max={z_max}, q={q_val}");
         let mut _primes_found = 0u32;
         let mut _cornacchia_ok = 0u32;
         let mut _parity_ok = 0u32;
@@ -175,53 +179,87 @@ impl ExtremalOrder<8> {
                     }
                 }
 
-                // Lines 16-19: construct γ = x + ωy + jz + ωjt.
-                // Check that γ/2 ∈ O (spec line 18: d = 2).
+                // Lines 16-19: construct γ = x + ωy + jz + jωt
+                // (note: the C ref computes j·ω·t, not ω·j·t as
+                // the spec's notation might suggest — the product
+                // order matters since ij = k but ji = -k).
                 //
-                // For O₀ with ω = i, basis {1, i, (1+j)/2, (i+k)/2}:
-                //   γ = x + iy + jz + kt
-                //   γ/2 ∈ O₀ iff x ≡ z (mod 2) and y ≡ t (mod 2)
-                // When satisfied, the order-basis coordinates are:
-                //   a = (x-z)/2, b = (y-t)/2, c = z, d = t
-                //
-                // For other orders (q > 1), the condition differs.
-                // TODO: generalize for q > 1 orders.
-                let x_mod2 = x_use.as_limbs()[0] & 1;
-                let y_mod2 = y_use.as_limbs()[0] & 1;
-                let z_mod2 = z.as_limbs()[0] & 1;
-                let t_mod2 = t.abs().as_limbs()[0] & 1;
+                // Then find the largest d with γ/d ∈ O and check
+                // d = 2. We construct γ as an Element at BigInt<8>
+                // width, normalize (which divides by the GCD of the
+                // coordinates), and check that normalization divided
+                // by exactly 2.
+                let omega = self.z();
+                let omega_j = omega.mul(&Element::<4>::J);
 
-                if x_mod2 != z_mod2 || y_mod2 != t_mod2 {
-                    continue;
-                }
-                _parity_ok += 1;
-                if _parity_ok == 1 {
-                    eprintln!(
-                        "        represent_integer: first parity_ok at z={z_val}, t={t_val}, \
-                         isogeny_cond={isogeny_cond}"
-                    );
+                let omega_coords = [
+                    omega.a.wide(),
+                    omega.b.wide(),
+                    omega.c.wide(),
+                    omega.d.wide(),
+                ];
+                let omega_d = omega.denom.wide();
+                let oj_coords = [
+                    omega_j.a.wide(),
+                    omega_j.b.wide(),
+                    omega_j.c.wide(),
+                    omega_j.d.wide(),
+                ];
+                let oj_d = omega_j.denom.wide();
+                let common_d = omega_d.ct_mul(&oj_d);
+
+                let scale_omega = oj_d;
+                let scale_omega_j = omega_d;
+
+                // γ = x·common_d + ω·y·scale_ω + j·z·common_d + j·ω·t·scale_ωj
+                // (matching the C ref's quat_order_elem_create)
+                let mut gamma_coords = [BigInt::<8>::ZERO; 4];
+                for k in 0..4 {
+                    let x_term = if k == 0 {
+                        x_use.ct_mul(&common_d)
+                    } else {
+                        BigInt::ZERO
+                    };
+                    let y_term = y_use.ct_mul(&scale_omega).ct_mul(&omega_coords[k]);
+                    let z_term = if k == 2 {
+                        z.ct_mul(&common_d)
+                    } else {
+                        BigInt::ZERO
+                    };
+                    // j·ω·t (C ref order: order->t * temp * order->z)
+                    let t_term = t.ct_mul(&scale_omega_j).ct_mul(&oj_coords[k]);
+                    gamma_coords[k] = x_term.ct_add(&y_term).ct_add(&z_term).ct_add(&t_term);
                 }
 
-                // γ/2 in {1, i, j, k} coordinates:
-                //   (x/2, y/2, z/2, t/2) — but these aren't the
-                //   order-basis coords. The Element type uses {1,i,j,k}
-                //   with a denominator. So γ/2 has {1,i,j,k} coords
-                //   (x, y, z, t) with denominator 2.
+                // Check: largest d with γ/d ∈ O is 2.
+                // γ's denom in {1,i,j,k} is common_d. Construct
+                // Element and normalize — normalization divides
+                // coords and denom by their GCD. If the GCD is
+                // 2·common_d, then d = 2.
                 let narrow = |v: &BigInt<8>| -> BigInt<4> {
                     v.narrow_to::<4>()
                         .expect("γ coord fits in BigInt<4>: bounded by √M")
                 };
-                let gamma = Element::<4>::new(
-                    Coordinate::from_bigint(narrow(&x_use)),
-                    Coordinate::from_bigint(narrow(&y_use)),
-                    Coordinate::from_bigint(narrow(&z)),
-                    Coordinate::from_bigint(narrow(&t)),
-                    Denominator::from_bigint_unchecked(BigInt::TWO),
+                let mut gamma = Element::<4>::new(
+                    Coordinate::from_bigint(narrow(&gamma_coords[0])),
+                    Coordinate::from_bigint(narrow(&gamma_coords[1])),
+                    Coordinate::from_bigint(narrow(&gamma_coords[2])),
+                    Coordinate::from_bigint(narrow(&gamma_coords[3])),
+                    Denominator::from_bigint_unchecked(narrow(&common_d)),
                 );
+                // Save pre-normalize denom to detect the scaling.
+                let pre_denom = *gamma.denom.as_bigint();
+                gamma.normalize();
+                let post_denom = *gamma.denom.as_bigint();
 
-                let mut result = gamma;
-                result.normalize();
-                return Some(result);
+                // d = pre_denom / post_denom. Check d = 2.
+                let (d, rem) = pre_denom.div_rem(&post_denom);
+                if !bool::from(rem.is_zero()) || d != BigInt::TWO {
+                    continue;
+                }
+                _parity_ok += 1;
+
+                return Some(gamma);
             }
         }
 
@@ -525,9 +563,7 @@ impl super::lattice::LeftIdeal<4> {
             }
         }
 
-        eprintln!(
-            "      suitable_ideals: no valid pair found ({_pairs_tried} tried)"
-        );
+        eprintln!("      suitable_ideals: no valid pair found ({_pairs_tried} tried)");
         None
     }
 }

@@ -416,6 +416,26 @@ Also note explicitly that the range $[-m', m']$ on line~5 includes
 negative values, and that both signs must be tried to satisfy the
 isogeny condition on line~15.
 
+\paragraph{3.\enspace Product order in $\gamma$ construction
+(line~17).}
+Line~17 writes $\gamma \leftarrow (x + \omega y + jz + \omega jt)$.
+In quaternion algebra, $\omega j \neq j\omega$ in general ($ij = k$
+but $ji = -k$).  The C reference's
+\texttt{quat\_order\_elem\_create} computes $j \cdot \omega \cdot t$
+(i.e., left-multiplying by~$j$ then by~$\omega$), which for
+$\omega = i$ gives $ji \cdot t = -kt$.  Reading line~17 as
+$\omega j t = ij \cdot t = kt$ produces the opposite sign on
+the~$k$ component.
+
+The difference does not affect the norm ($\mathrm{nrd}$ depends only
+on $|$components$|^2$), but it \emph{does} affect the isogeny
+condition (line~15) and the divisibility check (line~18), since both
+depend on the parity and congruence class of the coordinates.
+
+State whether line~17 means $(\omega j)t$ or $(j\omega)t$, or
+equivalently state the product order used by
+\texttt{quat\_order\_elem\_create}.
+
 % =====================================================================
 \section{Fixed-precision Hermite Normal Form}
 \label{sec:hnf}

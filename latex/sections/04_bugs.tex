@@ -310,13 +310,13 @@ the ones where a wrong value at the bottom of the stack flips a
 cryptographic predicate---``is this prime?'', ``is this a square?''---
 with no other symptom.
 
-\subsection{Three bugs in \texttt{GeneralizedRepresentInteger}}
+\subsection{Five bugs in \texttt{GeneralizedRepresentInteger}}
 \label{sec:bug-represent-integer}
 
 Algorithm~3.12 (\textsc{GeneralizedRepresentInteger}) finds
 $\gamma \in \mathcal{O}$ with $\mathrm{nrd}(\gamma) = M$ by sampling
 $(z, t)$ and solving $x^2 + qy^2 = M'$ via Cornacchia.  Our
-implementation had three independent errors that together prevented
+implementation had five independent errors that together prevented
 the algorithm from ever succeeding during signing:
 
 \begin{enumerate}
@@ -336,44 +336,60 @@ the algorithm from ever succeeding during signing:
     depends on the sign of~$t$.  Missing negative $t$ values halves
     the chance of satisfying this congruence.
 
-  \item \textbf{Incorrect divisibility check.}
+  \item \textbf{Incorrect divisibility-by-2 check.}
     The spec constructs $\gamma = x + \omega y + jz + \omega jt$ and
     checks that the largest~$d$ with $\gamma/d \in \mathcal{O}$ equals~2
-    (lines~18--19).  We replaced this with an ``all coordinates same
-    parity'' check, requiring $x, y, z, t$ to be all even or all odd.
-    This is wrong for two reasons.  First, with $z$ odd and $t$ even,
-    the parity check can never pass, regardless of $(x, y)$.  Second,
+    (lines~18--19).  We initially replaced this with an ``all
+    coordinates same parity'' check in $\{1, i, j, k\}$, then with
+    a hand-derived congruence condition.  Both were wrong.
+
+    The correct approach, matching the C reference's
+    \texttt{quat\_alg\_make\_primitive}, is to construct $\gamma$ as a
+    quaternion element in the order, compute the GCD of its coordinates
+    in the order's integral basis, and verify the GCD equals~2.
+    Attempting to reason about divisibility-by-2 in the
+    $\{1, i, j, k\}$ coordinates is fragile because
     the order~$\mathcal{O}_0$ has a basis with half-integer entries
-    ($\frac{1+j}{2}$, $\frac{i+k}{2}$), so divisibility by~2
-    in~$\mathcal{O}_0$ is not the same as all coordinates being even
-    in the $\{1, i, j, k\}$ basis.  The correct check is whether
-    all coordinates of $\gamma$ in the integral-basis representation
-    are divisible by~$2 \cdot d_{\mathcal{O}}$ (where $d_{\mathcal{O}}$
-    is the order's common denominator).
+    ($\frac{1+j}{2}$, $\frac{i+k}{2}$); divisibility by~2 in the
+    order is not equivalent to any simple parity condition on the
+    $\{1, i, j, k\}$ coordinates.
+
+  \item \textbf{Arithmetic overflow in primality and Cornacchia.}
+    The candidates $M'$ are ${\sim}273$-bit values stored in
+    \texttt{BigInt<8>} (512~bits).  Both \texttt{is\_probable\_prime}
+    and \texttt{cornacchia} internally call \texttt{pow\_mod}, whose
+    squaring step produces ${\sim}546$-bit intermediates that overflow
+    the 512-bit storage.  The result is that
+    \texttt{is\_probable\_prime} rejects genuine primes and
+    \texttt{cornacchia} returns \texttt{None} for valid inputs.  Fixed
+    by using the widened variants \texttt{is\_probable\_prime\_w::<9>}
+    and \texttt{cornacchia\_w::<9>} (576~bits $\geq 2 \times 273$).
+
+  \item \textbf{Hardcoded search bound too small.}
+    We initially used \texttt{bound = 256}.  The spec computes the
+    bound as $\lceil\sqrt{4M / (p\sqrt{q})}\rceil$, which for
+    NIST-I at the \textsc{FixedDegreeIsogeny} call site is
+    ${\sim}1400$--$2500$.  With 256 iterations, the search exhausted
+    without finding any $(z, t, x, y)$ satisfying both the isogeny
+    condition and the $d = 2$ condition.  Fixed by computing the bound
+    from the spec's formula.
 \end{enumerate}
 
-Bug~1 was the most damaging: with no primes found, the algorithm
-returned \texttt{None} for every call.  Bug~3 would have blocked
-progress even after bug~1 was fixed.
-
-\paragraph{Additional fix: arithmetic overflow.}
-At the same call site, the candidates $M'$ are ${\sim}273$-bit values
-stored in \texttt{BigInt<8>} (512~bits).  Both
-\texttt{is\_probable\_prime} and \texttt{cornacchia} internally call
-\texttt{pow\_mod}, whose squaring step produces ${\sim}546$-bit
-intermediates that overflow the 512-bit storage.  The result is that
-\texttt{is\_probable\_prime} rejects genuine primes and
-\texttt{cornacchia} returns \texttt{None} for valid inputs.  Fixed
-by using the widened variants \texttt{is\_probable\_prime\_w::<16>}
-and \texttt{cornacchia\_w::<16>}, giving 1024~bits of working space.
+Bugs~1 and~4 were the most damaging: bug~1 eliminated all candidates
+before primality testing, and bug~4 made the primality test reject
+genuine primes.  Bug~3 was the subtlest and required the most
+iterations to diagnose, since the divisibility condition depends on
+the order's algebraic structure rather than a simple coordinate check.
 
 \noindent
 \textbf{Takeaway:} Algorithm~3.12 is simple at first glance---a short
 loop with Cornacchia and a divisibility check---but the implementation
 details (sampling ranges, sign conventions, order-basis divisibility,
-and arithmetic width) are all places where a plausible-looking
-implementation silently fails.  Careful cross-referencing with the
-spec's exact ranges and the order's algebraic structure is essential.
+arithmetic width, and search bounds) are all places where a
+plausible-looking implementation silently fails.  The divisibility
+check in particular should not be hand-derived from coordinate
+arithmetic; it should use the same order-basis GCD computation as the
+C reference.
 
 \subsection{HNF coefficient blow-up at fixed precision}
 \label{sec:bug-hnf}
