@@ -644,7 +644,7 @@ impl SigningKey {
             let q_rsp_wide: BigInt<N_RESP> = q_rsp.widen();
             let i_com_norm_w: BigInt<N_RESP> = i_com.norm().widen();
             let i_com_rsp_norm_w = i_com_norm_w.ct_mul(&q_rsp_wide);
-            let mut i_com_rsp_w = match LeftIdeal::<30>::from_generator_mod_hnf(
+            let i_com_rsp_w = match LeftIdeal::<30>::from_generator_mod_hnf(
                 &alpha_rsp_conj,
                 &i_com_rsp_norm_w,
                 o0_w.order(),
@@ -658,11 +658,10 @@ impl SigningKey {
                     continue;
                 }
             };
-            if !i_com_rsp_w.reduce_to_prime_norm::<44, _>(rng) {
-                eprintln!("  response: reduce_to_prime_norm failed");
-                continue;
-            }
-            eprintln!("  response: reduce_to_prime_norm ok");
+            // Note: the spec does NOT call RandomEquivalentPrimeIdeal
+            // (reduce_to_prime_norm) on I_com,rsp. The ideal goes
+            // directly to IdealToIsogeny (lines 24 or 30) or to
+            // the auxiliary intersection.
             let i_com_rsp = match i_com_rsp_w.narrow() {
                 Some(i) => i,
                 None => {
@@ -679,7 +678,19 @@ impl SigningKey {
             let q_aux;
 
             if e_rsp_prime > 0 {
-                // Lines 22–27: auxiliary isogeny path
+                // Lines 22–27: auxiliary isogeny path.
+                //
+                // This path requires `dim2id2iso_arbitrary_isogeny_evaluation`
+                // (the C ref's specialized routine for ideals of arbitrary
+                // norm). Our `to_isogeny` uses `SuitableIdeals` +
+                // `FixedDegreeIsogeny`, which requires `u < 2^{f-2}`.
+                // The response ideal's norm (~2^257) exceeds this bound.
+                //
+                // TODO: implement `dim2id2iso_arbitrary_isogeny_evaluation`
+                // to handle the e'_rsp > 0 case.
+                eprintln!(
+                    "  response: e'_rsp={e_rsp_prime} > 0, need dim2id2iso (not yet implemented)"
+                );
                 let aux_norm = BigInt::<4>::ONE.shl(e_rsp_prime).ct_sub(&q_rsp);
                 let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0]) {
                     Some(i) => i,
