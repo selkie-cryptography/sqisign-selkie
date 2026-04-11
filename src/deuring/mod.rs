@@ -541,13 +541,46 @@ impl LeftIdeal<4> {
         let product = surfaces::EllipticProduct::new(e_u, e_v);
         let pmq1 = kp_first.projective_difference(&kq_first);
         let pmq2 = kp_second.projective_difference(&kq_second);
-        let kernel = surfaces::Kernel::from_montgomery(
+
+        eprintln!(
+            "    to_isogeny step 9: e_u j={:?}, e_v j={:?}, scale={}",
+            e_u.j_invariant(),
+            e_v.j_invariant(),
+            scale,
+        );
+        // Check if kernel points are on their curves.
+        let kp1_on = e_u.recover_y(
+            &kp_first.to_affine_x(),
+        );
+        let kp2_on = e_v.recover_y(
+            &kp_second.to_affine_x(),
+        );
+        let kq1_on = e_u.recover_y(&kq_first.to_affine_x());
+        let kq2_on = e_v.recover_y(&kq_second.to_affine_x());
+        let pmq1_on = e_u.recover_y(&pmq1.to_affine_x());
+        let pmq2_on = e_v.recover_y(&pmq2.to_affine_x());
+        eprintln!(
+            "    to_isogeny step 9: kp on curves=({}, {}), kq=({}, {}), pmq=({}, {})",
+            kp1_on.is_some(),
+            kp2_on.is_some(),
+            kq1_on.is_some(),
+            kq2_on.is_some(),
+            pmq1_on.is_some(),
+            pmq2_on.is_some(),
+        );
+
+        let kernel = match surfaces::Kernel::from_montgomery(
             product,
             (kp_first, kp_second),
             (kq_first, kq_second),
             (pmq1, pmq2),
-        )
-        .expect("kernel lift failed");
+        ) {
+            Some(k) => k,
+            None => {
+                eprintln!("    to_isogeny: kernel lift failed");
+                return None;
+            }
+        };
 
         let zero_v = ProjectiveXOnlyPoint::identity(&e_v);
         let (codomain, images) = kernel.isogeny(sui.e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
