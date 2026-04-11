@@ -406,6 +406,7 @@ impl SigningKey {
             BasisHint::from_byte(u8::from(self.verifying_key.hint)),
         );
 
+        eprintln!("sign_derand: entering main loop");
         // Line 3: while true do
         for _iter in 0..1000 {
             eprintln!("sign iter {_iter}");

@@ -368,3 +368,178 @@ fn l2_gram_stays_symmetric() {
         }
     }
 }
+
+// -----------------------------------------------------------------------
+// NrdBasis tests
+// -----------------------------------------------------------------------
+
+#[test]
+fn nrd_basis_identity_gram() {
+    // Standard basis {1, i, j, k} has nrd gram diag(1, 1, p, p).
+    let cols: [Vector<8>; 4] = [
+        V8::new(i8(1), i8(0), i8(0), i8(0)),
+        V8::new(i8(0), i8(1), i8(0), i8(0)),
+        V8::new(i8(0), i8(0), i8(1), i8(0)),
+        V8::new(i8(0), i8(0), i8(0), i8(1)),
+    ];
+    let nrd = NrdBasis::new(cols);
+    let gram = nrd.gram();
+    let p: I8 = crate::quaternions::precomputed::P_WIDE;
+
+    assert_eq!(gram[0][0], I8::ONE, "nrd(1) = 1");
+    assert_eq!(gram[1][1], I8::ONE, "nrd(i) = 1");
+    assert_eq!(gram[2][2], p, "nrd(j) = p");
+    assert_eq!(gram[3][3], p, "nrd(k) = p");
+
+    for row in 0..4 {
+        for col in 0..4 {
+            if row != col {
+                assert!(
+                    bool::from(gram[row][col].is_zero()),
+                    "G[{row}][{col}] should be zero for orthogonal basis"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn nrd_basis_gram_symmetric() {
+    // Non-trivial basis: columns are not orthogonal.
+    let cols: [Vector<8>; 4] = [
+        V8::new(i8(3), i8(1), i8(0), i8(0)),
+        V8::new(i8(1), i8(2), i8(0), i8(0)),
+        V8::new(i8(0), i8(0), i8(1), i8(1)),
+        V8::new(i8(0), i8(0), i8(2), i8(1)),
+    ];
+    let nrd = NrdBasis::new(cols);
+    let gram = nrd.gram();
+
+    for row in 0..4 {
+        for col in 0..4 {
+            assert_eq!(
+                gram[row][col], gram[col][row],
+                "Gram not symmetric at [{row}][{col}]"
+            );
+        }
+    }
+}
+
+#[test]
+fn nrd_basis_eval_quadratic_form() {
+    // For identity basis with gram diag(1, 1, p, p),
+    // c^T G c = c0² + c1² + p(c2² + c3²).
+    let cols: [Vector<8>; 4] = [
+        V8::new(i8(1), i8(0), i8(0), i8(0)),
+        V8::new(i8(0), i8(1), i8(0), i8(0)),
+        V8::new(i8(0), i8(0), i8(1), i8(0)),
+        V8::new(i8(0), i8(0), i8(0), i8(1)),
+    ];
+    let nrd = NrdBasis::new(cols);
+    let p: I8 = crate::quaternions::precomputed::P_WIDE;
+
+    let c = [i8(2), i8(3), i8(0), i8(0)];
+    let qf = nrd.eval_quadratic_form(&c);
+    // 2² + 3² = 13
+    assert_eq!(qf, i8(13));
+
+    let c2 = [i8(0), i8(0), i8(1), i8(1)];
+    let qf2 = nrd.eval_quadratic_form(&c2);
+    // p(1² + 1²) = 2p
+    assert_eq!(qf2, p.ct_mul(&i8(2)));
+}
+
+// -----------------------------------------------------------------------
+// HnfLattice::canonicalize tests
+// -----------------------------------------------------------------------
+
+#[test]
+fn canonicalize_already_canonical() {
+    // A canonical HNF should be unchanged by canonicalize.
+    let basis = Matrix::from_columns(&[
+        V::new(i(6), i(0), i(0), i(0)),
+        V::new(i(0), i(3), i(0), i(0)),
+        V::new(i(2), i(1), i(2), i(0)),
+        V::new(i(1), i(0), i(1), i(1)),
+    ]);
+    let lat = Lattice::new(basis, I::ONE);
+    let hnf = HnfLattice::from(lat);
+    let canonical = hnf.canonicalize();
+
+    assert_eq!(*hnf.basis(), *canonical.basis());
+}
+
+#[test]
+fn canonicalize_reduces_off_diagonals() {
+    // Construct an HNF where off-diagonal entries exceed the
+    // diagonal pivot. canonicalize should reduce them modulo the
+    // pivot while preserving the lattice.
+    //
+    // Start with a canonical HNF, then add multiples of pivot
+    // columns to inflate off-diagonal entries.
+    let mut cols = [
+        V::new(i(6), i(0), i(0), i(0)),
+        V::new(i(0), i(3), i(0), i(0)),
+        V::new(i(2), i(1), i(2), i(0)),
+        V::new(i(1), i(0), i(1), i(1)),
+    ];
+
+    // Inflate: col[2] += 5 * col[1] (makes col[2][1] = 1 + 5*3 = 16,
+    // which should reduce to 16 mod 3 = 1).
+    // Also col[3] += 3 * col[2] (inflates col[3] entries).
+    for row in 0..4 {
+        cols[2][row] = cols[2][row].ct_add(&i(5).ct_mul(&cols[1][row]));
+    }
+    for row in 0..4 {
+        cols[3][row] = cols[3][row].ct_add(&i(3).ct_mul(&cols[2][row]));
+    }
+
+    let inflated_basis = Matrix::from_columns(&cols);
+    // Construct HnfLattice directly (the inflated matrix is still
+    // a valid HNF — upper-triangular with positive pivots — just
+    // not canonical).
+    let inflated = HnfLattice::from(Lattice::new(inflated_basis, I::ONE));
+    let canonical = inflated.canonicalize();
+
+    // Off-diagonal entries should now be in [0, pivot).
+    let h = canonical.basis();
+    for col in 1..4 {
+        let pivot = h[col][col];
+        for row in 0..col {
+            let entry = h[col][row];
+            assert!(
+                entry >= I::ZERO && entry < pivot,
+                "h[{col}][{row}] = {entry:?} not in [0, {pivot:?})"
+            );
+        }
+    }
+
+    // The lattice should be unchanged: same HNF after
+    // re-reducing from scratch.
+    let original = HnfLattice::from(Lattice::new(
+        Matrix::from_columns(&[
+            V::new(i(6), i(0), i(0), i(0)),
+            V::new(i(0), i(3), i(0), i(0)),
+            V::new(i(2), i(1), i(2), i(0)),
+            V::new(i(1), i(0), i(1), i(1)),
+        ]),
+        I::ONE,
+    ));
+    assert_eq!(canonical, original, "canonicalized lattice should equal original");
+}
+
+#[test]
+fn canonicalize_preserves_denom() {
+    let basis = Matrix::from_columns(&[
+        V::new(i(4), i(0), i(0), i(0)),
+        V::new(i(0), i(2), i(0), i(0)),
+        V::new(i(1), i(1), i(1), i(0)),
+        V::new(i(0), i(0), i(0), i(1)),
+    ]);
+    let denom = i(3);
+    let lat = Lattice::new(basis, denom);
+    let hnf = HnfLattice::from(lat);
+    let canonical = hnf.canonicalize();
+
+    assert_eq!(*canonical.denom(), denom);
+}

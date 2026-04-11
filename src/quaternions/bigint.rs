@@ -798,6 +798,30 @@ impl<const N: usize> BigInt<N> {
         if check == *m { Some((x, y)) } else { None }
     }
 
+    /// Cornacchia's algorithm at a wider working width `W`.
+    ///
+    /// Widens `q` and `m` to `BigInt<W>` for the modular arithmetic
+    /// (Legendre symbol, modular square root, Euclidean reduction),
+    /// then narrows the result back to `BigInt<N>`. Use when
+    /// `64*N < 2*bits(m)` — otherwise [`cornacchia`](Self::cornacchia)
+    /// silently truncates during `pow_mod` and fails to find
+    /// solutions.
+    pub fn cornacchia_w<const W: usize>(q: &Self, m: &Self) -> Option<(Self, Self)> {
+        const {
+            assert!(
+                W >= N,
+                "cornacchia_w: working width W must be >= storage width N"
+            )
+        };
+        let q_w: BigInt<W> = q.widen();
+        let m_w: BigInt<W> = m.widen();
+        let (x_w, y_w) = BigInt::<W>::cornacchia(&q_w, &m_w)?;
+        Some((
+            x_w.narrow_to::<N>()?,
+            y_w.narrow_to::<N>()?,
+        ))
+    }
+
     /// Modular square root: returns x such that x² ≡ n (mod m),
     /// or `None` if n is not a quadratic residue mod m.
     ///

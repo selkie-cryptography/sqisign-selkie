@@ -310,6 +310,71 @@ the ones where a wrong value at the bottom of the stack flips a
 cryptographic predicate---``is this prime?'', ``is this a square?''---
 with no other symptom.
 
+\subsection{Three bugs in \texttt{GeneralizedRepresentInteger}}
+\label{sec:bug-represent-integer}
+
+Algorithm~3.12 (\textsc{GeneralizedRepresentInteger}) finds
+$\gamma \in \mathcal{O}$ with $\mathrm{nrd}(\gamma) = M$ by sampling
+$(z, t)$ and solving $x^2 + qy^2 = M'$ via Cornacchia.  Our
+implementation had three independent errors that together prevented
+the algorithm from ever succeeding during signing:
+
+\begin{enumerate}
+  \item \textbf{Off-by-one in $z$ sampling.}
+    The spec says ``sample $z$ uniformly from $[1, \ldots, m]$''
+    (line~4).  Our loop variable started at~2 instead of~1, skipping
+    the crucial $z = 1$ case.  With $z$ even, $M' = 4M - p(z^2 + qt^2)$
+    is always even and therefore never prime.  The \texttt{is\_probable\_prime}
+    check rejected every candidate, making the algorithm appear to
+    find no solutions at all.
+
+  \item \textbf{$t$ sampled from $[0, m']$ instead of $[-m', m']$.}
+    The spec says ``sample $t$ uniformly from $[-m', \ldots, m']$''
+    (line~5).  We sampled only non-negative values.  Since $M'$ depends
+    on~$t^2$, the Cornacchia output $(x, y)$ is the same for $\pm t$,
+    but the isogeny condition (line~15, $x - t \equiv 2 \pmod{4}$)
+    depends on the sign of~$t$.  Missing negative $t$ values halves
+    the chance of satisfying this congruence.
+
+  \item \textbf{Incorrect divisibility check.}
+    The spec constructs $\gamma = x + \omega y + jz + \omega jt$ and
+    checks that the largest~$d$ with $\gamma/d \in \mathcal{O}$ equals~2
+    (lines~18--19).  We replaced this with an ``all coordinates same
+    parity'' check, requiring $x, y, z, t$ to be all even or all odd.
+    This is wrong for two reasons.  First, with $z$ odd and $t$ even,
+    the parity check can never pass, regardless of $(x, y)$.  Second,
+    the order~$\mathcal{O}_0$ has a basis with half-integer entries
+    ($\frac{1+j}{2}$, $\frac{i+k}{2}$), so divisibility by~2
+    in~$\mathcal{O}_0$ is not the same as all coordinates being even
+    in the $\{1, i, j, k\}$ basis.  The correct check is whether
+    all coordinates of $\gamma$ in the integral-basis representation
+    are divisible by~$2 \cdot d_{\mathcal{O}}$ (where $d_{\mathcal{O}}$
+    is the order's common denominator).
+\end{enumerate}
+
+Bug~1 was the most damaging: with no primes found, the algorithm
+returned \texttt{None} for every call.  Bug~3 would have blocked
+progress even after bug~1 was fixed.
+
+\paragraph{Additional fix: arithmetic overflow.}
+At the same call site, the candidates $M'$ are ${\sim}273$-bit values
+stored in \texttt{BigInt<8>} (512~bits).  Both
+\texttt{is\_probable\_prime} and \texttt{cornacchia} internally call
+\texttt{pow\_mod}, whose squaring step produces ${\sim}546$-bit
+intermediates that overflow the 512-bit storage.  The result is that
+\texttt{is\_probable\_prime} rejects genuine primes and
+\texttt{cornacchia} returns \texttt{None} for valid inputs.  Fixed
+by using the widened variants \texttt{is\_probable\_prime\_w::<16>}
+and \texttt{cornacchia\_w::<16>}, giving 1024~bits of working space.
+
+\noindent
+\textbf{Takeaway:} Algorithm~3.12 is simple at first glance---a short
+loop with Cornacchia and a divisibility check---but the implementation
+details (sampling ranges, sign conventions, order-basis divisibility,
+and arithmetic width) are all places where a plausible-looking
+implementation silently fails.  Careful cross-referencing with the
+spec's exact ranges and the order's algebraic structure is essential.
+
 \subsection{HNF coefficient blow-up at fixed precision}
 \label{sec:bug-hnf}
 

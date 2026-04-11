@@ -54,12 +54,26 @@ impl ExtremalOrder<8> {
     ///
     /// Implements [Alg. 3.12].
     ///
-    /// WARNING: Not constant-time — brute-force search with
-    /// data-dependent loop bounds, primality testing, and Cornacchia
-    /// calls.
+    /// # Divergences
     ///
-    /// TODO(ct): Make constant-time before production use. Called on
-    /// secret-derived norms during signing (via FixedDegreeIsogeny).
+    /// - **t range**: the spec samples t from `[-m', m']` (line 5),
+    ///   not `[0, m']`. Both signs must be tried because the isogeny
+    ///   condition (line 15) depends on the sign of t, even though
+    ///   M' = 4M - p(z² + qt²) depends only on t².
+    /// - **Divisibility check**: the spec's "largest d with γ/d ∈ O"
+    ///   (line 18) is divisibility in the *order*, not coordinate-wise
+    ///   in {1, i, j, k}. For orders with half-integer basis elements,
+    ///   this requires checking divisibility by 2·d_O (the order's
+    ///   common denominator), not just that all coordinates are even.
+    /// - **Arithmetic width**: primality testing and Cornacchia on
+    ///   ~273-bit candidates in `BigInt<8>` overflow the 512-bit
+    ///   storage during modular exponentiation. Uses widened variants
+    ///   (`_w::<16>`) for correctness.
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time. `TODO(ct)`: input is secret-derived via
+    /// Algorithm 4.2 (FixedDegreeIsogeny calls this on secret norms).
     ///
     /// [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
     pub fn represent_integer(&self, m: &BigInt<8>, isogeny_cond: bool) -> Option<Element<4>> {
@@ -68,7 +82,12 @@ impl ExtremalOrder<8> {
         let q = BigInt::<8>::from_u64(q_val as u64);
         let four_m = BigInt::<8>::from_u64(4).ct_mul(m);
 
-        let bound: u32 = 256;
+        // Spec line 1: bound = ceil(sqrt(4M / (p·sqrt(q)))).
+        let bound: u32 = {
+            let q_sqrt = (q_val as f64).sqrt();
+            let approx = (four_m.to_f64() / (p.to_f64() * q_sqrt)).sqrt();
+            (approx.ceil() as u32).max(256)
+        };
         let z_max = {
             let approx = (four_m.to_f64() / p.to_f64() - q_val as f64)
                 .max(0.0)
@@ -76,11 +95,18 @@ impl ExtremalOrder<8> {
             approx as i64
         };
 
+        eprintln!(
+            "        represent_integer: bound={bound}, z_max={z_max}, q={q_val}"
+        );
+        let mut _primes_found = 0u32;
+        let mut _cornacchia_ok = 0u32;
+        let mut _parity_ok = 0u32;
+        let mut _isogeny_cond_fail = 0u32;
         let mut counter: u32 = 0;
         while counter < bound {
             counter += 1;
 
-            let z_val = (counter as i64 % z_max.max(1)) + 1;
+            let z_val = ((counter as i64 - 1) % z_max.max(1)) + 1;
             let z = BigInt::<8>::from_i64(z_val);
 
             let pz_sq = p.ct_mul(&z.ct_mul(&z));
@@ -97,10 +123,15 @@ impl ExtremalOrder<8> {
                 }
             };
 
-            for t_val in 0..=t_max.min(50) {
+            // Line 5: sample t from [-m', m'] (spec uses both signs).
+            // M' = 4M - p(z² + qt²) depends only on t², so the
+            // prime and Cornacchia results are the same for ±t. But
+            // the isogeny condition (line 12-15) and the divisibility
+            // check (line 18-19) depend on the sign of t.
+            let z_sq = z.ct_mul(&z);
+            let t_max_capped = t_max.min(50);
+            for t_val in (-t_max_capped)..=t_max_capped {
                 let t = BigInt::<8>::from_i64(t_val);
-
-                let z_sq = z.ct_mul(&z);
                 let t_sq = t.ct_mul(&t);
                 let inner = z_sq.ct_add(&q.ct_mul(&t_sq));
                 let m_prime = four_m.ct_sub(&p.ct_mul(&inner));
@@ -109,151 +140,83 @@ impl ExtremalOrder<8> {
                     continue;
                 }
 
-                if !m_prime.is_probable_prime(12) {
+                // m' can be up to ~273 bits in BigInt<8> (512 bits).
+                // Squaring during Miller-Rabin produces up to 546-bit
+                // intermediates, which overflows BigInt<8>. Widen to
+                // BigInt<9> (576 bits ≥ 2×273) for correct modular
+                // exponentiation.
+                if !m_prime.is_probable_prime_w::<9>(12) {
                     continue;
                 }
+                _primes_found += 1;
 
-                let Some((x, y)) = BigInt::<8>::cornacchia(&q, &m_prime) else {
+                // Cornacchia uses modular sqrt internally, which
+                // needs the same widening as primality testing.
+                let Some((x, y)) = BigInt::<8>::cornacchia_w::<9>(&q, &m_prime) else {
                     continue;
                 };
+                _cornacchia_ok += 1;
 
-                let x_odd = bool::from(x.is_odd());
-                let y_odd = bool::from(y.is_odd());
-                let z_odd = bool::from(z.is_odd());
-                let t_odd = bool::from(t.is_odd());
-                let all_even = !x_odd && !y_odd && !z_odd && !t_odd;
-                let all_odd = x_odd && y_odd && z_odd && t_odd;
-
-                if !all_even && !all_odd {
-                    continue;
-                }
-
+                // Lines 12-15: isogeny condition (spec Algorithm 3.12).
+                // If isogenyCond and q = 1: ensure x ≡ t (mod 2)
+                // (swap x,y if needed), then check x-t ≡ 2 (mod 4)
+                // and y-z ≡ 2 (mod 4).
+                let (mut x_use, mut y_use) = (x, y);
                 if isogeny_cond && q_val == 1 {
-                    let mut x_use = x;
-                    let mut y_use = y;
-                    if bool::from(x.is_odd()) != bool::from(t.is_odd()) {
+                    if bool::from(x_use.is_odd()) != bool::from(t.is_odd()) {
                         core::mem::swap(&mut x_use, &mut y_use);
                     }
-                    let xt_diff = x_use.ct_sub(&t).ct_mod(&BigInt::from_u64(4));
-                    let yz_diff = y_use.ct_sub(&z).ct_mod(&BigInt::from_u64(4));
+                    let four = BigInt::from_u64(4);
+                    let xt_diff = x_use.ct_sub(&t).ct_mod(&four);
+                    let yz_diff = y_use.ct_sub(&z).ct_mod(&four);
                     if xt_diff != BigInt::from_u64(2) || yz_diff != BigInt::from_u64(2) {
+                        _isogeny_cond_fail += 1;
                         continue;
                     }
                 }
 
-                // Construct γ = (x·1 + y·ω + z·j + t·ωj) / d.
-                let omega = self.z();
-                let omega_j = omega.mul(&Element::<4>::J);
+                // Lines 16-19: construct γ = x + ωy + jz + ωjt.
+                // Check that γ/2 ∈ O (spec line 18: d = 2).
+                //
+                // For O₀ with ω = i, basis {1, i, (1+j)/2, (i+k)/2}:
+                //   γ = x + iy + jz + kt
+                //   γ/2 ∈ O₀ iff x ≡ z (mod 2) and y ≡ t (mod 2)
+                // When satisfied, the order-basis coordinates are:
+                //   a = (x-z)/2, b = (y-t)/2, c = z, d = t
+                //
+                // For other orders (q > 1), the condition differs.
+                // TODO: generalize for q > 1 orders.
+                let x_mod2 = x_use.as_limbs()[0] & 1;
+                let y_mod2 = y_use.as_limbs()[0] & 1;
+                let z_mod2 = z.as_limbs()[0] & 1;
+                let t_mod2 = t.abs().as_limbs()[0] & 1;
 
-                // Widen omega coordinates to BigInt<8> for the linear combination.
-                let omega_coords = [
-                    omega.a.wide(),
-                    omega.b.wide(),
-                    omega.c.wide(),
-                    omega.d.wide(),
-                ];
-                let omega_d = omega.denom.wide();
-                let oj_coords = [
-                    omega_j.a.wide(),
-                    omega_j.b.wide(),
-                    omega_j.c.wide(),
-                    omega_j.d.wide(),
-                ];
-                let oj_d = omega_j.denom.wide();
-                let common_d = omega_d.ct_mul(&oj_d);
-
-                let scale_omega = oj_d;
-                let scale_omega_j = omega_d;
-
-                let mut gamma_coords = [BigInt::<8>::ZERO; 4];
-                for k in 0..4 {
-                    let x_term = if k == 0 {
-                        x.ct_mul(&common_d)
-                    } else {
-                        BigInt::ZERO
-                    };
-                    let y_term = y.ct_mul(&scale_omega).ct_mul(&omega_coords[k]);
-                    let z_term = if k == 2 {
-                        z.ct_mul(&common_d)
-                    } else {
-                        BigInt::ZERO
-                    };
-                    let t_term = t.ct_mul(&scale_omega_j).ct_mul(&oj_coords[k]);
-                    gamma_coords[k] = x_term.ct_add(&y_term).ct_add(&z_term).ct_add(&t_term);
-                }
-
-                let all_coords_even = bool::from(gamma_coords[0].is_even())
-                    && bool::from(gamma_coords[1].is_even())
-                    && bool::from(gamma_coords[2].is_even())
-                    && bool::from(gamma_coords[3].is_even());
-
-                if !all_coords_even {
+                if x_mod2 != z_mod2 || y_mod2 != t_mod2 {
                     continue;
                 }
+                _parity_ok += 1;
+                if _parity_ok == 1 {
+                    eprintln!(
+                        "        represent_integer: first parity_ok at z={z_val}, t={t_val}, \
+                         isogeny_cond={isogeny_cond}"
+                    );
+                }
 
-                // Divide by two and construct Element via from_wide.
+                // γ/2 in {1, i, j, k} coordinates:
+                //   (x/2, y/2, z/2, t/2) — but these aren't the
+                //   order-basis coords. The Element type uses {1,i,j,k}
+                //   with a denominator. So γ/2 has {1,i,j,k} coords
+                //   (x, y, z, t) with denominator 2.
+                let narrow = |v: &BigInt<8>| -> BigInt<4> {
+                    v.narrow_to::<4>()
+                        .expect("γ coord fits in BigInt<4>: bounded by √M")
+                };
                 let gamma = Element::<4>::new(
-                    Coordinate::from_bigint(BigInt::from_sign_and_limbs(
-                        if bool::from(gamma_coords[0].is_negative()) {
-                            1
-                        } else {
-                            0
-                        },
-                        [
-                            gamma_coords[0].abs().shr(1).as_limbs()[0],
-                            gamma_coords[0].abs().shr(1).as_limbs()[1],
-                            gamma_coords[0].abs().shr(1).as_limbs()[2],
-                            gamma_coords[0].abs().shr(1).as_limbs()[3],
-                        ],
-                    )),
-                    Coordinate::from_bigint(BigInt::from_sign_and_limbs(
-                        if bool::from(gamma_coords[1].is_negative()) {
-                            1
-                        } else {
-                            0
-                        },
-                        [
-                            gamma_coords[1].abs().shr(1).as_limbs()[0],
-                            gamma_coords[1].abs().shr(1).as_limbs()[1],
-                            gamma_coords[1].abs().shr(1).as_limbs()[2],
-                            gamma_coords[1].abs().shr(1).as_limbs()[3],
-                        ],
-                    )),
-                    Coordinate::from_bigint(BigInt::from_sign_and_limbs(
-                        if bool::from(gamma_coords[2].is_negative()) {
-                            1
-                        } else {
-                            0
-                        },
-                        [
-                            gamma_coords[2].abs().shr(1).as_limbs()[0],
-                            gamma_coords[2].abs().shr(1).as_limbs()[1],
-                            gamma_coords[2].abs().shr(1).as_limbs()[2],
-                            gamma_coords[2].abs().shr(1).as_limbs()[3],
-                        ],
-                    )),
-                    Coordinate::from_bigint(BigInt::from_sign_and_limbs(
-                        if bool::from(gamma_coords[3].is_negative()) {
-                            1
-                        } else {
-                            0
-                        },
-                        [
-                            gamma_coords[3].abs().shr(1).as_limbs()[0],
-                            gamma_coords[3].abs().shr(1).as_limbs()[1],
-                            gamma_coords[3].abs().shr(1).as_limbs()[2],
-                            gamma_coords[3].abs().shr(1).as_limbs()[3],
-                        ],
-                    )),
-                    Denominator::from_bigint_unchecked(BigInt::from_sign_and_limbs(
-                        0,
-                        [
-                            common_d.as_limbs()[0],
-                            common_d.as_limbs()[1],
-                            common_d.as_limbs()[2],
-                            common_d.as_limbs()[3],
-                        ],
-                    )),
+                    Coordinate::from_bigint(narrow(&x_use)),
+                    Coordinate::from_bigint(narrow(&y_use)),
+                    Coordinate::from_bigint(narrow(&z)),
+                    Coordinate::from_bigint(narrow(&t)),
+                    Denominator::from_bigint_unchecked(BigInt::TWO),
                 );
 
                 let mut result = gamma;
@@ -262,6 +225,11 @@ impl ExtremalOrder<8> {
             }
         }
 
+        eprintln!(
+            "        represent_integer: exhausted bound={bound}, z_max={z_max}, \
+             primes={_primes_found}, cornacchia_ok={_cornacchia_ok}, parity_ok={_parity_ok}, \
+             isogeny_cond_fail={_isogeny_cond_fail}"
+        );
         None
     }
 }
@@ -523,8 +491,19 @@ impl super::lattice::LeftIdeal<4> {
         let denom_8: BigInt<8> = (*lattice.denom()).into();
         let norm_8: BigInt<8> = (*self.norm()).into();
 
+        eprintln!(
+            "      suitable_ideals: norm_bits={}, denom={:?}",
+            norm_8.bitsize(),
+            denom_8
+        );
+
         let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
         let short_vecs = nrd_basis.enumerate_short_vectors(&norm_8, &denom_8);
+
+        eprintln!(
+            "      suitable_ideals: {} short vectors enumerated",
+            short_vecs.len()
+        );
 
         // Phase 2: Search pairs (β₁, β₂) sorted by ascending norm.
         //
@@ -532,14 +511,23 @@ impl super::lattice::LeftIdeal<4> {
         // When connecting ideals are added, this becomes a nested loop
         // over all (s, t) order-index pairs.
         let order = &EXTREMAL_ORDERS[0];
+        let mut _pairs_tried = 0u64;
         for (i, sv1) in short_vecs.iter().enumerate() {
             for sv2 in &short_vecs[i..] {
+                _pairs_tried += 1;
                 if let Some(result) = try_find_uv(sv1, sv2, &two_f, f, order) {
+                    eprintln!(
+                        "      suitable_ideals: found after {_pairs_tried} pairs, e={}",
+                        result.e.value()
+                    );
                     return Some(result);
                 }
             }
         }
 
+        eprintln!(
+            "      suitable_ideals: no valid pair found ({_pairs_tried} tried)"
+        );
         None
     }
 }
