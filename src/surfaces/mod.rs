@@ -397,8 +397,20 @@ impl Kernel {
         Q: ProductPoint,
         PmQ: ProductPoint,
     ) -> Option<Kernel> {
-        let (p1, q1) = TorsionBasis::new(P.0, Q.0, PmQ.0).lift(&domain.E1)?;
-        let (p2, q2) = TorsionBasis::new(P.1, Q.1, PmQ.1).lift(&domain.E2)?;
+        let (p1, q1) = match TorsionBasis::new(P.0, Q.0, PmQ.0).lift(&domain.E1) {
+            Some(r) => r,
+            None => {
+                eprintln!("    from_montgomery: lift E1 failed");
+                return None;
+            }
+        };
+        let (p2, q2) = match TorsionBasis::new(P.1, Q.1, PmQ.1).lift(&domain.E2) {
+            Some(r) => r,
+            None => {
+                eprintln!("    from_montgomery: lift E2 failed");
+                return None;
+            }
+        };
         Some(Kernel {
             domain,
             P: (p1, p2),
