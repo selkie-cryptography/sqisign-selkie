@@ -3,10 +3,11 @@
 //! Algorithms that operate across multiple quaternion types (elements,
 //! orders, ideals) and don't naturally belong to a single type.
 //!
-//! - [`represent_integer`]: find γ ∈ O with nrd(γ) = M ([Alg. 3.12][Alg. 3.12])
-//! - [`represent_integer_any_order`]: same, trying all precomputed orders
-//! - [`equivalent_prime_ideal`]: find J ∼ I with prime norm ([Algorithm
-//!   3.9][Alg. 3.9])
+//! - [`ExtremalOrder::represent_integer`]: find γ ∈ O with nrd(γ) = M ([Alg.
+//!   3.12])
+//! - [`ExtremalOrder::represent_integer_any`]: same, trying all precomputed
+//!   orders
+//! - [`equivalent_prime_ideal`]: find J ∼ I with prime norm ([Alg. 3.9])
 //! - [`SuitableIdealResult`]: output of SuitableIdeals ([Alg. 3.16][Alg. 3.16])
 //!
 //! [Alg. 3.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.9
@@ -26,239 +27,243 @@ use crate::curves::{TorsionExponent, isogeny::IsogenyDegree};
 ///
 /// Iterates over the seven precomputed extremal orders, calling
 /// [`represent_integer`] on each until one succeeds.
-///
-/// WARNING: Not constant-time — data-dependent iteration over orders
-/// with early return on first success.
-///
-/// TODO(ct): Make constant-time before production use. Called on
-/// secret-derived norms during signing (via FixedDegreeIsogeny,
-/// Algorithm 4.2 lines 21–24).
-pub fn represent_integer_any_order(m: &BigInt<8>) -> Option<Element<4>> {
-    for order in &EXTREMAL_ORDERS {
-        let order_wide = ExtremalOrder::<8>::from(*order);
-        if let Some(gamma) = represent_integer(m, &order_wide, false) {
-            return Some(gamma);
-        }
-    }
-    None
-}
-
-/// Find γ ∈ O with nrd(γ) = M using a specific extremal order.
-///
-/// Implements [Alg. 3.12][Alg. 3.12] from the spec.
-///
-/// WARNING: Not constant-time — brute-force search with data-dependent
-/// loop bounds, primality testing, and Cornacchia calls.
-///
-/// TODO(ct): Make constant-time before production use. Called on
-/// secret-derived norms during signing (via FixedDegreeIsogeny).
-///
-/// [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
-pub fn represent_integer(
-    m: &BigInt<8>,
-    order: &ExtremalOrder<8>,
-    isogeny_cond: bool,
-) -> Option<Element<4>> {
-    let p: BigInt<8> = P_WIDE;
-    let q_val = order.q();
-    let q = BigInt::<8>::from_u64(q_val as u64);
-    let four_m = BigInt::<8>::from_u64(4).ct_mul(m);
-
-    let bound: u32 = 256;
-    let z_max = {
-        let approx = (four_m.to_f64() / p.to_f64() - q_val as f64)
-            .max(0.0)
-            .sqrt();
-        approx as i64
-    };
-
-    let mut counter: u32 = 0;
-    while counter < bound {
-        counter += 1;
-
-        let z_val = (counter as i64 % z_max.max(1)) + 1;
-        let z = BigInt::<8>::from_i64(z_val);
-
-        let pz_sq = p.ct_mul(&z.ct_mul(&z));
-        if four_m <= pz_sq {
-            continue;
-        }
-        let remaining = four_m.ct_sub(&pz_sq);
-        let t_max = {
-            let qp = q.ct_mul(&p);
-            if bool::from(qp.is_zero()) {
-                0i64
-            } else {
-                (remaining.to_f64() / qp.to_f64()).sqrt() as i64
+impl ExtremalOrder<8> {
+    /// Find γ ∈ O with nrd(γ) = M, trying all precomputed orders.
+    ///
+    /// Iterates over [`EXTREMAL_ORDERS`] and calls
+    /// [`represent_integer`](Self::represent_integer) on each until
+    /// one succeeds.
+    ///
+    /// WARNING: Not constant-time — data-dependent iteration over
+    /// orders with early return on first success.
+    ///
+    /// TODO(ct): Make constant-time before production use. Called on
+    /// secret-derived norms during signing (via FixedDegreeIsogeny,
+    /// Algorithm 4.2 lines 21–24).
+    pub fn represent_integer_any(m: &BigInt<8>) -> Option<Element<4>> {
+        for order in &EXTREMAL_ORDERS {
+            let order_wide = ExtremalOrder::<8>::from(*order);
+            if let Some(gamma) = order_wide.represent_integer(m, false) {
+                return Some(gamma);
             }
+        }
+        None
+    }
+
+    /// Find γ ∈ O with nrd(γ) = M using this extremal order.
+    ///
+    /// Implements [Alg. 3.12].
+    ///
+    /// WARNING: Not constant-time — brute-force search with
+    /// data-dependent loop bounds, primality testing, and Cornacchia
+    /// calls.
+    ///
+    /// TODO(ct): Make constant-time before production use. Called on
+    /// secret-derived norms during signing (via FixedDegreeIsogeny).
+    ///
+    /// [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
+    pub fn represent_integer(&self, m: &BigInt<8>, isogeny_cond: bool) -> Option<Element<4>> {
+        let p: BigInt<8> = P_WIDE;
+        let q_val = self.q();
+        let q = BigInt::<8>::from_u64(q_val as u64);
+        let four_m = BigInt::<8>::from_u64(4).ct_mul(m);
+
+        let bound: u32 = 256;
+        let z_max = {
+            let approx = (four_m.to_f64() / p.to_f64() - q_val as f64)
+                .max(0.0)
+                .sqrt();
+            approx as i64
         };
 
-        for t_val in 0..=t_max.min(50) {
-            let t = BigInt::<8>::from_i64(t_val);
+        let mut counter: u32 = 0;
+        while counter < bound {
+            counter += 1;
 
-            let z_sq = z.ct_mul(&z);
-            let t_sq = t.ct_mul(&t);
-            let inner = z_sq.ct_add(&q.ct_mul(&t_sq));
-            let m_prime = four_m.ct_sub(&p.ct_mul(&inner));
+            let z_val = (counter as i64 % z_max.max(1)) + 1;
+            let z = BigInt::<8>::from_i64(z_val);
 
-            if bool::from(m_prime.is_zero()) || bool::from(m_prime.is_negative()) {
+            let pz_sq = p.ct_mul(&z.ct_mul(&z));
+            if four_m <= pz_sq {
                 continue;
             }
-
-            if !m_prime.is_probable_prime(12) {
-                continue;
-            }
-
-            let Some((x, y)) = BigInt::<8>::cornacchia(&q, &m_prime) else {
-                continue;
+            let remaining = four_m.ct_sub(&pz_sq);
+            let t_max = {
+                let qp = q.ct_mul(&p);
+                if bool::from(qp.is_zero()) {
+                    0i64
+                } else {
+                    (remaining.to_f64() / qp.to_f64()).sqrt() as i64
+                }
             };
 
-            let x_odd = bool::from(x.is_odd());
-            let y_odd = bool::from(y.is_odd());
-            let z_odd = bool::from(z.is_odd());
-            let t_odd = bool::from(t.is_odd());
-            let all_even = !x_odd && !y_odd && !z_odd && !t_odd;
-            let all_odd = x_odd && y_odd && z_odd && t_odd;
+            for t_val in 0..=t_max.min(50) {
+                let t = BigInt::<8>::from_i64(t_val);
 
-            if !all_even && !all_odd {
-                continue;
-            }
+                let z_sq = z.ct_mul(&z);
+                let t_sq = t.ct_mul(&t);
+                let inner = z_sq.ct_add(&q.ct_mul(&t_sq));
+                let m_prime = four_m.ct_sub(&p.ct_mul(&inner));
 
-            if isogeny_cond && q_val == 1 {
-                let mut x_use = x;
-                let mut y_use = y;
-                if bool::from(x.is_odd()) != bool::from(t.is_odd()) {
-                    core::mem::swap(&mut x_use, &mut y_use);
-                }
-                let xt_diff = x_use.ct_sub(&t).ct_mod(&BigInt::from_u64(4));
-                let yz_diff = y_use.ct_sub(&z).ct_mod(&BigInt::from_u64(4));
-                if xt_diff != BigInt::from_u64(2) || yz_diff != BigInt::from_u64(2) {
+                if bool::from(m_prime.is_zero()) || bool::from(m_prime.is_negative()) {
                     continue;
                 }
-            }
 
-            // Construct γ = (x·1 + y·ω + z·j + t·ωj) / d.
-            let omega = order.z();
-            let omega_j = omega.mul(&Element::<4>::J);
+                if !m_prime.is_probable_prime(12) {
+                    continue;
+                }
 
-            // Widen omega coordinates to BigInt<8> for the linear combination.
-            let omega_coords = [
-                omega.a.wide(),
-                omega.b.wide(),
-                omega.c.wide(),
-                omega.d.wide(),
-            ];
-            let omega_d = omega.denom.wide();
-            let oj_coords = [
-                omega_j.a.wide(),
-                omega_j.b.wide(),
-                omega_j.c.wide(),
-                omega_j.d.wide(),
-            ];
-            let oj_d = omega_j.denom.wide();
-            let common_d = omega_d.ct_mul(&oj_d);
-
-            let scale_omega = oj_d;
-            let scale_omega_j = omega_d;
-
-            let mut gamma_coords = [BigInt::<8>::ZERO; 4];
-            for k in 0..4 {
-                let x_term = if k == 0 {
-                    x.ct_mul(&common_d)
-                } else {
-                    BigInt::ZERO
+                let Some((x, y)) = BigInt::<8>::cornacchia(&q, &m_prime) else {
+                    continue;
                 };
-                let y_term = y.ct_mul(&scale_omega).ct_mul(&omega_coords[k]);
-                let z_term = if k == 2 {
-                    z.ct_mul(&common_d)
-                } else {
-                    BigInt::ZERO
-                };
-                let t_term = t.ct_mul(&scale_omega_j).ct_mul(&oj_coords[k]);
-                gamma_coords[k] = x_term.ct_add(&y_term).ct_add(&z_term).ct_add(&t_term);
+
+                let x_odd = bool::from(x.is_odd());
+                let y_odd = bool::from(y.is_odd());
+                let z_odd = bool::from(z.is_odd());
+                let t_odd = bool::from(t.is_odd());
+                let all_even = !x_odd && !y_odd && !z_odd && !t_odd;
+                let all_odd = x_odd && y_odd && z_odd && t_odd;
+
+                if !all_even && !all_odd {
+                    continue;
+                }
+
+                if isogeny_cond && q_val == 1 {
+                    let mut x_use = x;
+                    let mut y_use = y;
+                    if bool::from(x.is_odd()) != bool::from(t.is_odd()) {
+                        core::mem::swap(&mut x_use, &mut y_use);
+                    }
+                    let xt_diff = x_use.ct_sub(&t).ct_mod(&BigInt::from_u64(4));
+                    let yz_diff = y_use.ct_sub(&z).ct_mod(&BigInt::from_u64(4));
+                    if xt_diff != BigInt::from_u64(2) || yz_diff != BigInt::from_u64(2) {
+                        continue;
+                    }
+                }
+
+                // Construct γ = (x·1 + y·ω + z·j + t·ωj) / d.
+                let omega = self.z();
+                let omega_j = omega.mul(&Element::<4>::J);
+
+                // Widen omega coordinates to BigInt<8> for the linear combination.
+                let omega_coords = [
+                    omega.a.wide(),
+                    omega.b.wide(),
+                    omega.c.wide(),
+                    omega.d.wide(),
+                ];
+                let omega_d = omega.denom.wide();
+                let oj_coords = [
+                    omega_j.a.wide(),
+                    omega_j.b.wide(),
+                    omega_j.c.wide(),
+                    omega_j.d.wide(),
+                ];
+                let oj_d = omega_j.denom.wide();
+                let common_d = omega_d.ct_mul(&oj_d);
+
+                let scale_omega = oj_d;
+                let scale_omega_j = omega_d;
+
+                let mut gamma_coords = [BigInt::<8>::ZERO; 4];
+                for k in 0..4 {
+                    let x_term = if k == 0 {
+                        x.ct_mul(&common_d)
+                    } else {
+                        BigInt::ZERO
+                    };
+                    let y_term = y.ct_mul(&scale_omega).ct_mul(&omega_coords[k]);
+                    let z_term = if k == 2 {
+                        z.ct_mul(&common_d)
+                    } else {
+                        BigInt::ZERO
+                    };
+                    let t_term = t.ct_mul(&scale_omega_j).ct_mul(&oj_coords[k]);
+                    gamma_coords[k] = x_term.ct_add(&y_term).ct_add(&z_term).ct_add(&t_term);
+                }
+
+                let all_coords_even = bool::from(gamma_coords[0].is_even())
+                    && bool::from(gamma_coords[1].is_even())
+                    && bool::from(gamma_coords[2].is_even())
+                    && bool::from(gamma_coords[3].is_even());
+
+                if !all_coords_even {
+                    continue;
+                }
+
+                // Divide by two and construct Element via from_wide.
+                let gamma = Element::<4>::new(
+                    Coordinate::from_bigint(BigInt::from_sign_and_limbs(
+                        if bool::from(gamma_coords[0].is_negative()) {
+                            1
+                        } else {
+                            0
+                        },
+                        [
+                            gamma_coords[0].abs().shr(1).as_limbs()[0],
+                            gamma_coords[0].abs().shr(1).as_limbs()[1],
+                            gamma_coords[0].abs().shr(1).as_limbs()[2],
+                            gamma_coords[0].abs().shr(1).as_limbs()[3],
+                        ],
+                    )),
+                    Coordinate::from_bigint(BigInt::from_sign_and_limbs(
+                        if bool::from(gamma_coords[1].is_negative()) {
+                            1
+                        } else {
+                            0
+                        },
+                        [
+                            gamma_coords[1].abs().shr(1).as_limbs()[0],
+                            gamma_coords[1].abs().shr(1).as_limbs()[1],
+                            gamma_coords[1].abs().shr(1).as_limbs()[2],
+                            gamma_coords[1].abs().shr(1).as_limbs()[3],
+                        ],
+                    )),
+                    Coordinate::from_bigint(BigInt::from_sign_and_limbs(
+                        if bool::from(gamma_coords[2].is_negative()) {
+                            1
+                        } else {
+                            0
+                        },
+                        [
+                            gamma_coords[2].abs().shr(1).as_limbs()[0],
+                            gamma_coords[2].abs().shr(1).as_limbs()[1],
+                            gamma_coords[2].abs().shr(1).as_limbs()[2],
+                            gamma_coords[2].abs().shr(1).as_limbs()[3],
+                        ],
+                    )),
+                    Coordinate::from_bigint(BigInt::from_sign_and_limbs(
+                        if bool::from(gamma_coords[3].is_negative()) {
+                            1
+                        } else {
+                            0
+                        },
+                        [
+                            gamma_coords[3].abs().shr(1).as_limbs()[0],
+                            gamma_coords[3].abs().shr(1).as_limbs()[1],
+                            gamma_coords[3].abs().shr(1).as_limbs()[2],
+                            gamma_coords[3].abs().shr(1).as_limbs()[3],
+                        ],
+                    )),
+                    Denominator::from_bigint_unchecked(BigInt::from_sign_and_limbs(
+                        0,
+                        [
+                            common_d.as_limbs()[0],
+                            common_d.as_limbs()[1],
+                            common_d.as_limbs()[2],
+                            common_d.as_limbs()[3],
+                        ],
+                    )),
+                );
+
+                let mut result = gamma;
+                result.normalize();
+                return Some(result);
             }
-
-            let all_coords_even = bool::from(gamma_coords[0].is_even())
-                && bool::from(gamma_coords[1].is_even())
-                && bool::from(gamma_coords[2].is_even())
-                && bool::from(gamma_coords[3].is_even());
-
-            if !all_coords_even {
-                continue;
-            }
-
-            // Divide by two and construct Element via from_wide.
-            let gamma = Element::<4>::new(
-                Coordinate::from_bigint(BigInt::from_sign_and_limbs(
-                    if bool::from(gamma_coords[0].is_negative()) {
-                        1
-                    } else {
-                        0
-                    },
-                    [
-                        gamma_coords[0].abs().shr(1).as_limbs()[0],
-                        gamma_coords[0].abs().shr(1).as_limbs()[1],
-                        gamma_coords[0].abs().shr(1).as_limbs()[2],
-                        gamma_coords[0].abs().shr(1).as_limbs()[3],
-                    ],
-                )),
-                Coordinate::from_bigint(BigInt::from_sign_and_limbs(
-                    if bool::from(gamma_coords[1].is_negative()) {
-                        1
-                    } else {
-                        0
-                    },
-                    [
-                        gamma_coords[1].abs().shr(1).as_limbs()[0],
-                        gamma_coords[1].abs().shr(1).as_limbs()[1],
-                        gamma_coords[1].abs().shr(1).as_limbs()[2],
-                        gamma_coords[1].abs().shr(1).as_limbs()[3],
-                    ],
-                )),
-                Coordinate::from_bigint(BigInt::from_sign_and_limbs(
-                    if bool::from(gamma_coords[2].is_negative()) {
-                        1
-                    } else {
-                        0
-                    },
-                    [
-                        gamma_coords[2].abs().shr(1).as_limbs()[0],
-                        gamma_coords[2].abs().shr(1).as_limbs()[1],
-                        gamma_coords[2].abs().shr(1).as_limbs()[2],
-                        gamma_coords[2].abs().shr(1).as_limbs()[3],
-                    ],
-                )),
-                Coordinate::from_bigint(BigInt::from_sign_and_limbs(
-                    if bool::from(gamma_coords[3].is_negative()) {
-                        1
-                    } else {
-                        0
-                    },
-                    [
-                        gamma_coords[3].abs().shr(1).as_limbs()[0],
-                        gamma_coords[3].abs().shr(1).as_limbs()[1],
-                        gamma_coords[3].abs().shr(1).as_limbs()[2],
-                        gamma_coords[3].abs().shr(1).as_limbs()[3],
-                    ],
-                )),
-                Denominator::from_bigint_unchecked(BigInt::from_sign_and_limbs(
-                    0,
-                    [
-                        common_d.as_limbs()[0],
-                        common_d.as_limbs()[1],
-                        common_d.as_limbs()[2],
-                        common_d.as_limbs()[3],
-                    ],
-                )),
-            );
-
-            let mut result = gamma;
-            result.normalize();
-            return Some(result);
         }
-    }
 
-    None
+        None
+    }
 }
 
 // RandomEquivalentPrimeIdeal (Algorithm 3.9) is defined as
@@ -317,98 +322,102 @@ struct ShortVector {
     norm_approx: f64,
 }
 
-/// Enumerate non-zero lattice vectors within the box \[-m, m\]⁴
-/// from an L2-reduced basis, compute their degrees, and sort by norm.
-///
-/// For NIST-I with m = 2, this produces up to (2·2+1)⁴ − 1 = 624
-/// non-zero vectors.
-fn enumerate_short_vectors(
-    basis: &NrdBasis<8>,
-    ideal_norm: &BigInt<8>,
-    lattice_denom: &BigInt<8>,
-) -> Vec<ShortVector> {
-    let m = crate::params::FINDUV_BOX_SIZE;
-    let denom_sq = lattice_denom.ct_mul(lattice_denom);
-    let divisor = ideal_norm.ct_mul(&denom_sq);
+impl NrdBasis<8> {
+    /// Enumerate non-zero lattice vectors within the box \[-m, m\]⁴
+    /// from an L2-reduced basis, compute their degrees, and sort by
+    /// norm.
+    ///
+    /// For NIST-I with m = 2, this produces up to
+    /// (2·2+1)⁴ − 1 = 624 non-zero vectors.
+    fn enumerate_short_vectors(
+        &self,
+        ideal_norm: &BigInt<8>,
+        lattice_denom: &BigInt<8>,
+    ) -> Vec<ShortVector> {
+        let m = crate::params::FINDUV_BOX_SIZE;
+        let denom_sq = lattice_denom.ct_mul(lattice_denom);
+        let divisor = ideal_norm.ct_mul(&denom_sq);
 
-    let Some(den_4) = lattice_denom.narrow() else {
-        return Vec::new();
-    };
+        let Some(den_4) = lattice_denom.narrow() else {
+            return Vec::new();
+        };
 
-    let coeffs: Vec<BigInt<8>> = (-m..=m).map(BigInt::<8>::from_i64).collect();
-    let width = coeffs.len();
-    let mut vectors = Vec::with_capacity(width.pow(4) - 1);
+        let coeffs: Vec<BigInt<8>> = (-m..=m).map(BigInt::<8>::from_i64).collect();
+        let width = coeffs.len();
+        let mut vectors = Vec::with_capacity(width.pow(4) - 1);
 
-    for ix0 in 0..width {
-        for ix1 in 0..width {
-            for ix2 in 0..width {
-                for ix3 in 0..width {
-                    let x = [coeffs[ix0], coeffs[ix1], coeffs[ix2], coeffs[ix3]];
+        for ix0 in 0..width {
+            for ix1 in 0..width {
+                for ix2 in 0..width {
+                    for ix3 in 0..width {
+                        let x = [coeffs[ix0], coeffs[ix1], coeffs[ix2], coeffs[ix3]];
 
-                    if x.iter().all(|xi| bool::from(xi.is_zero())) {
-                        continue;
+                        if x.iter().all(|xi| bool::from(xi.is_zero())) {
+                            continue;
+                        }
+
+                        // nrd(β) · denom² = Σ x_i x_j G_{ij}.
+                        let nrd_scaled = self.eval_quadratic_form(&x);
+
+                        if bool::from(nrd_scaled.is_zero()) || bool::from(nrd_scaled.is_negative())
+                        {
+                            continue;
+                        }
+
+                        // degree = nrd_scaled / (nrd(I) · denom²).
+                        let (degree_wide, rem) = nrd_scaled.div_rem(&divisor);
+                        if !bool::from(rem.is_zero()) || bool::from(degree_wide.is_zero()) {
+                            continue;
+                        }
+                        let Some(degree_4) = degree_wide.narrow() else {
+                            continue;
+                        };
+                        let Some(degree) = IsogenyDegree::new_odd(*degree_4.as_limbs()) else {
+                            continue;
+                        };
+
+                        // β = Σ x_k · col_k.
+                        let coords: [BigInt<8>; 4] = core::array::from_fn(|row| {
+                            (0..4).fold(BigInt::<8>::ZERO, |acc, k| {
+                                acc.ct_add(&x[k].ct_mul(&self.cols()[k][row]))
+                            })
+                        });
+
+                        // Narrow coordinates to BigInt<4>. After L2 reduction
+                        // with small coefficients this should always succeed.
+                        let narrow: [Option<BigInt<4>>; 4] =
+                            core::array::from_fn(|i| coords[i].narrow());
+                        let [Some(a), Some(b), Some(c), Some(d)] = narrow else {
+                            continue;
+                        };
+
+                        vectors.push(ShortVector {
+                            elem: Element::<4>::new(
+                                Coordinate::from_bigint(a),
+                                Coordinate::from_bigint(b),
+                                Coordinate::from_bigint(c),
+                                Coordinate::from_bigint(d),
+                                Denominator::from_bigint_unchecked(den_4),
+                            ),
+                            degree,
+                            norm_approx: nrd_scaled.to_f64(),
+                        });
                     }
-
-                    // nrd(β) · denom² = Σ x_i x_j G_{ij}.
-                    let nrd_scaled = basis.eval_quadratic_form(&x);
-
-                    if bool::from(nrd_scaled.is_zero()) || bool::from(nrd_scaled.is_negative()) {
-                        continue;
-                    }
-
-                    // degree = nrd_scaled / (nrd(I) · denom²).
-                    let (degree_wide, rem) = nrd_scaled.div_rem(&divisor);
-                    if !bool::from(rem.is_zero()) || bool::from(degree_wide.is_zero()) {
-                        continue;
-                    }
-                    let Some(degree_4) = degree_wide.narrow() else {
-                        continue;
-                    };
-                    let Some(degree) = IsogenyDegree::new_odd(*degree_4.as_limbs()) else {
-                        continue;
-                    };
-
-                    // β = Σ x_k · col_k.
-                    let coords: [BigInt<8>; 4] = core::array::from_fn(|row| {
-                        (0..4).fold(BigInt::<8>::ZERO, |acc, k| {
-                            acc.ct_add(&x[k].ct_mul(&basis.cols()[k][row]))
-                        })
-                    });
-
-                    // Narrow coordinates to BigInt<4>. After L2 reduction
-                    // with small coefficients this should always succeed.
-                    let narrow: [Option<BigInt<4>>; 4] =
-                        core::array::from_fn(|i| coords[i].narrow());
-                    let [Some(a), Some(b), Some(c), Some(d)] = narrow else {
-                        continue;
-                    };
-
-                    vectors.push(ShortVector {
-                        elem: Element::<4>::new(
-                            Coordinate::from_bigint(a),
-                            Coordinate::from_bigint(b),
-                            Coordinate::from_bigint(c),
-                            Coordinate::from_bigint(d),
-                            Denominator::from_bigint_unchecked(den_4),
-                        ),
-                        degree,
-                        norm_approx: nrd_scaled.to_f64(),
-                    });
                 }
             }
         }
-    }
 
-    // Stable sort: preserves insertion order for equal-norm vectors,
-    // ensuring deterministic pair selection in the search phase.
-    // Determinism matters for signing — non-deterministic pair choice
-    // could leak information about which short vectors matched.
-    vectors.sort_by(|a, b| {
-        a.norm_approx
-            .partial_cmp(&b.norm_approx)
-            .unwrap_or(core::cmp::Ordering::Equal)
-    });
-    vectors
+        // Stable sort: preserves insertion order for equal-norm vectors,
+        // ensuring deterministic pair selection in the search phase.
+        // Determinism matters for signing — non-deterministic pair choice
+        // could leak information about which short vectors matched.
+        vectors.sort_by(|a, b| {
+            a.norm_approx
+                .partial_cmp(&b.norm_approx)
+                .unwrap_or(core::cmp::Ordering::Equal)
+        });
+        vectors
+    }
 }
 
 /// Try to find coprime odd degrees and matching u, v from a pair
@@ -514,10 +523,8 @@ impl super::lattice::LeftIdeal<4> {
         let denom_8: BigInt<8> = (*lattice.denom()).into();
         let norm_8: BigInt<8> = (*self.norm()).into();
 
-        let mut nrd_basis = NrdBasis::new(cols_8);
-        nrd_basis.l2_reduce();
-
-        let short_vecs = enumerate_short_vectors(&nrd_basis, &norm_8, &denom_8);
+        let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
+        let short_vecs = nrd_basis.enumerate_short_vectors(&norm_8, &denom_8);
 
         // Phase 2: Search pairs (β₁, β₂) sorted by ascending norm.
         //
@@ -600,7 +607,7 @@ mod tests {
         let order = ExtremalOrder::<8>::from(EXTREMAL_ORDERS[0]);
         let m = p.ct_add(&BigInt::TWO);
 
-        let result = represent_integer(&m, &order, false);
+        let result = order.represent_integer(&m, false);
         if let Some(gamma) = result {
             let (nrd_num, nrd_den) = gamma.norm();
             let (nrd, rem) = nrd_num.div_rem(&nrd_den);
@@ -617,7 +624,7 @@ mod tests {
         let p: BigInt<8> = P_WIDE;
         let m = p.ct_add(&BigInt::TWO);
 
-        let result = represent_integer_any_order(&m);
+        let result = ExtremalOrder::<8>::represent_integer_any(&m);
         if let Some(gamma) = result {
             let (nrd_num, nrd_den) = gamma.norm();
             let (nrd, rem) = nrd_num.div_rem(&nrd_den);

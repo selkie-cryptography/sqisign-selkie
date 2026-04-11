@@ -327,7 +327,7 @@ impl<const N: usize> Matrix<N> {
     ///
     /// [Alg. 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
     pub fn hnf(&self) -> Self {
-        hnf_from_columns(&self.columns())
+        Self::from_hnf_columns(&self.columns())
     }
 
     /// Returns the columns of this matrix as an array of [`Vector`].
@@ -357,7 +357,7 @@ impl<const N: usize> Matrix<N> {
     ///
     /// # Why this exists: HNF coefficient blow-up
     ///
-    /// Classical integer HNF (as implemented by [`hnf_from_columns`]
+    /// Classical integer HNF (as implemented by [`Matrix::from_hnf_columns`]
     /// and as written in Algorithm 3.2 of the SQIsign v2
     /// specification) produces intermediate column entries whose
     /// magnitude can grow substantially during the xgcd /
@@ -653,126 +653,129 @@ impl<const N: usize> fmt::Debug for Matrix<N> {
 // Hermite Normal Form (HNF)
 // ---------------------------------------------------------------------------
 
-/// Compute the column-style Hermite Normal Form from a set of 4-element
-/// column vectors (generators). The output is always a 4×4 matrix.
-///
-/// This implements [Alg. 3.2] from the SQIsign specification.
-/// The input can have more than 4 columns (e.g., 8 columns when computing
-/// the sum of two lattices); the HNF reduction produces 4 independent
-/// columns.
-///
-/// [Alg. 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
-pub fn hnf_from_columns<const N: usize>(cols: &[Vector<N>]) -> Matrix<N> {
-    let c = cols.len();
-    assert!(c >= 4, "need at least 4 columns for rank-4 HNF");
-    let d = 4usize;
+impl<const N: usize> Matrix<N> {
+    /// Compute the column-style Hermite Normal Form from a set of
+    /// 4-element column vectors (generators).
+    ///
+    /// The input can have more than 4 columns (e.g., 8 columns when
+    /// computing the sum of two lattices); the HNF reduction produces
+    /// 4 independent columns.
+    ///
+    /// Implements [Alg. 3.2].
+    ///
+    /// [Alg. 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
+    pub fn from_hnf_columns(cols: &[Vector<N>]) -> Self {
+        let c = cols.len();
+        assert!(c >= 4, "need at least 4 columns for rank-4 HNF");
+        let d = 4usize;
 
-    // Work with a mutable array of columns. a[col][row].
-    let mut a: Vec<[BigInt<N>; 4]> = cols.iter().map(|v| [v[0], v[1], v[2], v[3]]).collect();
+        // Work with a mutable array of columns. a[col][row].
+        let mut a: Vec<[BigInt<N>; 4]> = cols.iter().map(|v| [v[0], v[1], v[2], v[3]]).collect();
 
-    // [Alg. 3.2] — 0-based indexing.
-    // Spec's 1-based "i" maps to 0-based "pivot".
-    //
-    // [Alg. 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
-    let mut pivot = d;
+        // [Alg. 3.2] — 0-based indexing.
+        // Spec's 1-based "i" maps to 0-based "pivot".
+        //
+        // [Alg. 3.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.2
+        let mut pivot = d;
 
-    while pivot > 0 {
-        pivot -= 1;
+        while pivot > 0 {
+            pivot -= 1;
 
-        // Lines 1-7: Accumulate gcd into a[pivot][pivot] by combining
-        // column pivot with columns j < pivot (spec Algorithm 3.2).
-        if pivot > 0 {
-            let mut j = pivot;
-            while j > 0 {
-                j -= 1;
-                let val_i = a[pivot][pivot];
-                let val_j = a[j][pivot];
-                if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
-                    let (_g, u, v) = val_i.xgcd(&val_j);
-                    let old_i = a[pivot];
-                    let old_j = a[j];
-                    for r in 0..d {
-                        a[pivot][r] = u.ct_mul(&old_i[r]).ct_add(&v.ct_mul(&old_j[r]));
+            // Lines 1-7: Accumulate gcd into a[pivot][pivot] by combining
+            // column pivot with columns j < pivot (spec Algorithm 3.2).
+            if pivot > 0 {
+                let mut j = pivot;
+                while j > 0 {
+                    j -= 1;
+                    let val_i = a[pivot][pivot];
+                    let val_j = a[j][pivot];
+                    if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
+                        let (_g, u, v) = val_i.xgcd(&val_j);
+                        let old_i = a[pivot];
+                        let old_j = a[j];
+                        for r in 0..d {
+                            a[pivot][r] = u.ct_mul(&old_i[r]).ct_add(&v.ct_mul(&old_j[r]));
+                        }
                     }
+                }
+            }
+
+            // For non-square input (c > d): also XGCD with extra columns
+            // j >= d to fold their contributions into the pivot.
+            {
+                let mut j = d;
+                while j < c {
+                    let val_i = a[pivot][pivot];
+                    let val_j = a[j][pivot];
+                    if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
+                        let (_g, u, v) = val_i.xgcd(&val_j);
+                        let old_i = a[pivot];
+                        let old_j = a[j];
+                        for r in 0..d {
+                            a[pivot][r] = u.ct_mul(&old_i[r]).ct_add(&v.ct_mul(&old_j[r]));
+                        }
+                    }
+                    j += 1;
+                }
+            }
+
+            // Ensure pivot is positive.
+            if bool::from(a[pivot][pivot].is_negative()) {
+                for elem in &mut a[pivot] {
+                    *elem = elem.wrapping_neg();
+                }
+            }
+            let piv = a[pivot][pivot];
+            if bool::from(piv.is_zero()) {
+                continue;
+            }
+
+            // Lines 8-10: Eliminate a[j][pivot] for j < pivot.
+            // g ← a[j][pivot] / piv (exact integer division).
+            // col_j ← col_j - g * col_pivot.
+            {
+                let mut j = 0;
+                while j < pivot {
+                    let (g, _) = a[j][pivot].div_rem(&piv);
+                    if !bool::from(g.is_zero()) {
+                        let col_piv = a[pivot];
+                        for (r, col_piv_r) in col_piv.iter().enumerate().take(d) {
+                            a[j][r] = a[j][r].ct_sub(&g.ct_mul(col_piv_r));
+                        }
+                    }
+                    j += 1;
+                }
+            }
+
+            // Lines 11-14: Reduce a[j][pivot] for j > pivot to [0, piv).
+            // r ← a[j][pivot] mod piv.
+            // g ← (a[j][pivot] - r) / piv.
+            // col_j ← col_j - g * col_pivot.
+            {
+                let mut j = pivot + 1;
+                while j < c {
+                    let entry = a[j][pivot];
+                    let r = entry.ct_mod(&piv);
+                    let (g, _) = entry.ct_sub(&r).div_rem(&piv);
+                    if !bool::from(g.is_zero()) {
+                        let col_piv = a[pivot];
+                        for (row, col_piv_row) in col_piv.iter().enumerate().take(d) {
+                            a[j][row] = a[j][row].ct_sub(&g.ct_mul(col_piv_row));
+                        }
+                    }
+                    j += 1;
                 }
             }
         }
 
-        // For non-square input (c > d): also XGCD with extra columns
-        // j >= d to fold their contributions into the pivot.
-        {
-            let mut j = d;
-            while j < c {
-                let val_i = a[pivot][pivot];
-                let val_j = a[j][pivot];
-                if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
-                    let (_g, u, v) = val_i.xgcd(&val_j);
-                    let old_i = a[pivot];
-                    let old_j = a[j];
-                    for r in 0..d {
-                        a[pivot][r] = u.ct_mul(&old_i[r]).ct_add(&v.ct_mul(&old_j[r]));
-                    }
-                }
-                j += 1;
-            }
-        }
-
-        // Ensure pivot is positive.
-        if bool::from(a[pivot][pivot].is_negative()) {
-            for elem in &mut a[pivot] {
-                *elem = elem.wrapping_neg();
-            }
-        }
-        let piv = a[pivot][pivot];
-        if bool::from(piv.is_zero()) {
-            continue;
-        }
-
-        // Lines 8-10: Eliminate a[j][pivot] for j < pivot.
-        // g ← a[j][pivot] / piv (exact integer division).
-        // col_j ← col_j - g * col_pivot.
-        {
-            let mut j = 0;
-            while j < pivot {
-                let (g, _) = a[j][pivot].div_rem(&piv);
-                if !bool::from(g.is_zero()) {
-                    let col_piv = a[pivot];
-                    for (r, col_piv_r) in col_piv.iter().enumerate().take(d) {
-                        a[j][r] = a[j][r].ct_sub(&g.ct_mul(col_piv_r));
-                    }
-                }
-                j += 1;
-            }
-        }
-
-        // Lines 11-14: Reduce a[j][pivot] for j > pivot to [0, piv).
-        // r ← a[j][pivot] mod piv.
-        // g ← (a[j][pivot] - r) / piv.
-        // col_j ← col_j - g * col_pivot.
-        {
-            let mut j = pivot + 1;
-            while j < c {
-                let entry = a[j][pivot];
-                let r = entry.ct_mod(&piv);
-                let (g, _) = entry.ct_sub(&r).div_rem(&piv);
-                if !bool::from(g.is_zero()) {
-                    let col_piv = a[pivot];
-                    for (row, col_piv_row) in col_piv.iter().enumerate().take(d) {
-                        a[j][row] = a[j][row].ct_sub(&g.ct_mul(col_piv_row));
-                    }
-                }
-                j += 1;
-            }
-        }
+        // The first d columns contain the HNF.
+        Self::from_columns(&[
+            Vector::new(a[0][0], a[0][1], a[0][2], a[0][3]),
+            Vector::new(a[1][0], a[1][1], a[1][2], a[1][3]),
+            Vector::new(a[2][0], a[2][1], a[2][2], a[2][3]),
+            Vector::new(a[3][0], a[3][1], a[3][2], a[3][3]),
+        ])
     }
-
-    // The first d columns contain the HNF.
-    Matrix::from_columns(&[
-        Vector::new(a[0][0], a[0][1], a[0][2], a[0][3]),
-        Vector::new(a[1][0], a[1][1], a[1][2], a[1][3]),
-        Vector::new(a[2][0], a[2][1], a[2][2], a[2][3]),
-        Vector::new(a[3][0], a[3][1], a[3][2], a[3][3]),
-    ])
 }
 
 // ---------------------------------------------------------------------------
@@ -947,7 +950,7 @@ mod tests {
             V::new(i(0), i(0), i(1), i(0)),
             V::new(i(0), i(0), i(0), i(1)),
         ];
-        let h = hnf_from_columns::<4>(&cols);
+        let h = M::from_hnf_columns(&cols);
         assert_eq!(h, M::IDENTITY);
     }
 }

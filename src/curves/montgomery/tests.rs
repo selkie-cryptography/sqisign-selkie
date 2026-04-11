@@ -1,4 +1,4 @@
-use super::*;
+use super::{super::TorsionBasis, *};
 
 #[test]
 fn doubling_identity_is_identity() {
@@ -78,9 +78,9 @@ fn jacobian_double_matches_montgomery() {
     let p2_x_mont = &p2_mont.X * &p2_mont.Z.invert();
 
     // Jacobian: lift, double, convert, check.
-    let A = *curve.coefficient().as_fp2();
-    let y = recover_y(&(&p.X * &p.Z.invert()), &A).expect("P₀ should be on E₀");
-    let p_jac = JacobianPoint::new(&p.X * &p.Z.invert(), y, Fp2::ONE, &curve);
+    let x_aff = AffineX::from(&p.X * &p.Z.invert());
+    let y = curve.recover_y(&x_aff).expect("P₀ should be on E₀");
+    let p_jac = JacobianPoint::new(*x_aff.as_fp2(), y, Fp2::ONE, &curve);
     let p2_jac = p_jac.double();
 
     // Convert Jacobian to affine: x_aff = x / z².
@@ -93,8 +93,8 @@ fn jacobian_double_matches_montgomery() {
     );
 }
 
-/// Verify that lift_basis produces valid Jacobian points that
-/// convert back to the correct Montgomery x-coordinates.
+/// Verify that TorsionBasis::lift produces valid Jacobian points
+/// that convert back to the correct Montgomery x-coordinates.
 #[test]
 fn lift_basis_round_trip() {
     let curve = Curve::E0;
@@ -102,7 +102,9 @@ fn lift_basis_round_trip() {
     let q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, &curve);
     let pmq = p.projective_difference(&q);
 
-    let (p_jac, q_jac) = lift_basis(&p, &q, &pmq, &curve).expect("lift_basis should succeed on E₀");
+    let (p_jac, q_jac) = TorsionBasis::new(p, q, pmq)
+        .lift(&curve)
+        .expect("lift should succeed on E₀");
 
     // Check P: jac_to_xz(P_jac) should have same affine x as P.
     let p_back: ProjectiveXOnlyPoint = p_jac.into();
@@ -148,9 +150,9 @@ fn jac_to_xz_round_trip() {
     let curve = Curve::E0;
     let p = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, &curve);
 
-    let A = *curve.coefficient().as_fp2();
-    let y = recover_y(&(&p.X * &p.Z.invert()), &A).expect("P₀ should be on E₀");
-    let p_jac = JacobianPoint::new(&p.X * &p.Z.invert(), y, Fp2::ONE, &curve);
+    let x_aff = AffineX::from(&p.X * &p.Z.invert());
+    let y = curve.recover_y(&x_aff).expect("P₀ should be on E₀");
+    let p_jac = JacobianPoint::new(*x_aff.as_fp2(), y, Fp2::ONE, &curve);
 
     // jac_to_xz: (x, z) → (x, z²). For z=1, this is (x, 1).
     let p_mont: ProjectiveXOnlyPoint = p_jac.into();

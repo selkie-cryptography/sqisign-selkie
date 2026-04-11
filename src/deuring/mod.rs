@@ -38,7 +38,6 @@ use crate::{
     quaternions::{
         algebra::Element,
         bigint::BigInt,
-        ideal::represent_integer,
         lattice::{ExtremalOrder, Lattice, LeftIdeal},
         precomputed::EXTREMAL_ORDERS,
     },
@@ -324,7 +323,7 @@ fn fixed_degree_isogeny(
     let two_e_fdi = BigInt::<8>::ONE.shl(e_fdi);
     let m = u_wide.ct_mul(&two_e_fdi.ct_sub(&u_wide));
     let order_wide = ExtremalOrder::<8>::from(*order);
-    let theta = represent_integer(&m, &order_wide, true)?;
+    let theta = order_wide.represent_integer(&m, true)?;
 
     // Step 3: M_θ via order-basis decomposition.
     let m_theta = action_matrix(&theta, order.order(), &gen_matrices, f)?;

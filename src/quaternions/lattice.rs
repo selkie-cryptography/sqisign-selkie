@@ -33,10 +33,11 @@ use rand_core::{OsRng, RngCore};
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
-    linear::{Matrix, Vector, hnf_from_columns},
+    linear::{Matrix, Vector},
 };
 
 mod dpe;
+use dpe::Dpe;
 
 #[cfg(test)]
 mod tests;
@@ -214,7 +215,7 @@ impl<const N: usize> Lattice<N> {
                 cols_b[3],
             ];
             HnfLattice {
-                basis: hnf_from_columns(&all_cols),
+                basis: Matrix::from_hnf_columns(&all_cols),
                 denom: self.denom,
             }
         } else {
@@ -242,7 +243,7 @@ impl<const N: usize> Lattice<N> {
                 cols_b[3],
             ];
             HnfLattice {
-                basis: hnf_from_columns(&all_cols),
+                basis: Matrix::from_hnf_columns(&all_cols),
                 denom: common_denom,
             }
         }
@@ -406,7 +407,7 @@ impl<const N: usize> Lattice<N> {
         // Since basis_elem includes the lattice denom, and mul produces a
         // normalized result, the product columns share a common denom.
         // For now, use the product of the two lattice denoms as the HNF denom.
-        let result_basis = hnf_from_columns(&all_cols);
+        let result_basis = Matrix::from_hnf_columns(&all_cols);
         HnfLattice {
             basis: result_basis,
             // The product denominator needs careful handling of the
@@ -476,8 +477,7 @@ impl<const N: usize> Lattice<N> {
         let dual_gram = gram.adjugate();
 
         // LLL-reduce the dual Gram to get tighter per-axis bounds.
-        let mut dual_basis = NrdBasis::from_cols_and_gram(dual_gram.columns(), dual_gram);
-        dual_basis.l2_reduce();
+        let dual_basis = NrdBasis::from_cols_and_gram(dual_gram.columns(), dual_gram).l2_reduce();
 
         // The C ref's approach:
         //   1. LLL-reduce dual_gram, getting U such that dual_gram_reduced = U^T ·
@@ -1340,9 +1340,8 @@ impl LeftIdeal<4> {
     /// Construct a random left ideal of a given (not necessarily prime) norm.
     ///
     /// [Alg. 3.10][Alg. 3.10] from the spec (non-prime case).
-    /// Uses [`represent_integer`](crate::quaternions::ideal::represent_integer)
-    /// to find γ with nrd(γ) = m·N, then samples random β with
-    /// gcd(nrd(β), N) = 1.
+    /// Uses [`ExtremalOrder::represent_integer`] to find γ with
+    /// nrd(γ) = m·N, then samples random β with gcd(nrd(β), N) = 1.
     ///
     /// WARNING: Not constant-time.
     ///
@@ -1350,8 +1349,6 @@ impl LeftIdeal<4> {
     ///
     /// [Alg. 3.10]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.10
     pub fn random_norm(n: &BigInt<4>, order: &ExtremalOrder<4>) -> Option<Self> {
-        use crate::quaternions::ideal::represent_integer;
-
         // m = QUAT_prime_cofactor (precomputed prime ≈ p)
         let m4 = crate::params::QUAT_PRIME_COFACTOR;
         let m = BigInt::<8>::from_limbs({
@@ -1368,7 +1365,7 @@ impl LeftIdeal<4> {
         });
         let mn = m.ct_mul(&n_wide);
         let order_wide = ExtremalOrder::<8>::from(*order);
-        let gamma = represent_integer(&mn, &order_wide, false)?;
+        let gamma = order_wide.represent_integer(&mn, false)?;
 
         // Lines 11-14: sample β = x + yi + zj + wij with gcd(nrd(β), N) = 1
         let n_bits = n.bitsize() as usize;
@@ -1893,8 +1890,7 @@ where
             }
         }
 
-        let mut class_basis = NrdBasis::from_cols_and_gram(*nrd.cols(), class_gram);
-        class_basis.l2_reduce();
+        let class_basis = NrdBasis::from_cols_and_gram(*nrd.cols(), class_gram).l2_reduce();
 
         // Step 2: sample random short vectors until m is prime.
         //
@@ -2429,9 +2425,8 @@ impl<const N: usize> NrdBasis<N> {
     ///
     /// [Alg. 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
     /// [Alg. 3.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.6
-    pub fn l2_reduce(&mut self) {
-        use dpe::Dpe;
-
+    #[must_use]
+    pub fn l2_reduce(mut self) -> Self {
         /// L² reduction parameter η (size-reduction threshold).
         /// Following the spec: η = 0.51 (any value in (1/2, 1) works).
         const ETA: f64 = 0.51;
@@ -2588,5 +2583,7 @@ impl<const N: usize> NrdBasis<N> {
 
             k += 1;
         }
+
+        self
     }
 }

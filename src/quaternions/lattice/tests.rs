@@ -314,8 +314,7 @@ fn l2_identity_basis() {
     ];
     let gram = quat_gram(&basis, &p);
 
-    let mut nrd = NrdBasis::from_cols_and_gram(basis, gram);
-    nrd.l2_reduce();
+    let nrd = NrdBasis::from_cols_and_gram(basis, gram).l2_reduce();
 
     // Diagonal should be non-decreasing (short vectors first).
     for idx in 1..4 {
@@ -338,8 +337,7 @@ fn l2_reduces_bad_basis() {
     let gram = quat_gram(&basis, &p);
     let original_g00 = gram[0][0];
 
-    let mut nrd = NrdBasis::from_cols_and_gram(basis, gram);
-    nrd.l2_reduce();
+    let nrd = NrdBasis::from_cols_and_gram(basis, gram).l2_reduce();
 
     assert!(
         nrd.gram()[0][0] <= original_g00,
@@ -358,8 +356,7 @@ fn l2_gram_stays_symmetric() {
     ];
     let gram = quat_gram(&basis, &p);
 
-    let mut nrd = NrdBasis::from_cols_and_gram(basis, gram);
-    nrd.l2_reduce();
+    let nrd = NrdBasis::from_cols_and_gram(basis, gram).l2_reduce();
 
     for row in 0..4 {
         for col in 0..4 {

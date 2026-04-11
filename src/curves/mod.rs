@@ -29,12 +29,25 @@ pub mod scalar;
 
 use core::ops::Sub;
 
+pub use scalar::Scalar;
 use subtle::ConditionallySelectable;
 
 use crate::{
-    curves::montgomery::{Curve, ProjectiveXOnlyPoint, differential_add_and_double},
+    curves::{
+        montgomery::{
+            AffineX, Curve, JacobianPoint, ProjectiveXOnlyPoint, differential_add_and_double,
+        },
+        pairing::{RootOfUnity, tate_pairing},
+    },
+    deuring::precomputed::ACTION_MATRICES,
     fields::{fp::Fp, fp2::Fp2},
     params::TORSION_EVEN_POWER,
+    quaternions::{
+        algebra::{Coordinate, Denominator, Element},
+        bigint::BigInt,
+        lattice::LeftIdeal,
+        precomputed::EXTREMAL_ORDERS,
+    },
 };
 
 /// An exponent e such that 2^e divides the torsion group order.
@@ -254,6 +267,63 @@ impl TorsionBasis {
         TorsionBasis { R, S, RS }
     }
 
+    /// Lift this x-only basis to Jacobian coordinates on the
+    /// given curve.
+    ///
+    /// Normalizes R internally and uses the Okeya-Sakurai
+    /// algorithm to recover S's y-coordinate from R's
+    /// y-coordinate and the difference point R−S.
+    ///
+    /// Returns `None` if y-recovery fails (point not on curve).
+    ///
+    /// Corresponds to `lift_basis_normalized` in the C reference
+    /// (`basis.c:79`).
+    #[must_use]
+    pub fn lift(&self, curve: &Curve) -> Option<(JacobianPoint, JacobianPoint)> {
+        let A = *curve.coefficient().as_fp2();
+
+        // Normalize R: compute affine x_R = X_R / Z_R.
+        let z_inv = self.R.Z.invert();
+        let x_r = &self.R.X * &z_inv;
+
+        // Recover y_R via Curve::recover_y.
+        let y_r = curve.recover_y(&AffineX::from(x_r))?;
+
+        let r_jac = JacobianPoint::new(x_r, y_r, Fp2::ONE, curve);
+
+        // Okeya-Sakurai: recover y_S from x_R, y_R, S, R−S.
+        // C reference: basis.c:91-116.
+        let v1 = &x_r * &self.S.Z;
+        let v2 = &self.S.X + &v1;
+        let v3 = {
+            let diff = &self.S.X - &v1;
+            let diff_sq = diff.square();
+            &diff_sq * &self.RS.X
+        };
+        let two_a = &A + &A;
+        let v1_new = &two_a * &self.S.Z;
+        let v2 = &v2 + &v1_new;
+        let v4 = &(&x_r * &self.S.X) + &self.S.Z;
+        let v2 = &v2 * &v4;
+        let v1_new = &v1_new * &self.S.Z;
+        let v2 = &v2 - &v1_new;
+        let v2 = &v2 * &self.RS.Z;
+        let y_s_num = &v3 - &v2;
+        let two_yr = &y_r + &y_r;
+        let v1 = &(&two_yr * &self.S.Z) * &self.RS.Z;
+
+        // S in Jacobian: (X_S·v1·Z_S : y_s_num·(Z_S·v1)² : Z_S·v1)
+        let x_s_tmp = &self.S.X * &v1;
+        let z_s_jac = &self.S.Z * &v1;
+        let z_s_jac_sq = z_s_jac.square();
+        let y_s_jac = &y_s_num * &z_s_jac_sq;
+        let x_s_jac = &x_s_tmp * &z_s_jac;
+
+        let s_jac = JacobianPoint::new(x_s_jac, y_s_jac, z_s_jac, curve);
+
+        Some((r_jac, s_jac))
+    }
+
     /// Convert kernel scalars on E₀\[2^f\] to the corresponding
     /// left O₀-ideal.
     ///
@@ -274,20 +344,10 @@ impl TorsionBasis {
     // unsigned modular arithmetic mod 2^k on Scalar, with add, sub,
     // mul, and invert_mod. For now, convert at boundaries.
     pub fn kernel_to_ideal(
-        c1: &crate::quaternions::bigint::BigInt<4>,
-        c2: &crate::quaternions::bigint::BigInt<4>,
+        c1: &BigInt<4>,
+        c2: &BigInt<4>,
         f: TorsionExponent,
-    ) -> Option<crate::quaternions::lattice::LeftIdeal<4>> {
-        use crate::{
-            deuring::precomputed::ACTION_MATRICES,
-            quaternions::{
-                algebra::{Coordinate, Denominator, Element},
-                bigint::BigInt,
-                lattice::LeftIdeal,
-                precomputed::EXTREMAL_ORDERS,
-            },
-        };
-
+    ) -> Option<LeftIdeal<4>> {
         // Action matrices for E₀: [i, j, k, gen2, gen3, gen4].
         let m_i = &ACTION_MATRICES[0][0];
         let m_j = &ACTION_MATRICES[0][1];
@@ -353,7 +413,7 @@ impl TorsionBasis {
     /// Implements [Ladder3pt][Alg. 8.7] ([Alg. 8.7][Alg. 8.7]).
     ///
     /// [Alg. 8.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.7
-    pub fn scalar_mul_add(&self, m: &scalar::Scalar) -> ProjectiveXOnlyPoint {
+    pub fn scalar_mul_add(&self, m: &Scalar) -> ProjectiveXOnlyPoint {
         // Three-point Montgomery ladder computing R + [m]S.
         //
         // Processes 4 limbs × 64 bits = 256 bits from LSB to MSB,
@@ -380,11 +440,7 @@ impl TorsionBasis {
     ///
     /// Uses the three-point ladder internally. The scalars come from
     /// the kernel decomposition produced by the Deuring correspondence.
-    pub fn eval_decomposition(
-        &self,
-        a: &scalar::Scalar,
-        b: &scalar::Scalar,
-    ) -> ProjectiveXOnlyPoint {
+    pub fn eval_decomposition(&self, a: &Scalar, b: &Scalar) -> ProjectiveXOnlyPoint {
         self.biscalar_mul(a, b, TorsionExponent::FULL)
     }
 
@@ -397,12 +453,7 @@ impl TorsionBasis {
     /// Implements [LadderBiscalar][Alg. 8.8] ([Alg. 8.8][Alg. 8.8]).
     ///
     /// [Alg. 8.8]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.8
-    pub fn biscalar_mul(
-        &self,
-        m: &scalar::Scalar,
-        n: &scalar::Scalar,
-        e: TorsionExponent,
-    ) -> ProjectiveXOnlyPoint {
+    pub fn biscalar_mul(&self, m: &Scalar, n: &Scalar, e: TorsionExponent) -> ProjectiveXOnlyPoint {
         let kbits = e.value() as usize;
         let P = &self.R;
         let Q = &self.S;
@@ -680,7 +731,7 @@ impl TorsionBasis {
 #[derive(Copy, Clone, Debug)]
 pub struct ChangeOfBasisMatrix {
     /// Matrix entries as Scalars: [[x₁, x₂], [x₃, x₄]].
-    pub entries: [[scalar::Scalar; 2]; 2],
+    pub entries: [[Scalar; 2]; 2],
     /// Torsion exponent: entries are reduced mod 2^e.
     pub e: TorsionExponent,
 }
@@ -705,20 +756,12 @@ impl ChangeOfBasisMatrix {
         target_basis: &TorsionBasis,
         e: TorsionExponent,
     ) -> Self {
-        use pairing::{RootOfUnity, tate_pairing};
-        use scalar::Scalar;
-
-        use crate::{curves::montgomery::lift_basis, quaternions::bigint::BigInt};
-
         let curve = full_basis.R.curve();
         let f = TorsionExponent::FULL;
 
         // Lift both bases to Jacobian for deterministic cross-sum computation.
-        let (p1_jac, p2_jac) = lift_basis(&full_basis.R, &full_basis.S, &full_basis.RS, curve)
-            .expect("full basis lift failed");
-        let (q1_jac, q2_jac) =
-            lift_basis(&target_basis.R, &target_basis.S, &target_basis.RS, curve)
-                .expect("target basis lift failed");
+        let (p1_jac, p2_jac) = full_basis.lift(curve).expect("full basis lift failed");
+        let (q1_jac, q2_jac) = target_basis.lift(curve).expect("target basis lift failed");
 
         // Compute cross-sum x-coordinates via Jacobian arithmetic.
         let (q1_plus_p2, _) = q1_jac.x_add_sub(&p2_jac);
