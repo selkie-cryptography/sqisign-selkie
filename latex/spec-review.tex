@@ -360,6 +360,63 @@ applied by columns, or equivalently define the multiplication as
 $(P', Q') = (P, Q) \cdot \mathbf{M}^T$.
 
 % =====================================================================
+\section{\textsc{GeneralizedRepresentInteger} sampling ranges and
+  divisibility}
+\label{sec:represent-integer}
+
+\finding{Affects \algo{3.12}
+(\textsc{GeneralizedRepresentInteger}), and transitively
+\algo{3.15} (\textsc{FixedDegreeIsogeny}) during signing.}{\medium}
+
+\algo{3.12} describes sampling $z$ from $[1, \ldots, m]$ (line~4)
+and $t$ from $[-m', \ldots, m']$ (line~5).  Two aspects of the
+algorithm are easy to implement incorrectly:
+
+\paragraph{1.\enspace Sign of $t$ matters for the isogeny condition.}
+Since $M' = 4M - p(z^2 + qt^2)$ depends on~$t^2$, it is tempting
+to sample only $t \geq 0$ and rely on the symmetry.  However, the
+isogeny condition (line~15) checks $x - t \equiv 2 \pmod{4}$, which
+\emph{does} depend on the sign of~$t$.  Restricting to $t \geq 0$
+halves the effective search space for the isogeny condition, which
+can cause the algorithm to exhaust its bound without finding a
+solution.
+
+\paragraph{2.\enspace Divisibility by~2 in~$\mathcal{O}$
+(line~18) is not coordinate-wise.}
+Line~18 says ``set~$d$ to be the biggest scalar such that
+$\gamma / d \in \mathcal{O}$'' and line~19 checks $d = 2$.
+For the standard order~$\mathcal{O}_0 = \mathbb{Z}[i] +
+j\,\mathbb{Z}[i]$ with $q = 1$ and $\omega = i$, an element
+$\gamma = x + iy + jz + kt$ satisfies $\gamma/2 \in
+\mathcal{O}_0$ if and only if $x, y, z, t$ are all even.  However,
+for orders with half-integer basis elements (e.g.,
+$\mathcal{O}_0 = \mathbb{Z} + i\mathbb{Z} + \frac{1+j}{2}\mathbb{Z}
++ \frac{i+k}{2}\mathbb{Z}$, which is the actual $\mathcal{O}_0$
+for SQIsign), divisibility by~2 in~$\mathcal{O}_0$ is
+\emph{not} equivalent to all coordinates being even in the
+$\{1, i, j, k\}$ basis.  The correct check must account for the
+order's common denominator and basis structure.
+
+An implementor who reads ``$\gamma / d \in \mathcal{O}$'' as
+``all coordinates divisible by~$d$'' (which is correct for
+$\mathbb{Z}^4$ but not for a non-trivial order) will write code
+that rejects valid solutions.
+
+\paragraph{Recommendation.}
+Add a remark after line~18 of \algo{3.12} clarifying:
+\begin{quote}
+  \itshape The divisibility check ``$\gamma / d \in \mathcal{O}$''
+  is with respect to the order~$\mathcal{O}$, not
+  coordinate-wise in the $\{1, i, j, k\}$ basis.  For orders with
+  a non-trivial denominator $d_{\mathcal{O}}$, the integral
+  coordinates of~$\gamma$ in the order's column basis must all be
+  divisible by~$d \cdot d_{\mathcal{O}}$.
+\end{quote}
+Also note explicitly that the range $[-m', m']$ on line~5 includes
+negative values, and that both signs must be tried to satisfy the
+isogeny condition on line~15.
+
+% =====================================================================
 \section{Fixed-precision Hermite Normal Form}
 \label{sec:hnf}
 
