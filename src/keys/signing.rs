@@ -480,25 +480,40 @@ impl SigningKey {
                 };
 
             // Line 13: I_chl ← [I_sk]_* I'_chl
-            let o_r_sk = self.ideal.right_order();
-            let i_chl = self.ideal.pushforward(&i_chl_prime, &o_r_sk);
+            //
+            // Pushforward involves inverse, intersection, and product
+            // — all of which produce intermediate lattice entries that
+            // overflow BigInt<4>. Widen to N_RESP before pushforward.
+            const N_RESP: usize = 30;
+            let i_sk_w = self.ideal.widen::<N_RESP>();
+            let i_com_w = i_com.widen::<N_RESP>();
+            let i_chl_prime_w = i_chl_prime.widen::<N_RESP>();
+            let o_r_sk = i_sk_w.right_order();
+            let i_chl_w = i_sk_w.pushforward(&i_chl_prime_w, &o_r_sk);
 
             // Line 14: α_rsp ← RandomEquivalentQuaternion(I_com ∩ I_sk · I_chl)
             //
             // The spec (Algorithm 4.3) uses a sampling radius of
             //   B = D_rsp · D²_mix · 2^{f+1} ≈ 2^1399   (NIST-I).
-            //
-            // We widen the three ideals to a common `LeftIdeal<22>`
-            // (1408 bits) to accommodate the radius, compute the
-            // intersection `I_com ∩ (I_sk · I_chl)` at that width, and
-            // sample with intermediate width W=44.
-            const N_RESP: usize = 30;
-            let i_sk_w = self.ideal.widen::<N_RESP>();
-            let i_chl_w = i_chl.widen::<N_RESP>();
-            let i_com_w = i_com.widen::<N_RESP>();
 
+            // The product I_sk · I_chl has entries up to ~1663 bits.
+            // The intersection via dual→sum→dual cubes the entry
+            // size through 3×3 subdeterminants, requiring ~5000-bit
+            // The product I_sk · I_chl has entries up to ~1775 bits.
+            // The dual→sum→dual intersection cubes entry sizes
+            // through 3×3 subdeterminants — incompatible with fixed
+            // width. Use the stacked-kernel intersection instead,
+            // which needs ~4× the entry size for intermediates.
+            //
+            // Hadamard bound on kernel vectors: ~4 × (denom + entry)
+            // ≈ 4 × 3438 ≈ 13752 bits. After B₁·a: ~15527 bits
+            // ≈ 243 limbs. But the HNF of the result is bounded by
+            // the ideal norms (~381 bits), so narrowing succeeds.
             let i_sk_i_chl = i_sk_w.lattice().product(i_chl_w.lattice());
-            let intersection = i_com_w.lattice().intersection(&i_sk_i_chl);
+            let i_prod_lat = Lattice::<N_RESP>::from(i_sk_i_chl);
+            let i_com_lat = Lattice::<N_RESP>::from(*i_com_w.lattice());
+
+            let intersection = i_com_lat.intersection_via_kernel::<250>(&i_prod_lat);
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
 
             // Radius: D_rsp · D²_mix · 2^{f+1}, computed at BigInt<22>.
@@ -506,6 +521,19 @@ impl SigningKey {
             let d_mix_22 = D_MIX.widen::<N_RESP>();
             let d_mix_sq = d_mix_22.ct_mul(&d_mix_22);
             let radius = d_mix_sq.shl(e_rsp + f + 1);
+
+            // Diagnostic: check gram determinant before sampling.
+            {
+                let cols = intersection_lat.basis().columns();
+                let nrd = crate::quaternions::lattice::NrdBasis::new(cols);
+                let det = nrd.gram().det();
+                eprintln!(
+                    "  response: intersection denom={:?}, det_bits={}, det_zero={}",
+                    intersection_lat.denom(),
+                    det.bitsize(),
+                    bool::from(det.is_zero()),
+                );
+            }
 
             let alpha_rsp_w = match intersection_lat.sample_from_ball::<44>(&radius) {
                 Some(a) => a,

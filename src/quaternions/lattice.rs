@@ -168,6 +168,11 @@ impl<const N: usize> Lattice<N> {
     ///
     /// Computed via the identity L₁ ∩ L₂ = dual(dual(L₁) + dual(L₂)).
     ///
+    /// WARNING: the dual computation cubes the entry size through
+    /// 3×3 subdeterminants. For wide lattices (entries > ~600 bits),
+    /// use [`intersection_via_kernel`](Self::intersection_via_kernel)
+    /// instead.
+    ///
     /// See [§3.1.5.2] (Intersection) of the spec.
     ///
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
@@ -177,6 +182,212 @@ impl<const N: usize> Lattice<N> {
         let dual_sum: Lattice<N> = dual1.sum(&dual2).into();
         let result = dual_sum.dual();
         HnfLattice::from(result)
+    }
+
+    /// Lattice intersection via the stacked-kernel method.
+    ///
+    /// Computes L₁ ∩ L₂ by finding the integer kernel of the 4×8
+    /// constraint matrix `[d₂·B₁ | −d₁·B₂]` and mapping kernel
+    /// vectors back through B₁. This avoids the dual computation
+    /// (which cubes entry sizes) at the cost of working at a wider
+    /// intermediate width `W`.
+    ///
+    /// The intermediate width `W` must be large enough for the
+    /// column-reduction operations on the constraint matrix.
+    /// Entries start at `bits(d) + bits(B)` and grow during
+    /// elimination; `W ≥ 4 * (bits(d) + bits(B)) / 64` is a
+    /// safe bound (Hadamard).
+    ///
+    /// # Divergences
+    ///
+    /// The spec and C reference use `dual → sum → dual`
+    /// (with GMP for arbitrary precision). We use the kernel
+    /// method to avoid the cubic entry-size blow-up that makes
+    /// the dual approach incompatible with fixed-width arithmetic.
+    pub fn intersection_via_kernel<const W: usize>(
+        &self,
+        other: &Self,
+    ) -> HnfLattice<N> {
+        const { assert!(W >= N, "intersection_via_kernel: W must be >= N") };
+
+        let d1: BigInt<W> = self.denom.widen();
+        let d2: BigInt<W> = other.denom.widen();
+        let b1 = self.basis;
+        let b2 = other.basis;
+
+        // Form the 4×8 constraint matrix M = [d₂·B₁ | −d₁·B₂].
+        // Augment with an 8×8 identity below to track column
+        // operations: the full 12×8 matrix is [M; I₈].
+        //
+        // We represent each column as a 12-element array of
+        // BigInt<W>. After column reduction on the top 4 rows,
+        // columns with all-zero top blocks have kernel vectors
+        // in their bottom 8 entries.
+
+        // Build 8 columns of length 12.
+        let mut cols: [[BigInt<W>; 12]; 8] = [[BigInt::<W>::ZERO; 12]; 8];
+
+        // First 4 columns: d₂ · B₁ (top), identity cols 0-3 (bottom)
+        for col in 0..4 {
+            for row in 0..4 {
+                cols[col][row] = d2.ct_mul(&b1[row][col].widen::<W>());
+            }
+            cols[col][4 + col] = BigInt::<W>::ONE;
+        }
+
+        // Last 4 columns: −d₁ · B₂ (top), identity cols 4-7 (bottom)
+        for col in 0..4 {
+            for row in 0..4 {
+                cols[4 + col][row] = d1.ct_mul(&b2[row][col].widen::<W>()).wrapping_neg();
+            }
+            cols[4 + col][4 + 4 + col] = BigInt::<W>::ONE;
+        }
+
+        // Column HNF on the top 4 rows. Process each row from
+        // 0 to 3: accumulate all nonzero entries into a single
+        // pivot column via repeated xgcd, then reduce remaining
+        // entries modulo the pivot. This is the same as our
+        // `from_hnf_columns` but operating on 8 columns of
+        // length 12 (with tracking in the bottom 8 rows).
+        let mut pivot_col_for_row = [usize::MAX; 4];
+
+        for pivot_row in 0..4 {
+            // Phase 1: accumulate GCD. Pick first nonzero column
+            // as initial pivot, then xgcd with all others.
+            let mut pc = usize::MAX;
+            for col in 0..8 {
+                // Skip columns already used as pivots for earlier rows.
+                if pivot_col_for_row[..pivot_row].contains(&col) {
+                    continue;
+                }
+                if bool::from(cols[col][pivot_row].is_zero()) {
+                    continue;
+                }
+                if pc == usize::MAX {
+                    pc = col;
+                    continue;
+                }
+                let piv = cols[pc][pivot_row];
+                let entry = cols[col][pivot_row];
+                let (g, u, v) = piv.xgcd(&entry);
+                let (piv_over_g, _) = piv.div_rem(&g);
+                let (entry_over_g, _) = entry.div_rem(&g);
+                let old_pc: [BigInt<W>; 12] = cols[pc];
+                let old_col: [BigInt<W>; 12] = cols[col];
+                for r in 0..12 {
+                    cols[pc][r] = u.ct_mul(&old_pc[r])
+                        .ct_add(&v.ct_mul(&old_col[r]));
+                    cols[col][r] = piv_over_g
+                        .ct_mul(&old_col[r])
+                        .ct_sub(&entry_over_g.ct_mul(&old_pc[r]));
+                }
+            }
+            if pc == usize::MAX {
+                continue;
+            }
+            pivot_col_for_row[pivot_row] = pc;
+
+            // Make pivot positive.
+            if bool::from(cols[pc][pivot_row].is_negative()) {
+                for r in 0..12 {
+                    cols[pc][r] = cols[pc][r].wrapping_neg();
+                }
+            }
+
+            // Phase 2: reduce all other columns modulo the pivot
+            // in this row (ensures entries are in [0, pivot)).
+            let piv = cols[pc][pivot_row];
+            for col in 0..8 {
+                if col == pc {
+                    continue;
+                }
+                let entry = cols[col][pivot_row];
+                if bool::from(entry.is_zero()) {
+                    continue;
+                }
+                let (q, _) = entry.div_rem(&piv);
+                if !bool::from(q.is_zero()) {
+                    let snap = cols[pc];
+                    for r in 0..12 {
+                        cols[col][r] = cols[col][r]
+                            .ct_sub(&q.ct_mul(&snap[r]));
+                    }
+                }
+            }
+        }
+
+        // Diagnostic: check how many pivots we found and which
+        // columns are zero in the top block.
+        eprintln!(
+            "    intersection_via_kernel: pivot_col_for_row={pivot_col_for_row:?}"
+        );
+        for col in 0..8 {
+            let top_zero = (0..4).all(|r| bool::from(cols[col][r].is_zero()));
+            eprintln!(
+                "    col {col}: top_zero={top_zero}, top_bits=[{}, {}, {}, {}]",
+                cols[col][0].bitsize(),
+                cols[col][1].bitsize(),
+                cols[col][2].bitsize(),
+                cols[col][3].bitsize(),
+            );
+        }
+
+        // Extract kernel vectors: columns whose top 4 entries are
+        // all zero. There should be exactly 4 such columns.
+        let mut kernel_vecs = [[BigInt::<W>::ZERO; 8]; 4];
+        let mut n_kernel = 0;
+        for col in 0..8 {
+            let top_zero = (0..4).all(|r| bool::from(cols[col][r].is_zero()));
+            if top_zero && n_kernel < 4 {
+                for r in 0..8 {
+                    kernel_vecs[n_kernel][r] = cols[col][4 + r];
+                }
+                n_kernel += 1;
+            }
+        }
+        eprintln!("    intersection_via_kernel: n_kernel={n_kernel}");
+
+        // Intersection basis: for each kernel vector [a; b]
+        // (where a is the first 4 entries), compute B₁ · a.
+        // The result has denominator d₁.
+        let mut inter_cols = [Vector::<W>::ZERO; 4];
+        for (i, kv) in kernel_vecs.iter().enumerate() {
+            let a = [kv[0], kv[1], kv[2], kv[3]];
+            let mut v = [BigInt::<W>::ZERO; 4];
+            for row in 0..4 {
+                for k in 0..4 {
+                    v[row] = v[row].ct_add(
+                        &b1[row][k].widen::<W>().ct_mul(&a[k]),
+                    );
+                }
+            }
+            inter_cols[i] = Vector::new(v[0], v[1], v[2], v[3]);
+        }
+
+        // Reduce to HNF at width W, then narrow to N.
+        let inter_basis_w = Matrix::<W>::from_hnf_columns(&inter_cols);
+        let denom_w = d1;
+
+        // Narrow back to BigInt<N>.
+        let mut basis_n = Matrix::<N>::ZERO;
+        for row in 0..4 {
+            for col in 0..4 {
+                basis_n[row][col] = inter_basis_w[row][col]
+                    .narrow_to::<N>()
+                    .expect(
+                        "intersection HNF entry fits in BigInt<N>: \
+                         bounded by input ideal norms",
+                    );
+            }
+        }
+        let denom_n: BigInt<N> = denom_w
+            .narrow_to()
+            .expect("intersection denom fits in BigInt<N>");
+
+        HnfLattice {
+            basis: basis_n,
+            denom: denom_n,
+        }
     }
 
     // Lattice product: `self · other`.
