@@ -386,17 +386,19 @@ fn fixed_degree_isogeny(
     // [u](P-Q) = scalar * (P-Q).
     let mut pmq1 = &u_scalar * &basis_t.RS;
     // K₁−K₂ second component: θ(P)−θ(Q) = θ(P−Q).
-    // Compute θ(P−Q) via the action matrix applied to (P−Q):
-    // θ(P−Q) = [m00](P−Q) + [m10]Q... no, this doesn't work
-    // because the action matrix is for (P, Q), not (P-Q, Q).
-    //
-    // Actually: θ(P−Q) = θ(P) − θ(Q) for a linear map. But θ
-    // is an endomorphism, so θ(P−Q) = θ(P) − θ(Q).
-    // In x-only, x(θ(P)−θ(Q)) can't be computed from
-    // x(θ(P)) and x(θ(Q)) without the y-coordinate.
-    // Use projective_difference as a fallback.
-    // TODO: propagate θ(P−Q) via the biladder.
-    let mut pmq2 = k1_second.projective_difference(&k2_second);
+    // θ is linear, so θ(P−Q) = [m00−m01]P + [m10−m11]Q.
+    // Compute via a third eval_decomposition call with the
+    // difference scalars, matching the C ref's
+    // matrix_scalar_application_even_basis which does three
+    // biladder calls for (θ(P), θ(Q), θ(P−Q)).
+    let m00 = Scalar::from_limbs(*m_theta.entry(0, 0).as_limbs());
+    let m01 = Scalar::from_limbs(*m_theta.entry(0, 1).as_limbs());
+    let m10 = Scalar::from_limbs(*m_theta.entry(1, 0).as_limbs());
+    let m11 = Scalar::from_limbs(*m_theta.entry(1, 1).as_limbs());
+    let mut pmq2 = basis_t.eval_decomposition(
+        &m00.sub_mod2k(&m01, f.value()),
+        &m10.sub_mod2k(&m11, f.value()),
+    );
 
     for _ in 0..(f.value() - 2 - e_fdi) {
         k1_first = k1_first.double();
