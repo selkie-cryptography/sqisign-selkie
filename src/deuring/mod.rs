@@ -523,6 +523,16 @@ impl LeftIdeal<4> {
         };
         let (p_step6, q_step6) = m_beta2.apply_scaled(&norm_inv, phi_v_p, phi_v_q, f);
 
+        // Check: are phi_u_p, phi_u_q on e_u?
+        let phi_up_on = e_u.recover_y(&phi_u_p.to_affine_x());
+        let phi_uq_on = e_u.recover_y(&phi_u_q.to_affine_x());
+        eprintln!(
+            "    to_isogeny: phi_u on e_u = ({}, {}), d1_bits={}",
+            phi_up_on.is_some(),
+            phi_uq_on.is_some(),
+            d1.bit_length(),
+        );
+
         // Steps 7–8: Build kernel points on E_u × E_v.
         //
         // K_P ← [2^{f-e}]([d₁]φ_u(P_s), P)
