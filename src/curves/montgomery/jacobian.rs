@@ -109,8 +109,51 @@ impl JacobianPoint {
             &(&dy * &(&u1_dx_sq - &x3)) - &(&v1 * &dx_cubed)
         };
 
-        // z₃ = dx·z₁² = 2y₁·z₁²  (NOT 2y₁·z₁ like standard Jacobian!)
+        // z₃ = dx·z₁² = 2y₁·z₁²
+        //
+        // NOTE: This is NOT the standard Jacobian Z' = 2yz. It
+        // uses Z' = 2yz², which changes the projective
+        // representative of jac_to_xz. The theta gluing accounts
+        // for this difference via `double_for_theta` which uses
+        // the standard formula.
         let z3 = &dx * &zz;
+
+        JacobianPoint {
+            X: x3,
+            Y: y3,
+            Z: z3,
+            curve: self.curve,
+        }
+    }
+
+    /// Jacobian doubling matching the C ref's `DBL` (ec_jac.c:110).
+    ///
+    /// Uses `Z' = 2yz` (standard Jacobian), unlike [`double`] which
+    /// uses `Z' = 2yz²`. The theta change-of-basis requires the
+    /// standard convention so that `jac_to_xz` produces the same
+    /// projective representative as the C ref.
+    ///
+    /// TODO: reconcile with [`double`] — one doubling formula for
+    /// all uses, matching the C ref's convention throughout.
+    #[must_use]
+    pub fn double_for_theta(&self) -> JacobianPoint {
+        let A = *self.curve.coefficient().as_fp2();
+
+        let xx = self.X.square();
+        let three_xx = &(&xx + &xx) + &xx;
+        let zz = self.Z.square();
+        let two_ax = &(&A * &self.X) + &(&A * &self.X);
+        let alpha = &three_xx + &(&zz * &(&zz + &two_ax));
+
+        let z3 = &(&self.Y * &self.Z) + &(&self.Y * &self.Z); // 2yz
+        let z3_sq = z3.square(); // 4y²z²
+        let yy = self.Y.square();
+        let two_yy = &yy + &yy;
+        let four_xyy = &two_yy * &(&self.X + &self.X);
+
+        let x3 = &(&alpha.square() - &(&A * &z3_sq)) - &(&four_xyy + &four_xyy);
+        let four_yyyy = two_yy.square();
+        let y3 = &(&alpha * &(&four_xyy - &x3)) - &(&four_yyyy + &four_yyyy);
 
         JacobianPoint {
             X: x3,

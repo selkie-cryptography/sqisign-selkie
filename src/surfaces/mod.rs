@@ -714,9 +714,20 @@ impl Kernel {
 
         // --- Phase 4: splitting (lines 39–45) ---
         //
-        // The penultimate and ultimate steps used bool_2=0, so the
-        // codomain is in dual form (not Hadamard-transformed). The
-        // splitting step expects this form.
+        // The splitting step expects the codomain in dual form
+        // (without the final Hadamard). For chains with ≥2 generic
+        // steps, the penultimate and ultimate steps produced this
+        // form (bool_2=0). But for very short chains (e=2), no
+        // generic steps run and the codomain comes directly from
+        // the gluing, which is in standard form (with Hadamard).
+        // In that case, apply an inverse Hadamard (which equals
+        // Hadamard up to a factor of 4, since H² = 4I).
+        // The splitting step expects the codomain in dual form.
+        // For chains with ≥2 generic steps, the penultimate and
+        // ultimate steps produce this (hadamard_bool_2=0). For
+        // short chains (e=2), there's exactly one generic step
+        // which IS the ultimate step, so it also produces dual
+        // form. The splitting should work in all cases.
         #[cfg(test)]
         {
             let count = isogeny::get_index_splitting_count(&current_jacobian.null);
