@@ -241,3 +241,65 @@ fn action_matrix_consistent_with_basis() {
         "M_i · (1, 0)^T applied to basis does not match i(P₀)"
     );
 }
+
+/// Diagonal kernel (P,P),(Q,Q) on E₀ × E₀ should produce a product.
+///
+/// This tests the (2,2)-chain in isolation: the diagonal embedding
+/// is always a valid kernel, so if splitting gives zeros≠1, the
+/// chain itself has a bug for the E₀ × E₀ case.
+#[test]
+fn diagonal_kernel_splits() {
+
+    let curve = Curve::E0;
+    let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &curve);
+    let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &curve);
+    let pmq = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve);
+    let basis = TorsionBasis::new(p, q, pmq);
+
+    // Action matrix M_i applied to (P, Q, P-Q) basis.
+    let m_i = &ACTION_MATRICES[0][0];
+    let f = TorsionExponent::FULL.value();
+    let i_p = basis.eval_decomposition(m_i.entry(0, 0), m_i.entry(1, 0));
+    let i_pmq = basis.eval_decomposition(
+        &m_i.entry(0, 0).sub_mod2k(m_i.entry(0, 1), f),
+        &m_i.entry(1, 0).sub_mod2k(m_i.entry(1, 1), f),
+    );
+    let i_q = basis.eval_decomposition(m_i.entry(0, 1), m_i.entry(1, 1));
+
+    // Lift with (P, P-Q) as generators (matching C ref convention).
+    let comp1 = TorsionBasis::new(p, pmq, q);
+    let (p_jac, pmq_jac) = comp1.lift(&curve).expect("lift comp1");
+    let comp2 = TorsionBasis::new(i_p, i_pmq, i_q);
+    let (ip_jac, ipmq_jac) = comp2.lift(&curve).expect("lift comp2");
+
+    // Kernel: K₁ = (P, i(P)), K₂ = (P-Q, i(P-Q)).
+    let e = 50u32;
+    let doublings = TorsionExponent::FULL.value() - 2 - e;
+    let double_n = |mut pt: JacobianPoint, n: u32| -> JacobianPoint {
+        for _ in 0..n {
+            pt = pt.double_for_theta();
+        }
+        pt
+    };
+    let k1 = (double_n(p_jac, doublings), double_n(ip_jac, doublings));
+    let k2 = (double_n(pmq_jac, doublings), double_n(ipmq_jac, doublings));
+
+    let product = surfaces::EllipticProduct::new(curve, curve);
+    let kernel = surfaces::Kernel::from_jacobian(product, k1, k2);
+
+    // Print the y-value for comparison with C ref.
+    let y_p = curve.recover_y(&p.to_affine_x()).unwrap();
+    let y_bytes = y_p.to_bytes();
+    let re_hex: String = y_bytes[..32].iter().rev().map(|b| format!("{:02x}", b)).collect();
+    let im_hex: String = y_bytes[32..].iter().rev().map(|b| format!("{:02x}", b)).collect();
+    eprintln!("recover_y(P) re=0x{re_hex} im=0x{im_hex}");
+
+    // Use extra_torsion mode since the kernel has order 2^(e+2),
+    // matching the signing path (FixedDegreeIsogeny).
+    let te = TorsionExponent::try_from(e).unwrap();
+    let (_codomain, _images) = kernel.isogeny_extra_torsion(te, &[]);
+    // If this doesn't panic and the test-only splitting diagnostic
+    // prints zeros=1, the chain works for E₀ × E₀.
+    // The splitting count is printed by the #[cfg(test)] block
+    // inside the chain's Phase 4.
+}

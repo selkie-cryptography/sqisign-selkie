@@ -396,6 +396,19 @@ fn theta_change_of_basis(
     ];
     let invs = batch_invert(&to_invert);
 
+    #[cfg(test)]
+    {
+        let zero_count = [&d_G.delta, &d_Gp.delta, &d_H.delta, &d_Hp.delta]
+            .iter()
+            .filter(|d| **d == &Fp2::ZERO)
+            .count();
+        if zero_count > 0 {
+            eprintln!(
+                "GLUING: {zero_count}/4 delta(s) are ZERO (degenerate ActionByTranslation)"
+            );
+        }
+    }
+
     // Complete each ActionByTranslation with the batched inverses.
     let G = translation_finish(&d_G, &invs[0], &invs[1]);
     let Gp = translation_finish(&d_Gp, &invs[2], &invs[3]);
@@ -724,6 +737,13 @@ pub(crate) fn codomain_8torsion(
     let beta = &hs2.Y * &zaxb;
     let gamma = &hs2.Z * &xawb;
     let delta = &hs2.W * &zaxb;
+
+    #[cfg(test)]
+    {
+        if alpha == gamma {
+            eprintln!("codomain_8torsion: alpha==gamma → after H: c=d=0!");
+        }
+    }
 
     let zgwd = &hs2.Z * &hs2.W;
     let alpha_inv = &hs1.Y * &zgwd;

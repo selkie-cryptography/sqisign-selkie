@@ -450,10 +450,44 @@ impl Kernel {
     /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
     /// [§8.5.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.3
     /// [§8.5.8]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.8
+    /// Compute the chain with standard torsion (verification path).
+    ///
+    /// The kernel has order 2^(e+2). The last two isogeny steps
+    /// use special hadamard_bool settings (penultimate/ultimate)
+    /// to produce dual-form output for the splitting step.
     pub fn isogeny(
         &self,
         e: crate::curves::TorsionExponent,
         pts: &[ProductPoint],
+    ) -> (EllipticProduct, Vec<ProductPoint>) {
+        self.isogeny_inner(e, pts, false)
+    }
+
+    /// Compute the chain with extra torsion (signing path).
+    ///
+    /// The kernel has order 2^(e+2) where the extra 2 bits are
+    /// HD_extra_torsion from the C ref. ALL isogeny steps use
+    /// normal hadamard_bool (bool_1=0, bool_2=1), matching the
+    /// C ref's behavior when `extra_torsion=true`.
+    ///
+    /// # Divergences
+    ///
+    /// The spec does not distinguish these two modes. The C ref
+    /// (theta_isogenies.c) uses `extra_torsion` to control
+    /// hadamard_bool settings in the chain's final steps.
+    pub fn isogeny_extra_torsion(
+        &self,
+        e: crate::curves::TorsionExponent,
+        pts: &[ProductPoint],
+    ) -> (EllipticProduct, Vec<ProductPoint>) {
+        self.isogeny_inner(e, pts, true)
+    }
+
+    fn isogeny_inner(
+        &self,
+        e: crate::curves::TorsionExponent,
+        pts: &[ProductPoint],
+        extra_torsion: bool,
     ) -> (EllipticProduct, Vec<ProductPoint>) {
         // Algorithm 8.47 (Isogeny22ChainWithTorsion):
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
@@ -539,6 +573,25 @@ impl Kernel {
 
         let (gluing_data, _) = gluing.isogeny(&[]);
 
+        // Check the gluing codomain's null point for zero components
+        #[cfg(test)]
+        {
+            let null = &gluing_data.codomain.null;
+            let comps = [("a", &null.a), ("b", &null.b), ("c", &null.c), ("d", &null.d)];
+            let zeros: Vec<&str> = comps.iter().filter(|(_, v)| **v == Fp2::ZERO).map(|(n, _)| *n).collect();
+            if !zeros.is_empty() {
+                eprintln!("GLUE CODOMAIN: zero components: {zeros:?}");
+            }
+            let pc = null.precompute();
+            let pc_zeros: Vec<&str> = [
+                ("c1", &pc.c1), ("c2", &pc.c2), ("c3", &pc.c3), ("c4", &pc.c4),
+                ("c5", &pc.c5), ("c6", &pc.c6), ("c7", &pc.c7), ("c8", &pc.c8),
+            ].iter().filter(|(_, v)| **v == Fp2::ZERO).map(|(n, _)| *n).collect();
+            if !pc_zeros.is_empty() {
+                eprintln!("GLUE PRECOMP: zero values: {pc_zeros:?}");
+            }
+        }
+
         #[cfg(test)]
         {
             let null = &gluing_data.codomain.null;
@@ -584,10 +637,20 @@ impl Kernel {
         // that may be incorrect for intermediate strategy levels).
         // Push remaining strategy points through the gluing eval.
         // The strategy points are already in Jacobian — pass directly.
+        // Push remaining strategy points through the gluing eval.
+        // The C ref (theta_isogenies.c:1174-1178) pushes levels
+        // 0..current-1 through the gluing, then decrements current.
         let mut theta_strat: Vec<(JacobianPoint, JacobianPoint)> = Vec::new();
-        for &(ri_jac, si_jac) in strat_pts.iter().take(k) {
+        for (idx, &(ri_jac, si_jac)) in strat_pts.iter().take(k).enumerate() {
             let R = GluingKernel::eval(&ri_jac, &gluing.T1_jac, &A1, &A2, &gluing_data);
             let S = GluingKernel::eval(&si_jac, &gluing.T1_jac, &A1, &A2, &gluing_data);
+            #[cfg(test)]
+            {
+                let hs_s = S.squared().hadamard();
+                if hs_s.X == hs_s.Z {
+                    eprintln!("GLUE_EVAL: strat[{idx}].S has H(S²).X == H(S²).Z (degenerate)");
+                }
+            }
             theta_strat.push((R, S));
         }
         let mut orders: Vec<u32> = orders[..k].iter().map(|o| o - 1).collect();
@@ -647,6 +710,28 @@ impl Kernel {
                     R = R.double();
                     S = S.double();
                 }
+                #[cfg(test)]
+                {
+                    let any_zero = |p: &JacobianPoint| {
+                        p.X == Fp2::ZERO
+                            && p.Y == Fp2::ZERO
+                            && p.Z == Fp2::ZERO
+                            && p.W == Fp2::ZERO
+                    };
+                    if any_zero(&R) || any_zero(&S) {
+                        eprintln!(
+                            "CHAIN pushdown: after {n} doublings from level {}, R or S is ZERO",
+                            k - 1
+                        );
+                    }
+                    let hs = S.squared().hadamard();
+                    if hs.X == hs.Z {
+                        eprintln!(
+                            "CHAIN pushdown: after {n} dbls from lvl {}, S has H(S²).X==H(S²).Z",
+                            k - 1
+                        );
+                    }
+                }
                 if k >= theta_strat.len() {
                     theta_strat.push((R, S));
                     orders.push(orders[k - 1] - n);
@@ -666,10 +751,60 @@ impl Kernel {
             // The splitting step expects the codomain in dual form
             // (without the final Hadamard), which is what bool_2=0
             // produces.
-            let (dual, new_jac) = if steps_remaining == 1 {
+            #[cfg(test)]
+            {
+                let t1 = &theta_strat[k].0;
+                let t2 = &theta_strat[k].1;
+                let any_zero = |p: &JacobianPoint| {
+                    p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
+                };
+                if any_zero(t1) || any_zero(t2) {
+                    eprintln!("CHAIN step {_step_index}: 8-torsion input is ZERO (k={k})");
+                }
+                if _step_index == 0 {
+                    let fp2_hex = |v: &Fp2| -> String {
+                        let b = v.to_bytes();
+                        let r: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                        format!("0x{r}")
+                    };
+                    eprintln!("STEP0 T2.X={} T2.Y={} T2.Z={} T2.W={}",
+                        fp2_hex(&t2.X), fp2_hex(&t2.Y), fp2_hex(&t2.Z), fp2_hex(&t2.W));
+                    // Check if T2 has Z == 0 or W == 0 component
+                    if t2.Z == Fp2::ZERO { eprintln!("STEP0: T2.Z is ZERO!"); }
+                    if t2.W == Fp2::ZERO { eprintln!("STEP0: T2.W is ZERO!"); }
+                    // Check for X == Z relationship (which causes alpha==gamma)
+                    let hs = t2.squared().hadamard();
+                    if hs.X == hs.Z { eprintln!("STEP0: H(T2²).X == H(T2²).Z → will cause alpha==gamma"); }
+                }
+                // Check ALL strategy points before eval.
+                for (si, sp) in theta_strat.iter().enumerate() {
+                    if any_zero(&sp.0) {
+                        eprintln!("CHAIN step {_step_index}: strat[{si}].0 is ZERO");
+                    }
+                    if any_zero(&sp.1) {
+                        eprintln!("CHAIN step {_step_index}: strat[{si}].1 is ZERO");
+                    }
+                }
+                // Check null point.
+                let null = &current_jacobian.null;
+                let null_zero = null.a == Fp2::ZERO && null.b == Fp2::ZERO;
+                if null_zero {
+                    eprintln!("CHAIN step {_step_index}: codomain null is ZERO");
+                }
+            }
+
+            // When extra_torsion=true (signing path), all steps use
+            // normal hadamard_bool (bool_1=0, bool_2=1). The C ref
+            // (theta_isogenies.c:1232) uses normal settings for all
+            // steps when extra_torsion=true, and the splitting expects
+            // the codomain in standard (Hadamard-transformed) form.
+            //
+            // When extra_torsion=false (verification path), the last
+            // two steps use special hadamard_bool to produce dual form.
+            let (dual, new_jac) = if !extra_torsion && steps_remaining == 1 {
                 // Ultimate: bool_1=1, bool_2=0
                 isogeny::codomain_8torsion_ultimate(&theta_strat[k].0, &theta_strat[k].1)
-            } else if steps_remaining == 2 {
+            } else if !extra_torsion && steps_remaining == 2 {
                 // Penultimate: bool_1=0, bool_2=0
                 isogeny::codomain_8torsion_no_hadamard(&theta_strat[k].0, &theta_strat[k].1)
             } else {
@@ -677,11 +812,10 @@ impl Kernel {
                 isogeny::codomain_8torsion(&theta_strat[k].0, &theta_strat[k].1)
             };
 
-            // Evaluate: use matching bool_1/bool_2 for point evaluation.
             let eval_fn = |pt: &JacobianPoint| -> JacobianPoint {
-                if steps_remaining == 1 {
+                if !extra_torsion && steps_remaining == 1 {
                     isogeny::eval_ultimate(pt, &dual, &new_jac)
-                } else if steps_remaining == 2 {
+                } else if !extra_torsion && steps_remaining == 2 {
                     isogeny::eval_no_outer_hadamard(pt, &dual, &new_jac)
                 } else {
                     isogeny::eval(pt, &dual, &new_jac)
@@ -696,12 +830,47 @@ impl Kernel {
                 theta_strat[i].0 = eval_fn(&theta_strat[i].0);
                 theta_strat[i].1 = eval_fn(&theta_strat[i].1);
                 orders[i] -= 1;
+
+                #[cfg(test)]
+                {
+                    let any_zero = |p: &JacobianPoint| {
+                        p.X == Fp2::ZERO
+                            && p.Y == Fp2::ZERO
+                            && p.Z == Fp2::ZERO
+                            && p.W == Fp2::ZERO
+                    };
+                    if any_zero(&theta_strat[i].0) || any_zero(&theta_strat[i].1) {
+                        eprintln!(
+                            "CHAIN step {_step_index}: strat[{i}] became ZERO AFTER eval"
+                        );
+                    }
+                }
             }
 
             theta_strat.truncate(k);
             orders.truncate(k);
             k = k.saturating_sub(1);
             current_jacobian = new_jac;
+
+            #[cfg(test)]
+            {
+                let null = &current_jacobian.null;
+                let zero_components: Vec<&str> = [
+                    ("a", &null.a),
+                    ("b", &null.b),
+                    ("c", &null.c),
+                    ("d", &null.d),
+                ]
+                .iter()
+                .filter(|(_, v)| **v == Fp2::ZERO)
+                .map(|(n, _)| *n)
+                .collect();
+                if !zero_components.is_empty() {
+                    eprintln!(
+                        "CHAIN step {_step_index}: null has zero components: {zero_components:?}"
+                    );
+                }
+            }
 
             #[cfg(test)]
             if _step_index < 3 || steps_remaining <= 2 {
