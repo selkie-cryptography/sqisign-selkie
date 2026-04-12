@@ -722,12 +722,8 @@ impl Kernel {
         // the gluing, which is in standard form (with Hadamard).
         // In that case, apply an inverse Hadamard (which equals
         // Hadamard up to a factor of 4, since H² = 4I).
-        // The splitting step expects the codomain in dual form.
-        // For chains with ≥2 generic steps, the penultimate and
-        // ultimate steps produce this (hadamard_bool_2=0). For
-        // short chains (e=2), there's exactly one generic step
-        // which IS the ultimate step, so it also produces dual
-        // form. The splitting should work in all cases.
+        // The splitting step expects the codomain in a specific
+        // form where exactly one U_{i,j}(0) = 0.
         #[cfg(test)]
         {
             let count = isogeny::get_index_splitting_count(&current_jacobian.null);
