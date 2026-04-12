@@ -14,20 +14,20 @@ C reference is a pragmatic gap, not a deliberate security argument.
 
 Seven papers form a complete constant-time stack for SQIsign~v2:
 \begin{itemize}
-  \item Kouider et al.~\cite{kouider2025} provide constant-time big
+  \item Kouider et al.~\cite{EPRINT:KMJK25} provide constant-time big
     integer arithmetic (division, exponentiation, square root) up to
     ${\sim}12{,}000$~bits.
-  \item Hanyecz et al.~\cite{hanyecz2025} give the first constant-time
+  \item Hanyecz et al.~\cite{EPRINT:HKKKS25} give the first constant-time
     LLL-like lattice reduction for dimension~4, replacing the
     variable-time L2 algorithm used in \texttt{SuitableIdeals}.
   \item Basso et al.~\cite{basso2025} cover CT~HNF, CT
     \texttt{IdealGenerator}, and CT \texttt{RepresentInteger}---the
     three core quaternion subroutines.
-  \item Kim et al.~\cite{kim2025} prove explicit worst-case size
+  \item Kim et al.~\cite{EPRINT:KLKL25} prove explicit worst-case size
     bounds for all quaternion intermediates in Round-2 SQIsign,
     enabling fixed-precision (no multi-precision) arithmetic.
-  \item Mukherjee et al.~\cite{mukherjee2025attack} and Jacquemin et
-    al.~\cite{jacquemin2023} demonstrate and propose mitigations for
+  \item Mukherjee et al.~\cite{EPRINT:MCJKR25} and Jacquemin et
+    al.~\cite{EPRINT:JMKR23} demonstrate and propose mitigations for
     SPA attacks on Cornacchia's algorithm---the most urgent
     constant-time target.
 \end{itemize}

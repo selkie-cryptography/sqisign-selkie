@@ -1,13 +1,33 @@
 \section{Current Status and Future Work}
 \label{sec:status}
 
-As of writing, 157~unit tests pass.  The full \texttt{IdealToIsogeny}
-pipeline is wired end-to-end.  KAT verification runs to completion but
-fails at the $(2,2)$-chain splitting step due to remaining
-theta-coordinate bugs.  The immediate next steps are:
+Verification is complete: all KAT vectors from the C reference
+implementation verify successfully, exercising the full pipeline from
+torsion basis construction through the $(2,2)$-isogeny chain and
+splitting.
+
+Signing compiles end-to-end and is structurally complete.  The
+commitment phase, challenge derivation, and response phase are wired
+together, with \texttt{Order<N>} tracking maximal orders through the
+Deuring correspondence.  Two coupled blockers remain:
+\begin{itemize}
+  \item The sampling radius in the response phase is a placeholder;
+    the correct value $D_{\mathrm{rsp}} \cdot D_{\mathrm{mix}}^2
+    \cdot 2^{f+1} \approx 2^{1399}$ requires wider lattice
+    arithmetic (${\sim}22$~limbs for the radius, ${\sim}12$ for
+    lattice entries).
+  \item Degree computations in the response phase are missing a
+    $D_{\mathrm{mix}}^2$ division, coupled with the radius fix.
+\end{itemize}
+
+Key generation (Algorithm~4.1) is not yet implemented.  Signature
+serialization to the 148-byte wire format is implemented.
+
+\paragraph{Next steps.}
 \begin{enumerate}
-  \item Fix remaining theta bugs and achieve KAT verification;
-  \item Wire \texttt{SigningKey::sign()} and \texttt{generate()};
-  \item Achieve full KAT interoperability;
-  \item Execute the six-phase CT hardening plan.
+  \item Widen the response-phase sampling and degree arithmetic to
+    achieve a first successful signature;
+  \item Wire key generation;
+  \item Achieve full KAT interoperability (sign + verify round-trip);
+  \item Execute the six-phase CT hardening plan (\S\ref{sec:ct}).
 \end{enumerate}
