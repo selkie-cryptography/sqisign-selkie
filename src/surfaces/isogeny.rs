@@ -88,13 +88,15 @@ impl GluingKernel {
         // The C reference does this at gluing_compute:434-437 to ensure
         // the correct projective representative (x, z²) for the
         // theta change-of-basis computation.
+        // Use double_for_theta (standard Z'=2yz Jacobian) to match
+        // the C ref's projective representative for jac_to_xz.
         let T1_prime: (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint) = (
-            ProjectiveXOnlyPoint::from(self.T1_jac.0.double()),
-            ProjectiveXOnlyPoint::from(self.T1_jac.1.double()),
+            ProjectiveXOnlyPoint::from(self.T1_jac.0.double_for_theta()),
+            ProjectiveXOnlyPoint::from(self.T1_jac.1.double_for_theta()),
         );
         let T2_prime: (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint) = (
-            ProjectiveXOnlyPoint::from(self.T2_jac.0.double()),
-            ProjectiveXOnlyPoint::from(self.T2_jac.1.double()),
+            ProjectiveXOnlyPoint::from(self.T2_jac.0.double_for_theta()),
+            ProjectiveXOnlyPoint::from(self.T2_jac.1.double_for_theta()),
         );
 
         // 3. N ← ThetaChangeOfBasis(T₁', T₂')
@@ -206,7 +208,16 @@ impl GluingKernel {
         let x = &hs1.0 * &alpha_inv; // X₁ · (Y₁·Z₂)
         let y = &hs1.2 * &beta; // Z₁ · (Y₁·X₂)
 
-        // 24. (a₂,b₂,c₂,d₂) ← H(α, β, γ, 0)
+        // Apply Hadamard to get the standard-form codomain null.
+        //
+        // # Divergences
+        //
+        // The C ref stores the gluing codomain in dual form
+        // (α, β, γ, 0) WITHOUT Hadamard (theta_isogenies.c:497).
+        // Our chain's precomputation and generic step eval are
+        // built around the standard form (WITH Hadamard). Matching
+        // the C ref requires adjusting the entire chain's
+        // Hadamard convention, which is tracked as a separate task.
         let (a2, b2, c2, d2) = hadamard4(&alpha, &beta, &gamma, &Fp2::ZERO);
         let null = ThetaNullPoint::new(a2, b2, c2, d2);
         let codomain = Jacobian::new(null);

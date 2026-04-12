@@ -588,6 +588,7 @@ impl super::lattice::LeftIdeal<4> {
             Denominator::from_bigint_unchecked(delta_conj.denom.as_bigint().widen::<8>()),
         );
         let mut new_cols = [Vector::<8>::ZERO; 4];
+        #[allow(clippy::needless_range_loop)]
         for j in 0..4 {
             let bj = lattice.basis_elem(j);
             let bj_8 = Element::<8>::new(
@@ -668,7 +669,7 @@ impl super::lattice::LeftIdeal<4> {
             }
             None => {
                 eprintln!("      suitable_ideals: smallest_equiv failed, using original");
-                self.clone()
+                *self
             }
         };
 
