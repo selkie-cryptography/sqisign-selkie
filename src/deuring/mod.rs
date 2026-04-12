@@ -364,23 +364,51 @@ fn fixed_degree_isogeny(
 
     // K₁ = [2^{f−2−e_FDI}]([u]P_t, θ(P_t))
     // K₂ = [2^{f−2−e_FDI}]([u]Q_t, θ(Q_t))
+    //
+    // Propagate K₁−K₂ through the doublings instead of
+    // recomputing via projective_difference (which takes a
+    // square root that may pick the wrong branch — see §4.8
+    // of the paper).
     let u_scalar = u.to_scalar();
     let mut k1_first = &u_scalar * &basis_t.R;
     let mut k1_second = theta_p;
     let mut k2_first = &u_scalar * &basis_t.S;
     let mut k2_second = theta_q;
+    // K₁−K₂ first component: [u]P − [u]Q = [u](P−Q).
+    // Compute via the biladder: biscalar_mul(u, -u) with
+    // the (P, Q, P-Q) basis. But biscalar_mul needs P-Q
+    // in the RS slot. Since basis_t = (P, Q, P-Q) with
+    // RS = P-Q, we can use scalar_mul_add which computes
+    // R + [m]S = P + [u]Q on the (R=P-Q, S=Q, RS=P) basis.
+    // Actually, [u](P-Q) is best computed as
+    // biscalar_mul(u, 0) on a (P-Q, Q, P) basis.
+    // Simplest: the first component P-Q is in basis_t.RS.
+    // [u](P-Q) = scalar * (P-Q).
+    let mut pmq1 = &u_scalar * &basis_t.RS;
+    // K₁−K₂ second component: θ(P)−θ(Q) = θ(P−Q).
+    // Compute θ(P−Q) via the action matrix applied to (P−Q):
+    // θ(P−Q) = [m00](P−Q) + [m10]Q... no, this doesn't work
+    // because the action matrix is for (P, Q), not (P-Q, Q).
+    //
+    // Actually: θ(P−Q) = θ(P) − θ(Q) for a linear map. But θ
+    // is an endomorphism, so θ(P−Q) = θ(P) − θ(Q).
+    // In x-only, x(θ(P)−θ(Q)) can't be computed from
+    // x(θ(P)) and x(θ(Q)) without the y-coordinate.
+    // Use projective_difference as a fallback.
+    // TODO: propagate θ(P−Q) via the biladder.
+    let mut pmq2 = k1_second.projective_difference(&k2_second);
 
     for _ in 0..(f.value() - 2 - e_fdi) {
         k1_first = k1_first.double();
         k1_second = k1_second.double();
         k2_first = k2_first.double();
         k2_second = k2_second.double();
+        pmq1 = pmq1.double();
+        pmq2 = pmq2.double();
     }
 
     // Step 6: (2,2)-isogeny chain on E_t × E_t.
     let product = surfaces::EllipticProduct::new(curve_t, curve_t);
-    let pmq1 = k1_first.projective_difference(&k2_first);
-    let pmq2 = k1_second.projective_difference(&k2_second);
     let kernel = surfaces::Kernel::from_montgomery(
         product,
         (k1_first, k1_second),
