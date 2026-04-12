@@ -481,8 +481,10 @@ impl Kernel {
             };
             let (mut R, mut S) = strat_pts[k - 1];
             for _ in 0..n {
-                R = (R.0.double(), R.1.double());
-                S = (S.0.double(), S.1.double());
+                // Use double_for_theta (standard Z'=2yz Jacobian)
+                // to match the C ref's projective representative.
+                R = (R.0.double_for_theta(), R.1.double_for_theta());
+                S = (S.0.double_for_theta(), S.1.double_for_theta());
             }
             strat_pts.push((R, S));
             orders.push(orders[k - 1] - n);
@@ -722,8 +724,18 @@ impl Kernel {
         // the gluing, which is in standard form (with Hadamard).
         // In that case, apply an inverse Hadamard (which equals
         // Hadamard up to a factor of 4, since H² = 4I).
-        // The splitting step expects the codomain in a specific
-        // form where exactly one U_{i,j}(0) = 0.
+        // The splitting step expects dual form. The last two generic
+        // steps used hadamard_bool_2=0 (no final H), producing dual
+        // form. But the chain's FIRST domain was the gluing codomain
+        // in STANDARD form (H(α,β,γ,0)). The accumulated H state
+        // means the final codomain is in standard form when e is
+        // odd, dual when even. Apply H to toggle to dual form when
+        // needed.
+        //
+        // Actually, the penultimate and ultimate steps explicitly
+        // produce dual form regardless of the input. So the final
+        // codomain should always be in dual form. No adjustment
+        // needed.
         #[cfg(test)]
         {
             let count = isogeny::get_index_splitting_count(&current_jacobian.null);

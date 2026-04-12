@@ -406,10 +406,8 @@ impl SigningKey {
             BasisHint::from_byte(u8::from(self.verifying_key.hint)),
         );
 
-        eprintln!("sign_derand: entering main loop");
         // Line 3: while true do
         for _iter in 0..1000 {
-            eprintln!("sign iter {_iter}");
             // --- Commitment (lines 4–9) ---
 
             // Line 4: I_com ← RandomIdealGivenNorm(D_mix, true).
@@ -422,42 +420,25 @@ impl SigningKey {
                 rng,
             ) {
                 Some(i) => i,
-                None => {
-                    eprintln!("  skip: rand");
-                    continue;
-                }
+                None => continue,
             };
-            eprintln!("  rand ok");
 
             // Lines 5–6: RandomEquivalentPrimeIdeal.
             if !i_com.reduce_to_prime_norm::<30, _>(rng) {
-                eprintln!("  skip: reduce");
                 continue;
             }
-            eprintln!(
-                "  reduce ok, norm_limbs[0..4]={:x?}",
-                &i_com.norm().as_limbs()[..4]
-            );
 
             // Narrow to LeftIdeal<4> for to_isogeny.
             let i_com_narrow = match i_com.narrow() {
                 Some(i) => i,
-                None => {
-                    eprintln!("  skip: narrow");
-                    continue;
-                }
+                None => continue,
             };
-            eprintln!("  narrow ok");
 
             // Line 7: E_com, P_com, Q_com ← IdealToIsogeny(I_com)
             let (e_com, p_com, q_com) = match i_com_narrow.to_isogeny() {
                 Some(r) => r,
-                None => {
-                    eprintln!("  skip: to_isogeny");
-                    continue;
-                }
+                None => continue,
             };
-            eprintln!("  to_isogeny ok");
 
             // --- Challenge (line 10) ---
             let chl = Challenge::derive(&self.verifying_key, &e_com, msg);
@@ -535,52 +516,19 @@ impl SigningKey {
             let d_mix_sq = d_mix_22.ct_mul(&d_mix_22);
             let radius = d_mix_sq.shl(e_rsp + f + 1);
 
-            // Diagnostic: check gram determinant before sampling.
-            {
-                let cols = intersection_lat.basis().columns();
-                let nrd = crate::quaternions::lattice::NrdBasis::new(cols);
-                let det = nrd.gram().det();
-                eprintln!(
-                    "  response: intersection denom={:?}, det_bits={}, det_zero={}",
-                    intersection_lat.denom(),
-                    det.bitsize(),
-                    bool::from(det.is_zero()),
-                );
-            }
-
-            eprintln!("  response: radius_bits={}, sampling...", radius.bitsize(),);
             // The intersection lattice has entries up to ~1920 bits
             // (BigInt<30>). The gram computation squares these:
             // ~3840 bits ≈ 60 limbs. Use W=64 for margin.
             let alpha_rsp_w = match intersection_lat.sample_from_ball::<64>(&radius) {
-                Some(a) => {
-                    eprintln!("  response: sample_from_ball succeeded!");
-                    a
-                }
-                None => {
-                    eprintln!("  response: sample_from_ball returned None");
-                    continue;
-                }
+                Some(a) => a,
+                None => continue,
             };
 
             // Line 15: α_rsp, n_bt ← ComputeBacktrackingAndNormalize(α_rsp).
             // Keep `alpha_rsp_w` at `Element<N_RESP>` for the wide
             // degree-computation and ideal construction below.
-            eprintln!(
-                "  response: alpha_rsp coord_bits=[{}, {}, {}, {}], denom_bits={}",
-                alpha_rsp_w.a.as_bigint().bitsize(),
-                alpha_rsp_w.b.as_bigint().bitsize(),
-                alpha_rsp_w.c.as_bigint().bitsize(),
-                alpha_rsp_w.d.as_bigint().bitsize(),
-                alpha_rsp_w.denom.as_bigint().bitsize(),
-            );
             let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
             let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
-            eprintln!(
-                "  response: nrd_bits={}, nrd_den_bits={}",
-                nrd_num_w.bitsize(),
-                nrd_den_w.bitsize(),
-            );
 
             // Lines 16–20: degree computations.
             //
@@ -607,19 +555,9 @@ impl SigningKey {
             // spare. Narrow from the wide working width.
             let q_rsp: BigInt<4> = match d_rsp_shifted.narrow_to::<4>() {
                 Some(q) => q,
-                None => {
-                    eprintln!(
-                        "  response: q_rsp narrow failed, bits={}",
-                        d_rsp_shifted.bitsize()
-                    );
-                    continue;
-                }
+                None => continue,
             };
             let e_rsp_prime = e_rsp - r_rsp_val - n_bt;
-            eprintln!(
-                "  response: n_bt={n_bt}, r_rsp={r_rsp_val}, e_rsp_prime={e_rsp_prime}, q_rsp_bits={}",
-                q_rsp.bitsize()
-            );
 
             let n_bt_te =
                 TorsionExponent::try_from(n_bt).map_err(|_| SignatureError::SigningFailed)?;
@@ -649,14 +587,8 @@ impl SigningKey {
                 &i_com_rsp_norm_w,
                 o0_w.order(),
             ) {
-                Some(i) => {
-                    eprintln!("  response: from_generator_mod_hnf ok");
-                    i
-                }
-                None => {
-                    eprintln!("  response: from_generator_mod_hnf failed");
-                    continue;
-                }
+                Some(i) => i,
+                None => continue,
             };
             // The response ideal has norm ~2^257 which may exceed
             // BigInt<4>. Try narrowing directly; if it fails, call
@@ -671,28 +603,16 @@ impl SigningKey {
                     // barely exceeding BigInt<4>). Use reduce_to_
                     // prime_norm as a fallback — it produces a
                     // prime-norm equivalent that fits in BigInt<4>.
-                    eprintln!(
-                        "  response: narrow failed (norm_bits={}), using reduce_to_prime_norm",
-                        i_com_rsp_w.norm().bitsize(),
-                    );
                     let mut i_rsp = i_com_rsp_w;
                     if !i_rsp.reduce_to_prime_norm::<44, _>(rng) {
-                        eprintln!("  response: reduce_to_prime_norm failed");
                         continue;
                     }
                     match i_rsp.narrow() {
                         Some(i) => i,
-                        None => {
-                            eprintln!("  response: narrow after reduce failed");
-                            continue;
-                        }
+                        None => continue,
                     }
                 }
             };
-            eprintln!(
-                "  response: i_com_rsp ready (norm_bits={})",
-                i_com_rsp.norm().bitsize()
-            );
 
             // Lines 21–33: compute response isogeny
             let (mut e_chl, mut p_chl, mut q_chl);
