@@ -435,8 +435,12 @@ impl SigningKey {
             };
 
             // Line 7: E_com, P_com, Q_com ← IdealToIsogeny(I_com)
+            eprintln!("[sign iter={_iter}] commitment to_isogeny...");
             let (e_com, p_com, q_com) = match i_com_narrow.to_isogeny() {
-                Some(r) => r,
+                Some(r) => {
+                    eprintln!("[sign iter={_iter}] commitment to_isogeny OK");
+                    r
+                }
                 None => continue,
             };
 
@@ -642,8 +646,12 @@ impl SigningKey {
                 let inter_norm = i_com_rsp.norm().ct_mul(i_aux.norm());
                 let i_inter =
                     LeftIdeal::from_parts(inter_lattice, inter_norm, *EXTREMAL_ORDERS[0].order());
+                eprintln!("[sign iter={_iter}] response to_isogeny...");
                 let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_inter.to_isogeny() {
-                    Some(r) => r,
+                    Some(r) => {
+                        eprintln!("[sign iter={_iter}] response to_isogeny OK");
+                        r
+                    }
                     None => continue,
                 };
 
@@ -768,6 +776,7 @@ impl SigningKey {
             // Convert ChangeOfBasisMatrix → ChallengeMatrix for Signature.
             let sig_matrix = ChallengeMatrix::from(m_chl);
 
+            eprintln!("[sign iter={_iter}] SUCCESS — assembling signature");
             return Ok(Signature {
                 curve_aux,
                 n_bt: n_bt_te,
