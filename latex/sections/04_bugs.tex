@@ -391,6 +391,69 @@ check in particular should not be hand-derived from coordinate
 arithmetic; it should use the same order-basis GCD computation as the
 C reference.
 
+\subsection{Invalid test kernels for $(2,2)$-isogeny chains}
+\label{sec:bug-theta-tests}
+
+This was the most time-consuming false lead we encountered.  We
+wrote three unit tests that exercised the $(2,2)$-isogeny chain on
+short chains ($e = 2, 3$) with synthetic kernel points constructed
+from arbitrary basis elements --- for example, $(P, Q) \times (Q,
+P)$ on $E_0 \times E_0$, where $P, Q$ are torsion basis points.
+All three consistently failed at the splitting step
+(Algorithm~8.41), which found zero vanishing $U_{i,j}(0)$
+coordinates instead of the expected one.
+
+Because 100 KAT verification vectors exercised the same chain code
+and passed, we assumed the test data was valid and spent
+considerable effort searching for a bug in our implementation:
+comparing every intermediate value against the C reference, tracing
+Hadamard transform conventions through the chain, checking
+projective representatives from Jacobian doubling, and adding
+isotropicity diagnostics.  None of these investigations found a
+discrepancy --- the formulas matched the C reference exactly.
+
+We had originally pulled these kernel constructions from the C
+reference implementation's test suite without modification or
+independent validation.  Because the C reference exercises the
+$(2,2)$-chain only through the full signing/verification flow
+(which produces valid kernels by construction), its tests never
+exercise synthetic kernels of this form.  We adopted the kernel
+patterns without checking whether they satisfied the theta
+formula preconditions.
+
+The test data was invalid.  The synthetic kernels are
+\emph{isotropic} in the Weil-pairing sense (the product Weil
+pairing is trivial), but they cause the
+\texttt{ActionByTranslation} determinant $\delta = x_{P_4} z_{P_2}
+- z_{P_4} x_{P_2}$ to vanish.  The theta change-of-basis
+(Algorithm~8.36) requires inverting~$\delta$; when $\delta = 0$ the
+formulas silently produce wrong output.  We confirmed this by
+running the same kernels through the DMPR24 reference SageMath
+implementation~\cite{DMPR24}, which also fails with a
+\texttt{ZeroDivisionError} in the same batched inversion.
+
+The specification does not document the nonvanishing-$\delta$
+precondition.  The C reference avoids it in practice because its
+kernels come from \textsc{FixedDegreeIsogeny} (Algorithm~3.15),
+which constructs kernels from endomorphisms produced by
+\textsc{RepresentInteger} --- these structured kernels have
+nonzero~$\delta$ by construction.  When $\delta$ does vanish (a
+rare edge case), the C reference's \texttt{gluing\_compute}
+returns failure and the signing loop retries.
+
+\noindent
+\textbf{Takeaway:} Not every isotropic subgroup of
+$E_1[2^e] \times E_2[2^e]$ is a valid kernel for the theta
+$(2,2)$-isogeny formulas.  The formulas additionally require
+nonvanishing of certain determinants in the theta change-of-basis
+computation.  This precondition is nowhere stated in the
+specification and is not obvious from the pseudocode.  We wasted
+significant debugging time because our test data violated an
+undocumented assumption.  The fix was to delete the invalid tests
+and rely on KAT verification (100 vectors, all passing), which
+exercises the chain on kernels produced by the actual protocol
+flow.
+
 \subsection{HNF coefficient blow-up at fixed precision}
 \label{sec:bug-hnf}
 
