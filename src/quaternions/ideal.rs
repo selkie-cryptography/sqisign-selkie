@@ -113,7 +113,6 @@ impl ExtremalOrder<8> {
             approx as i64
         };
 
-        eprintln!("        represent_integer: bound={bound}, z_max={z_max}, q={q_val}");
         let mut _primes_found = 0u32;
         let mut _cornacchia_ok = 0u32;
         let mut _parity_ok = 0u32;
@@ -275,11 +274,6 @@ impl ExtremalOrder<8> {
             }
         }
 
-        eprintln!(
-            "        represent_integer: exhausted bound={bound}, z_max={z_max}, \
-             primes={_primes_found}, cornacchia_ok={_cornacchia_ok}, parity_ok={_parity_ok}, \
-             isogeny_cond_fail={_isogeny_cond_fail}"
-        );
         None
     }
 }
@@ -658,19 +652,8 @@ impl super::lattice::LeftIdeal<4> {
         // short-vector degrees small enough for the u·d₁ + v·d₂ =
         // 2^e search to succeed.
         let ideal = match self.smallest_equiv() {
-            Some(eq) => {
-                eprintln!(
-                    "      suitable_ideals: smallest_equiv norm_bits={} (was {}), denom_bits={}",
-                    eq.norm().bitsize(),
-                    self.norm().bitsize(),
-                    eq.lattice().denom().bitsize(),
-                );
-                eq
-            }
-            None => {
-                eprintln!("      suitable_ideals: smallest_equiv failed, using original");
-                *self
-            }
+            Some(eq) => eq,
+            None => *self,
         };
 
         // Phase 1: L2-reduce and enumerate short vectors.
@@ -689,11 +672,6 @@ impl super::lattice::LeftIdeal<4> {
         let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
         let short_vecs = nrd_basis.enumerate_short_vectors(&norm_8, &denom_8);
 
-        eprintln!(
-            "      suitable_ideals: {} short vectors enumerated",
-            short_vecs.len()
-        );
-
         // Phase 2: Search pairs (β₁, β₂) sorted by ascending norm.
         //
         // Currently both β₁ and β₂ come from L_0 (standard order).
@@ -705,16 +683,11 @@ impl super::lattice::LeftIdeal<4> {
             for sv2 in &short_vecs[i..] {
                 _pairs_tried += 1;
                 if let Some(result) = try_find_uv(sv1, sv2, &two_f, f, order) {
-                    eprintln!(
-                        "      suitable_ideals: found after {_pairs_tried} pairs, e={}",
-                        result.e.value()
-                    );
                     return Some(result);
                 }
             }
         }
 
-        eprintln!("      suitable_ideals: no valid pair found ({_pairs_tried} tried)");
         None
     }
 }

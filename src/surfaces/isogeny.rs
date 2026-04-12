@@ -114,61 +114,12 @@ impl GluingKernel {
         // jac_to_xz-converted Montgomery points (from From<JacobianPoint>).
         let theta_pts = product_to_theta(&[self.T1, self.T2], &N);
 
-        #[cfg(test)]
-        {
-            // Trace each computation stage.
-            let P1 = &theta_pts[0];
-            eprintln!(
-                "gluing trace: T1 mont = ({:?},{:?}) ({:?},{:?})",
-                self.T1.0.X, self.T1.0.Z, self.T1.1.X, self.T1.1.Z
-            );
-            // Raw product before N.
-            let raw_x = &self.T1.0.X * &self.T1.1.X;
-            let raw_y = &self.T1.0.X * &self.T1.1.Z;
-            let raw_z = &self.T1.0.Z * &self.T1.1.X;
-            let raw_w = &self.T1.0.Z * &self.T1.1.Z;
-            eprintln!(
-                "gluing trace: raw product T1 = ({:?}, {:?}, {:?}, {:?})",
-                raw_x, raw_y, raw_z, raw_w
-            );
-            eprintln!(
-                "gluing trace: after N, T1 = ({:?}, {:?}, {:?}, {:?})",
-                P1.0, P1.1, P1.2, P1.3
-            );
-            // Squared.
-            let sq = (P1.0.square(), P1.1.square(), P1.2.square(), P1.3.square());
-            eprintln!(
-                "gluing trace: squared T1 = ({:?}, {:?}, {:?}, {:?})",
-                sq.0, sq.1, sq.2, sq.3
-            );
-            // After hadamard.
-            let h = hadamard4(&sq.0, &sq.1, &sq.2, &sq.3);
-            eprintln!(
-                "gluing trace: H(sq) T1 = ({:?}, {:?}, {:?}, {:?})",
-                h.0, h.1, h.2, h.3
-            );
-            eprintln!("gluing trace: H(sq).3 is_zero = {}", h.3 == Fp2::ZERO);
-        }
         let P1 = &theta_pts[0];
         let P2 = &theta_pts[1];
 
         // 7–8. (X₁,Y₁,Z₁,W₁) ← H ∘ S(P₁), (X₂,Y₂,Z₂,W₂) ← H ∘ S(P₂)
         let hs1 = squared_hadamard4(&P1.0, &P1.1, &P1.2, &P1.3);
         let hs2 = squared_hadamard4(&P2.0, &P2.1, &P2.2, &P2.3);
-
-        #[cfg(test)]
-        {
-            eprintln!(
-                "gluing: hs1 = ({:?}, {:?}, {:?}, {:?})",
-                hs1.0, hs1.1, hs1.2, hs1.3
-            );
-            eprintln!(
-                "gluing: hs2 = ({:?}, {:?}, {:?}, {:?})",
-                hs2.0, hs2.1, hs2.2, hs2.3
-            );
-            eprintln!("gluing: hs1.3 (W₁) is_zero = {}", hs1.3 == Fp2::ZERO);
-            eprintln!("gluing: hs2.3 (W₂) is_zero = {}", hs2.3 == Fp2::ZERO);
-        }
 
         // 13–15. Recover α, β, γ from the cross-products.
         //
@@ -208,16 +159,10 @@ impl GluingKernel {
         let x = &hs1.0 * &alpha_inv; // X₁ · (Y₁·Z₂)
         let y = &hs1.2 * &beta; // Z₁ · (Y₁·X₂)
 
-        // Apply Hadamard to get the standard-form codomain null.
-        //
-        // # Divergences
-        //
-        // The C ref stores the gluing codomain in dual form
-        // (α, β, γ, 0) WITHOUT Hadamard (theta_isogenies.c:497).
-        // Our chain's precomputation and generic step eval are
-        // built around the standard form (WITH Hadamard). Matching
-        // the C ref requires adjusting the entire chain's
-        // Hadamard convention, which is tracked as a separate task.
+        // Apply Hadamard: H(α, β, γ, 0). This gives standard form
+        // with all four coordinates nonzero, which is needed for the
+        // precomputation (d=0 makes three precomp values zero,
+        // killing coordinates during theta doubling).
         let (a2, b2, c2, d2) = hadamard4(&alpha, &beta, &gamma, &Fp2::ZERO);
         let null = ThetaNullPoint::new(a2, b2, c2, d2);
         let codomain = Jacobian::new(null);
@@ -456,26 +401,6 @@ fn theta_change_of_basis(
     let Gp = translation_finish(&d_Gp, &invs[2], &invs[3]);
     let H = translation_finish(&d_H, &invs[4], &invs[5]);
     let Hp = translation_finish(&d_Hp, &invs[6], &invs[7]);
-
-    #[cfg(test)]
-    {
-        eprintln!(
-            "N matrix: G = [{:?}, {:?}; {:?}, {:?}]",
-            G[0][0], G[0][1], G[1][0], G[1][1]
-        );
-        eprintln!(
-            "N matrix: Gp = [{:?}, {:?}; {:?}, {:?}]",
-            Gp[0][0], Gp[0][1], Gp[1][0], Gp[1][1]
-        );
-        eprintln!(
-            "N matrix: H = [{:?}, {:?}; {:?}, {:?}]",
-            H[0][0], H[0][1], H[1][0], H[1][1]
-        );
-        eprintln!(
-            "N matrix: Hp = [{:?}, {:?}; {:?}, {:?}]",
-            Hp[0][0], Hp[0][1], Hp[1][0], Hp[1][1]
-        );
-    }
 
     // Lines 4–7: intermediate products.
     let t1 = &G[0][0] * &H[0][0] + &G[0][1] * &H[1][0];
@@ -1170,16 +1095,6 @@ fn get_index_splitting(null: &ThetaNullPoint) -> SplittingIndex {
             count += 1;
             result = idx;
         }
-    }
-    #[cfg(test)]
-    if count != 1 {
-        eprintln!(
-            "GetIndexSplitting: count={count}, null=({:?}, {:?}, {:?}, {:?})",
-            null.a, null.b, null.c, null.d
-        );
-        // Check if any coordinate is zero (degenerate point)
-        let any_zero = [&null.a, &null.b, &null.c, &null.d].contains(&&Fp2::ZERO);
-        eprintln!("  any_zero_coord={any_zero}");
     }
     debug_assert!(
         count == 1,

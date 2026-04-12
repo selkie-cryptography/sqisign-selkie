@@ -305,6 +305,9 @@ fn fixed_degree_isogeny(
     let curve_t = Curve::E0;
     let p_t = ProjectiveXOnlyPoint::from_affine_x(precomputed::torsion_basis::e0_px(), &curve_t);
     let q_t = ProjectiveXOnlyPoint::from_affine_x(precomputed::torsion_basis::e0_qx(), &curve_t);
+    // Use (R=P, S=Q, RS=PmQ) ordering so that
+    // eval_decomposition(a, b) computes [a]P + [b]Q, matching
+    // the action matrix convention θ(P) = [m00]P + [m10]Q.
     let basis_t = TorsionBasis::new(p_t, q_t, p_t.projective_difference(&q_t));
     let gen_matrices = [
         ACTION_MATRICES[t][3],
@@ -317,7 +320,6 @@ fn fixed_degree_isogeny(
         f.value() - 2,
         p_bits.saturating_sub(u.bit_length()) + QUAT_REPRES_BOUND_INPUT,
     );
-    eprintln!("      fdi: t={t}, u_bits={}, e_fdi={e_fdi}", u.bit_length());
 
     // Step 2: θ ← RepresentInteger(u·(2^{e_FDI} − u), O_t, true)
     let u_wide = u.to_bigint_wide();
@@ -327,27 +329,11 @@ fn fixed_degree_isogeny(
         return None;
     }
     let m = u_wide.ct_mul(&two_e_fdi.ct_sub(&u_wide));
-    eprintln!("      fdi: m_bits={}", m.bitsize());
     let order_wide = ExtremalOrder::<8>::from(*order);
-    let theta = match order_wide.represent_integer(&m, true) {
-        Some(th) => {
-            eprintln!("      fdi: represent_integer ok");
-            th
-        }
-        None => {
-            eprintln!("      fdi: represent_integer failed (isogeny_cond=true)");
-            return None;
-        }
-    };
+    let theta = order_wide.represent_integer(&m, true)?;
 
     // Step 3: M_θ via order-basis decomposition.
-    let m_theta = match action_matrix(&theta, order.order(), &gen_matrices, f) {
-        Some(m) => m,
-        None => {
-            eprintln!("      fdi: action_matrix failed");
-            return None;
-        }
-    };
+    let m_theta = action_matrix(&theta, order.order(), &gen_matrices, f)?;
 
     // Step 4–5: Build kernel points on E_t × E_t.
     //
@@ -457,111 +443,43 @@ impl LeftIdeal<4> {
         let f = TorsionExponent::FULL;
 
         // Step 1: Decompose via SuitableIdeals.
-        let sui = match self.suitable_ideals() {
-            Some(s) => {
-                eprintln!("    to_isogeny: suitable_ideals ok, e={}", s.e.value());
-                s
-            }
-            None => {
-                eprintln!("    to_isogeny: suitable_ideals failed");
-                return None;
-            }
-        };
+        let sui = self.suitable_ideals()?;
 
         // Steps 2–3: degrees (already in sui.factor1.degree, sui.factor2.degree).
         let d1 = &sui.factor1.degree;
         let _d2 = &sui.factor2.degree;
 
         // Step 4: E_u, φ_u(P_s), φ_u(Q_s) ← FixedDegreeIsogeny(s, u)
-        let u_deg = match IsogenyDegree::new_odd(*sui.u.as_limbs()) {
-            Some(d) => d,
-            None => {
-                eprintln!("    to_isogeny: u_deg not odd, u={:?}", sui.u);
-                return None;
-            }
-        };
-        let (e_u, phi_u_p, phi_u_q) = match fixed_degree_isogeny(sui.factor1.order, &u_deg) {
-            Some(r) => {
-                eprintln!("    to_isogeny: fixed_degree_isogeny(s, u) ok");
-                r
-            }
-            None => {
-                eprintln!("    to_isogeny: fixed_degree_isogeny(s, u) failed");
-                return None;
-            }
-        };
+        let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
+        let (e_u, phi_u_p, phi_u_q) = fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
 
         // Step 5: E_v, φ_v(P_t), φ_v(Q_t) ← FixedDegreeIsogeny(t, v)
-        let v_deg = match IsogenyDegree::new_odd(*sui.v.as_limbs()) {
-            Some(d) => d,
-            None => {
-                eprintln!("    to_isogeny: v_deg not odd, v={:?}", sui.v);
-                return None;
-            }
-        };
-        let (e_v, phi_v_p, phi_v_q) = match fixed_degree_isogeny(sui.factor2.order, &v_deg) {
-            Some(r) => {
-                eprintln!("    to_isogeny: fixed_degree_isogeny(t, v) ok");
-                r
-            }
-            None => {
-                eprintln!("    to_isogeny: fixed_degree_isogeny(t, v) failed");
-                return None;
-            }
-        };
+        let v_deg = IsogenyDegree::new_odd(*sui.v.as_limbs())?;
+        let (e_v, phi_v_p, phi_v_q) = fixed_degree_isogeny(sui.factor2.order, &v_deg)?;
 
         // Step 6: [P, Q]^T ← (1/(nrd(I)·nrd(J_t))) M_{β₂} [φ_v(P_t), φ_v(Q_t)]^T
         //
         // For t=0, nrd(J_0) = 1, so the scalar is 1/nrd(I) mod 2^f.
         // TODO: For t > 0, multiply by 1/nrd(J_t) as well.
         let modulus = BigInt::<4>::ONE.shl(f.value());
-        let norm_inv = match self.norm().invert_mod(&modulus) {
-            Some(inv) => inv,
-            None => {
-                eprintln!("    to_isogeny: norm_inv failed, norm={:?}", self.norm());
-                return None;
-            }
-        };
+        let norm_inv = self.norm().invert_mod(&modulus)?;
 
         // Look up generator action matrices for order O_t.
-        let t_index = match EXTREMAL_ORDERS
+        let t_index = EXTREMAL_ORDERS
             .iter()
-            .position(|o| o.q() == sui.factor2.order.q())
-        {
-            Some(idx) => idx,
-            None => {
-                eprintln!("    to_isogeny: t_index lookup failed");
-                return None;
-            }
-        };
+            .position(|o| o.q() == sui.factor2.order.q())?;
         let gen_matrices_t = [
             ACTION_MATRICES[t_index][3],
             ACTION_MATRICES[t_index][4],
             ACTION_MATRICES[t_index][5],
         ];
-        let m_beta2 = match action_matrix(
+        let m_beta2 = action_matrix(
             &sui.factor2.beta,
             sui.factor2.order.order(),
             &gen_matrices_t,
             f,
-        ) {
-            Some(m) => m,
-            None => {
-                eprintln!("    to_isogeny: action_matrix(beta2) failed");
-                return None;
-            }
-        };
+        )?;
         let (p_step6, q_step6) = m_beta2.apply_scaled(&norm_inv, phi_v_p, phi_v_q, f);
-
-        // Check: are phi_u_p, phi_u_q on e_u?
-        let phi_up_on = e_u.recover_y(&phi_u_p.to_affine_x());
-        let phi_uq_on = e_u.recover_y(&phi_u_q.to_affine_x());
-        eprintln!(
-            "    to_isogeny: phi_u on e_u = ({}, {}), d1_bits={}",
-            phi_up_on.is_some(),
-            phi_uq_on.is_some(),
-            d1.bit_length(),
-        );
 
         // Steps 7–8: Build kernel points on E_u × E_v.
         //
@@ -586,41 +504,12 @@ impl LeftIdeal<4> {
         let pmq1 = kp_first.projective_difference(&kq_first);
         let pmq2 = kp_second.projective_difference(&kq_second);
 
-        eprintln!(
-            "    to_isogeny step 9: e_u j={:?}, e_v j={:?}, scale={}",
-            e_u.j_invariant(),
-            e_v.j_invariant(),
-            scale,
-        );
-        // Check if kernel points are on their curves.
-        let kp1_on = e_u.recover_y(&kp_first.to_affine_x());
-        let kp2_on = e_v.recover_y(&kp_second.to_affine_x());
-        let kq1_on = e_u.recover_y(&kq_first.to_affine_x());
-        let kq2_on = e_v.recover_y(&kq_second.to_affine_x());
-        let pmq1_on = e_u.recover_y(&pmq1.to_affine_x());
-        let pmq2_on = e_v.recover_y(&pmq2.to_affine_x());
-        eprintln!(
-            "    to_isogeny step 9: kp on curves=({}, {}), kq=({}, {}), pmq=({}, {})",
-            kp1_on.is_some(),
-            kp2_on.is_some(),
-            kq1_on.is_some(),
-            kq2_on.is_some(),
-            pmq1_on.is_some(),
-            pmq2_on.is_some(),
-        );
-
-        let kernel = match surfaces::Kernel::from_montgomery(
+        let kernel = surfaces::Kernel::from_montgomery(
             product,
             (kp_first, kp_second),
             (kq_first, kq_second),
             (pmq1, pmq2),
-        ) {
-            Some(k) => k,
-            None => {
-                eprintln!("    to_isogeny: kernel lift failed");
-                return None;
-            }
-        };
+        )?;
 
         let zero_v = ProjectiveXOnlyPoint::identity(&e_v);
         let (codomain, images) = kernel.isogeny(sui.e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
@@ -632,48 +521,26 @@ impl LeftIdeal<4> {
         let (p_chain, q_chain) = (images[0].0, images[1].0);
 
         // Step 14: [P_I, Q_I]^T ← (1/(u·d₁)) M_{β₁} [P_I, Q_I]^T
-        let s_index = match EXTREMAL_ORDERS
+        let s_index = EXTREMAL_ORDERS
             .iter()
-            .position(|o| o.q() == sui.factor1.order.q())
-        {
-            Some(idx) => idx,
-            None => {
-                eprintln!("    to_isogeny: s_index lookup failed");
-                return None;
-            }
-        };
+            .position(|o| o.q() == sui.factor1.order.q())?;
         let gen_matrices_s = [
             ACTION_MATRICES[s_index][3],
             ACTION_MATRICES[s_index][4],
             ACTION_MATRICES[s_index][5],
         ];
-        let m_beta1 = match action_matrix(
+        let m_beta1 = action_matrix(
             &sui.factor1.beta,
             sui.factor1.order.order(),
             &gen_matrices_s,
             f,
-        ) {
-            Some(m) => m,
-            None => {
-                eprintln!("    to_isogeny: action_matrix(beta1) failed");
-                return None;
-            }
-        };
+        )?;
 
         // scalar = 1/(u · d₁) mod 2^f
         let ud1 = sui
             .u
             .ct_mul(&BigInt::<4>::from_sign_and_limbs(0, *d1.limbs()));
-        let ud1_inv = match ud1.invert_mod(&modulus) {
-            Some(inv) => inv,
-            None => {
-                eprintln!(
-                    "    to_isogeny: ud1_inv failed, ud1={:?} (must be odd)",
-                    ud1
-                );
-                return None;
-            }
-        };
+        let ud1_inv = ud1.invert_mod(&modulus)?;
 
         let (p_i, q_i) = m_beta1.apply_scaled(&ud1_inv, p_chain, q_chain, f);
 

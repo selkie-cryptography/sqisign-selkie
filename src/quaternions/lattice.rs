@@ -312,20 +312,6 @@ impl<const N: usize> Lattice<N> {
             }
         }
 
-        // Diagnostic: check how many pivots we found and which
-        // columns are zero in the top block.
-        eprintln!("    intersection_via_kernel: pivot_col_for_row={pivot_col_for_row:?}");
-        for col in 0..8 {
-            let top_zero = (0..4).all(|r| bool::from(cols[col][r].is_zero()));
-            eprintln!(
-                "    col {col}: top_zero={top_zero}, top_bits=[{}, {}, {}, {}]",
-                cols[col][0].bitsize(),
-                cols[col][1].bitsize(),
-                cols[col][2].bitsize(),
-                cols[col][3].bitsize(),
-            );
-        }
-
         // Extract kernel vectors: columns whose top 4 entries are
         // all zero. There should be exactly 4 such columns.
         let mut kernel_vecs = [[BigInt::<W>::ZERO; 8]; 4];
@@ -339,8 +325,6 @@ impl<const N: usize> Lattice<N> {
                 n_kernel += 1;
             }
         }
-        eprintln!("    intersection_via_kernel: n_kernel={n_kernel}");
-
         // Intersection basis: for each kernel vector [a; b]
         // (where a is the first 4 entries), compute B₁ · a.
         // The result has denominator d₁.
@@ -367,11 +351,6 @@ impl<const N: usize> Lattice<N> {
                 basis_n[row][col] = match inter_basis_w[row][col].narrow_to::<N>() {
                     Some(v) => v,
                     None => {
-                        eprintln!(
-                            "    intersection_via_kernel: narrow failed at [{row}][{col}], \
-                             bits={}",
-                            inter_basis_w[row][col].bitsize(),
-                        );
                         // Fall back: the intersection HNF entries
                         // exceed BigInt<N>. Caller should retry with
                         // a wider N or widen the intersection.
@@ -388,10 +367,6 @@ impl<const N: usize> Lattice<N> {
         let denom_n: BigInt<N> = match denom_w.narrow_to() {
             Some(d) => d,
             None => {
-                eprintln!(
-                    "    intersection_via_kernel: denom narrow failed, bits={}",
-                    denom_w.bitsize(),
-                );
                 return HnfLattice {
                     basis: Matrix::<N>::ZERO,
                     denom: BigInt::<N>::ZERO,
@@ -723,16 +698,7 @@ impl<const N: usize> Lattice<N> {
                 all_zero = false;
             }
         }
-        eprintln!(
-            "      sample_from_ball: bounds=[{}, {}, {}, {}], rad_bits={}",
-            bounds[0].bitsize(),
-            bounds[1].bitsize(),
-            bounds[2].bitsize(),
-            bounds[3].bitsize(),
-            rad.bitsize(),
-        );
         if all_zero {
-            eprintln!("      sample_from_ball: all bounds zero, returning None");
             return None; // ball too small
         }
 
@@ -1405,15 +1371,6 @@ impl LeftIdeal<30> {
             }
         }
         let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), o_alpha_denom);
-
-        eprintln!(
-            "    from_generator_mod_hnf: o_alpha[0][0]_bits={}, o_n[0][0]_bits={}, alpha_d_bits={}, o_alpha_denom_bits={}, norm_bits={}",
-            o_alpha_cols[0][0].bitsize(),
-            o_n_cols[0][0].bitsize(),
-            alpha_d.bitsize(),
-            o_alpha_denom.bitsize(),
-            norm.bitsize(),
-        );
 
         // Mod-HNF bounding modulus `D = 4 · d⁴ · norm² · p`.
         //
@@ -2110,15 +2067,6 @@ where
         // mantissa can't handle the cancellation.
         let canonical = self.lattice.canonicalize();
         let basis = canonical.basis();
-        eprintln!(
-            "    reduce_to_prime_norm: canonical diag=[{}, {}, {}, {}], denom_bits={}, norm_bits={}",
-            basis[0][0].bitsize(),
-            basis[1][1].bitsize(),
-            basis[2][2].bitsize(),
-            basis[3][3].bitsize(),
-            self.lattice.denom().bitsize(),
-            self.norm.bitsize(),
-        );
         let cols = basis.columns();
         let nrd = NrdBasis::new(cols);
 
@@ -2142,11 +2090,6 @@ where
             }
         }
 
-        eprintln!(
-            "    reduce_to_prime_norm: class_gram[0][0]_bits={}, class_divisor_bits={}",
-            class_gram[0][0].bitsize(),
-            class_divisor.bitsize(),
-        );
         let class_basis = NrdBasis::from_cols_and_gram(*nrd.cols(), class_gram).l2_reduce();
 
         // Step 2: sample random short vectors until m is prime.
@@ -2170,7 +2113,6 @@ where
             let m = class_basis.eval_quadratic_form(&c).shr(1);
 
             if m.is_probable_prime_w::<PRIME_W>(primality_rounds) {
-                eprintln!("  reduce: found prime m_bits={}", m.bitsize());
                 // Reconstruct α = Σ c_i · col_i in the reduced basis.
                 let mut alpha = [BigInt::<N>::ZERO; 4];
                 for (i, c_i) in c.iter().enumerate() {
