@@ -88,11 +88,23 @@ impl ExtremalOrder<8> {
         let q = BigInt::<8>::from_u64(q_val as u64);
         let four_m = BigInt::<8>::from_u64(4).ct_mul(m);
 
+        // M must be positive and odd for solutions to exist.
+        if bool::from(m.is_negative()) || bool::from(m.is_zero()) || bool::from(m.is_even()) {
+            return None;
+        }
+        if *m <= p {
+            // M ≤ p: the bound formula produces nonsense.
+            return None;
+        }
+
         // Spec line 1: bound = ceil(sqrt(4M / (p·sqrt(q)))).
         let bound: u32 = {
             let q_sqrt = (q_val as f64).sqrt();
-            let approx = (four_m.to_f64() / (p.to_f64() * q_sqrt)).sqrt();
-            (approx.ceil() as u32).max(256)
+            let ratio = four_m.to_f64() / (p.to_f64() * q_sqrt);
+            if ratio <= 0.0 {
+                return None;
+            }
+            (ratio.sqrt().ceil() as u32).max(256)
         };
         let z_max = {
             let approx = (four_m.to_f64() / p.to_f64() - q_val as f64)
