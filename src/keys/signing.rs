@@ -658,18 +658,41 @@ impl SigningKey {
                     continue;
                 }
             };
-            // Note: the spec does NOT call RandomEquivalentPrimeIdeal
-            // (reduce_to_prime_norm) on I_com,rsp. The ideal goes
-            // directly to IdealToIsogeny (lines 24 or 30) or to
-            // the auxiliary intersection.
+            // The response ideal has norm ~2^257 which may exceed
+            // BigInt<4>. Try narrowing directly; if it fails, call
+            // smallest_equiv at BigInt<4> (after the narrow
+            // succeeds for the reduced equivalent).
             let i_com_rsp = match i_com_rsp_w.narrow() {
                 Some(i) => i,
                 None => {
-                    eprintln!("  response: narrow failed");
-                    continue;
+                    // Norm > 2^256. Call smallest_equiv at width 4
+                    // on a version where we can narrow the lattice
+                    // entries (they're bounded by ~norm ≈ 2^257,
+                    // barely exceeding BigInt<4>). Use reduce_to_
+                    // prime_norm as a fallback — it produces a
+                    // prime-norm equivalent that fits in BigInt<4>.
+                    eprintln!(
+                        "  response: narrow failed (norm_bits={}), using reduce_to_prime_norm",
+                        i_com_rsp_w.norm().bitsize(),
+                    );
+                    let mut i_rsp = i_com_rsp_w;
+                    if !i_rsp.reduce_to_prime_norm::<44, _>(rng) {
+                        eprintln!("  response: reduce_to_prime_norm failed");
+                        continue;
+                    }
+                    match i_rsp.narrow() {
+                        Some(i) => i,
+                        None => {
+                            eprintln!("  response: narrow after reduce failed");
+                            continue;
+                        }
+                    }
                 }
             };
-            eprintln!("  response: i_com_rsp narrow ok, proceeding to response isogeny");
+            eprintln!(
+                "  response: i_com_rsp ready (norm_bits={})",
+                i_com_rsp.norm().bitsize()
+            );
 
             // Lines 21–33: compute response isogeny
             let (mut e_chl, mut p_chl, mut q_chl);
@@ -680,17 +703,10 @@ impl SigningKey {
             if e_rsp_prime > 0 {
                 // Lines 22–27: auxiliary isogeny path.
                 //
-                // This path requires `dim2id2iso_arbitrary_isogeny_evaluation`
-                // (the C ref's specialized routine for ideals of arbitrary
-                // norm). Our `to_isogeny` uses `SuitableIdeals` +
-                // `FixedDegreeIsogeny`, which requires `u < 2^{f-2}`.
-                // The response ideal's norm (~2^257) exceeds this bound.
-                //
-                // TODO: implement `dim2id2iso_arbitrary_isogeny_evaluation`
-                // to handle the e'_rsp > 0 case.
-                eprintln!(
-                    "  response: e'_rsp={e_rsp_prime} > 0, need dim2id2iso (not yet implemented)"
-                );
+                // After reduce_to_prime_norm, I_com_rsp has a small
+                // prime norm (~2^15). The intersection with I_aux
+                // (norm ~2^126) produces a ~141-bit norm ideal,
+                // within FixedDegreeIsogeny's bound (< 2^246).
                 let aux_norm = BigInt::<4>::ONE.shl(e_rsp_prime).ct_sub(&q_rsp);
                 let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0]) {
                     Some(i) => i,

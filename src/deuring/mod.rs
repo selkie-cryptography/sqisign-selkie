@@ -322,6 +322,10 @@ fn fixed_degree_isogeny(
     // Step 2: θ ← RepresentInteger(u·(2^{e_FDI} − u), O_t, true)
     let u_wide = u.to_bigint_wide();
     let two_e_fdi = BigInt::<8>::ONE.shl(e_fdi);
+    // If u ≥ 2^{e_FDI}, the product is non-positive — no solution.
+    if u_wide >= two_e_fdi {
+        return None;
+    }
     let m = u_wide.ct_mul(&two_e_fdi.ct_sub(&u_wide));
     eprintln!("      fdi: m_bits={}", m.bitsize());
     let order_wide = ExtremalOrder::<8>::from(*order);
