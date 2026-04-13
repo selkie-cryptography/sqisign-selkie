@@ -76,25 +76,17 @@ pub mod torsion_basis {
 ///
 /// # Basis convention
 ///
-/// These matrices were extracted from the C reference
-/// implementation's `CURVES_WITH_ENDOMORPHISMS` data. The C ref
-/// stores the torsion basis in a **swapped slot convention**:
+/// These matrices encode the endomorphism in the standard
+/// `(P, Q)` basis. For a matrix `M = [[m00, m01], [m10, m11]]`:
 ///
-/// - `basis.P` = P (first generator)
-/// - `basis.Q` = P−Q (difference, in the Q slot)
-/// - `basis.PmQ` = Q (second generator, in the PmQ slot)
+/// - Column 0: `θ(P) = [m00]·P + [m10]·Q`
+/// - Column 1: `θ(Q) = [m01]·P + [m11]·Q`
 ///
-/// The biladder `ec_biscalar_mul(s0, s1, basis)` computes
-/// `[s0]·P + [s1]·(P−Q)`, NOT `[s0]·P + [s1]·Q`. Therefore
-/// these action matrices encode the endomorphism in the `(P, P−Q)`
-/// basis: for a matrix `M = [[m00, m01], [m10, m11]]`,
+/// Use with `eval_decomposition` on a `TorsionBasis(P, Q, P−Q)`.
 ///
-/// - Column 0: `θ(P) = [m00]·P + [m10]·(P−Q)`
-/// - Column 1: `θ(P−Q) = [m01]·P + [m11]·(P−Q)`
-///
-/// When using these matrices with `eval_decomposition`, the
-/// `TorsionBasis` must be constructed as `(P, P−Q, Q)` so that
-/// `eval_decomposition(a, b)` computes `[a]·P + [b]·(P−Q)`.
+/// Verified by `action_matrix_consistent_with_basis` (x-only
+/// check against known endomorphism) and `action_matrix_scalar_three`
+/// (decomposition of scalar elements produces the identity matrix).
 pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
     // Curve 0
     [
