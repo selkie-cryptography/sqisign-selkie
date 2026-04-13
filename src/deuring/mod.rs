@@ -307,11 +307,12 @@ fn fixed_degree_isogeny(
     let q_t = ProjectiveXOnlyPoint::from_affine_x(precomputed::torsion_basis::e0_qx(), &curve_t);
     let pmq_t =
         ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve_t);
-    // Use (R=P, S=Q, RS=PmQ) ordering so that
-    // eval_decomposition(a, b) computes [a]P + [b]Q, matching
-    // the action matrix convention (verified by the
-    // action_matrix_consistent_with_basis test).
-    let basis_t = TorsionBasis::new(p_t, q_t, pmq_t);
+    // Use (R=P, S=P−Q, RS=Q) ordering so that
+    // eval_decomposition(a, b) computes [a]P + [b](P−Q), matching
+    // the C ref's swapped basis convention. The precomputed action
+    // matrices were extracted from the C ref and encode the action
+    // in the (P, P−Q) basis, NOT the (P, Q) basis.
+    let basis_t = TorsionBasis::new(p_t, pmq_t, q_t);
     let gen_matrices = [
         ACTION_MATRICES[t][3],
         ACTION_MATRICES[t][4],
@@ -364,41 +365,58 @@ fn fixed_degree_isogeny(
     let m10 = m_theta.entry(1, 0).mul_mod2k(&u_inv, e_fdi + 2);
     let m11 = m_theta.entry(1, 1).mul_mod2k(&u_inv, e_fdi + 2);
 
-    // Step 4–5: Build kernel points on E_t × E_t.
+    // Step 4–5: Match the C ref's flow exactly:
+    // 1. Lift full-torsion basis to Jacobian
+    // 2. Apply θ/u via the action matrix (biladder on Montgomery basis)
+    // 3. Lift the endomorphism output to Jacobian
+    // 4. Double everything in Jacobian to reduce to order 2^(e+2)
     //
-    // (θ/u)(P) = [m00]P + [m10]Q
-    // (θ/u)(P−Q) = [(m00−m01)]P + [(m10−m11)]Q  (by linearity)
+    // The lift must happen BEFORE doubling so the Okeya-Sakurai sees
+    // consistent projective representatives. After lifting, Jacobian
+    // doublings preserve the group law exactly.
+    //
+    // Use (P, P-Q) as kernel generators to avoid the theta degeneracy
+    // on E₀×E₀ (see §4 of the paper).
+    // With the swapped basis (P, P-Q, Q):
+    // Column 0 of M gives θ/u(P) = [m00]P + [m10](P-Q)
+    // Column 1 of M gives θ/u(P-Q) = [m01]P + [m11](P-Q)
+    // Difference gives θ/u(Q) = θ/u(P) - θ/u(P-Q)
     let theta_p = basis_t.eval_decomposition(&m00, &m10);
-    let theta_pmq = basis_t.eval_decomposition(
+    let theta_pmq = basis_t.eval_decomposition(&m01, &m11);
+    let theta_q = basis_t.eval_decomposition(
         &m00.sub_mod2k(&m01, e_fdi + 2),
         &m10.sub_mod2k(&m11, e_fdi + 2),
     );
-    // θ/u(Q) = θ/u(P) − θ/u(P−Q) for the T1−T2 difference.
-    let theta_q = basis_t.eval_decomposition(&m01, &m11);
 
-    // Kernel generators: T1 = (P, θ/u(P)), T2 = (P−Q, θ/u(P−Q)).
-    //
-    // The C ref uses (P, P−Q) as kernel generators (NOT (P, Q)).
-    // The Okeya-Sakurai lift of (P, P−Q) produces Jacobian
-    // y-coordinates that avoid a theta-coordinate degeneracy
-    // (alpha==gamma → null point c=d=0) that occurs with (P, Q)
-    // on E₀ × E₀.
-    //
-    // Component 1: lift (P, P−Q, Q) → (P_jac, PmQ_jac)
-    let basis_component1 = TorsionBasis::new(basis_t.R, basis_t.RS, basis_t.S);
-    let (p_jac_1, pmq_jac_1) = basis_component1.lift(&curve_t)?;
-    // Component 2: lift (θ/u(P), θ/u(P−Q), θ/u(Q)) → (θP_jac, θPmQ_jac)
-    let basis_component2 = TorsionBasis::new(theta_p, theta_pmq, theta_q);
-    let (p_jac_2, pmq_jac_2) = basis_component2.lift(&curve_t)?;
+    // Lift component 1: (P, P-Q, Q) — same as basis_t
+    let comp1 = TorsionBasis::new(basis_t.R, basis_t.S, basis_t.RS);
+    let (p_jac_1, pmq_jac_1) = match comp1.lift(&curve_t) {
+        Some(r) => r,
+        None => {
+            #[cfg(test)]
+            eprintln!("[FDI] comp1 lift failed");
+            return None;
+        }
+    };
+    // Lift component 2: (θ/u(P), θ/u(P-Q), θ/u(Q)) → (θP_jac, θPmQ_jac)
+    let comp2 = TorsionBasis::new(theta_p, theta_pmq, theta_q);
+    let (p_jac_2, pmq_jac_2) = match comp2.lift(&curve_t) {
+        Some(r) => r,
+        None => {
+            #[cfg(test)]
+            eprintln!("[FDI] comp2 lift failed (θ/u point not on E₀?)");
+            return None;
+        }
+    };
 
     // Double in Jacobian to reduce from order 2^f to order 2^(e+2).
+    let doublings = f.value() - 2 - e_fdi;
     let double_n = |mut pt: JacobianPoint, n: u32| -> JacobianPoint {
         for _ in 0..n {
             pt = pt.double_for_theta();
         }
         pt
     };
-    let doublings = f.value() - 2 - e_fdi;
     let k1_jac = (double_n(p_jac_1, doublings), double_n(p_jac_2, doublings));
     let k2_jac = (double_n(pmq_jac_1, doublings), double_n(pmq_jac_2, doublings));
 
