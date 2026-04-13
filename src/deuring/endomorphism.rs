@@ -122,6 +122,21 @@ impl ActionMatrix {
         (p_prime, q_prime)
     }
 
+    /// Apply this action matrix to a torsion basis, returning a new
+    /// basis for the endomorphism image.
+    ///
+    /// Computes `θ(P) = [m00]P + [m10]Q` and `θ(Q) = [m01]P + [m11]Q`,
+    /// then derives `θ(P) − θ(Q)` via `projective_difference` to
+    /// ensure the Okeya-Sakurai y-recovery produces consistent
+    /// Jacobian coordinates. The resulting basis is safe to pass to
+    /// `TorsionBasis::lift`.
+    #[must_use]
+    pub fn apply_to_basis(&self, basis: &TorsionBasis, f: TorsionExponent) -> TorsionBasis {
+        let p_prime = basis.biscalar_mul(self.entry(0, 0), self.entry(1, 0), f);
+        let q_prime = basis.biscalar_mul(self.entry(0, 1), self.entry(1, 1), f);
+        TorsionBasis::from((p_prime, q_prime))
+    }
+
     /// Matrix-matrix multiplication mod 2^f.
     pub fn mat_mul_mod(&self, rhs: &Self, f: u32) -> Self {
         Self {

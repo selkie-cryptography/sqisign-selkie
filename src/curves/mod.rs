@@ -227,6 +227,16 @@ impl From<ChallengeHint> for u8 {
 /// This triple is the minimum information needed to compute arbitrary
 /// linear combinations \[a\]R + \[b\]S via `LadderBiscalar`.
 ///
+/// # Constructors
+///
+/// Prefer `From<(P, Q)>` which computes R−S automatically via
+/// `projective_difference`. Use `new` only when R−S is already
+/// known from a prior computation (e.g., propagated through an
+/// isogeny evaluation). The R−S argument to `new` MUST be the
+/// actual `projective_difference(R, S)` — NOT an independently
+/// computed point with the same affine x, since the projective
+/// representative affects the Okeya-Sakurai y-recovery in `lift`.
+///
 /// See [§2.2.3] (torsion subgroups and deterministic basis computation).
 ///
 /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3

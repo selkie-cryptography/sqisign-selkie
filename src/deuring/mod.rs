@@ -307,12 +307,12 @@ fn fixed_degree_isogeny(
     let q_t = ProjectiveXOnlyPoint::from_affine_x(precomputed::torsion_basis::e0_qx(), &curve_t);
     let pmq_t =
         ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve_t);
-    // Use (R=P, S=P−Q, RS=Q) ordering so that
-    // eval_decomposition(a, b) computes [a]P + [b](P−Q), matching
-    // the C ref's swapped basis convention. The precomputed action
-    // matrices were extracted from the C ref and encode the action
-    // in the (P, P−Q) basis, NOT the (P, Q) basis.
-    let basis_t = TorsionBasis::new(p_t, pmq_t, q_t);
+    // Use (R=P, S=Q, RS=PmQ) ordering so that
+    // eval_decomposition(a, b) computes [a]P + [b]Q, matching
+    // the action matrix convention verified by the
+    // action_matrix_consistent_with_basis test and the
+    // scalar_mul_kernel_splits test.
+    let basis_t = TorsionBasis::new(p_t, q_t, pmq_t);
     let gen_matrices = [
         ACTION_MATRICES[t][3],
         ACTION_MATRICES[t][4],
@@ -377,34 +377,37 @@ fn fixed_degree_isogeny(
     //
     // Use (P, P-Q) as kernel generators to avoid the theta degeneracy
     // on E₀×E₀ (see §4 of the paper).
-    // With the swapped basis (P, P-Q, Q):
-    // Column 0 of M gives θ/u(P) = [m00]P + [m10](P-Q)
-    // Column 1 of M gives θ/u(P-Q) = [m01]P + [m11](P-Q)
-    // Difference gives θ/u(Q) = θ/u(P) - θ/u(P-Q)
+    // Apply θ/u to the basis via the biladder. Compute all three
+    // images (θ/u(P), θ/u(Q), θ/u(P-Q)) as separate biladder calls
+    // to get consistent projective representatives.
     let theta_p = basis_t.eval_decomposition(&m00, &m10);
-    let theta_pmq = basis_t.eval_decomposition(&m01, &m11);
-    let theta_q = basis_t.eval_decomposition(
-        &m00.sub_mod2k(&m01, e_fdi + 2),
-        &m10.sub_mod2k(&m11, e_fdi + 2),
+    let theta_q = basis_t.eval_decomposition(&m01, &m11);
+    let theta_pmq = basis_t.eval_decomposition(
+        &m00.sub_mod2k(&m01, f.value()),
+        &m10.sub_mod2k(&m11, f.value()),
     );
 
-    // Lift component 1: (P, P-Q, Q) — same as basis_t
-    let comp1 = TorsionBasis::new(basis_t.R, basis_t.S, basis_t.RS);
+    // Lift component 1: (P, P-Q, Q) from the precomputed basis.
+    let comp1 = TorsionBasis::new(basis_t.R, basis_t.RS, basis_t.S);
     let (p_jac_1, pmq_jac_1) = match comp1.lift(&curve_t) {
         Some(r) => r,
         None => {
             #[cfg(test)]
-            eprintln!("[FDI] comp1 lift failed");
+            eprintln!("[FDI] comp1 lift FAILED");
             return None;
         }
     };
-    // Lift component 2: (θ/u(P), θ/u(P-Q), θ/u(Q)) → (θP_jac, θPmQ_jac)
+    // Lift component 2: (θ/u(P), θ/u(P-Q), θ/u(Q)) from the
+    // biladder outputs. Using new() with the biladder's PmQ (not
+    // projective_difference) because all three biladder calls use
+    // the same basis and produce consistent projective
+    // representatives.
     let comp2 = TorsionBasis::new(theta_p, theta_pmq, theta_q);
     let (p_jac_2, pmq_jac_2) = match comp2.lift(&curve_t) {
         Some(r) => r,
         None => {
             #[cfg(test)]
-            eprintln!("[FDI] comp2 lift failed (θ/u point not on E₀?)");
+            eprintln!("[FDI] comp2 lift FAILED");
             return None;
         }
     };
