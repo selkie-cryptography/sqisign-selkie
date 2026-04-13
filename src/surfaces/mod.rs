@@ -641,16 +641,9 @@ impl Kernel {
         // The C ref (theta_isogenies.c:1174-1178) pushes levels
         // 0..current-1 through the gluing, then decrements current.
         let mut theta_strat: Vec<(JacobianPoint, JacobianPoint)> = Vec::new();
-        for (idx, &(ri_jac, si_jac)) in strat_pts.iter().take(k).enumerate() {
+        for &(ri_jac, si_jac) in strat_pts.iter().take(k) {
             let R = GluingKernel::eval(&ri_jac, &gluing.T1_jac, &A1, &A2, &gluing_data);
             let S = GluingKernel::eval(&si_jac, &gluing.T1_jac, &A1, &A2, &gluing_data);
-            #[cfg(test)]
-            {
-                let hs_s = S.squared().hadamard();
-                if hs_s.X == hs_s.Z {
-                    eprintln!("GLUE_EVAL: strat[{idx}].S has H(S²).X == H(S²).Z (degenerate)");
-                }
-            }
             theta_strat.push((R, S));
         }
         let mut orders: Vec<u32> = orders[..k].iter().map(|o| o - 1).collect();
@@ -886,25 +879,27 @@ impl Kernel {
         // --- Phase 4: splitting (lines 39–45) ---
         //
         // The splitting step expects the codomain in dual form
-        // (without the final Hadamard). For chains with ≥2 generic
-        // steps, the penultimate and ultimate steps produced this
-        // form (bool_2=0). But for very short chains (e=2), no
-        // generic steps run and the codomain comes directly from
-        // the gluing, which is in standard form (with Hadamard).
-        // In that case, apply an inverse Hadamard (which equals
-        // Hadamard up to a factor of 4, since H² = 4I).
-        // The splitting step expects dual form. The last two generic
-        // steps used hadamard_bool_2=0 (no final H), producing dual
-        // form. But the chain's FIRST domain was the gluing codomain
-        // in STANDARD form (H(α,β,γ,0)). The accumulated H state
-        // means the final codomain is in standard form when e is
-        // odd, dual when even. Apply H to toggle to dual form when
-        // needed.
+        // (without the final Hadamard transform on the null point).
         //
-        // Actually, the penultimate and ultimate steps explicitly
-        // produce dual form regardless of the input. So the final
-        // codomain should always be in dual form. No adjustment
-        // needed.
+        // For extra_torsion=false: the penultimate and ultimate
+        // steps use bool_2=0 (no Hadamard), producing dual form.
+        //
+        // For extra_torsion=true: ALL steps use bool_2=1 (with
+        // Hadamard), so the final codomain is in STANDARD form.
+        // Apply Hadamard to convert to dual form before splitting.
+        // (H is its own inverse up to a factor of 4, i.e.,
+        // H(H(x)) = 4x, so applying H once converts between
+        // standard and dual form up to scaling, which is fine
+        // since the splitting works projectively.)
+        // When extra_torsion=true, the codomain is in standard form
+        // (Hadamard-transformed). Apply Hadamard to convert to dual
+        // form for the splitting step. (H² = 4I, so one H converts
+        // between forms up to projective scaling.)
+        if extra_torsion {
+            let null = &current_jacobian.null;
+            let (a, b, c, d) = hadamard4(&null.a, &null.b, &null.c, &null.d);
+            current_jacobian = Jacobian::new(ThetaNullPoint::new(a, b, c, d));
+        }
         #[cfg(test)]
         {
             let count = isogeny::get_index_splitting_count(&current_jacobian.null);
