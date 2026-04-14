@@ -568,3 +568,30 @@ formulation produces a non-degenerate kernel without normalization.
 The current pseudocode silently requires a step that is absent from
 the algorithm box.
 
+\subsection{Sign-magnitude to unsigned modular conversion}
+\label{sec:bug-scalar-sign}
+
+The quaternion algebra's \texttt{decompose} function returns
+coefficients as signed integers (e.g., $c_0 = -8$ for
+$\theta = 3 + 5i + 7j + 11k$ in $\mathcal{O}_0$).  These
+coefficients are used as scalars in the biladder to compute
+$\theta(P) = c_0 \cdot P + c_1 \cdot M_{\mathrm{gen2}} + \cdots$
+on the torsion basis $E_t[2^f]$.
+
+Our \texttt{BigInt} type uses sign-magnitude representation, while
+\texttt{Scalar} (the biladder's input) is unsigned modular
+($\bmod\, 2^{256}$).  The \texttt{From<BigInt> for Scalar}
+conversion originally took the raw limbs without checking the sign
+bit, mapping $-8$ to $+8$ instead of $2^{256} - 8$.  This produced
+the wrong endomorphism image for \emph{every} nontrivial quaternion
+element from \textsc{RepresentInteger}, while passing tests that
+used simple elements like~$i$ or scalar multiples (whose
+decomposition has no negative coefficients).
+
+\noindent
+\textbf{Takeaway:} Every boundary between signed and unsigned
+integer representations is a potential sign-swallowing bug.
+The type system did not prevent this because both \texttt{BigInt}
+and \texttt{Scalar} store the same \texttt{[u64; 4]} limbs --- only
+the interpretation differs.
+
