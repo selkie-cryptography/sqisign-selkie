@@ -7,6 +7,8 @@
 //! [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
 //! [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
 
+#[cfg(test)]
+mod kat_data;
 mod signing;
 mod verifying;
 
@@ -526,11 +528,17 @@ mod tests {
     }
 
     /// Verify all 100 hardcoded KAT vectors from the C reference
-    /// implementation (PQCsignKAT_353_SQIsign_lvl1.rsp, commit
-    /// 91e9e464fe5400192d13e1f9240cbf180200a103).
+    /// implementation (PQCsignKAT_353_SQIsign_lvl1.rsp).
     #[test]
     fn kat_verify_all() {
-        include!("kat_vectors.rs");
+        for (i, &(_seed, pk, _sk, _msg, sm)) in kat_data::KAT_VECTORS.iter().enumerate() {
+            verify_kat(pk, sm);
+            if i == 0 {
+                // Also check the inline constants match vector 0.
+                assert_eq!(pk, KAT0_PK);
+                assert_eq!(sm, KAT0_SM);
+            }
+        }
     }
 
     /// Cross-check all KAT vectors against the C reference implementation
@@ -580,5 +588,48 @@ mod tests {
             verified >= 10,
             "expected at least 10 KAT vectors, verified {verified}"
         );
+
+        // Also verify our hardcoded kat_data matches the fetched file.
+        let mut fetched: Vec<(String, String, String, String, String)> = Vec::new();
+        let mut cur_seed = String::new();
+        let mut cur_pk = String::new();
+        let mut cur_sk = String::new();
+        let mut cur_msg = String::new();
+        for line in body.lines() {
+            let line = line.trim();
+            if let Some(v) = line.strip_prefix("seed = ") {
+                cur_seed = v.to_string();
+            } else if let Some(v) = line.strip_prefix("pk = ") {
+                cur_pk = v.to_string();
+            } else if let Some(v) = line.strip_prefix("sk = ") {
+                cur_sk = v.to_string();
+            } else if let Some(v) = line.strip_prefix("msg = ") {
+                cur_msg = v.to_string();
+            } else if let Some(v) = line.strip_prefix("sm = ") {
+                fetched.push((
+                    cur_seed.clone(),
+                    cur_pk.clone(),
+                    cur_sk.clone(),
+                    cur_msg.clone(),
+                    v.to_string(),
+                ));
+            }
+        }
+
+        let kat = kat_data::KAT_VECTORS;
+        assert_eq!(
+            fetched.len(),
+            kat.len(),
+            "fetched {} vectors but kat_data has {}",
+            fetched.len(),
+            kat.len()
+        );
+        for (i, (f, k)) in fetched.iter().zip(kat.iter()).enumerate() {
+            assert_eq!(f.0, k.0, "vector {i}: seed mismatch");
+            assert_eq!(f.1, k.1, "vector {i}: pk mismatch");
+            assert_eq!(f.2, k.2, "vector {i}: sk mismatch");
+            assert_eq!(f.3, k.3, "vector {i}: msg mismatch");
+            assert_eq!(f.4, k.4, "vector {i}: sm mismatch");
+        }
     }
 }
