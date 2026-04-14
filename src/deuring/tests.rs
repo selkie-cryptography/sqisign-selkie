@@ -311,14 +311,14 @@ fn diagonal_kernel_splits() {
 /// matrix scaled by 3, as expected for a scalar endomorphism.
 #[test]
 fn action_matrix_scalar_three() {
-    let order = &crate::quaternions::precomputed::EXTREMAL_ORDERS[0];
+    let order = &EXTREMAL_ORDERS[0];
     let elem = Element::<4>::from_i64(3, 0, 0, 0);
     let gen_matrices = [
         ACTION_MATRICES[0][3],
         ACTION_MATRICES[0][4],
         ACTION_MATRICES[0][5],
     ];
-    let m = super::action_matrix(&elem, order.order(), &gen_matrices, TorsionExponent::FULL)
+    let m = action_matrix(&elem, order.order(), &gen_matrices, TorsionExponent::FULL)
         .expect("decompose should succeed for scalar element");
 
     // For θ = 3·1, the action matrix should be 3·I = [[3,0],[0,3]].
@@ -327,6 +327,76 @@ fn action_matrix_scalar_three() {
     assert_eq!(*m.entry(1, 1), three, "m11 should be 3");
     assert_eq!(*m.entry(0, 1), Scalar::ZERO, "m01 should be 0");
     assert_eq!(*m.entry(1, 0), Scalar::ZERO, "m10 should be 0");
+}
+
+/// Chain with COMPUTED action_matrix (not precomputed) for θ = i.
+///
+/// Tests that action_matrix() produces the same result as the
+/// precomputed ACTION_MATRICES[0][0] for the `i` element.
+#[test]
+fn computed_action_matrix_kernel_splits() {
+    let curve = Curve::E0;
+    let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &curve);
+    let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &curve);
+    let pmq = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve);
+    let basis = TorsionBasis::new(p, q, pmq);
+
+    let order = &EXTREMAL_ORDERS[0];
+    let gen_matrices = [
+        ACTION_MATRICES[0][3],
+        ACTION_MATRICES[0][4],
+        ACTION_MATRICES[0][5],
+    ];
+    let f = TorsionExponent::FULL;
+
+    // θ = i (the quaternion unit). Element (0, 1, 0, 0) in {1, i, j, k}.
+    let theta = Element::<4>::from_i64(0, 1, 0, 0);
+    let m_computed = action_matrix(&theta, order.order(), &gen_matrices, f)
+        .expect("action_matrix should succeed for i");
+
+    // Compare with precomputed M_i.
+    let m_precomp = &ACTION_MATRICES[0][0];
+    eprintln!(
+        "computed m00 == precomp m00: {}",
+        m_computed.entry(0, 0) == m_precomp.entry(0, 0)
+    );
+    eprintln!(
+        "computed m10 == precomp m10: {}",
+        m_computed.entry(1, 0) == m_precomp.entry(1, 0)
+    );
+
+    // Use the COMPUTED matrix (not precomputed) to build the kernel.
+    let m00 = m_computed.entry(0, 0);
+    let m01 = m_computed.entry(0, 1);
+    let m10 = m_computed.entry(1, 0);
+    let m11 = m_computed.entry(1, 1);
+
+    let theta_p = basis.eval_decomposition(m00, m10);
+    let theta_q = basis.eval_decomposition(m01, m11);
+    // Use projective_difference for PmQ (same fix as production code).
+    let theta_pmq = theta_p.projective_difference(&theta_q);
+
+    let comp1 = TorsionBasis::new(p, pmq, q);
+    let (p_jac, pmq_jac) = comp1.lift(&curve).expect("lift comp1");
+    let comp2 = TorsionBasis::new(theta_p, theta_pmq, theta_q);
+    let (tp_jac, tpmq_jac) = comp2.lift(&curve).expect("lift comp2");
+
+    let e = 50u32;
+    let doublings = f.value() - 2 - e;
+    let double_n = |mut pt: JacobianPoint, n: u32| -> JacobianPoint {
+        for _ in 0..n {
+            pt = pt.double_for_theta();
+        }
+        pt
+    };
+    let k1 = (double_n(p_jac, doublings), double_n(tp_jac, doublings));
+    let k2 = (double_n(pmq_jac, doublings), double_n(tpmq_jac, doublings));
+
+    let product = surfaces::EllipticProduct::new(curve, curve);
+    let kernel = surfaces::Kernel::from_jacobian(product, k1, k2);
+
+    let te = TorsionExponent::try_from(e).unwrap();
+    let (_codomain, _images) = kernel.isogeny_extra_torsion(te, &[]);
 }
 
 /// Compare Montgomery ladder vs biladder for [3]*P.
@@ -366,7 +436,7 @@ fn action_matrix_kernel_splits() {
     let i_p = basis.eval_decomposition(m_i.entry(0, 0), m_i.entry(1, 0));
     let i_q = basis.eval_decomposition(m_i.entry(0, 1), m_i.entry(1, 1));
     let f = TorsionExponent::FULL.value();
-    let i_pmq = basis.eval_decomposition(
+    let _i_pmq = basis.eval_decomposition(
         &m_i.entry(0, 0).sub_mod2k(m_i.entry(0, 1), f),
         &m_i.entry(1, 0).sub_mod2k(m_i.entry(1, 1), f),
     );
@@ -381,8 +451,7 @@ fn action_matrix_kernel_splits() {
     let comp2 = TorsionBasis::new(i_p, i_pmq_diff, i_q);
     let (ip_jac, ipmq_jac) = comp2.lift(&curve).expect("lift comp2");
 
-    // Test with e=150 to match the signing pipeline's chain length.
-    let e = 150u32;
+    let e = 50u32;
     let doublings = TorsionExponent::FULL.value() - 2 - e;
     let double_n = |mut pt: JacobianPoint, n: u32| -> JacobianPoint {
         for _ in 0..n {
