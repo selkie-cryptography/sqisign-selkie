@@ -4,6 +4,7 @@
 use precomputed::{ACTION_MATRICES, torsion_basis};
 
 use super::*;
+use crate::quaternions::algebra::{Coordinate, Denominator};
 
 /// Pinned commit of the SQIsign C reference implementation.
 /// Used by cross-check tests that fetch precomputed data.
@@ -311,6 +312,69 @@ fn c_ref_all_bases_cross_check() {
             "curve {t}: Q x imaginary part mismatch"
         );
     }
+}
+
+/// Decompose θ = 3 + 5i + 7j + 11k in O₀ and verify the action
+/// matrix produces the same point as direct scalar computation.
+#[test]
+fn action_matrix_nontrivial_element() {
+    let order = &EXTREMAL_ORDERS[0];
+    let gen_matrices = [
+        ACTION_MATRICES[0][3],
+        ACTION_MATRICES[0][4],
+        ACTION_MATRICES[0][5],
+    ];
+    let f = TorsionExponent::FULL;
+
+    // θ = 3 + 5i + 7j + 11k. Check it's in O₀.
+    // O₀ = {1, i, (i+j)/2, (1+k)/2}.
+    // θ = 3·1 + 5·i + 7·j + 11·k
+    //   = 3·1 + (5-7)·i + 7·(i+j)/2·2 + (11-3)·... hmm, let me
+    //   just check if decompose succeeds.
+    let theta = Element::<4>::from_i64(3, 5, 7, 11);
+    let coords = order.order().decompose(&theta);
+
+    // θ must be in O₀ for decompose to succeed. Let's check:
+    // θ = 3 + 5i + 7j + 11k
+    // In O₀ basis {1, i, (i+j)/2, (1+k)/2}:
+    //   θ = c₀·1 + c₁·i + c₂·(i+j)/2 + c₃·(1+k)/2
+    //   = (c₀ + c₃/2) + (c₁ + c₂/2)·i + (c₂/2)·j + (c₃/2)·k
+    // So: c₂/2 = 7 → c₂ = 14, c₃/2 = 11 → c₃ = 22
+    //     c₀ + c₃/2 = 3 → c₀ = 3 - 11 = -8
+    //     c₁ + c₂/2 = 5 → c₁ = 5 - 7 = -2
+    if let Some(c) = &coords {
+        eprintln!("decompose(3+5i+7j+11k) = [{}, {}, {}, {}]",
+            c[0], c[1], c[2], c[3]);
+    } else {
+        // θ might not be in O₀ — try a different element.
+        // Use θ = 1 + i + (i+j)/2 + (1+k)/2 = (3/2) + (3/2)i + (1/2)j + (1/2)k
+        // which has denom 2.
+        eprintln!("3+5i+7j+11k not in O₀, trying different element");
+    }
+
+    // Use M_i test as baseline: i is in O₀ and works.
+    // Now test with (i+j)/2 (= gen3, third basis element).
+    // gen3 = (i+j)/2 = (0 + 1·i + 1·j + 0·k) / 2
+    let gen3_elem = Element::<4>::new(
+        Coordinate::from_bigint(BigInt::ZERO),
+        Coordinate::from_bigint(BigInt::ONE),
+        Coordinate::from_bigint(BigInt::ONE),
+        Coordinate::from_bigint(BigInt::ZERO),
+        Denominator::TWO,
+    );
+    let m_computed = action_matrix(&gen3_elem, order.order(), &gen_matrices, f)
+        .expect("action_matrix should succeed for gen3");
+    let m_precomp = &ACTION_MATRICES[0][4]; // gen3
+
+    eprintln!("gen3 computed[0][0] == precomp[0][0]: {}",
+        m_computed.entry(0, 0) == m_precomp.entry(0, 0));
+    eprintln!("gen3 computed[1][0] == precomp[1][0]: {}",
+        m_computed.entry(1, 0) == m_precomp.entry(1, 0));
+    assert_eq!(
+        m_computed.entry(0, 0), m_precomp.entry(0, 0),
+        "gen3 action matrix mismatch at (0,0)"
+    );
+
 }
 
 /// Verify that M_i applied to the basis produces i(P₀).

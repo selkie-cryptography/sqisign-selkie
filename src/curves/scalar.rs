@@ -7,6 +7,8 @@
 
 use core::fmt;
 
+use crate::quaternions::bigint::BigInt;
+
 /// A scalar for elliptic curve point multiplication.
 ///
 /// Stored as four little-endian u64 limbs (256-bit unsigned integer).
@@ -192,22 +194,37 @@ impl From<u64> for Scalar {
     }
 }
 
-impl From<Scalar> for crate::quaternions::bigint::BigInt<4> {
+impl From<Scalar> for BigInt<4> {
     /// Convert a `Scalar` (unsigned) to a non-negative `BigInt<4>`.
     fn from(s: Scalar) -> Self {
         Self::from_limbs(s.0)
     }
 }
 
-impl From<&Scalar> for crate::quaternions::bigint::BigInt<4> {
+impl From<&Scalar> for BigInt<4> {
     fn from(s: &Scalar) -> Self {
         Self::from_limbs(s.0)
     }
 }
 
-impl From<crate::quaternions::bigint::BigInt<4>> for Scalar {
-    fn from(b: crate::quaternions::bigint::BigInt<4>) -> Self {
-        Self::from_limbs(*b.as_limbs())
+/// Convert a signed `BigInt<4>` to a `Scalar` (unsigned mod 2^256).
+///
+/// Negative values are reduced: `-x` becomes `2^256 - x`. This is
+/// necessary because `BigInt` is sign-magnitude while `Scalar` is
+/// unsigned modular. A previous version took the raw limbs without
+/// checking the sign, silently mapping `-x` to `+x` — this
+/// corrupted the action matrix whenever `decompose` returned
+/// negative coefficients (which happens for most nontrivial
+/// quaternion elements).
+impl From<BigInt<4>> for Scalar {
+    fn from(b: BigInt<4>) -> Self {
+        if bool::from(b.is_negative()) {
+            let abs_scalar = Self::from_limbs(*b.abs().as_limbs());
+            let zero = Self::from_u64(0);
+            zero.sub_mod2k(&abs_scalar, 256)
+        } else {
+            Self::from_limbs(*b.as_limbs())
+        }
     }
 }
 
