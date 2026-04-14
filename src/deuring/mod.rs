@@ -255,12 +255,32 @@ fn action_matrix(
 ) -> Option<ActionMatrix> {
     let coords = order.decompose(elem)?;
 
-    let c0_mod = coords[0].ct_mod(&BigInt::<4>::ONE.shl(f.value()));
-    let c0_scalar = Scalar::from(c0_mod);
+    // Reduce all coefficients mod 2^f. For negative coefficients,
+    // ct_mod returns a negative remainder (truncated division), so
+    // add the modulus to get the canonical representative in [0, 2^f).
+    let modulus = BigInt::<4>::ONE.shl(f.value());
+    let reduce = |c: &BigInt<4>| -> Scalar {
+        let r = c.ct_mod(&modulus);
+        if bool::from(r.is_negative()) {
+            Scalar::from(r.ct_add(&modulus))
+        } else {
+            Scalar::from(r)
+        }
+    };
+
+    let c0_scalar = reduce(&coords[0]);
     let mut result = ActionMatrix::new(c0_scalar, Scalar::ZERO, Scalar::ZERO, c0_scalar);
 
     for k in 0..3 {
-        result = result.add_scaled_mod(&coords[k + 1], &gen_matrices[k], f.value());
+        let s = reduce(&coords[k + 1]);
+        let other = &gen_matrices[k];
+        let fv = f.value();
+        result = ActionMatrix::new(
+            result.entry(0, 0).add_mod2k(&s.mul_mod2k(other.entry(0, 0), fv), fv),
+            result.entry(0, 1).add_mod2k(&s.mul_mod2k(other.entry(0, 1), fv), fv),
+            result.entry(1, 0).add_mod2k(&s.mul_mod2k(other.entry(1, 0), fv), fv),
+            result.entry(1, 1).add_mod2k(&s.mul_mod2k(other.entry(1, 1), fv), fv),
+        );
     }
 
     Some(result)
@@ -478,19 +498,31 @@ impl LeftIdeal<4> {
         let f = TorsionExponent::FULL;
 
         // Step 1: Decompose via SuitableIdeals.
+        #[cfg(test)]
+        let _t0 = std::time::Instant::now();
         let sui = self.suitable_ideals()?;
+        #[cfg(test)]
+        eprintln!("[to_isogeny] suitable_ideals: {:?}", _t0.elapsed());
 
         // Steps 2–3: degrees (already in sui.factor1.degree, sui.factor2.degree).
         let d1 = &sui.factor1.degree;
         let _d2 = &sui.factor2.degree;
 
         // Step 4: E_u, φ_u(P_s), φ_u(Q_s) ← FixedDegreeIsogeny(s, u)
+        #[cfg(test)]
+        let _t1 = std::time::Instant::now();
         let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
         let (e_u, phi_u_p, phi_u_q) = fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
+        #[cfg(test)]
+        eprintln!("[to_isogeny] FDI(u): {:?}", _t1.elapsed());
 
         // Step 5: E_v, φ_v(P_t), φ_v(Q_t) ← FixedDegreeIsogeny(t, v)
+        #[cfg(test)]
+        let _t2 = std::time::Instant::now();
         let v_deg = IsogenyDegree::new_odd(*sui.v.as_limbs())?;
         let (e_v, phi_v_p, phi_v_q) = fixed_degree_isogeny(sui.factor2.order, &v_deg)?;
+        #[cfg(test)]
+        eprintln!("[to_isogeny] FDI(v): {:?}", _t2.elapsed());
 
         // Step 6: [P, Q]^T ← (1/(nrd(I)·nrd(J_t))) M_{β₂} [φ_v(P_t), φ_v(Q_t)]^T
         //

@@ -194,9 +194,11 @@ impl<const N: usize> Lattice<N> {
     ///
     /// The intermediate width `W` must be large enough for the
     /// column-reduction operations on the constraint matrix.
-    /// Entries start at `bits(d) + bits(B)` and grow during
-    /// elimination; `W ≥ 4 * (bits(d) + bits(B)) / 64` is a
-    /// safe bound (Hadamard).
+    /// Entries start at `bits(d) + bits(B)` and can grow during
+    /// xgcd elimination. `W` should provide margin above the
+    /// initial entry size; the Hadamard bound is
+    /// `W >= 4 * (bits(d) + bits(B)) / 64` but smaller values
+    /// may work in practice.
     ///
     /// # Divergences
     ///
