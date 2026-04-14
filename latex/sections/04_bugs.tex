@@ -25,7 +25,7 @@ fp2_mul(&null.t, &T->P1.z, &T->P2.z); // Z1 * Z2
 \end{lstlisting}
 
 \noindent
-\textbf{Takeaway:} When the spec is abstract about coordinate
+\textbf{Advice for implementers:} When the spec is abstract about coordinate
 representations, the C reference is the ground truth.
 
 \subsection{Squared theta means square then Hadamard}
@@ -39,7 +39,7 @@ computed $\mathcal{H}(\mathrm{inv} \cdot P^2)$ instead of
 $\mathcal{H}(\mathrm{inv} \cdot \mathcal{H}(P^2))$.
 
 \noindent
-\textbf{Takeaway:} Read the body of helper functions in the C reference,
+\textbf{Advice for implementers:} Read the body of helper functions in the C reference,
 not just their names.  ``Squared theta'' is not just squaring.
 
 \subsection{Cross-product index errors in GluingEval}
@@ -52,7 +52,7 @@ should be $u_1 \cdot w_2$ (cross-curve), but we wrote $u_1 \cdot w_1$
 (same-curve).
 
 \noindent
-\textbf{Takeaway:} In product-curve formulas, every multiplication
+\textbf{Advice for implementers:} In product-curve formulas, every multiplication
 involves one factor from each curve.  Two factors with the same
 subscript are almost certainly wrong.
 
@@ -66,7 +66,7 @@ Our code called \texttt{Fp2::invert()}, which is both wrong and
 expensive.
 
 \noindent
-\textbf{Takeaway:} In projective or theta coordinates, ``inverse''
+\textbf{Advice for implementers:} In projective or theta coordinates, ``inverse''
 almost always means projective inverse via cross-products.  Actual
 field inversion is a red flag.
 
@@ -80,7 +80,7 @@ $(x : x : y : y)$.  Storing this in a generic 4-coordinate
 and \texttt{J.y} for the two distinct values, but both hold $x$.
 
 \noindent
-\textbf{Takeaway:} Do not reuse a generic $n$-coordinate type to store
+\textbf{Advice for implementers:} Do not reuse a generic $n$-coordinate type to store
 a value with a special pattern.  Use a dedicated type, or at minimum
 document which fields hold which logical values.
 
@@ -100,7 +100,7 @@ $P + [m]Q$.  The swap ensures the multiplied point avoids $(0,0)$
 for differential addition.  This is not documented in the spec.
 
 \noindent
-\textbf{Takeaway:} Undocumented conventions in reference code can look
+\textbf{Advice for implementers:} Undocumented conventions in reference code can look
 like bugs in your own code.  Verify against the reference before
 ``fixing'' something that isn't broken.
 
@@ -129,7 +129,7 @@ Hadamard-transformed null point that has no zero $U_{i,j}(0)$ entry.
 The chain ran correctly for 125 steps and produced nonsense at the end.
 
 \noindent
-\textbf{Takeaway:} The last few steps of an isogeny chain often need
+\textbf{Advice for implementers:} The last few steps of an isogeny chain often need
 special handling.  The spec describes the generic step uniformly; the
 \texttt{hadamard\_bool} optimization is an implementation-level choice
 in the C reference that avoids redundant Hadamard transforms at the
@@ -178,7 +178,7 @@ that computes torsion bases via \texttt{difference\_point} must
 canonicalize its $\mathbb{F}_{p^2}$ square root.
 
 \noindent
-\textbf{Takeaway:}  Any time a specification says ``compute a square
+\textbf{Advice for implementers:}  Any time a specification says ``compute a square
 root'' in $\mathbb{F}_{p^2}$, the implementation \emph{must} specify
 and enforce a canonical choice.  The even-real-part convention used by
 the C reference is simple and should be the default for any SQIsign
@@ -218,7 +218,7 @@ Each fix was individually necessary; all three together were sufficient
 to make KAT vector~0 verify.
 
 \noindent
-\textbf{Takeaway:} In $x$-only Montgomery arithmetic, $P{-}Q$ is a
+\textbf{Advice for implementers:} In $x$-only Montgomery arithmetic, $P{-}Q$ is a
 \emph{derived value} that cannot be reconstructed from $x(P)$ and
 $x(Q)$ alone (because $x(P{-}Q) = x(P{+}Q)$ on the Kummer line, and
 \texttt{DifferencePoint} resolves this ambiguity via a square root
@@ -300,7 +300,7 @@ enough.  Until we do this, every call site that passes a near-full
 modulus is potentially wrong and will fail silently.
 
 \noindent
-\textbf{Takeaway:} With fixed-width arithmetic, every call site that
+\textbf{Advice for implementers:} With fixed-width arithmetic, every call site that
 chains multiplications needs a width budget.  A function that takes a
 \texttt{BigInt<N>} is not self-contained: its correctness depends on
 $N$ being big enough for its internal operations.  Document the
@@ -382,7 +382,7 @@ iterations to diagnose, since the divisibility condition depends on
 the order's algebraic structure rather than a simple coordinate check.
 
 \noindent
-\textbf{Takeaway:} Algorithm~3.12 is simple at first glance---a short
+\textbf{Advice for implementers:} Algorithm~3.12 is simple at first glance---a short
 loop with Cornacchia and a divisibility check---but the implementation
 details (sampling ranges, sign conventions, order-basis divisibility,
 arithmetic width, and search bounds) are all places where a
@@ -442,7 +442,7 @@ rare edge case), the C reference's \texttt{gluing\_compute}
 returns failure and the signing loop retries.
 
 \noindent
-\textbf{Takeaway:} Not every isotropic subgroup of
+\textbf{Advice for implementers:} Not every isotropic subgroup of
 $E_1[2^e] \times E_2[2^e]$ is a valid kernel for the theta
 $(2,2)$-isogeny formulas.  The formulas additionally require
 nonvanishing of certain determinants in the theta change-of-basis
@@ -508,7 +508,7 @@ is applied to two additional HNF sites:
 \end{itemize}
 
 \noindent
-\textbf{Takeaway:} Algorithm~3.2 of the SQIsign specification
+\textbf{Advice for implementers:} Algorithm~3.2 of the SQIsign specification
 describes HNF over arbitrary-precision integers; it does not
 discuss fixed-precision adaptations or coefficient-size bounds.
 Any fixed-width implementation of Algorithm~3.2 must either prove
@@ -561,7 +561,7 @@ the extra~$+2$ accounts for the gluing's order-4 structure.  Without
 this step, the inner $(2,2)$-chain \emph{always} fails.
 
 \noindent
-\textbf{Takeaway:} Algorithm~3.15 should either (a) state that the
+\textbf{Advice for implementers:} Algorithm~3.15 should either (a) state that the
 kernel is formed from $(P,\, (\theta/u)(P))$ and explain the
 modular inversion, or (b) prove that the $([u]P,\, \theta(P))$
 formulation produces a non-degenerate kernel without normalization.
@@ -589,7 +589,7 @@ used simple elements like~$i$ or scalar multiples (whose
 decomposition has no negative coefficients).
 
 \noindent
-\textbf{Takeaway:} Every boundary between signed and unsigned
+\textbf{Advice for implementers:} Every boundary between signed and unsigned
 integer representations is a potential sign-swallowing bug.
 The type system did not prevent this because both \texttt{BigInt}
 and \texttt{Scalar} store the same \texttt{[u64; 4]} limbs --- only
