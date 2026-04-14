@@ -377,37 +377,30 @@ fn fixed_degree_isogeny(
     //
     // Use (P, P-Q) as kernel generators to avoid the theta degeneracy
     // on E₀×E₀ (see §4 of the paper).
-    // Apply θ/u to the basis via the biladder. Compute all three
-    // images (θ/u(P), θ/u(Q), θ/u(P-Q)) as separate biladder calls
-    // to get consistent projective representatives.
+    // Apply θ/u to the basis via the biladder.
     let theta_p = basis_t.eval_decomposition(&m00, &m10);
     let theta_q = basis_t.eval_decomposition(&m01, &m11);
-    let theta_pmq = basis_t.eval_decomposition(
-        &m00.sub_mod2k(&m01, f.value()),
-        &m10.sub_mod2k(&m11, f.value()),
-    );
+    // θ/u(P−Q) via projective_difference (NOT a third biladder
+    // call). The biladder produces the correct affine x but a
+    // projective representative that is inconsistent with the
+    // other two biladder outputs, causing the Okeya-Sakurai lift
+    // to recover the wrong y-sign and the chain to collapse.
+    let theta_pmq = theta_p.projective_difference(&theta_q);
 
     // Lift component 1: (P, P-Q, Q) from the precomputed basis.
     let comp1 = TorsionBasis::new(basis_t.R, basis_t.RS, basis_t.S);
-    let (p_jac_1, pmq_jac_1) = match comp1.lift(&curve_t) {
-        Some(r) => r,
-        None => {
-            #[cfg(test)]
-            eprintln!("[FDI] comp1 lift FAILED");
-            return None;
-        }
-    };
-    // Lift component 2: (θ/u(P), θ/u(P-Q), θ/u(Q)) from the
-    // biladder outputs. Using new() with the biladder's PmQ (not
-    // projective_difference) because all three biladder calls use
-    // the same basis and produce consistent projective
-    // representatives.
+    let (p_jac_1, pmq_jac_1) = comp1.lift(&curve_t)?;
+    // Lift component 2: (θ/u(P), θ/u(P)−θ/u(Q), θ/u(Q)).
     let comp2 = TorsionBasis::new(theta_p, theta_pmq, theta_q);
     let (p_jac_2, pmq_jac_2) = match comp2.lift(&curve_t) {
-        Some(r) => r,
+        Some(r) => {
+            #[cfg(test)]
+            eprintln!("[FDI] comp2 lift OK, proceeding to chain");
+            r
+        }
         None => {
             #[cfg(test)]
-            eprintln!("[FDI] comp2 lift FAILED");
+            eprintln!("[FDI] comp2 lift FAILED (theta_p not on curve?)");
             return None;
         }
     };
