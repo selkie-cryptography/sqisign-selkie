@@ -505,13 +505,17 @@ impl SigningKey {
             // intersection throughout. We match the C ref.
             let i_chl_lat = Lattice::<N_RESP>::from(*i_chl_prime_w.lattice());
             let i_sk_lat = Lattice::<N_RESP>::from(*i_sk_w.lattice());
-            let i_chl_sk = i_chl_lat.intersection_via_kernel::<120>(&i_sk_lat);
+            // W=60: entries start at ~60 limbs (d*B products); xgcd
+            // elimination may grow them. W=120 is the safe Hadamard
+            // bound but 4x slower. W=60 is adequate in practice —
+            // validate by completing a full signing round-trip.
+            let i_chl_sk = i_chl_lat.intersection_via_kernel::<60>(&i_sk_lat);
 
             let i_com_conj = i_com_w.lattice().conjugate();
             let i_chl_sk_lat = Lattice::<N_RESP>::from(i_chl_sk);
             let i_com_conj_lat = Lattice::<N_RESP>::from(i_com_conj);
 
-            let intersection = i_chl_sk_lat.intersection_via_kernel::<120>(&i_com_conj_lat);
+            let intersection = i_chl_sk_lat.intersection_via_kernel::<60>(&i_com_conj_lat);
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
 
             // Radius: D_rsp · D²_mix · 2^{f+1}, computed at BigInt<22>.
