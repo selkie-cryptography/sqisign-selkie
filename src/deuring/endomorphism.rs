@@ -116,7 +116,7 @@ impl ActionMatrix {
         let s10 = s.mul_mod2k(self.entry(1, 0), fv);
         let s11 = s.mul_mod2k(self.entry(1, 1), fv);
 
-        let basis = TorsionBasis::new(p, q, p.projective_difference(&q));
+        let basis = TorsionBasis::from((p, q));
         let p_prime = basis.eval_decomposition(&s00, &s10);
         let q_prime = basis.eval_decomposition(&s01, &s11);
         (p_prime, q_prime)

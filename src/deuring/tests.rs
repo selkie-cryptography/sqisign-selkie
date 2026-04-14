@@ -225,7 +225,7 @@ fn action_matrix_consistent_with_basis() {
 
     let p0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &Curve::E0);
     let q0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &Curve::E0);
-    let basis = TorsionBasis::new(p0, q0, p0.projective_difference(&q0));
+    let basis = TorsionBasis::from((p0, q0));
 
     let m_i = &ACTION_MATRICES[0][0];
 
@@ -255,7 +255,7 @@ fn diagonal_kernel_splits() {
     let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &curve);
     let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &curve);
     let pmq = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve);
-    let basis = TorsionBasis::new(p, q, pmq);
+    let basis = TorsionBasis::from_propagated(p, q, pmq);
 
     // Action matrix M_i applied to (P, Q, P-Q) basis.
     let m_i = &ACTION_MATRICES[0][0];
@@ -268,9 +268,9 @@ fn diagonal_kernel_splits() {
     let i_q = basis.eval_decomposition(m_i.entry(0, 1), m_i.entry(1, 1));
 
     // Lift with (P, P-Q) as generators (matching C ref convention).
-    let comp1 = TorsionBasis::new(p, pmq, q);
+    let comp1 = TorsionBasis::from_propagated(p, pmq, q);
     let (p_jac, pmq_jac) = comp1.lift(&curve).expect("lift comp1");
-    let comp2 = TorsionBasis::new(i_p, i_pmq, i_q);
+    let comp2 = TorsionBasis::from_propagated(i_p, i_pmq, i_q);
     let (ip_jac, ipmq_jac) = comp2.lift(&curve).expect("lift comp2");
 
     // Kernel: K₁ = (P, i(P)), K₂ = (P-Q, i(P-Q)).
@@ -339,7 +339,7 @@ fn computed_action_matrix_kernel_splits() {
     let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &curve);
     let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &curve);
     let pmq = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve);
-    let basis = TorsionBasis::new(p, q, pmq);
+    let basis = TorsionBasis::from_propagated(p, q, pmq);
 
     let order = &EXTREMAL_ORDERS[0];
     let gen_matrices = [
@@ -376,9 +376,9 @@ fn computed_action_matrix_kernel_splits() {
     // Use projective_difference for PmQ (same fix as production code).
     let theta_pmq = theta_p.projective_difference(&theta_q);
 
-    let comp1 = TorsionBasis::new(p, pmq, q);
+    let comp1 = TorsionBasis::from_propagated(p, pmq, q);
     let (p_jac, pmq_jac) = comp1.lift(&curve).expect("lift comp1");
-    let comp2 = TorsionBasis::new(theta_p, theta_pmq, theta_q);
+    let comp2 = TorsionBasis::from_propagated(theta_p, theta_pmq, theta_q);
     let (tp_jac, tpmq_jac) = comp2.lift(&curve).expect("lift comp2");
 
     let e = 50u32;
@@ -410,7 +410,7 @@ fn ladder_vs_biladder_agree() {
     let three = Scalar::from_u64(3);
     let ladder_result = &three * &p;
 
-    let basis = TorsionBasis::new(p, q, pmq);
+    let basis = TorsionBasis::from_propagated(p, q, pmq);
     let biladder_result = basis.eval_decomposition(&three, &Scalar::ZERO);
 
     assert_eq!(
@@ -430,7 +430,7 @@ fn action_matrix_kernel_splits() {
     let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &curve);
     let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &curve);
     let pmq = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve);
-    let basis = TorsionBasis::new(p, q, pmq);
+    let basis = TorsionBasis::from_propagated(p, q, pmq);
 
     let m_i = &ACTION_MATRICES[0][0];
     let i_p = basis.eval_decomposition(m_i.entry(0, 0), m_i.entry(1, 0));
@@ -442,13 +442,13 @@ fn action_matrix_kernel_splits() {
     );
 
     // Lift component 1: (P, P-Q, Q)
-    let comp1 = TorsionBasis::new(p, pmq, q);
+    let comp1 = TorsionBasis::from_propagated(p, pmq, q);
     let (p_jac, pmq_jac) = comp1.lift(&curve).expect("lift comp1");
     // Lift component 2: (i(P), i(P-Q), i(Q))
     // Use projective_difference for i(P)-i(Q) instead of the
     // biladder's i(P-Q), to get a consistent PmQ representative.
     let i_pmq_diff = i_p.projective_difference(&i_q);
-    let comp2 = TorsionBasis::new(i_p, i_pmq_diff, i_q);
+    let comp2 = TorsionBasis::from_propagated(i_p, i_pmq_diff, i_q);
     let (ip_jac, ipmq_jac) = comp2.lift(&curve).expect("lift comp2");
 
     let e = 50u32;
@@ -489,10 +489,10 @@ fn scalar_mul_kernel_splits() {
     let three_q = &three * &q;
 
     // Lift component 1: (P, P-Q, Q)
-    let comp1 = TorsionBasis::new(p, pmq, q);
+    let comp1 = TorsionBasis::from_propagated(p, pmq, q);
     let (p_jac, pmq_jac) = comp1.lift(&curve).expect("lift comp1");
     // Lift component 2: ([3]P, [3](P-Q), [3]Q)
-    let comp2 = TorsionBasis::new(three_p, three_pmq, three_q);
+    let comp2 = TorsionBasis::from_propagated(three_p, three_pmq, three_q);
     let (tp_jac, tpmq_jac) = comp2.lift(&curve).expect("lift comp2");
 
     // Kernel: K₁ = (P, [3]P), K₂ = (P-Q, [3](P-Q))

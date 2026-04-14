@@ -319,7 +319,7 @@ mod tests {
         let p = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_P_X, &curve);
         let q = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_Q_X, &curve);
         let pmq = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_PMQ_X, &curve);
-        TorsionBasis::new(p, q, pmq)
+        TorsionBasis::from_propagated(p, q, pmq)
     }
 
     #[test]

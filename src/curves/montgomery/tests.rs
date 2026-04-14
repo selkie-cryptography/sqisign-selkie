@@ -60,7 +60,7 @@ fn torsion_basis_holds_points() {
     let S = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(7)), &curve);
     let RS = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(11)), &curve);
 
-    let basis = TorsionBasis::new(R, S, RS);
+    let basis = TorsionBasis::from_propagated(R, S, RS);
     assert_eq!(basis.R, R);
     assert_eq!(basis.S, S);
     assert_eq!(basis.RS, RS);
@@ -102,7 +102,7 @@ fn lift_basis_round_trip() {
     let q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, &curve);
     let pmq = p.projective_difference(&q);
 
-    let (p_jac, q_jac) = TorsionBasis::new(p, q, pmq)
+    let (p_jac, q_jac) = TorsionBasis::from_propagated(p, q, pmq)
         .lift(&curve)
         .expect("lift should succeed on E₀");
 
