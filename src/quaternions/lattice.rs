@@ -1858,8 +1858,8 @@ impl LeftIdeal<30> {
             // = 4 · d⁴ · D_MIX² · p, keeping everything within the
             // `W = 44` working width. See the rustdoc on
             // [`Matrix::from_hnf_columns_mod`] and the "Fixed-Precision HNF"
-            // entry in `latex/spec-review.tex` for the full
-            // rationale.
+            // rationale (spec gap: Algorithm 3.2 doesn't discuss
+            // fixed-precision adaptations).
             let o_alpha = Lattice::new(Matrix::from_columns(&o_alpha_cols), order_denom);
             let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), order_denom);
 

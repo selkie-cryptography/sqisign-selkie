@@ -581,4 +581,58 @@ standard modular HNF technique (reducing modulo a known multiple
 of the lattice determinant) is sufficient to keep intermediates
 bounded.
 
+% =====================================================================
+\section{Endomorphism image $P{-}Q$ and the Okeya-Sakurai lift}
+\label{sec:endo-pmq}
+
+\finding{Affects \algo{3.15}
+(\textsc{FixedDegreeIsogeny}), and transitively
+\textsc{IdealToIsogeny} and \textsc{KeyGen}.}{\high}
+
+\algo{3.15} line~4 says to construct the kernel from
+$(\theta(P),\, \theta(Q))$.  The $(2,2)$-isogeny chain lifts
+these Montgomery $x$-only points to Jacobian $(x,y,z)$
+coordinates via the Okeya-Sakurai formula, which requires the
+projective $x$-only representative of $P{-}Q$ (not just its
+affine $x$-coordinate).
+
+The Okeya-Sakurai formula recovers $y_Q$ from
+$(x_P, y_P, X_Q, Z_Q, X_{P{-}Q}, Z_{P{-}Q})$.  The specific
+projective representative $(X_{P{-}Q} : Z_{P{-}Q})$ determines
+the recovered $y_Q$.  Two representatives that agree in the
+ratio $X/Z$ but differ in the individual coordinates produce
+different $y_Q$ values---one correct, one not.
+
+The spec does not specify how $\theta(P{-}Q)$ is obtained.
+Two natural approaches:
+\begin{enumerate}[nosep]
+  \item Compute $\theta(P{-}Q)$ as a third biladder call with
+        scalars $(m_{00}{-}m_{01},\, m_{10}{-}m_{11})$ on the
+        same basis triple $(P, Q, P{-}Q)$.
+  \item Compute \textsc{DifferencePoint}$(\theta(P),\, \theta(Q))$,
+        which takes an $\Fpii$ square root and is ambiguous
+        ($P{-}Q$ vs.\ $P{+}Q$).
+\end{enumerate}
+
+Approach~(1) produces three outputs whose projective
+representatives are consistent (all derived from the same
+basis via differential addition), so the Okeya-Sakurai
+lift recovers the correct $y$.  Approach~(2) picks a
+deterministic but potentially wrong branch of the square root,
+causing the lift to recover the wrong $y$ for roughly half of
+all inputs.  In our implementation, approach~(2) caused the
+$(2,2)$-chain to fail for every $\theta$ from
+\textsc{RepresentInteger} while succeeding for the $i$
+automorphism (a degenerate case whose square root happens to
+land on the correct branch).
+
+\paragraph{Recommendation.}
+Add a remark in \algo{3.15} or in the description of the
+$(2,2)$-isogeny chain that the difference $\theta(P){-}\theta(Q)$
+must be computed by applying $\theta$ to $P{-}Q$ directly (via
+the biladder with the same basis triple), \emph{not} by
+recomputing \textsc{DifferencePoint} on the outputs.  The same
+constraint applies to every other site that constructs a basis
+triple for the Okeya-Sakurai lift.
+
 \end{document}

@@ -536,7 +536,8 @@ fn computed_action_matrix_kernel_splits() {
 
     let theta_p = basis.eval_decomposition(m00, m10);
     let theta_q = basis.eval_decomposition(m01, m11);
-    // Use projective_difference for PmQ (same fix as production code).
+    // Use projective_difference for the `i` endomorphism test
+    // (same reasoning as action_matrix_kernel_splits above).
     let theta_pmq = theta_p.projective_difference(&theta_q);
 
     let comp1 = TorsionBasis::from_propagated(p, pmq, q);
@@ -585,8 +586,18 @@ fn ladder_vs_biladder_agree() {
 
 /// Action-matrix kernel using M_i: (P, i(P)), (P-Q, i(P-Q)).
 ///
-/// Uses the action matrix with the biladder to compute i(P) etc,
-/// then builds the kernel the same way as scalar_mul_kernel_splits.
+/// Uses `projective_difference` for PmQ instead of the biladder
+/// (which production code uses). The `i` automorphism's specific
+/// symmetry causes the biladder PmQ to trigger a theta-coordinate
+/// degeneracy (alpha==gamma → zeros=10). This does not arise for
+/// general theta from `represent_integer` because those elements
+/// lack the automorphism's symmetry — but we have not formally
+/// proved this. Production code uses the biladder and retries on
+/// chain failure; this test uses `projective_difference` to
+/// verify the chain formulas in isolation.
+///
+/// TODO: property test or formal argument that represent_integer
+/// outputs never trigger the biladder PmQ degeneracy.
 #[test]
 fn action_matrix_kernel_splits() {
     let curve = Curve::E0;
@@ -607,9 +618,11 @@ fn action_matrix_kernel_splits() {
     // Lift component 1: (P, P-Q, Q)
     let comp1 = TorsionBasis::from_propagated(p, pmq, q);
     let (p_jac, pmq_jac) = comp1.lift(&curve).expect("lift comp1");
-    // Lift component 2: (i(P), i(P-Q), i(Q))
-    // Use projective_difference for i(P)-i(Q) instead of the
-    // biladder's i(P-Q), to get a consistent PmQ representative.
+    // Lift component 2: use projective_difference for the `i`
+    // endomorphism test. The biladder PmQ causes zeros=10 for
+    // `i` specifically (degenerate symmetry), though it works
+    // for general theta from represent_integer. Production code
+    // uses biladder PmQ and retries on failure.
     let i_pmq_diff = i_p.projective_difference(&i_q);
     let comp2 = TorsionBasis::from_propagated(i_p, i_pmq_diff, i_q);
     let (ip_jac, ipmq_jac) = comp2.lift(&curve).expect("lift comp2");

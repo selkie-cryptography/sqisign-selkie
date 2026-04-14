@@ -403,20 +403,29 @@ fn fixed_degree_isogeny(
     //
     // Use (P, P-Q) as kernel generators to avoid the theta degeneracy
     // on E₀×E₀ (see §4 of the paper).
-    // Apply θ/u to the basis via the biladder.
+    // Apply θ/u to the basis via three biladder calls, matching the
+    // C ref's `matrix_application_even_basis`. All three use the same
+    // basis, so their projective representatives are consistent for
+    // the Okeya-Sakurai lift. Do NOT use `projective_difference` for
+    // the third output — the ambiguous square root picks the wrong
+    // branch for most theta values from represent_integer.
+    //
+    // The biladder PmQ can trigger alpha==gamma degeneracy for
+    // automorphisms (e.g. `i`), but this does not arise for general
+    // represent_integer outputs. The chain validates its output and
+    // returns None on failure, triggering a retry at the caller.
     let theta_p = basis_t.eval_decomposition(&m00, &m10);
     let theta_q = basis_t.eval_decomposition(&m01, &m11);
-    // θ/u(P−Q) via projective_difference (NOT a third biladder
-    // call). The biladder produces the correct affine x but a
-    // projective representative that is inconsistent with the
-    // other two biladder outputs, causing the Okeya-Sakurai lift
-    // to recover the wrong y-sign and the chain to collapse.
-    let theta_pmq = theta_p.projective_difference(&theta_q);
+    let theta_pmq = basis_t.eval_decomposition(
+        &m00.sub_mod2k(&m01, f.value()),
+        &m10.sub_mod2k(&m11, f.value()),
+    );
 
     // Lift component 1: (P, P-Q, Q) from the precomputed basis.
     let comp1 = TorsionBasis::from_propagated(basis_t.R, basis_t.RS, basis_t.S);
     let (p_jac_1, pmq_jac_1) = comp1.lift(&curve_t)?;
-    // Lift component 2: (θ/u(P), θ/u(P)−θ/u(Q), θ/u(Q)).
+    // Lift component 2: (θ/u(P), θ/u(P-Q), θ/u(Q)) — three
+    // biladder outputs with consistent projective representatives.
     let comp2 = TorsionBasis::from_propagated(theta_p, theta_pmq, theta_q);
     let (p_jac_2, pmq_jac_2) = match comp2.lift(&curve_t) {
         Some(r) => {
