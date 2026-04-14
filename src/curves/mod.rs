@@ -243,11 +243,16 @@ impl From<ChallengeHint> for u8 {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct TorsionBasis {
     /// First basis element R.
-    pub R: ProjectiveXOnlyPoint,
+    pub(crate) R: ProjectiveXOnlyPoint,
     /// Second basis element S.
-    pub S: ProjectiveXOnlyPoint,
+    pub(crate) S: ProjectiveXOnlyPoint,
     /// Difference R − S (needed for differential addition).
-    pub RS: ProjectiveXOnlyPoint,
+    ///
+    /// Must be the actual projective difference of R and S — not
+    /// an independently computed point with the same affine x.
+    /// The projective representative affects Okeya-Sakurai
+    /// y-recovery in [`lift`](Self::lift).
+    pub(crate) RS: ProjectiveXOnlyPoint,
 }
 
 /// Construct a [`TorsionBasis`] from two [`ProjectiveXOnlyPoint`]s,
@@ -268,8 +273,20 @@ impl From<(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> for TorsionBasis {
 }
 
 impl TorsionBasis {
-    /// Construct a basis from its three components (R, S, R−S).
-    pub fn new(
+    /// Construct a basis from pre-propagated components (R, S, R−S).
+    ///
+    /// `rs` must have been obtained from one of:
+    /// - a precomputed constant (e.g., `BASIS_E0_PMQ_X`)
+    /// - propagation through a group homomorphism alongside R and
+    ///   S (scalar multiplication, isogeny evaluation, doubling)
+    /// - rearranging an existing `TorsionBasis`'s fields
+    ///
+    /// Do NOT pass a point computed by a separate biladder call or
+    /// any other independent computation — even if it has the
+    /// correct affine x-coordinate, its projective representative
+    /// will be inconsistent, causing `lift` to recover the wrong
+    /// Jacobian y-sign. Use `From<(R, S)>` instead.
+    pub(crate) fn from_propagated(
         R: ProjectiveXOnlyPoint,
         S: ProjectiveXOnlyPoint,
         RS: ProjectiveXOnlyPoint,
@@ -842,7 +859,7 @@ impl ChangeOfBasisMatrix {
         let c_minus_d = c.sub_mod2k(d, k);
         let pmq_prime = basis.biscalar_mul(&a_minus_b, &c_minus_d, self.e);
 
-        TorsionBasis::new(p_prime, q_prime, pmq_prime)
+        TorsionBasis::from_propagated(p_prime, q_prime, pmq_prime)
     }
 
     // SetChangeOfBasisMatrix (Algorithm 4.8) will be inlined into

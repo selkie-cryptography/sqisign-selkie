@@ -260,7 +260,7 @@ impl VerifyingKey {
         }
 
         // --- Line 14: apply M_chl ---
-        let basis_chl_scaled = TorsionBasis::new(P_chl, Q_chl, PmQ_chl);
+        let basis_chl_scaled = TorsionBasis::from_propagated(P_chl, Q_chl, PmQ_chl);
         let basis_chl_transformed = &sig.M_chl * &basis_chl_scaled;
         let (mut P_chl, mut Q_chl, mut PmQ_chl) = (
             basis_chl_transformed.R,

@@ -213,7 +213,7 @@ impl SigningKey {
 
             // Line 9: M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk, Q_pk)).
             let phi_pmq = phi_p.projective_difference(&phi_q);
-            let eval_basis = TorsionBasis::new(phi_p, phi_pmq, phi_q);
+            let eval_basis = TorsionBasis::from_propagated(phi_p, phi_pmq, phi_q);
             let mat_sk = SecretKeyMatrix::encode(&eval_basis, &basis_pk);
 
             // Assemble the verifying key with its cached byte form.
@@ -747,25 +747,21 @@ impl SigningKey {
             let scale = f - e_cob.value() - 2;
             let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
 
-            let det_aux_scaled = TorsionBasis::new(
+            let det_aux_scaled = TorsionBasis::from_propagated(
                 &scale_scalar * &det_aux.R,
                 &scale_scalar * &det_aux.S,
                 &scale_scalar * &det_aux.RS,
             );
-            let det_chl_scaled = TorsionBasis::new(
+            let det_chl_scaled = TorsionBasis::from_propagated(
                 &scale_scalar * &det_chl.R,
                 &scale_scalar * &det_chl.S,
                 &scale_scalar * &det_chl.RS,
             );
 
-            let basis_aux = TorsionBasis::new(p_aux, q_aux, p_aux.projective_difference(&q_aux));
+            let basis_aux = TorsionBasis::from((p_aux, q_aux));
             let m1 = ChangeOfBasisMatrix::from_bases(&basis_aux, &det_aux_scaled, e_cob);
 
-            let basis_chl = TorsionBasis::new(
-                p_chl_final,
-                q_chl_final,
-                p_chl_final.projective_difference(&q_chl_final),
-            );
+            let basis_chl = TorsionBasis::from((p_chl_final, q_chl_final));
             let transformed = m1.mul(&basis_chl);
             let m_chl = ChangeOfBasisMatrix::from_bases(&det_chl_scaled, &transformed, e_cob);
 

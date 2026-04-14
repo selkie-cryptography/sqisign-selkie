@@ -214,7 +214,7 @@ pub fn compute_even_response(
     // Compute K = [s_shifted]P + [t_shifted]Q using the biladder.
     // Need PmQ for the three-point ladder.
     let PmQ = P.projective_difference(Q);
-    let basis = TorsionBasis::new(*P, *Q, PmQ);
+    let basis = TorsionBasis::from_propagated(*P, *Q, PmQ);
     // TODO: PmQ from projective_difference may pick wrong branch.
     // In signing, the basis (P, Q, P-Q) should have been propagated
     // from a prior computation, not recomputed here.
@@ -312,7 +312,7 @@ fn fixed_degree_isogeny(
     // the action matrix convention verified by the
     // action_matrix_consistent_with_basis test and the
     // scalar_mul_kernel_splits test.
-    let basis_t = TorsionBasis::new(p_t, q_t, pmq_t);
+    let basis_t = TorsionBasis::from_propagated(p_t, q_t, pmq_t);
     let gen_matrices = [
         ACTION_MATRICES[t][3],
         ACTION_MATRICES[t][4],
@@ -388,10 +388,10 @@ fn fixed_degree_isogeny(
     let theta_pmq = theta_p.projective_difference(&theta_q);
 
     // Lift component 1: (P, P-Q, Q) from the precomputed basis.
-    let comp1 = TorsionBasis::new(basis_t.R, basis_t.RS, basis_t.S);
+    let comp1 = TorsionBasis::from_propagated(basis_t.R, basis_t.RS, basis_t.S);
     let (p_jac_1, pmq_jac_1) = comp1.lift(&curve_t)?;
     // Lift component 2: (θ/u(P), θ/u(P)−θ/u(Q), θ/u(Q)).
-    let comp2 = TorsionBasis::new(theta_p, theta_pmq, theta_q);
+    let comp2 = TorsionBasis::from_propagated(theta_p, theta_pmq, theta_q);
     let (p_jac_2, pmq_jac_2) = match comp2.lift(&curve_t) {
         Some(r) => {
             #[cfg(test)]
