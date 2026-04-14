@@ -403,7 +403,7 @@ impl<const N: usize> Matrix<N> {
     ///   arbitrary-precision integers. It does not discuss fixed-precision
     ///   adaptations or the coefficient-size bounds necessary for a safe
     ///   fixed-width implementation. This is a spec gap at the "implementation
-    ///   guidance" level; documented in `latex/spec-review.tex`.
+    ///   guidance" level.
     /// - **C reference:** uses GMP (`ibz_t`), so coefficient growth is absorbed
     ///   by arbitrary-precision arithmetic and `quat_lattice_hnf` follows the
     ///   classical algorithm directly. Our fixed-precision constraint forces

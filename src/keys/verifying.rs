@@ -359,7 +359,7 @@ impl VerifyingKey {
         //
         // Use the PmQ that was computed by the matrix application and
         // pushed through the even response isogeny — NEVER recompute
-        // via projective_difference (see §4 of spec-review.tex).
+        // via projective_difference (ambiguous square root).
         let product = surfaces::EllipticProduct::new(curve_chl, sig.curve_aux);
 
         #[cfg(test)]
