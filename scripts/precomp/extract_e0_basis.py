@@ -7,8 +7,9 @@ Usage:
     python3 extract_e0_basis.py
 
 Fetches the raw e0_basis.c file from the pinned commit on GitHub and
-parses the Broadwell 64-bit limbs. Outputs the plain integer
-x-coordinates (converted from Broadwell Montgomery form R=2^256).
+parses the 64-bit limbs from the C ref's Broadwell backend (which
+stores Fp elements in Montgomery form with R = 2^256). Outputs the
+plain integer x-coordinates.
 
 The pinned commit ensures reproducibility regardless of upstream changes.
 """
@@ -25,7 +26,7 @@ URL = f"https://raw.githubusercontent.com/SQISign/the-sqisign/{COMMIT}/src/preco
 # NIST-I prime
 p = 5 * 2**248 - 1
 
-# Broadwell Montgomery constant
+# The C ref's Broadwell backend uses Montgomery form with R = 2^256.
 R_BW = 2**256
 R_BW_INV = pow(R_BW, p - 2, p)
 
@@ -52,7 +53,7 @@ def extract_broadwell_blocks(content):
 
 
 def broadwell_to_plain(mont_val):
-    """Convert from Broadwell Montgomery form to plain integer."""
+    """Convert from Montgomery form (R = 2^256) to plain integer."""
     return (mont_val * R_BW_INV) % p
 
 

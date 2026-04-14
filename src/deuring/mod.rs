@@ -297,22 +297,17 @@ fn fixed_degree_isogeny(
     // Look up the precomputed curve and torsion basis for this order.
     let t = EXTREMAL_ORDERS.iter().position(|o| o.q() == order.q())?;
 
-    // TODO: Support t > 0 with precomputed torsion bases.
-    if t != 0 {
-        return None;
-    }
-
-    let curve_t = Curve::E0;
-    let p_t = ProjectiveXOnlyPoint::from_affine_x(precomputed::torsion_basis::e0_px(), &curve_t);
-    let q_t = ProjectiveXOnlyPoint::from_affine_x(precomputed::torsion_basis::e0_qx(), &curve_t);
-    let pmq_t =
-        ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve_t);
-    // Use (R=P, S=Q, RS=PmQ) ordering so that
-    // eval_decomposition(a, b) computes [a]P + [b]Q, matching
-    // the action matrix convention verified by the
-    // action_matrix_consistent_with_basis test and the
-    // scalar_mul_kernel_splits test.
-    let basis_t = TorsionBasis::from_propagated(p_t, q_t, pmq_t);
+    let (px, qx, a_coeff) = precomputed::torsion_basis::basis_for_curve(t)?;
+    #[cfg(test)]
+    eprintln!("[FDI] t={t}, e_fdi will be computed next");
+    let curve_t = if t == 0 {
+        Curve::E0
+    } else {
+        Curve::from(crate::curves::montgomery::Coefficient::from(a_coeff))
+    };
+    let p_t = ProjectiveXOnlyPoint::from_affine_x(px, &curve_t);
+    let q_t = ProjectiveXOnlyPoint::from_affine_x(qx, &curve_t);
+    let basis_t = TorsionBasis::from((p_t, q_t));
     let gen_matrices = [
         ACTION_MATRICES[t][3],
         ACTION_MATRICES[t][4],
@@ -334,7 +329,18 @@ fn fixed_degree_isogeny(
     }
     let m = u_wide.ct_mul(&two_e_fdi.ct_sub(&u_wide));
     let order_wide = ExtremalOrder::<8>::from(*order);
-    let theta = order_wide.represent_integer(&m, true)?;
+    let theta = match order_wide.represent_integer(&m, true) {
+        Some(t) => {
+            #[cfg(test)]
+            eprintln!("[FDI] represent_integer OK, e_fdi={e_fdi}");
+            t
+        }
+        None => {
+            #[cfg(test)]
+            eprintln!("[FDI] represent_integer FAILED, e_fdi={e_fdi}");
+            return None;
+        }
+    };
 
     // Step 3: M_θ via order-basis decomposition.
     let m_theta = action_matrix(&theta, order.order(), &gen_matrices, f)?;

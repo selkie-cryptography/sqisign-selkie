@@ -5,6 +5,10 @@ use precomputed::{ACTION_MATRICES, torsion_basis};
 
 use super::*;
 
+/// Pinned commit of the SQIsign C reference implementation.
+/// Used by cross-check tests that fetch precomputed data.
+const C_REF_COMMIT: &str = "91e9e464fe5400192d13e1f9240cbf180200a103";
+
 #[test]
 fn action_matrix_via_trait() {
     let elem = Element::<4>::from_i64(1, 0, 0, 0);
@@ -108,7 +112,9 @@ fn torsion_basis_points_on_e0() {
 /// Cross-check our precomputed torsion basis against the C reference
 /// implementation at a pinned commit.
 ///
-/// Fetches `e0_basis.c` from GitHub, parses the Broadwell 64-bit limbs,
+/// Fetches `e0_basis.c` from GitHub, parses the 64-bit limbs from the
+/// C ref's Broadwell backend (which stores Fp in Montgomery form
+/// with R = 2^256),
 /// converts from the C ref's Montgomery form (R=2^256) to plain integers,
 /// and compares against our stored values.
 ///
@@ -116,11 +122,10 @@ fn torsion_basis_points_on_e0() {
 #[test]
 #[ignore]
 fn c_ref_basis_cross_check() {
-    // Pinned commit of the SQIsign reference implementation.
-    const COMMIT: &str = "91e9e464fe5400192d13e1f9240cbf180200a103";
+    let commit = C_REF_COMMIT;
     let url = format!(
         "https://raw.githubusercontent.com/SQISign/the-sqisign/{}/src/precomp/ref/lvl1/e0_basis.c",
-        COMMIT
+        commit
     );
 
     // Fetch the file.
@@ -153,7 +158,9 @@ fn c_ref_basis_cross_check() {
         broadwell_values.len()
     );
 
-    // Convert from Broadwell Montgomery form (R=2^256) to plain integers.
+    // The C ref's Broadwell backend stores Fp elements in Montgomery
+    // form with R = 2^256. Convert to plain integers by multiplying
+    // by R⁻¹ mod p.
     let p = BigInt::<8>::from_sign_and_limbs(
         0,
         [
@@ -195,23 +202,115 @@ fn c_ref_basis_cross_check() {
     assert_eq!(
         c_ref_px_re,
         our_px.a.to_bytes(),
-        "P₀ x real part mismatch with C ref at commit {COMMIT}"
+        "P₀ x real part mismatch with C ref at commit {C_REF_COMMIT}"
     );
     assert_eq!(
         c_ref_px_im,
         our_px.b.to_bytes(),
-        "P₀ x imaginary part mismatch with C ref at commit {COMMIT}"
+        "P₀ x imaginary part mismatch with C ref at commit {C_REF_COMMIT}"
     );
     assert_eq!(
         c_ref_qx_re,
         our_qx.a.to_bytes(),
-        "Q₀ x real part mismatch with C ref at commit {COMMIT}"
+        "Q₀ x real part mismatch with C ref at commit {C_REF_COMMIT}"
     );
     assert_eq!(
         c_ref_qx_im,
         our_qx.b.to_bytes(),
-        "Q₀ x imaginary part mismatch with C ref at commit {COMMIT}"
+        "Q₀ x imaginary part mismatch with C ref at commit {C_REF_COMMIT}"
     );
+}
+
+/// Cross-check torsion bases for all 7 curves against the C ref's
+/// `endomorphism_action.c` (fetched from the pinned commit).
+///
+/// Run with: `cargo test c_ref_all_bases_cross_check -- --ignored`
+#[test]
+#[ignore]
+fn c_ref_all_bases_cross_check() {
+    let commit = C_REF_COMMIT;
+    let url = format!(
+        "https://raw.githubusercontent.com/SQISign/the-sqisign/{}/src/precomp/ref/lvl1/endomorphism_action.c",
+        commit
+    );
+
+    let body = reqwest::blocking::get(&url)
+        .unwrap_or_else(|e| panic!("failed to fetch {url}: {e}"))
+        .text()
+        .unwrap();
+
+    // Parse ALL Broadwell 64-bit blocks.
+    let re = regex::Regex::new(r"SQISIGN_GF_IMPL_BROADWELL\)\n\{([^}]+)\}").unwrap();
+    let mut blocks: Vec<[u64; 4]> = Vec::new();
+    for cap in re.captures_iter(&body) {
+        let limbs: Vec<u64> = cap[1]
+            .split(',')
+            .map(|s| u64::from_str_radix(s.trim().trim_start_matches("0x"), 16).unwrap())
+            .collect();
+        assert_eq!(limbs.len(), 4);
+        blocks.push([limbs[0], limbs[1], limbs[2], limbs[3]]);
+    }
+
+    assert_eq!(blocks.len(), 140, "expected 140 Broadwell blocks for 7 curves");
+
+    // The C ref's Broadwell backend stores Fp elements in Montgomery
+    // form with R = 2^256. Convert to plain integers.
+    let p = BigInt::<8>::from_sign_and_limbs(
+        0,
+        [0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x04FFFFFFFFFFFFFF, 0, 0, 0, 0],
+    );
+    let r_bw = BigInt::<8>::ONE.shl(256);
+    let r_bw_inv = BigInt::<8>::pow_mod(&r_bw, &p.ct_sub(&BigInt::<8>::TWO), &p);
+
+    let convert = |limbs: &[u64; 4]| -> [u8; 32] {
+        let mont = BigInt::<8>::from_sign_and_limbs(0, [limbs[0], limbs[1], limbs[2], limbs[3], 0, 0, 0, 0]);
+        let plain = mont.ct_mul(&r_bw_inv).ct_mod(&p);
+        let mut bytes = [0u8; 32];
+        for i in 0..4 {
+            bytes[i * 8..(i + 1) * 8].copy_from_slice(&plain.as_limbs()[i].to_le_bytes());
+        }
+        bytes
+    };
+
+    // Layout per curve: 20 Broadwell blocks.
+    // Blocks 0-7: ec_curve_t {A(re,im), C(re,im), A24(x_re,x_im,z_re,z_im)}
+    // Blocks 8-19: ec_basis_t {P(x_re,x_im,z_re,z_im),
+    //                          Q(x_re,x_im,z_re,z_im),
+    //                          PmQ(x_re,x_im,z_re,z_im)}
+    const BLOCKS_PER_CURVE: usize = 20;
+
+    for t in 0..7 {
+        let base = t * BLOCKS_PER_CURVE;
+
+        let c_ref_px_re = convert(&blocks[base + 8]);
+        let c_ref_px_im = convert(&blocks[base + 9]);
+        let c_ref_qx_re = convert(&blocks[base + 12]);
+        let c_ref_qx_im = convert(&blocks[base + 13]);
+
+        let (our_px, our_qx, _) = torsion_basis::basis_for_curve(t)
+            .unwrap_or_else(|| panic!("no basis for curve {t}"));
+
+        assert_eq!(
+            c_ref_px_re,
+            our_px.a.to_bytes(),
+            "curve {t}: P x real part mismatch"
+        );
+        assert_eq!(
+            c_ref_px_im,
+            our_px.b.to_bytes(),
+            "curve {t}: P x imaginary part mismatch"
+        );
+        assert_eq!(
+            c_ref_qx_re,
+            our_qx.a.to_bytes(),
+            "curve {t}: Q x real part mismatch"
+        );
+        assert_eq!(
+            c_ref_qx_im,
+            our_qx.b.to_bytes(),
+            "curve {t}: Q x imaginary part mismatch"
+        );
+    }
 }
 
 /// Verify that M_i applied to the basis produces i(P₀).
@@ -512,4 +611,39 @@ fn scalar_mul_kernel_splits() {
 
     let te = TorsionExponent::try_from(e).unwrap();
     let (_codomain, _images) = kernel.isogeny_extra_torsion(te, &[]);
+}
+
+/// Verify all 7 torsion bases: points on curve, correct order.
+#[test]
+fn all_torsion_bases_on_curve() {
+    use crate::curves::montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint};
+
+    for t in 0..7 {
+        let (px, qx, a) = torsion_basis::basis_for_curve(t)
+            .unwrap_or_else(|| panic!("no basis for curve {t}"));
+        let curve = Curve::from(Coefficient::from(a));
+        let p = ProjectiveXOnlyPoint::from_affine_x(px, &curve);
+        let q = ProjectiveXOnlyPoint::from_affine_x(qx, &curve);
+
+        // Points should be on the curve (recover_y succeeds).
+        assert!(
+            curve.recover_y(&p.to_affine_x()).is_some(),
+            "curve {t}: P not on curve"
+        );
+        assert!(
+            curve.recover_y(&q.to_affine_x()).is_some(),
+            "curve {t}: Q not on curve"
+        );
+
+        // [2^f]P = O (order divides 2^f).
+        let f = TorsionExponent::FULL.value();
+        let mut test = p;
+        for _ in 0..f {
+            test = test.double();
+        }
+        assert!(
+            test.Z == crate::fields::Fp2::ZERO,
+            "curve {t}: [2^f]P ≠ O"
+        );
+    }
 }
