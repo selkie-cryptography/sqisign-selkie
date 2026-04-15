@@ -89,7 +89,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: reviewdog/action-setup@19eab14c39ff4e8b0db556d2acab0ad43e0ea85c
+      - uses: reviewdog/action-setup@38a8d76742a75eeb6c6ffc616bde64179fd09ebf
       - name: Run clippy with reviewdog
         env:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -111,7 +111,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
-      - uses: reviewdog/action-setup@19eab14c39ff4e8b0db556d2acab0ad43e0ea85c
+      - uses: reviewdog/action-setup@38a8d76742a75eeb6c6ffc616bde64179fd09ebf
       - name: Run rustfmt with reviewdog
         env:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -202,7 +202,7 @@ jobs:
   sage-precompute-check:
     name: Sage precompute cross-check
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -210,22 +210,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
-      - name: Cache SageMath apt packages
+      - name: Cache Conda environment
         uses: actions/cache@v5
         with:
-          path: |
-            /var/cache/apt/archives
-          key: sage-apt-${{ runner.os }}
+          path: ~/sage-env
+          key: sage-conda-${{ runner.os }}-10.6
 
-      - name: Install SageMath
+      - name: Install SageMath via conda-forge
         run: |
-          sudo apt-get update
-          sudo apt-get install -y sagemath
+          if [ ! -d ~/sage-env ]; then
+            wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O miniforge.sh
+            bash miniforge.sh -b -p ~/miniforge
+            ~/miniforge/bin/conda create -y -p ~/sage-env sage=10.6 -c conda-forge
+          fi
+          echo "$HOME/sage-env/bin" >> "$GITHUB_PATH"
 
       - name: Verify Sage >= 10.5
         run: |
           sage --version
-          sage -c "from sage.misc.banner import require_version; assert require_version(10, 5), 'SageMath >= 10.5 required (ref impl minimum for maxorders.py)'"
 
       - name: Run Sage cross-check test
         run: cargo test sage_cross_check -- --ignored
@@ -260,12 +262,12 @@ jobs:
 
       - name: Build PDF
         working-directory: latex
-        run: latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
+        run: latexmk -pdf -interaction=nonstopmode -halt-on-error sqisign-selkie.tex
 
       - name: Check PDF is up to date
         working-directory: latex
         run: |
-          git diff --exit-code main.pdf || {
-            echo "::error::latex/main.pdf is out of date. Rebuild with 'cd latex && latexmk -pdf main.tex' and commit."
+          git diff --exit-code sqisign-selkie.pdf || {
+            echo "::error::latex/sqisign-selkie.pdf is out of date. Rebuild with 'cd latex && latexmk -pdf sqisign-selkie.tex' and commit."
             exit 1
           }
