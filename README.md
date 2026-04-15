@@ -16,6 +16,8 @@ specification][spec] (2025-07-07), targeting the NIST-I parameter set
 > functional. Signing is structurally complete with commitment phase
 > working; the response phase is slow due to unoptimized quaternion
 > arithmetic. All 100 C reference KAT verification vectors pass.
+> Signing and key generation are **not yet constant-time** — the
+> quaternion layer is variable-time with `TODO(ct)` markers throughout.
 > **Do not use in production.**
 
 ## Example
@@ -78,6 +80,25 @@ vectors from a pinned commit. Run them explicitly:
 cargo test --lib -- --ignored
 ```
 
+## Mutation testing
+
+We use [cargo-mutants](https://mutants.rs/) to verify that our test
+suite actually catches bugs, not just that it runs. Install with
+`cargo install cargo-mutants`, then:
+
+```sh
+cargo mutants -- --lib                      # full run (slow)
+cargo mutants --in-diff <(git diff main) -- --lib  # only changed code
+```
+
+Functions where mutation is meaningless (e.g., formatting, zeroize drop
+glue, compile-time constants) are excluded in `.cargo/mutants.toml`.
+Functions that would hang or loop forever under mutation are annotated
+with `#[mutants::skip]` in the source.
+
+CI runs incremental mutation testing on every PR (only changed code) and
+a full sharded run weekly.
+
 # Safety
 
 The `sqisign-selkie` types are designed to make illegal states
@@ -86,13 +107,19 @@ is guaranteed to hold a point on the associated Montgomery curve, and
 any instance of an `Fp` is guaranteed to hold a canonical element of
 F_p.
 
-All operations on secret or secret-derived data are intended to be
-constant-time (no secret-dependent branches, no secret-dependent memory
-accesses). Variable-time code is only acceptable on truly public data
-(e.g., verification). Temporary variable-time code paths on secret data
-are marked with `TODO(ct)` comments documenting which spec algorithm
-line makes the input secret-derived. We use the [`subtle`
-crate][subtle_doc] for conditional moves and optimization barriers.
+Constant-time signing and key generation are a design goal, **not yet
+achieved.** The quaternion arithmetic layer (lattice reduction, HNF,
+Cornacchia, `IdealToIsogeny`) is currently variable-time on
+secret-derived data. Every variable-time code path on secret data is
+marked with a `TODO(ct)` comment documenting which spec algorithm line
+makes the input secret-derived. Once end-to-end signing interoperability
+is complete, we plan a six-phase CT hardening based on published
+techniques (Kouider et al., Hanyecz et al., Basso et al., Kim et al.).
+
+Variable-time code is only acceptable on truly public data (e.g.,
+verification). We use the [`subtle` crate][subtle_doc] for conditional
+moves and optimization barriers where CT has been implemented (field
+arithmetic, curve operations).
 
 Some functionality (e.g., batch inversion) requires heap allocation for
 temporary buffers. All heap-allocated buffers of potentially secret data

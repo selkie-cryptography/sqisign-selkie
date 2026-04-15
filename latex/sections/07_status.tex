@@ -23,6 +23,10 @@ Deuring correspondence.  Two coupled blockers remain:
 Key generation (Algorithm~4.1) is not yet implemented.  Signature
 serialization to the 148-byte wire format is implemented.
 
+Signing and key generation are \textbf{not yet constant-time.}  The
+quaternion arithmetic layer is variable-time on secret-derived data
+(see \S\ref{sec:ct} for details and our hardening plan).
+
 \paragraph{Next steps.}
 \begin{enumerate}
   \item Widen the response-phase sampling and degree arithmetic to

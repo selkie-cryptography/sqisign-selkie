@@ -32,5 +32,17 @@ Seven papers form a complete constant-time stack for SQIsign~v2:
     constant-time target.
 \end{itemize}
 
+\subsection{Current status}
+
+Signing and key generation are \textbf{not yet constant-time.}  The
+entire quaternion arithmetic layer---lattice reduction (L2/LLL), Hermite
+Normal Form, Cornacchia/\textsc{RepresentInteger}, and
+\textsc{IdealToIsogeny}---is variable-time on secret-derived data.
+Every such code path is annotated with \texttt{TODO(ct)} citing the
+Algorithm~4.2 line that makes the input secret-derived.
+
+Field arithmetic (\S\ref{sec:arch}), curve operations, and
+verification are constant-time or operate on purely public data.
+
 We plan a six-phase CT hardening immediately after achieving
 end-to-end interoperability.

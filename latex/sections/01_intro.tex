@@ -38,14 +38,17 @@ We target four goals:
     public API, but us writing the internals, and anyone who maintains
     this code after us.
 
-  \item \textbf{Constant-time signing.}  The specification does not
-    discuss side channels.  The C reference is variable-time for the
-    entire quaternion layer.  We traced the signing algorithm and
-    confirmed that the quaternion operations compute over
-    secret-key-derived data.  Published
+  \item \textbf{Constant-time signing (goal, not yet achieved).}
+    The specification does not discuss side channels.  The C reference
+    is variable-time for the entire quaternion layer.  We traced the
+    signing algorithm and confirmed that the quaternion operations
+    compute over secret-key-derived data.  Published
     attacks~\cite{EPRINT:MCJKR25} demonstrate practical SPA on
     Cornacchia's algorithm.  Constant-time execution is not a
-    nice-to-have; it is a requirement.
+    nice-to-have; it is a requirement.  Our signing and key generation
+    code is currently variable-time, with every secret-touching code
+    path marked \texttt{TODO(ct)}.  We plan to harden after achieving
+    end-to-end interoperability (\S\ref{sec:ct}).
 
   \item \textbf{Idiomatic Rust.}  Methods on types over free functions.
     Invariants via distinct types, not runtime checks.  Code that a
