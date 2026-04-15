@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
@@ -94,7 +94,7 @@ jobs:
         env:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cargo clippy --all-targets --message-format=short 2>&1 |
+          cargo +nightly clippy --all-targets --all-features --message-format=short -- -D warnings 2>&1 |
             reviewdog -f=clippy -reporter=github-check -fail-level=any
 
   fmt:
@@ -116,7 +116,7 @@ jobs:
         env:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cargo +nightly fmt -- --check 2>&1 |
+          cargo +nightly fmt --all -- --check 2>&1 |
             reviewdog -f=rustfmt -reporter=github-check -fail-level=any
 
   doc:
