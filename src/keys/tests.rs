@@ -154,7 +154,8 @@ fn challenge_matrix_from_bytes_exact_length() {
     assert!(ChallengeMatrix::from_bytes(&data, comp_bytes).is_ok());
 }
 
-// Wycheproof-style verification negatives live in tests/wycheproof.rs
+// Negative / vulnerability test vectors live in tests/wycheproof.rs
+// (C2SP/wycheproof JSON format, portable to other implementations).
 // (top-level integration test, public API only, portable to other impls).
 
 // ---------------- KAT verification ----------------
