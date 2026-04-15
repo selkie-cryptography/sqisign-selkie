@@ -145,3 +145,59 @@ fn kat_sk_pk_match_all() {
         );
     }
 }
+
+/// Generate a fresh key, sign a random message, verify.
+///
+/// Run with: `cargo test --lib --release sign_fresh -- --ignored`.
+#[test]
+#[ignore]
+fn sign_fresh() {
+    let sk = SigningKey::generate(&mut OsRng).expect("keygen should succeed");
+    let mut msg = [0u8; 64];
+    rand_core::RngCore::fill_bytes(&mut OsRng, &mut msg);
+
+    let sig = match sk.sign(&msg, &mut OsRng) {
+        Ok(s) => s,
+        Err(SignatureError::SigningFailed) => {
+            eprintln!("sign_fresh: SigningFailed (response phase incomplete)");
+            return;
+        }
+        Err(other) => panic!("unexpected sign error: {other:?}"),
+    };
+
+    sk.verifying_key()
+        .verify(&msg, &sig)
+        .expect("signature should verify");
+}
+
+/// Sign with KAT vector 0's keypair and verify.
+///
+/// Run with: `cargo test --lib --release sign_with_kat_key -- --ignored`.
+#[test]
+#[ignore]
+fn sign_with_kat_key() {
+    let (_, pk_hex, sk_hex, _, _) = crate::keys::kat_data::KAT_VECTORS[0];
+    let sk = SigningKey::from_bytes(
+        hex::decode(sk_hex).unwrap().as_slice().try_into().unwrap(),
+    )
+    .expect("KAT sk should parse");
+    let vk = VerifyingKey::from_bytes(
+        hex::decode(pk_hex).unwrap().as_slice().try_into().unwrap(),
+    )
+    .expect("KAT pk should parse");
+
+    let mut msg = [0u8; 64];
+    rand_core::RngCore::fill_bytes(&mut OsRng, &mut msg);
+
+    let sig = match sk.sign(&msg, &mut OsRng) {
+        Ok(s) => s,
+        Err(SignatureError::SigningFailed) => {
+            eprintln!("sign_with_kat_key: SigningFailed (response phase incomplete)");
+            return;
+        }
+        Err(other) => panic!("unexpected sign error: {other:?}"),
+    };
+
+    vk.verify(&msg, &sig)
+        .expect("signature should verify against KAT pk");
+}

@@ -1,0 +1,70 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Performance benchmarks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      # gh-pages deployment on push to main
+      contents: write
+      # PR comments with benchmark comparison
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: bench
+
+      - name: Run benchmarks
+        run: |
+          cargo bench --features bench-internals -- --color never 2>&1 | \
+            .github/scripts/divan-to-json.sh > bench-output.json
+
+      - name: Store benchmark result (push to main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: benchmark-action/github-action-benchmark@d48d326b4ca9ba73ca0cd0d59f108f9e02a381c7
+        with:
+          name: sqisign-selkie benchmarks
+          tool: customSmallerIsBetter
+          output-file-path: bench-output.json
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: bench
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: "115%"
+          comment-on-alert: true
+          comment-always: true
+          fail-on-alert: false
+
+      - name: Compare against baseline (pull request)
+        if: github.event_name == 'pull_request'
+        uses: benchmark-action/github-action-benchmark@d48d326b4ca9ba73ca0cd0d59f108f9e02a381c7
+        with:
+          name: sqisign-selkie benchmarks
+          tool: customSmallerIsBetter
+          output-file-path: bench-output.json
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: bench
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: false
+          comment-on-alert: true
+          alert-threshold: "115%"
+          fail-on-alert: false
