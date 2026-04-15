@@ -35,21 +35,21 @@ fn modulus_192() -> BigInt<4> {
 fn add(bencher: divan::Bencher) {
     let a = sample_a();
     let b = sample_b();
-    bencher.bench(|| &divan::black_box(a) + &divan::black_box(b));
+    bencher.bench(|| divan::black_box(a) + divan::black_box(b));
 }
 
 #[divan::bench]
 fn sub(bencher: divan::Bencher) {
     let a = sample_a();
     let b = sample_b();
-    bencher.bench(|| &divan::black_box(a) - &divan::black_box(b));
+    bencher.bench(|| divan::black_box(a) - divan::black_box(b));
 }
 
 #[divan::bench]
 fn mul(bencher: divan::Bencher) {
     let a = sample_a();
     let b = sample_b();
-    bencher.bench(|| &divan::black_box(a) * &divan::black_box(b));
+    bencher.bench(|| divan::black_box(a) * divan::black_box(b));
 }
 
 #[divan::bench]
@@ -123,7 +123,7 @@ fn mul_wide(bencher: divan::Bencher) {
         0xCAFE_BABE, 0x9ABC_DEF0, 0x7654_3210, 0x89AB_CDEF,
         0x5555_6666, 0x7777_8888, 0x9999_AAAA, 0xBBBB_CCCC,
     ]);
-    bencher.bench(|| &divan::black_box(a) * &divan::black_box(b));
+    bencher.bench(|| divan::black_box(a) * divan::black_box(b));
 }
 
 #[divan::bench]
