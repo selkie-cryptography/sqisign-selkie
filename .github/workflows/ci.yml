@@ -117,7 +117,7 @@ jobs:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cargo +nightly fmt --all -- --check 2>&1 |
-            reviewdog -f=rustfmt -reporter=github-check -fail-level=any
+            reviewdog -f=diff -reporter=github-check -fail-level=any
 
   doc:
     name: Documentation
