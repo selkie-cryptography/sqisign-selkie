@@ -154,8 +154,10 @@ fn challenge_matrix_from_bytes_exact_length() {
     assert!(ChallengeMatrix::from_bytes(&data, comp_bytes).is_ok());
 }
 
-// ---------------- KAT verification ----------------
+// Wycheproof-style verification negatives live in tests/wycheproof.rs
+// (top-level integration test, public API only, portable to other impls).
 
+// ---------------- KAT verification ----------------
 
 /// Verify all 100 hardcoded KAT vectors from the C reference
 /// implementation (PQCsignKAT_353_SQIsign_lvl1.rsp).

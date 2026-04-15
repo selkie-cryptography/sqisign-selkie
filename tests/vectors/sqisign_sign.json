@@ -1,0 +1,75 @@
+{
+  "algorithm": "SQIsign_248",
+  "schema": "sqisign_sign_schema.json",
+  "numberOfTests": 1,
+  "header": [
+    "SQIsign_248: f=248, p = 5*2^248 - 1 (NIST security level I).",
+    "Wycheproof-style test vectors for SQIsign_248 signing.",
+    "Signing is in flux; this file is a skeleton.",
+    "Spec version: SQIsign v2.0.1 (2025-07-07).",
+    "",
+    "TODO categories (add vectors as signing stabilizes):",
+    "- SignVerifyRoundTrip: sign with our impl, verify with C ref (and vice versa).",
+    "- NonceIndependence: same (sk, msg) with different randomness -> distinct E_com.",
+    "- EmptyMessage: sign and verify empty message.",
+    "- LargeMessage: sign and verify 2^16-byte message.",
+    "- ResponseEdgeCases: inputs that exercise r_rsp > 0, n_bt > 0, max lattice width.",
+    "- CornacchiaBranching: inputs that exercise different Cornacchia branches (SPA target).",
+    "- DegenerateIdeal: commitment ideal with pathological norm."
+  ],
+  "notes": {
+    "KatRoundTrip": {
+      "bugType": "CORRECTNESS",
+      "description": "Signature from C reference KAT file verifies under the paired pk. Tests the sign-then-verify contract without running our own signer."
+    },
+    "SignVerifyRoundTrip": {
+      "bugType": "CORRECTNESS",
+      "description": "Sign with our implementation, verify the result. The fundamental correctness property."
+    },
+    "NonceIndependence": {
+      "bugType": "SIGNATURE_MALLEABILITY",
+      "description": "Signing the same message twice with different randomness must produce distinct commitment curves. Nonce reuse leaks the secret key.",
+      "links": [
+        "https://eprint.iacr.org/2025/897"
+      ]
+    },
+    "CornacchiaBranching": {
+      "bugType": "SIDE_CHANNEL",
+      "description": "Inputs crafted so that the Cornacchia algorithm in RepresentInteger takes different branches. Detects implementations vulnerable to SPA.",
+      "links": [
+        "https://eprint.iacr.org/2023/1747"
+      ]
+    },
+    "ResponseEdgeCases": {
+      "bugType": "EDGE_CASE",
+      "description": "Signatures where r_rsp > 0 or n_bt > 0, exercising the even-response isogeny and backtracking paths that are absent in most KAT vectors."
+    },
+    "DegenerateIdeal": {
+      "bugType": "EDGE_CASE",
+      "description": "Commitment ideal with pathological norm (e.g., norm dividing p, trivial generator). Tests whether signing rejects or handles gracefully."
+    }
+  },
+  "testGroups": [
+    {
+      "type": "SqisignSign",
+      "source": {
+        "name": "selkie-cryptography/sqisign-selkie",
+        "version": "0.1"
+      },
+      "tests": [
+        {
+          "tcId": 1,
+          "comment": "KAT vector 0 - C ref signature verifies under its own pk",
+          "sk": "07CCD21425136F6E865E497D2D4D208F0054AD81372066E817480787AAF7B2029550C89E892D618CE3230F23510BFBE68FCCDDAEA51DB1436B462ADFAF008A010B19943116DB5B4552B05B174969C61C9C8701000000000000000000000000000094F28A5533DF8872E3C7EFE3D45A175A0CFDFFFFFFFFFFFFFFFFFFFFFFFFFFFFF1959E3D67EADD79948DB766D9FFAF4D3FFDFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000000000000000358A8756E1CA2E31C2F3C879414AC08DF7EA0C1D732F9AE3D1AC4644E524340095A4F53D286FDE8A7226CE960C152C344888C963A457B02CAECA41C2672D76000365B548FB9C9E6C0E149BABA3EC7BC33B8F052B6B9D4F840A2AD67221C8F600464B9862D34ADF4D562F3836EBEFC4D8F874351B3E63A4DF9D33C0BBF9EB1800",
+          "pk": "07CCD21425136F6E865E497D2D4D208F0054AD81372066E817480787AAF7B2029550C89E892D618CE3230F23510BFBE68FCCDDAEA51DB1436B462ADFAF008A010B",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010202",
+          "result": "valid",
+          "flags": [
+            "KatRoundTrip"
+          ]
+        }
+      ]
+    }
+  ]
+}
