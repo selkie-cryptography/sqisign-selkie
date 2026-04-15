@@ -250,7 +250,7 @@ jobs:
         run: cargo test c_ref_kat_cross_check -- --ignored
 
   paper:
-    name: Build paper
+    name: Build LaTeX documents
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     container: ghcr.io/xu-cheng/texlive-full:latest
@@ -260,14 +260,14 @@ jobs:
           persist-credentials: false
           submodules: true
 
-      - name: Build PDF
+      - name: Build PDFs
         working-directory: latex
-        run: latexmk -pdf -interaction=nonstopmode -halt-on-error sqisign-selkie.tex
+        run: make all
 
-      - name: Check PDF is up to date
+      - name: Check PDFs are up to date
         working-directory: latex
         run: |
-          git diff --exit-code sqisign-selkie.pdf || {
-            echo "::error::latex/sqisign-selkie.pdf is out of date. Rebuild with 'cd latex && latexmk -pdf sqisign-selkie.tex' and commit."
+          git diff --exit-code sqisign-selkie.pdf sqisign-v2-spec-review.pdf || {
+            echo "::error::LaTeX PDFs are out of date. Rebuild with 'cd latex && make' and commit."
             exit 1
           }
