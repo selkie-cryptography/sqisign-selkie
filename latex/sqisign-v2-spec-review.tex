@@ -635,4 +635,40 @@ recomputing \textsc{DifferencePoint} on the outputs.  The same
 constraint applies to every other site that constructs a basis
 triple for the Okeya-Sakurai lift.
 
+% =====================================================================
+\section{\textsc{GetIndexSplitting} must handle malformed input}
+\label{sec:splitting-panic}
+
+\finding{Affects \algo{8.42}
+(\textsc{GetIndexSplitting}), and transitively verification
+(\algo{4.9}).}{\medium}
+
+\algo{8.42} searches the null point $U_{i,j}(0)$ for the unique
+index $(i,j)$ where it vanishes.  The spec states this index
+``exists and is unique'' (Proposition~8.5.3), which is true for
+honestly generated signatures.
+
+\paragraph{What goes wrong.}
+For \emph{malformed} signatures (corrupted \texttt{E\_aux},
+\texttt{M\_chl}, or \texttt{chl}), the $(2,2)$-isogeny chain may
+produce a null point with zero or multiple vanishing entries.
+An implementation that asserts uniqueness (e.g., via
+\texttt{debug\_assert!}) will panic on such inputs, providing a
+denial-of-service vector: any untrusted signature can crash the
+verifier in debug builds.  In release builds, the assertion compiles
+out and the function returns a wrong index, leading to silent
+misbehavior rather than a clean rejection.
+
+We discovered this via negative test vectors
+(\S\ref{sec:splitting-panic}): single-bit flips in
+\texttt{E\_aux}, \texttt{M\_chl}, and \texttt{chl} all triggered
+the assertion.
+
+\paragraph{Recommendation.}
+Note in \algo{8.42} that implementations must handle the case where
+no (or multiple) vanishing indices exist, returning an error rather
+than assuming uniqueness.  A verification implementation should treat
+a missing or ambiguous splitting index as signature rejection, not an
+assertion failure.
+
 \end{document}

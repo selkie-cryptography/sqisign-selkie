@@ -8,6 +8,9 @@ or implicit C reference conventions, and four classes of bugs arising
 from fixed-precision arithmetic.  We catalog these, explain how they
 arose, and extract concrete lessons for anyone implementing
 isogeny-based schemes from a spec.  We show how Rust's type system
-enforces cryptographic invariants at compile time, and survey the
-published constant-time techniques for SQIsign's quaternion arithmetic.
+enforces cryptographic invariants at compile time, survey the
+published constant-time techniques for SQIsign's quaternion arithmetic,
+and describe a negative test vector suite (in C2SP/wycheproof JSON
+format) that detects vulnerabilities---not just bugs---in SQIsign
+verification, signing, and key generation.
 \end{abstract}
