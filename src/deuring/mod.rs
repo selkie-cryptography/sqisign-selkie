@@ -276,10 +276,18 @@ fn action_matrix(
         let other = &gen_matrices[k];
         let fv = f.value();
         result = ActionMatrix::new(
-            result.entry(0, 0).add_mod2k(&s.mul_mod2k(other.entry(0, 0), fv), fv),
-            result.entry(0, 1).add_mod2k(&s.mul_mod2k(other.entry(0, 1), fv), fv),
-            result.entry(1, 0).add_mod2k(&s.mul_mod2k(other.entry(1, 0), fv), fv),
-            result.entry(1, 1).add_mod2k(&s.mul_mod2k(other.entry(1, 1), fv), fv),
+            result
+                .entry(0, 0)
+                .add_mod2k(&s.mul_mod2k(other.entry(0, 0), fv), fv),
+            result
+                .entry(0, 1)
+                .add_mod2k(&s.mul_mod2k(other.entry(0, 1), fv), fv),
+            result
+                .entry(1, 0)
+                .add_mod2k(&s.mul_mod2k(other.entry(1, 0), fv), fv),
+            result
+                .entry(1, 1)
+                .add_mod2k(&s.mul_mod2k(other.entry(1, 1), fv), fv),
         );
     }
 

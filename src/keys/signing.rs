@@ -518,7 +518,11 @@ impl SigningKey {
             // validate by completing a full signing round-trip.
             let i_chl_sk = i_chl_lat.intersection_via_kernel::<40>(&i_sk_lat);
             #[cfg(test)]
-            eprintln!("[sign {_iter}] intersection 1: {:?} (cumul {:?})", _t_int.elapsed(), _iter_start.elapsed());
+            eprintln!(
+                "[sign {_iter}] intersection 1: {:?} (cumul {:?})",
+                _t_int.elapsed(),
+                _iter_start.elapsed()
+            );
 
             let i_com_conj = i_com_w.lattice().conjugate();
             let i_chl_sk_lat = Lattice::<N_RESP>::from(i_chl_sk);
@@ -528,7 +532,11 @@ impl SigningKey {
             let _t_int2 = std::time::Instant::now();
             let intersection = i_chl_sk_lat.intersection_via_kernel::<40>(&i_com_conj_lat);
             #[cfg(test)]
-            eprintln!("[sign {_iter}] intersection 2: {:?} (cumul {:?})", _t_int2.elapsed(), _iter_start.elapsed());
+            eprintln!(
+                "[sign {_iter}] intersection 2: {:?} (cumul {:?})",
+                _t_int2.elapsed(),
+                _iter_start.elapsed()
+            );
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
 
             // Radius: D_rsp · D²_mix · 2^{f+1}, computed at BigInt<22>.
@@ -545,7 +553,11 @@ impl SigningKey {
             let alpha_rsp_w = match intersection_lat.sample_from_ball::<64>(&radius) {
                 Some(a) => {
                     #[cfg(test)]
-                    eprintln!("[sign {_iter}] sample: {:?} (cumul {:?})", _t_sample.elapsed(), _iter_start.elapsed());
+                    eprintln!(
+                        "[sign {_iter}] sample: {:?} (cumul {:?})",
+                        _t_sample.elapsed(),
+                        _iter_start.elapsed()
+                    );
                     a
                 }
                 None => continue,
@@ -670,11 +682,17 @@ impl SigningKey {
                 let i_inter =
                     LeftIdeal::from_parts(inter_lattice, inter_norm, *EXTREMAL_ORDERS[0].order());
                 #[cfg(test)]
-                eprintln!("[sign {_iter}] response to_isogeny... (cumul {:?})", _iter_start.elapsed());
+                eprintln!(
+                    "[sign {_iter}] response to_isogeny... (cumul {:?})",
+                    _iter_start.elapsed()
+                );
                 let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_inter.to_isogeny() {
                     Some(r) => {
                         #[cfg(test)]
-                        eprintln!("[sign {_iter}] response to_isogeny OK (cumul {:?})", _iter_start.elapsed());
+                        eprintln!(
+                            "[sign {_iter}] response to_isogeny OK (cumul {:?})",
+                            _iter_start.elapsed()
+                        );
                         r
                     }
                     None => continue,

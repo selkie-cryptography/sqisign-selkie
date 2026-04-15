@@ -277,8 +277,8 @@ impl TorsionBasis {
     ///
     /// `rs` must have been obtained from one of:
     /// - a precomputed constant (e.g., `BASIS_E0_PMQ_X`)
-    /// - propagation through a group homomorphism alongside R and
-    ///   S (scalar multiplication, isogeny evaluation, doubling)
+    /// - propagation through a group homomorphism alongside R and S (scalar
+    ///   multiplication, isogeny evaluation, doubling)
     /// - rearranging an existing `TorsionBasis`'s fields
     ///
     /// Do NOT pass a point computed by a separate biladder call or

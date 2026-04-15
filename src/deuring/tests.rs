@@ -252,19 +252,35 @@ fn c_ref_all_bases_cross_check() {
         blocks.push([limbs[0], limbs[1], limbs[2], limbs[3]]);
     }
 
-    assert_eq!(blocks.len(), 140, "expected 140 Broadwell blocks for 7 curves");
+    assert_eq!(
+        blocks.len(),
+        140,
+        "expected 140 Broadwell blocks for 7 curves"
+    );
 
     // The C ref's Broadwell backend stores Fp elements in Montgomery
     // form with R = 2^256. Convert to plain integers.
     let p = BigInt::<8>::from_sign_and_limbs(
         0,
-        [0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x04FFFFFFFFFFFFFF, 0, 0, 0, 0],
+        [
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0x04FFFFFFFFFFFFFF,
+            0,
+            0,
+            0,
+            0,
+        ],
     );
     let r_bw = BigInt::<8>::ONE.shl(256);
     let r_bw_inv = BigInt::<8>::pow_mod(&r_bw, &p.ct_sub(&BigInt::<8>::TWO), &p);
 
     let convert = |limbs: &[u64; 4]| -> [u8; 32] {
-        let mont = BigInt::<8>::from_sign_and_limbs(0, [limbs[0], limbs[1], limbs[2], limbs[3], 0, 0, 0, 0]);
+        let mont = BigInt::<8>::from_sign_and_limbs(
+            0,
+            [limbs[0], limbs[1], limbs[2], limbs[3], 0, 0, 0, 0],
+        );
         let plain = mont.ct_mul(&r_bw_inv).ct_mod(&p);
         let mut bytes = [0u8; 32];
         for i in 0..4 {
@@ -288,8 +304,8 @@ fn c_ref_all_bases_cross_check() {
         let c_ref_qx_re = convert(&blocks[base + 12]);
         let c_ref_qx_im = convert(&blocks[base + 13]);
 
-        let (our_px, our_qx, _) = torsion_basis::basis_for_curve(t)
-            .unwrap_or_else(|| panic!("no basis for curve {t}"));
+        let (our_px, our_qx, _) =
+            torsion_basis::basis_for_curve(t).unwrap_or_else(|| panic!("no basis for curve {t}"));
 
         assert_eq!(
             c_ref_px_re,
@@ -343,8 +359,10 @@ fn action_matrix_nontrivial_element() {
     //     c₀ + c₃/2 = 3 → c₀ = 3 - 11 = -8
     //     c₁ + c₂/2 = 5 → c₁ = 5 - 7 = -2
     if let Some(c) = &coords {
-        eprintln!("decompose(3+5i+7j+11k) = [{}, {}, {}, {}]",
-            c[0], c[1], c[2], c[3]);
+        eprintln!(
+            "decompose(3+5i+7j+11k) = [{}, {}, {}, {}]",
+            c[0], c[1], c[2], c[3]
+        );
     } else {
         // θ might not be in O₀ — try a different element.
         // Use θ = 1 + i + (i+j)/2 + (1+k)/2 = (3/2) + (3/2)i + (1/2)j + (1/2)k
@@ -366,15 +384,19 @@ fn action_matrix_nontrivial_element() {
         .expect("action_matrix should succeed for gen3");
     let m_precomp = &ACTION_MATRICES[0][4]; // gen3
 
-    eprintln!("gen3 computed[0][0] == precomp[0][0]: {}",
-        m_computed.entry(0, 0) == m_precomp.entry(0, 0));
-    eprintln!("gen3 computed[1][0] == precomp[1][0]: {}",
-        m_computed.entry(1, 0) == m_precomp.entry(1, 0));
+    eprintln!(
+        "gen3 computed[0][0] == precomp[0][0]: {}",
+        m_computed.entry(0, 0) == m_precomp.entry(0, 0)
+    );
+    eprintln!(
+        "gen3 computed[1][0] == precomp[1][0]: {}",
+        m_computed.entry(1, 0) == m_precomp.entry(1, 0)
+    );
     assert_eq!(
-        m_computed.entry(0, 0), m_precomp.entry(0, 0),
+        m_computed.entry(0, 0),
+        m_precomp.entry(0, 0),
         "gen3 action matrix mismatch at (0,0)"
     );
-
 }
 
 /// Verify that M_i applied to the basis produces i(P₀).
@@ -404,7 +426,6 @@ fn action_matrix_consistent_with_basis() {
         "M_i · (1, 0)^T applied to basis does not match i(P₀)"
     );
 }
-
 
 /// Action matrix for θ=3 (scalar element) should produce [3]P.
 ///
@@ -451,7 +472,6 @@ fn ladder_vs_biladder_agree() {
         "[3]P via ladder ≠ eval_decomposition(3, 0)"
     );
 }
-
 
 /// Scalar-multiplication kernel on E₀ × E₀: (P, [3]P), (P-Q, [3](P-Q)).
 ///
@@ -504,8 +524,8 @@ fn all_torsion_bases_on_curve() {
     use crate::curves::montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint};
 
     for t in 0..7 {
-        let (px, qx, a) = torsion_basis::basis_for_curve(t)
-            .unwrap_or_else(|| panic!("no basis for curve {t}"));
+        let (px, qx, a) =
+            torsion_basis::basis_for_curve(t).unwrap_or_else(|| panic!("no basis for curve {t}"));
         let curve = Curve::from(Coefficient::from(a));
         let p = ProjectiveXOnlyPoint::from_affine_x(px, &curve);
         let q = ProjectiveXOnlyPoint::from_affine_x(qx, &curve);

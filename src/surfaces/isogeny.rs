@@ -403,9 +403,7 @@ fn theta_change_of_basis(
             .filter(|d| **d == &Fp2::ZERO)
             .count();
         if zero_count > 0 {
-            eprintln!(
-                "GLUING: {zero_count}/4 delta(s) are ZERO (degenerate ActionByTranslation)"
-            );
+            eprintln!("GLUING: {zero_count}/4 delta(s) are ZERO (degenerate ActionByTranslation)");
         }
     }
 

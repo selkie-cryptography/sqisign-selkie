@@ -116,12 +116,24 @@ fn invert_mod(bencher: divan::Bencher) {
 #[divan::bench]
 fn mul_wide(bencher: divan::Bencher) {
     let a = BigInt::<8>::from_limbs([
-        0xDEAD_BEEF, 0x1234_5678, 0xFEDC_BA98, 0x0123_4567,
-        0xAAAA_BBBB, 0xCCCC_DDDD, 0x1111_2222, 0x3333_4444,
+        0xDEAD_BEEF,
+        0x1234_5678,
+        0xFEDC_BA98,
+        0x0123_4567,
+        0xAAAA_BBBB,
+        0xCCCC_DDDD,
+        0x1111_2222,
+        0x3333_4444,
     ]);
     let b = BigInt::<8>::from_limbs([
-        0xCAFE_BABE, 0x9ABC_DEF0, 0x7654_3210, 0x89AB_CDEF,
-        0x5555_6666, 0x7777_8888, 0x9999_AAAA, 0xBBBB_CCCC,
+        0xCAFE_BABE,
+        0x9ABC_DEF0,
+        0x7654_3210,
+        0x89AB_CDEF,
+        0x5555_6666,
+        0x7777_8888,
+        0x9999_AAAA,
+        0xBBBB_CCCC,
     ]);
     bencher.bench(|| divan::black_box(a) * divan::black_box(b));
 }
@@ -129,12 +141,24 @@ fn mul_wide(bencher: divan::Bencher) {
 #[divan::bench]
 fn div_rem_wide(bencher: divan::Bencher) {
     let a = BigInt::<8>::from_limbs([
-        0xDEAD_BEEF, 0x1234_5678, 0xFEDC_BA98, 0x0123_4567,
-        0xAAAA_BBBB, 0xCCCC_DDDD, 0x1111_2222, 0x3333_4444,
+        0xDEAD_BEEF,
+        0x1234_5678,
+        0xFEDC_BA98,
+        0x0123_4567,
+        0xAAAA_BBBB,
+        0xCCCC_DDDD,
+        0x1111_2222,
+        0x3333_4444,
     ]);
     let b = BigInt::<8>::from_limbs([
-        0xCAFE_BABE, 0x9ABC_DEF0, 0x7654_3210, 0x89AB_CDEF,
-        0, 0, 0, 0,
+        0xCAFE_BABE,
+        0x9ABC_DEF0,
+        0x7654_3210,
+        0x89AB_CDEF,
+        0,
+        0,
+        0,
+        0,
     ]);
     bencher.bench(|| divan::black_box(&a).div_rem(divan::black_box(&b)));
 }

@@ -6,7 +6,7 @@ use sqisign_selkie::{
         montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
     },
-    params::{BASIS_E0_PMQ_X, BASIS_E0_P_X, BASIS_E0_Q_X, TORSION_EVEN_POWER},
+    params::{BASIS_E0_P_X, BASIS_E0_PMQ_X, BASIS_E0_Q_X, TORSION_EVEN_POWER},
     surfaces::{EllipticProduct, Kernel},
 };
 

@@ -15,9 +15,7 @@
 //! Other SQIsign implementations can reuse `tests/vectors/*.json` by
 //! writing their own test runner against the same schema.
 
-use sqisign_selkie::{
-    Signature, SigningKey, VerifyingKey, SIGNATURE_BYTES, SIGNING_KEY_BYTES,
-};
+use sqisign_selkie::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, Signature, SigningKey, VerifyingKey};
 
 // =====================================================================
 // JSON schema types (C2SP/wycheproof signatures_common format)
@@ -128,16 +126,12 @@ fn sqisign_verify_vectors() {
 
             match tv.result.as_str() {
                 "valid" => {
-                    let sig_arr: &[u8; SIGNATURE_BYTES] = sig_bytes
-                        .as_slice()
-                        .try_into()
-                        .unwrap_or_else(|_| {
+                    let sig_arr: &[u8; SIGNATURE_BYTES] =
+                        sig_bytes.as_slice().try_into().unwrap_or_else(|_| {
                             panic!("tcId {}: sig wrong length {}", tv.tc_id, sig_bytes.len())
                         });
                     let sig = Signature::from_bytes(sig_arr)
-                        .unwrap_or_else(|e| {
-                            panic!("tcId {}: sig parse failed: {e}", tv.tc_id)
-                        });
+                        .unwrap_or_else(|e| panic!("tcId {}: sig parse failed: {e}", tv.tc_id));
                     assert!(
                         verify_succeeds(&vk, &msg, &sig),
                         "tcId {}: expected valid, got rejection ({})",
@@ -160,8 +154,7 @@ fn sqisign_verify_vectors() {
                     assert!(
                         rejected,
                         "tcId {}: expected invalid, but verified ({})",
-                        tv.tc_id,
-                        tv.comment
+                        tv.tc_id, tv.comment
                     );
                 }
                 "acceptable" => {
@@ -238,16 +231,12 @@ fn sqisign_keygen_vectors() {
             match tv.result.as_str() {
                 "valid" => {
                     // sk must parse
-                    let sk_arr: &[u8; SIGNING_KEY_BYTES] = sk_bytes
-                        .as_slice()
-                        .try_into()
-                        .unwrap_or_else(|_| {
+                    let sk_arr: &[u8; SIGNING_KEY_BYTES] =
+                        sk_bytes.as_slice().try_into().unwrap_or_else(|_| {
                             panic!("tcId {}: sk wrong length {}", tv.tc_id, sk_bytes.len())
                         });
                     let sk = SigningKey::from_bytes(sk_arr)
-                        .unwrap_or_else(|e| {
-                            panic!("tcId {}: sk parse failed: {e}", tv.tc_id)
-                        });
+                        .unwrap_or_else(|e| panic!("tcId {}: sk parse failed: {e}", tv.tc_id));
 
                     // If pk is provided, the embedded vk must match
                     if let Some(pk_hex) = &tv.pk {
@@ -355,9 +344,10 @@ fn sqisign_sign_vectors() {
         for tv in &group.tests {
             let pk_bytes = hex::decode(&tv.pk).unwrap();
             let vk = VerifyingKey::from_bytes(
-                pk_bytes.as_slice().try_into().unwrap_or_else(|_| {
-                    panic!("tcId {}: pk wrong length", tv.tc_id)
-                }),
+                pk_bytes
+                    .as_slice()
+                    .try_into()
+                    .unwrap_or_else(|_| panic!("tcId {}: pk wrong length", tv.tc_id)),
             )
             .unwrap_or_else(|e| panic!("tcId {}: pk parse failed: {e}", tv.tc_id));
 
@@ -366,16 +356,12 @@ fn sqisign_sign_vectors() {
 
             match tv.result.as_str() {
                 "valid" => {
-                    let sig_arr: &[u8; SIGNATURE_BYTES] = sig_bytes
-                        .as_slice()
-                        .try_into()
-                        .unwrap_or_else(|_| {
+                    let sig_arr: &[u8; SIGNATURE_BYTES] =
+                        sig_bytes.as_slice().try_into().unwrap_or_else(|_| {
                             panic!("tcId {}: sig wrong length {}", tv.tc_id, sig_bytes.len())
                         });
                     let sig = Signature::from_bytes(sig_arr)
-                        .unwrap_or_else(|e| {
-                            panic!("tcId {}: sig parse failed: {e}", tv.tc_id)
-                        });
+                        .unwrap_or_else(|e| panic!("tcId {}: sig parse failed: {e}", tv.tc_id));
                     assert!(
                         verify_succeeds(&vk, &msg, &sig),
                         "tcId {}: expected valid, got rejection ({})",
@@ -398,8 +384,7 @@ fn sqisign_sign_vectors() {
                     assert!(
                         rejected,
                         "tcId {}: expected invalid, but verified ({})",
-                        tv.tc_id,
-                        tv.comment
+                        tv.tc_id, tv.comment
                     );
                 }
                 "acceptable" => {}
