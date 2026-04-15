@@ -15,7 +15,7 @@ use crate::{
         isogeny::Kernel as CurveKernel,
         montgomery::{Coefficient, Curve},
     },
-    fields::Fp2,
+    fields::fp2::Fp2,
     hash,
     keys::{Challenge, Signature, SignatureError, VERIFYING_KEY_BYTES},
     params::{E_RSP, TORSION_EVEN_POWER},

@@ -15,32 +15,56 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![warn(rust_2018_idioms, unused_lifetimes, unused_qualifications)]
 
+// --- Internal modules (pub(crate) by default, pub with bench-internals) ---
+
 // NIST-I parameter set constants
+#[cfg(not(feature = "bench-internals"))]
+pub(crate) mod params;
+#[cfg(feature = "bench-internals")]
 pub mod params;
 
 // Finite field arithmetic (F_p and F_{p^2})
+#[cfg(not(feature = "bench-internals"))]
+pub(crate) mod fields;
+#[cfg(feature = "bench-internals")]
 pub mod fields;
 
 // Elliptic curves, points, and isogenies between them
+#[cfg(not(feature = "bench-internals"))]
+pub(crate) mod curves;
+#[cfg(feature = "bench-internals")]
 pub mod curves;
 
 // Abelian surfaces and (2,2)-isogenies using theta coordinates
+#[cfg(not(feature = "bench-internals"))]
+pub(crate) mod surfaces;
+#[cfg(feature = "bench-internals")]
 pub mod surfaces;
+
+// Quaternion algebra and big integer arithmetic
+#[cfg(not(feature = "bench-internals"))]
+pub(crate) mod quaternions;
+#[cfg(feature = "bench-internals")]
+pub mod quaternions;
+
+// Deuring correspondence: ideal ↔ isogeny bridge
+#[cfg(not(feature = "bench-internals"))]
+pub(crate) mod deuring;
+#[cfg(feature = "bench-internals")]
+pub mod deuring;
+
+// --- Always-private modules ---
 
 // Challenge hash function
 pub(crate) mod hash;
-
-// Quaternion algebra and big integer arithmetic
-pub(crate) mod quaternions;
-
-// Deuring correspondence: ideal ↔ isogeny bridge
-pub(crate) mod deuring;
 
 // AES256-CTR-DRBG (SP 800-90A) used by _derand entry points
 pub(crate) mod drbg;
 
 // Key types and signatures
-pub mod keys;
+pub(crate) mod keys;
+
+// --- Public API ---
 
 pub use keys::{Signature, SignatureError, SigningKey, VerifyingKey};
 pub use params::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};

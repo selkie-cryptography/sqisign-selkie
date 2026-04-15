@@ -2,17 +2,46 @@
 
 A compact post-quantum signature scheme from quaternions and isogenies, in Rust.
 
-<img width="27%" align="right" src="https://user-images.githubusercontent.com/552961/197638905-f5144be3-a2f2-48c2-9ecb-26e4e34d8d8a.svg#gh-light-mode-only"/>
-<img width="27%" align="right" src="https://user-images.githubusercontent.com/552961/197640007-f3f05dd1-c61c-4c16-bd04-d1813937ad47.svg#gh-dark-mode-only"/>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/selkie-cryptography/.github/raw/main/assets/selkie-solid-white-on-transparent.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://github.com/selkie-cryptography/.github/raw/main/assets/selkie-solid-black-on-transparent.svg">
+  <img width="25%" align="right" src="https://github.com/selkie-cryptography/.github/raw/main/assets/selkie-solid-black-on-transparent.svg" alt="Selkie logo">
+</picture>
 
 Implements [SQIsign][sqisign] as specified in the [v2.0.1
 specification][spec] (2025-07-07), targeting the NIST-I parameter set
 (p = 5 · 2²⁴⁸ − 1).
 
-> **Status: work in progress.** Verification passes known-answer tests
-> from the C reference implementation. Signing compiles and is
-> structurally complete but has remaining arithmetic blockers. Key
-> generation is not yet implemented. **Do not use in production.**
+> **Status: work in progress.** Key generation and verification are
+> functional. Signing is structurally complete with commitment phase
+> working; the response phase is slow due to unoptimized quaternion
+> arithmetic. All 100 C reference KAT verification vectors pass.
+> **Do not use in production.**
+
+## Example
+
+<!-- TODO: remove no_run once signing completes in reasonable time -->
+```rust,no_run
+use sqisign_selkie::{SigningKey, VerifyingKey, SIGNATURE_BYTES};
+
+// Generate a new signing key.
+let sk = SigningKey::generate(&mut rand_core::OsRng)
+    .expect("key generation failed");
+
+// Sign a message.
+let message = "Maighdean mhara mo mháithrín ard".as_bytes();
+let signature = sk.sign(message, &mut rand_core::OsRng)
+    .expect("signing failed");
+
+// The verifying key can be extracted and serialized.
+let vk_bytes = sk.verifying_key().to_bytes();
+
+// Verify the signature.
+let vk = VerifyingKey::from_bytes(&vk_bytes)
+    .expect("invalid verifying key");
+vk.verify(message, &signature)
+    .expect("invalid signature");
+```
 
 ## Design principles
 

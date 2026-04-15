@@ -527,7 +527,7 @@ fn all_torsion_bases_on_curve() {
             test = test.double();
         }
         assert!(
-            test.Z == crate::fields::Fp2::ZERO,
+            test.Z == crate::fields::fp2::Fp2::ZERO,
             "curve {t}: [2^f]P ≠ O"
         );
     }

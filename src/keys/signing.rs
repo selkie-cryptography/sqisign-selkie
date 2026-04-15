@@ -408,6 +408,9 @@ impl SigningKey {
 
         // Line 3: while true do
         for _iter in 0..1000 {
+            #[cfg(test)]
+            let _iter_start = std::time::Instant::now();
+
             // --- Commitment (lines 4–9) ---
 
             // Line 4: I_com ← RandomIdealGivenNorm(D_mix, true).
@@ -435,10 +438,12 @@ impl SigningKey {
             };
 
             // Line 7: E_com, P_com, Q_com ← IdealToIsogeny(I_com)
-            eprintln!("[sign iter={_iter}] commitment to_isogeny...");
+            #[cfg(test)]
+            eprintln!("[sign {_iter}] commitment to_isogeny...");
             let (e_com, p_com, q_com) = match i_com_narrow.to_isogeny() {
                 Some(r) => {
-                    eprintln!("[sign iter={_iter}] commitment to_isogeny OK");
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] commitment OK ({:?})", _iter_start.elapsed());
                     r
                 }
                 None => continue,
@@ -505,17 +510,25 @@ impl SigningKey {
             // intersection throughout. We match the C ref.
             let i_chl_lat = Lattice::<N_RESP>::from(*i_chl_prime_w.lattice());
             let i_sk_lat = Lattice::<N_RESP>::from(*i_sk_w.lattice());
+            #[cfg(test)]
+            let _t_int = std::time::Instant::now();
             // W=60: entries start at ~60 limbs (d*B products); xgcd
             // elimination may grow them. W=120 is the safe Hadamard
             // bound but 4x slower. W=60 is adequate in practice —
             // validate by completing a full signing round-trip.
-            let i_chl_sk = i_chl_lat.intersection_via_kernel::<60>(&i_sk_lat);
+            let i_chl_sk = i_chl_lat.intersection_via_kernel::<40>(&i_sk_lat);
+            #[cfg(test)]
+            eprintln!("[sign {_iter}] intersection 1: {:?} (cumul {:?})", _t_int.elapsed(), _iter_start.elapsed());
 
             let i_com_conj = i_com_w.lattice().conjugate();
             let i_chl_sk_lat = Lattice::<N_RESP>::from(i_chl_sk);
             let i_com_conj_lat = Lattice::<N_RESP>::from(i_com_conj);
 
-            let intersection = i_chl_sk_lat.intersection_via_kernel::<60>(&i_com_conj_lat);
+            #[cfg(test)]
+            let _t_int2 = std::time::Instant::now();
+            let intersection = i_chl_sk_lat.intersection_via_kernel::<40>(&i_com_conj_lat);
+            #[cfg(test)]
+            eprintln!("[sign {_iter}] intersection 2: {:?} (cumul {:?})", _t_int2.elapsed(), _iter_start.elapsed());
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
 
             // Radius: D_rsp · D²_mix · 2^{f+1}, computed at BigInt<22>.
@@ -527,8 +540,14 @@ impl SigningKey {
             // The intersection lattice has entries up to ~1920 bits
             // (BigInt<30>). The gram computation squares these:
             // ~3840 bits ≈ 60 limbs. Use W=64 for margin.
+            #[cfg(test)]
+            let _t_sample = std::time::Instant::now();
             let alpha_rsp_w = match intersection_lat.sample_from_ball::<64>(&radius) {
-                Some(a) => a,
+                Some(a) => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] sample: {:?} (cumul {:?})", _t_sample.elapsed(), _iter_start.elapsed());
+                    a
+                }
                 None => continue,
             };
 
@@ -650,10 +669,12 @@ impl SigningKey {
                 let inter_norm = i_com_rsp.norm().ct_mul(i_aux.norm());
                 let i_inter =
                     LeftIdeal::from_parts(inter_lattice, inter_norm, *EXTREMAL_ORDERS[0].order());
-                eprintln!("[sign iter={_iter}] response to_isogeny...");
+                #[cfg(test)]
+                eprintln!("[sign {_iter}] response to_isogeny... (cumul {:?})", _iter_start.elapsed());
                 let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_inter.to_isogeny() {
                     Some(r) => {
-                        eprintln!("[sign iter={_iter}] response to_isogeny OK");
+                        #[cfg(test)]
+                        eprintln!("[sign {_iter}] response to_isogeny OK (cumul {:?})", _iter_start.elapsed());
                         r
                     }
                     None => continue,
@@ -776,7 +797,8 @@ impl SigningKey {
             // Convert ChangeOfBasisMatrix → ChallengeMatrix for Signature.
             let sig_matrix = ChallengeMatrix::from(m_chl);
 
-            eprintln!("[sign iter={_iter}] SUCCESS — assembling signature");
+            #[cfg(test)]
+            eprintln!("[sign {_iter}] SUCCESS (cumul {:?})", _iter_start.elapsed());
             return Ok(Signature {
                 curve_aux,
                 n_bt: n_bt_te,

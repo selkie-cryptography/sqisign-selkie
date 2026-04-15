@@ -503,6 +503,10 @@ fn fixed_degree_isogeny(
 /// [Alg. 3.15]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
 /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
 impl LeftIdeal<4> {
+    /// Compute the isogeny corresponding to this ideal.
+    ///
+    /// Returns `(E_I, φ_I(P₀), φ_I(Q₀))` or `None` if the
+    /// decomposition or chain fails probabilistically.
     pub fn to_isogeny(self) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
         let f = TorsionExponent::FULL;
 

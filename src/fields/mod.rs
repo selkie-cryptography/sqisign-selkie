@@ -5,6 +5,3 @@
 
 pub mod fp;
 pub mod fp2;
-
-pub use fp::Fp;
-pub use fp2::Fp2;

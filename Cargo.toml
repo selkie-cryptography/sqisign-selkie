@@ -17,6 +17,7 @@ exclude = [
 [features]
 default = ["zeroize"]
 zeroize = ["dep:zeroize"]
+bench-internals = []
 
 [dependencies]
 # TODO: replace with our own SHAKE256 implementation to minimize trusted dependencies.
@@ -27,7 +28,42 @@ subtle = "2.6"
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"], optional = true }
 
 [dev-dependencies]
+divan = "0.1"
 hex = "0.4"
 regex = "1"
 reqwest = { version = "0.12", features = ["blocking"] }
 serde_json = "1"
+
+[[bench]]
+name = "sqisign"
+harness = false
+
+[[bench]]
+name = "field"
+harness = false
+required-features = ["bench-internals"]
+
+[[bench]]
+name = "bigint"
+harness = false
+required-features = ["bench-internals"]
+
+[[bench]]
+name = "curves"
+harness = false
+required-features = ["bench-internals"]
+
+[[bench]]
+name = "quaternions"
+harness = false
+required-features = ["bench-internals"]
+
+[[bench]]
+name = "surfaces"
+harness = false
+required-features = ["bench-internals"]
+
+[[bench]]
+name = "deuring"
+harness = false
+required-features = ["bench-internals"]
