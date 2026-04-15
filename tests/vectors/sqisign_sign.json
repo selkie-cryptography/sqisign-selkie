@@ -4,7 +4,8 @@
   "numberOfTests": 1,
   "header": [
     "SQIsign_248: f=248, p = 5*2^248 - 1 (NIST security level I).",
-    "Wycheproof-style test vectors for SQIsign_248 signing.",
+    "Negative and vulnerability test vectors for SQIsign_248 signing.",
+    "Format: C2SP/wycheproof JSON.",
     "Signing is in flux; this file is a skeleton.",
     "Spec version: SQIsign v2.0.1 (2025-07-07).",
     "",

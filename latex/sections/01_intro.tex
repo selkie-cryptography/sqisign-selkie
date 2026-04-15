@@ -66,4 +66,10 @@ This paper is a living document, updated as the implementation progresses.
     (\S\ref{sec:types}).
   \item A survey of constant-time SQIsign techniques and a concrete
     hardening plan (\S\ref{sec:ct}).
+  \item A negative test vector suite for SQIsign verification,
+    signing, and key generation (\S\ref{sec:testing})---portable
+    JSON vectors in C2SP/wycheproof format that other implementations
+    can consume to detect vulnerabilities including exponent overflow,
+    non-canonical field elements, degenerate kernels, and cross-field
+    splicing attacks.
 \end{itemize}
