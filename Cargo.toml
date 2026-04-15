@@ -30,6 +30,7 @@ zeroize = { version = "1", default-features = false, features = ["zeroize_derive
 [dev-dependencies]
 divan = "0.1"
 mutants = "0.0.3"  # #[mutants::skip] attribute for cargo-mutants
+serde = { version = "1", features = ["derive"] }
 hex = "0.4"
 regex = "1"
 reqwest = { version = "0.13", features = ["blocking"] }
