@@ -1,6 +1,7 @@
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+# `vulnerability` was removed — all vulnerabilities are now errors.
+# Warn on unmaintained direct dependencies only.
+unmaintained = "workspace"
 yanked = "deny"
 
 [bans]
