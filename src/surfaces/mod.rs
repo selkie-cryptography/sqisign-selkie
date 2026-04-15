@@ -577,16 +577,35 @@ impl Kernel {
         #[cfg(test)]
         {
             let null = &gluing_data.codomain.null;
-            let comps = [("a", &null.a), ("b", &null.b), ("c", &null.c), ("d", &null.d)];
-            let zeros: Vec<&str> = comps.iter().filter(|(_, v)| **v == Fp2::ZERO).map(|(n, _)| *n).collect();
+            let comps = [
+                ("a", &null.a),
+                ("b", &null.b),
+                ("c", &null.c),
+                ("d", &null.d),
+            ];
+            let zeros: Vec<&str> = comps
+                .iter()
+                .filter(|(_, v)| **v == Fp2::ZERO)
+                .map(|(n, _)| *n)
+                .collect();
             if !zeros.is_empty() {
                 eprintln!("GLUE CODOMAIN: zero components: {zeros:?}");
             }
             let pc = null.precompute();
             let pc_zeros: Vec<&str> = [
-                ("c1", &pc.c1), ("c2", &pc.c2), ("c3", &pc.c3), ("c4", &pc.c4),
-                ("c5", &pc.c5), ("c6", &pc.c6), ("c7", &pc.c7), ("c8", &pc.c8),
-            ].iter().filter(|(_, v)| **v == Fp2::ZERO).map(|(n, _)| *n).collect();
+                ("c1", &pc.c1),
+                ("c2", &pc.c2),
+                ("c3", &pc.c3),
+                ("c4", &pc.c4),
+                ("c5", &pc.c5),
+                ("c6", &pc.c6),
+                ("c7", &pc.c7),
+                ("c8", &pc.c8),
+            ]
+            .iter()
+            .filter(|(_, v)| **v == Fp2::ZERO)
+            .map(|(n, _)| *n)
+            .collect();
             if !pc_zeros.is_empty() {
                 eprintln!("GLUE PRECOMP: zero values: {pc_zeros:?}");
             }
@@ -706,10 +725,7 @@ impl Kernel {
                 #[cfg(test)]
                 {
                     let any_zero = |p: &JacobianPoint| {
-                        p.X == Fp2::ZERO
-                            && p.Y == Fp2::ZERO
-                            && p.Z == Fp2::ZERO
-                            && p.W == Fp2::ZERO
+                        p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
                     };
                     if any_zero(&R) || any_zero(&S) {
                         eprintln!(
@@ -757,17 +773,29 @@ impl Kernel {
                 if _step_index == 0 {
                     let fp2_hex = |v: &Fp2| -> String {
                         let b = v.to_bytes();
-                        let r: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                        let r: String =
+                            b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
                         format!("0x{r}")
                     };
-                    eprintln!("STEP0 T2.X={} T2.Y={} T2.Z={} T2.W={}",
-                        fp2_hex(&t2.X), fp2_hex(&t2.Y), fp2_hex(&t2.Z), fp2_hex(&t2.W));
+                    eprintln!(
+                        "STEP0 T2.X={} T2.Y={} T2.Z={} T2.W={}",
+                        fp2_hex(&t2.X),
+                        fp2_hex(&t2.Y),
+                        fp2_hex(&t2.Z),
+                        fp2_hex(&t2.W)
+                    );
                     // Check if T2 has Z == 0 or W == 0 component
-                    if t2.Z == Fp2::ZERO { eprintln!("STEP0: T2.Z is ZERO!"); }
-                    if t2.W == Fp2::ZERO { eprintln!("STEP0: T2.W is ZERO!"); }
+                    if t2.Z == Fp2::ZERO {
+                        eprintln!("STEP0: T2.Z is ZERO!");
+                    }
+                    if t2.W == Fp2::ZERO {
+                        eprintln!("STEP0: T2.W is ZERO!");
+                    }
                     // Check for X == Z relationship (which causes alpha==gamma)
                     let hs = t2.squared().hadamard();
-                    if hs.X == hs.Z { eprintln!("STEP0: H(T2²).X == H(T2²).Z → will cause alpha==gamma"); }
+                    if hs.X == hs.Z {
+                        eprintln!("STEP0: H(T2²).X == H(T2²).Z → will cause alpha==gamma");
+                    }
                 }
                 // Check ALL strategy points before eval.
                 for (si, sp) in theta_strat.iter().enumerate() {
@@ -794,10 +822,10 @@ impl Kernel {
             //
             // When extra_torsion=false (verification path), the last
             // two steps use special hadamard_bool to produce dual form.
-            let (dual, new_jac) = if !extra_torsion && steps_remaining == 1 {
+            let (dual, new_jac) = if steps_remaining == 1 {
                 // Ultimate: bool_1=1, bool_2=0
                 isogeny::codomain_8torsion_ultimate(&theta_strat[k].0, &theta_strat[k].1)
-            } else if !extra_torsion && steps_remaining == 2 {
+            } else if steps_remaining == 2 {
                 // Penultimate: bool_1=0, bool_2=0
                 isogeny::codomain_8torsion_no_hadamard(&theta_strat[k].0, &theta_strat[k].1)
             } else {
@@ -806,9 +834,9 @@ impl Kernel {
             };
 
             let eval_fn = |pt: &JacobianPoint| -> JacobianPoint {
-                if !extra_torsion && steps_remaining == 1 {
+                if steps_remaining == 1 {
                     isogeny::eval_ultimate(pt, &dual, &new_jac)
-                } else if !extra_torsion && steps_remaining == 2 {
+                } else if steps_remaining == 2 {
                     isogeny::eval_no_outer_hadamard(pt, &dual, &new_jac)
                 } else {
                     isogeny::eval(pt, &dual, &new_jac)
@@ -827,15 +855,10 @@ impl Kernel {
                 #[cfg(test)]
                 {
                     let any_zero = |p: &JacobianPoint| {
-                        p.X == Fp2::ZERO
-                            && p.Y == Fp2::ZERO
-                            && p.Z == Fp2::ZERO
-                            && p.W == Fp2::ZERO
+                        p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
                     };
                     if any_zero(&theta_strat[i].0) || any_zero(&theta_strat[i].1) {
-                        eprintln!(
-                            "CHAIN step {_step_index}: strat[{i}] became ZERO AFTER eval"
-                        );
+                        eprintln!("CHAIN step {_step_index}: strat[{i}] became ZERO AFTER eval");
                     }
                 }
             }

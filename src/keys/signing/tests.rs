@@ -58,7 +58,7 @@ fn generated_verifying_key_roundtrips() {
 #[test]
 #[ignore]
 fn keygen_kat_all() {
-    for (i, &(seed_hex, pk_hex, sk_hex, _, _)) in
+    for (i, &(seed_hex, pk_hex, sk_hex, ..)) in
         crate::keys::kat_data::KAT_VECTORS.iter().enumerate()
     {
         let seed_bytes = hex::decode(seed_hex).expect("valid hex");
@@ -129,9 +129,7 @@ fn sign_kat_all() {
 /// key matches the standalone KAT pk.
 #[test]
 fn kat_sk_pk_match_all() {
-    for (i, &(_, pk_hex, sk_hex, _, _)) in
-        crate::keys::kat_data::KAT_VECTORS.iter().enumerate()
-    {
+    for (i, &(_, pk_hex, sk_hex, ..)) in crate::keys::kat_data::KAT_VECTORS.iter().enumerate() {
         let sk_bytes = hex::decode(sk_hex).expect("valid hex");
         let pk_bytes = hex::decode(pk_hex).expect("valid hex");
 
@@ -176,15 +174,11 @@ fn sign_fresh() {
 #[test]
 #[ignore]
 fn sign_with_kat_key() {
-    let (_, pk_hex, sk_hex, _, _) = crate::keys::kat_data::KAT_VECTORS[0];
-    let sk = SigningKey::from_bytes(
-        hex::decode(sk_hex).unwrap().as_slice().try_into().unwrap(),
-    )
-    .expect("KAT sk should parse");
-    let vk = VerifyingKey::from_bytes(
-        hex::decode(pk_hex).unwrap().as_slice().try_into().unwrap(),
-    )
-    .expect("KAT pk should parse");
+    let (_, pk_hex, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[0];
+    let sk = SigningKey::from_bytes(hex::decode(sk_hex).unwrap().as_slice().try_into().unwrap())
+        .expect("KAT sk should parse");
+    let vk = VerifyingKey::from_bytes(hex::decode(pk_hex).unwrap().as_slice().try_into().unwrap())
+        .expect("KAT pk should parse");
 
     let mut msg = [0u8; 64];
     rand_core::RngCore::fill_bytes(&mut OsRng, &mut msg);

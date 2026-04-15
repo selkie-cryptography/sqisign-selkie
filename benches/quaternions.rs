@@ -1,7 +1,7 @@
 use sqisign_selkie::quaternions::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
-    lattice::{LeftIdeal, Lattice},
+    lattice::{Lattice, LeftIdeal},
     precomputed::EXTREMAL_ORDERS,
 };
 
@@ -112,18 +112,14 @@ fn lattice_conjugate(bencher: divan::Bencher) {
 #[divan::bench(sample_count = 10)]
 fn ideal_random_prime_norm(bencher: divan::Bencher) {
     let order = &EXTREMAL_ORDERS[0];
-    let norm = BigInt::<4>::from_limbs([
-        0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0,
-    ]);
+    let norm = BigInt::<4>::from_limbs([0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0]);
     bencher.bench(|| LeftIdeal::<4>::random_prime_norm(&norm, order));
 }
 
 #[divan::bench]
 fn ideal_inverse(bencher: divan::Bencher) {
     let order = &EXTREMAL_ORDERS[0];
-    let norm = BigInt::<4>::from_limbs([
-        0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0,
-    ]);
+    let norm = BigInt::<4>::from_limbs([0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0]);
     if let Some(ideal) = LeftIdeal::<4>::random_prime_norm(&norm, order) {
         bencher.bench(|| divan::black_box(&ideal).inverse());
     }
@@ -132,9 +128,7 @@ fn ideal_inverse(bencher: divan::Bencher) {
 #[divan::bench]
 fn ideal_right_order(bencher: divan::Bencher) {
     let order = &EXTREMAL_ORDERS[0];
-    let norm = BigInt::<4>::from_limbs([
-        0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0,
-    ]);
+    let norm = BigInt::<4>::from_limbs([0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0]);
     if let Some(ideal) = LeftIdeal::<4>::random_prime_norm(&norm, order) {
         bencher.bench(|| divan::black_box(&ideal).right_order());
     }
@@ -143,9 +137,7 @@ fn ideal_right_order(bencher: divan::Bencher) {
 #[divan::bench]
 fn ideal_generator(bencher: divan::Bencher) {
     let order = &EXTREMAL_ORDERS[0];
-    let norm = BigInt::<4>::from_limbs([
-        0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0,
-    ]);
+    let norm = BigInt::<4>::from_limbs([0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0]);
     if let Some(ideal) = LeftIdeal::<4>::random_prime_norm(&norm, order) {
         bencher.bench(|| divan::black_box(&ideal).generator());
     }

@@ -207,35 +207,203 @@ pub const STANDARD_ORDER: &ExtremalOrder<4> = &EXTREMAL_ORDERS[0];
 ///
 /// Extracted from the C ref via Sage and independently verified.
 pub const CONNECTING_IDEAL_NORMS: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
-    BigInt::from_sign_and_limbs(0, [0x0000000000000002, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000]), // q=1
-    BigInt::from_sign_and_limbs(0, [0x0000000000000002, 0x6000000000000000, 0x0000000000000000, 0x0000000000000000]), // q=5
-    BigInt::from_sign_and_limbs(0, [0x7F90157B8673F5FE, 0x78F4A646D00BD2C5, 0x0000000000000000, 0x0000000000000000]), // q=17
-    BigInt::from_sign_and_limbs(0, [0x3C6FA8E67715E5E2, 0x17949BEC872B9078, 0x0000000000000000, 0x0000000000000000]), // q=37
-    BigInt::from_sign_and_limbs(0, [0xDE33C5116DEEAFA2, 0x2DF94F97C89EC8CE, 0x0000000000000000, 0x0000000000000000]), // q=41
-    BigInt::from_sign_and_limbs(0, [0x52A2EE77559419F2, 0xB348218745C9F459, 0x0000000000000000, 0x0000000000000000]), // q=53
-    BigInt::from_sign_and_limbs(0, [0xD0316AD767CFAA3A, 0x2996D852EBCA0701, 0x0000000000000000, 0x0000000000000000]), // q=97
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x0000000000000002,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=1
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x0000000000000002,
+            0x6000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=5
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x7F90157B8673F5FE,
+            0x78F4A646D00BD2C5,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=17
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x3C6FA8E67715E5E2,
+            0x17949BEC872B9078,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=37
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0xDE33C5116DEEAFA2,
+            0x2DF94F97C89EC8CE,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=41
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x52A2EE77559419F2,
+            0xB348218745C9F459,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=53
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0xD0316AD767CFAA3A,
+            0x2996D852EBCA0701,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=97
 ];
 
 /// The `x` entry (row 2, col 1) of each connecting ideal's HNF basis.
 pub const CONNECTING_IDEAL_X: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
-    BigInt::from_sign_and_limbs(0, [0x0000000000000001, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000]), // q=1
-    BigInt::from_sign_and_limbs(0, [0x0000000000000001, 0x5000000000000000, 0x0000000000000000, 0x0000000000000000]), // q=5
-    BigInt::from_sign_and_limbs(0, [0x99333EA38647F719, 0x73436F08E8DE6A21, 0x0000000000000000, 0x0000000000000000]), // q=17
-    BigInt::from_sign_and_limbs(0, [0x81469E8C3C1E604B, 0x0F44A68AB45218B7, 0x0000000000000000, 0x0000000000000000]), // q=37
-    BigInt::from_sign_and_limbs(0, [0x083DF746C4E35E07, 0x1F9F9C4344C15354, 0x0000000000000000, 0x0000000000000000]), // q=41
-    BigInt::from_sign_and_limbs(0, [0x34AE63E0BF193E1F, 0xB125DFED38597C14, 0x0000000000000000, 0x0000000000000000]), // q=53
-    BigInt::from_sign_and_limbs(0, [0x13C97CEB9024A7C5, 0x1507E56D3D1459C0, 0x0000000000000000, 0x0000000000000000]), // q=97
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x0000000000000001,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=1
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x0000000000000001,
+            0x5000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=5
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x99333EA38647F719,
+            0x73436F08E8DE6A21,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=17
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x81469E8C3C1E604B,
+            0x0F44A68AB45218B7,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=37
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x083DF746C4E35E07,
+            0x1F9F9C4344C15354,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=41
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x34AE63E0BF193E1F,
+            0xB125DFED38597C14,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=53
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x13C97CEB9024A7C5,
+            0x1507E56D3D1459C0,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=97
 ];
 
 /// The `y` entry (row 3, col 0) of each connecting ideal's HNF basis.
 pub const CONNECTING_IDEAL_Y: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
-    BigInt::from_sign_and_limbs(0, [0x0000000000000001, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000]), // q=1
-    BigInt::from_sign_and_limbs(0, [0x0000000000000001, 0x1000000000000000, 0x0000000000000000, 0x0000000000000000]), // q=5
-    BigInt::from_sign_and_limbs(0, [0xE65CD6D8002BFEE5, 0x05B1373DE72D68A3, 0x0000000000000000, 0x0000000000000000]), // q=17
-    BigInt::from_sign_and_limbs(0, [0xBB290A5A3AF78597, 0x084FF561D2D977C0, 0x0000000000000000, 0x0000000000000000]), // q=37
-    BigInt::from_sign_and_limbs(0, [0xD5F5CDCAA90B519B, 0x0E59B35483DD757A, 0x0000000000000000, 0x0000000000000000]), // q=41
-    BigInt::from_sign_and_limbs(0, [0x1DF48A96967ADBD3, 0x0222419A0D707845, 0x0000000000000000, 0x0000000000000000]), // q=53
-    BigInt::from_sign_and_limbs(0, [0xBC67EDEBD7AB0275, 0x148EF2E5AEB5AD41, 0x0000000000000000, 0x0000000000000000]), // q=97
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x0000000000000001,
+            0x0000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=1
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x0000000000000001,
+            0x1000000000000000,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=5
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0xE65CD6D8002BFEE5,
+            0x05B1373DE72D68A3,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=17
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0xBB290A5A3AF78597,
+            0x084FF561D2D977C0,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=37
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0xD5F5CDCAA90B519B,
+            0x0E59B35483DD757A,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=41
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0x1DF48A96967ADBD3,
+            0x0222419A0D707845,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=53
+    BigInt::from_sign_and_limbs(
+        0,
+        [
+            0xBC67EDEBD7AB0275,
+            0x148EF2E5AEB5AD41,
+            0x0000000000000000,
+            0x0000000000000000,
+        ],
+    ), // q=97
 ];
 
 #[cfg(test)]
