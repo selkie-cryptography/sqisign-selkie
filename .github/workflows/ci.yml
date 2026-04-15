@@ -171,22 +171,33 @@ jobs:
           tool: cargo-deny
       - run: cargo deny check advisories bans
 
+  # Incremental mutation testing: only mutate code changed in the PR.
+  # Full mutation testing runs on a weekly schedule (see mutants.yml).
   mutants:
-    name: Mutation testing (preliminary)
+    name: Mutation testing (incremental)
     runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request'
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Generate diff against base branch
+        run: git diff origin/${{ github.base_ref }}.. > git.diff
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
         with:
           tool: cargo-mutants
-      - run: cargo mutants --timeout=60 -- --lib
-        # TODO: As the test suite grows, restrict to specific modules
-        # or use --in-diff to only mutate changed code.
+      - name: Run cargo-mutants on changed code
+        run: cargo mutants --no-shuffle -vV --in-diff git.diff -- --lib
+      - name: Archive mutants.out
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-incremental.out
+          path: mutants.out
 
   sage-precompute-check:
     name: Sage precompute cross-check
@@ -200,7 +211,7 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
       - name: Cache SageMath apt packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             /var/cache/apt/archives

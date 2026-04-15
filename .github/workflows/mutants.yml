@@ -1,0 +1,43 @@
+name: Mutation testing (full)
+
+# Full mutation run, sharded across 8 workers.
+# Runs weekly and on-demand.  PRs get incremental coverage in ci.yml.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # every Monday at 06:00 UTC
+  workflow_dispatch:       # manual trigger
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutants:
+    name: Shard ${{ matrix.shard }}/8
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: mutants-${{ matrix.shard }}
+      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+        with:
+          tool: cargo-mutants
+      - name: Run cargo-mutants (shard ${{ matrix.shard }}/8)
+        run: cargo mutants --shard ${{ matrix.shard }}/8 -vV -- --lib
+      - name: Archive mutants.out
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-shard-${{ matrix.shard }}.out
+          path: mutants.out
