@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <title>sqisign-selkie CI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0d0f;
+      --bg-raised: #111315;
+      --fg: #ddd;
+      --fg-muted: #888;
+      --fg-dim: #555;
+      --border: rgba(255, 255, 255, 0.06);
+      --bar-bg: rgba(255, 255, 255, 0.04);
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f4f3f0;
+        --bg-raised: #eae9e5;
+        --fg: #1a1a1a;
+        --fg-muted: #6a6a6a;
+        --fg-dim: #aaa;
+        --border: rgba(0, 0, 0, 0.08);
+        --bar-bg: rgba(0, 0, 0, 0.04);
+        --green: #1a7f37;
+        --yellow: #9a6700;
+        --red: #cf222e;
+      }
+    }
+
+    *, *::after, *::before { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 18px;
+      line-height: 1.5;
+      color: var(--fg);
+      background-color: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    a {
+      text-decoration: none;
+      color: var(--fg);
+      transition: color 0.2s;
+    }
+
+    a:hover { color: var(--fg-muted); }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    .header {
+      padding: 40px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header__inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header__title {
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+    }
+
+    .header__subtitle {
+      font-size: 14px;
+      color: var(--fg-muted);
+    }
+
+    .header__org {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+    }
+
+    .header__org:hover { color: var(--fg); }
+
+    .sections { padding: 48px 0; }
+    .section { margin-bottom: 48px; }
+    .section:last-child { margin-bottom: 0; }
+
+    .section__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 20px;
+    }
+
+    .section__title {
+      position: relative;
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      line-height: 1.3;
+      padding-left: 8px;
+    }
+
+    .section__title::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 50%;
+      z-index: -1;
+      transform: translateY(-50%);
+      display: block;
+      width: 80px;
+      height: 32px;
+      border-radius: 4px 0 0 4px;
+      background: linear-gradient(90deg, var(--border) 0%, transparent 100%);
+    }
+
+    .meta {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--fg-dim);
+    }
+
+    .meta a { color: var(--fg-dim); }
+    .meta a:hover { color: var(--fg-muted); }
+
+    /* Coverage table */
+    .cov-summary {
+      font-size: 36px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      margin-bottom: 16px;
+      padding-left: 8px;
+    }
+
+    .cov-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .cov-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .cov-table th:nth-child(2),
+    .cov-table th:nth-child(3) { text-align: right; }
+
+    .cov-table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+
+    .cov-table td:nth-child(2),
+    .cov-table td:nth-child(3) {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .cov-table .module-name {
+      font-family: 'Inter', monospace;
+      font-size: 13px;
+    }
+
+    .cov-bar-cell { width: 40%; }
+
+    .cov-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--bar-bg);
+      overflow: hidden;
+    }
+
+    .cov-bar__fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    /* Benchmark table */
+    .bench-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .bench-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .bench-table th:nth-child(n+2) { text-align: right; }
+
+    .bench-table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+
+    .bench-table td:nth-child(n+2) {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bench-table .bench-name {
+      font-family: 'Inter', monospace;
+      font-size: 13px;
+    }
+
+    .bench-group {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 12px 8px 4px;
+    }
+
+    /* Status indicators */
+    .status {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+
+    .status--updating {
+      color: var(--yellow);
+      border: 1px solid rgba(210, 153, 34, 0.3);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .empty {
+      padding: 32px 8px;
+      font-size: 14px;
+      color: var(--fg-dim);
+    }
+
+    .footer {
+      padding: 48px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .footer__inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: var(--fg-muted);
+    }
+
+    .footer a { font-weight: 500; color: var(--fg); }
+    .footer a:hover { color: var(--fg-muted); }
+
+    @media only screen and (max-width: 640px) {
+      body { font-size: 16px; }
+      .header { padding: 24px 0; }
+      .sections { padding: 32px 0; }
+      .section { margin-bottom: 36px; }
+      .cov-summary { font-size: 28px; }
+      .cov-bar-cell { display: none; }
+      .footer__inner { flex-direction: column; gap: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="header">
+    <div class="container">
+      <div class="header__inner">
+        <div>
+          <div class="header__title">sqisign-selkie</div>
+          <div class="header__subtitle">CI artifacts</div>
+        </div>
+        <a class="header__org" href="https://github.com/selkie-cryptography/sqisign-selkie">GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="sections">
+
+      <section class="section" id="coverage-section">
+        <div class="section__header">
+          <h2 class="section__title">Coverage</h2>
+          <span class="meta" id="coverage-meta"></span>
+        </div>
+        <div id="coverage-content">
+          <p class="empty">No coverage data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="bench-section">
+        <div class="section__header">
+          <h2 class="section__title">Benchmarks</h2>
+          <span class="meta" id="bench-meta"></span>
+        </div>
+        <div id="bench-content">
+          <p class="empty">No benchmark data yet.</p>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__inner">
+        <span><a href="https://selkiecryptography.com">Selkie Cryptography</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const REPO = 'selkie-cryptography/sqisign-selkie';
+    const API = 'https://api.github.com';
+
+    function covColor(pct) {
+      if (pct >= 80) return 'var(--green)';
+      if (pct >= 50) return 'var(--yellow)';
+      return 'var(--red)';
+    }
+
+    function timeAgo(iso) {
+      const ms = Date.now() - new Date(iso).getTime();
+      const mins = Math.floor(ms / 60000);
+      if (mins < 60) return `${mins}m ago`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `${hours}h ago`;
+      return `${Math.floor(hours / 24)}d ago`;
+    }
+
+    function commitLink(sha) {
+      return `<a href="https://github.com/${REPO}/commit/${sha}">${sha.slice(0, 7)}</a>`;
+    }
+
+    async function isWorkflowRunning(workflowFile) {
+      try {
+        const r = await fetch(
+          `${API}/repos/${REPO}/actions/workflows/${workflowFile}/runs?status=in_progress&per_page=1`
+        );
+        if (!r.ok) return false;
+        const data = await r.json();
+        return data.workflow_runs && data.workflow_runs.length > 0;
+      } catch {
+        return false;
+      }
+    }
+
+    async function renderCoverage() {
+      const metaEl = document.getElementById('coverage-meta');
+      const contentEl = document.getElementById('coverage-content');
+
+      let data;
+      try {
+        const r = await fetch('/coverage/coverage.json');
+        if (!r.ok) throw new Error();
+        data = await r.json();
+      } catch {
+        if (await isWorkflowRunning('ci.yml')) {
+          metaEl.innerHTML = '<span class="status status--updating">building</span>';
+        }
+        return;
+      }
+
+      // Meta line
+      const parts = [];
+      if (data.sha) parts.push(commitLink(data.sha));
+      if (data.updated_at) parts.push(timeAgo(data.updated_at));
+      if (await isWorkflowRunning('ci.yml')) {
+        parts.push('<span class="status status--updating">updating</span>');
+      }
+      metaEl.innerHTML = parts.join(' &middot; ');
+
+      // Summary number
+      const total = data.total || {};
+      const totalPct = total.percent != null ? total.percent.toFixed(1) : '—';
+
+      // Module table
+      const modules = data.modules || [];
+      let html = `<div class="cov-summary" style="color:${covColor(total.percent)}">${totalPct}%</div>`;
+
+      if (modules.length > 0) {
+        html += `<table class="cov-table">
+          <thead><tr>
+            <th>Module</th>
+            <th>Lines</th>
+            <th>%</th>
+            <th class="cov-bar-cell"></th>
+          </tr></thead><tbody>`;
+
+        for (const m of modules) {
+          const pct = m.percent.toFixed(1);
+          const color = covColor(m.percent);
+          html += `<tr>
+            <td class="module-name">${m.name}</td>
+            <td>${m.covered}/${m.total}</td>
+            <td style="color:${color}">${pct}%</td>
+            <td class="cov-bar-cell">
+              <div class="cov-bar">
+                <div class="cov-bar__fill" style="width:${m.percent}%;background:${color}"></div>
+              </div>
+            </td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+      }
+
+      contentEl.innerHTML = html;
+    }
+
+    async function renderBenchmarks() {
+      const metaEl = document.getElementById('bench-meta');
+      const contentEl = document.getElementById('bench-content');
+
+      let data;
+      try {
+        const r = await fetch('/bench/bench.json');
+        if (!r.ok) throw new Error();
+        data = await r.json();
+      } catch {
+        if (await isWorkflowRunning('bench.yml')) {
+          metaEl.innerHTML = '<span class="status status--updating">running</span>';
+        }
+        return;
+      }
+
+      // Meta line
+      const parts = [];
+      if (data.sha) parts.push(commitLink(data.sha));
+      if (data.updated_at) parts.push(timeAgo(data.updated_at));
+      if (await isWorkflowRunning('bench.yml')) {
+        parts.push('<span class="status status--updating">updating</span>');
+      }
+      metaEl.innerHTML = parts.join(' &middot; ');
+
+      const groups = data.groups || [];
+      if (groups.length === 0) return;
+
+      let html = `<table class="bench-table">
+        <thead><tr>
+          <th>Benchmark</th>
+          <th>Time</th>
+          <th>Throughput</th>
+        </tr></thead><tbody>`;
+
+      for (const g of groups) {
+        html += `<tr><td class="bench-group" colspan="3">${g.name}</td></tr>`;
+        for (const b of g.benchmarks) {
+          const time = b.time_ns < 1000
+            ? `${b.time_ns.toFixed(0)} ns`
+            : b.time_ns < 1_000_000
+            ? `${(b.time_ns / 1000).toFixed(1)} &micro;s`
+            : `${(b.time_ns / 1_000_000).toFixed(2)} ms`;
+          const tp = b.throughput || '—';
+          html += `<tr>
+            <td class="bench-name">${b.name}</td>
+            <td>${time}</td>
+            <td>${tp}</td>
+          </tr>`;
+        }
+      }
+
+      html += '</tbody></table>';
+      contentEl.innerHTML = html;
+    }
+
+    renderCoverage();
+    renderBenchmarks();
+  </script>
+
+</body>
+</html>

@@ -137,8 +137,8 @@ jobs:
     name: Code coverage
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # TODO: When the repo goes public, set up Codecov or Coveralls for
-    # PR-level coverage reporting and upload lcov.info there.
+    # Gates PRs on minimum line coverage.
+    # On push to main, generates JSON report and uploads to CI site.
     steps:
       - uses: actions/checkout@v6
         with:
@@ -156,6 +156,43 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cargo llvm-cov --fail-under-lines 50 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate coverage JSON for CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p coverage-out
+          cargo llvm-cov --json --summary-only | jq '{
+            sha: "${{ github.sha }}",
+            updated_at: (now | todate),
+            total: {
+              covered: .data[0].totals.lines.covered,
+              total: .data[0].totals.lines.count,
+              percent: .data[0].totals.lines.percent
+            },
+            modules: [
+              .data[0].files
+              | group_by(.filename | split("/")[1])
+              | .[]
+              | {
+                  name: .[0].filename | split("/")[1],
+                  covered: (map(.summary.lines.covered) | add),
+                  total: (map(.summary.lines.count) | add),
+                  percent: ((map(.summary.lines.covered) | add) * 100.0 / (map(.summary.lines.count) | add))
+                }
+            ] | sort_by(-.percent)
+          }' > coverage-out/coverage.json
+
+      - name: Upload coverage to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Upload coverage to CI site (sftp)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl ssh sftp shell -a sqisign-selkie-ci <<'SFTP'
+          put coverage-out/coverage.json /data/coverage/coverage.json
+          SFTP
 
   audit:
     name: Security audit
@@ -253,6 +290,9 @@ jobs:
     name: Build LaTeX documents
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      statuses: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -271,10 +311,38 @@ jobs:
           working_directory: latex
           root_file: sqisign-v2-spec-review.tex
 
-      - name: Check PDFs are up to date
-        working-directory: latex
+      - name: Upload PDFs
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: latex-pdfs
+          path: |
+            latex/sqisign-selkie.pdf
+            latex/sqisign-v2-spec-review.pdf
+
+      - name: Annotate commit with artifact link
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git diff --exit-code sqisign-selkie.pdf sqisign-v2-spec-review.pdf || {
-            echo "::error::LaTeX PDFs are out of date. Rebuild with 'cd latex && make' and commit."
-            exit 1
-          }
+          ARTIFACT_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload.outputs.artifact-id }}"
+          gh api repos/${{ github.repository }}/statuses/${{ github.sha }} \
+            -f state=success \
+            -f target_url="$ARTIFACT_URL" \
+            -f description="Download built PDFs" \
+            -f context="latex-pdfs"
+
+  site:
+    name: Deploy CI site
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy to Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        working-directory: .github/site
+        run: fly deploy
