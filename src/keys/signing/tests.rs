@@ -144,6 +144,24 @@ fn kat_sk_pk_match_all() {
     }
 }
 
+/// Parse → serialize → re-parse round-trip for every KAT signing key.
+#[test]
+fn kat_sk_roundtrip_all() {
+    for (i, &(_, _, sk_hex, ..)) in crate::keys::kat_data::KAT_VECTORS.iter().enumerate() {
+        let sk_bytes: [u8; crate::params::SIGNING_KEY_BYTES] =
+            hex::decode(sk_hex).expect("valid hex").try_into().unwrap();
+
+        let sk = SigningKey::from_bytes(&sk_bytes)
+            .unwrap_or_else(|_| panic!("vector {i}: sk should parse"));
+
+        let reserialized = sk.to_bytes();
+        assert_eq!(
+            reserialized, sk_bytes,
+            "vector {i}: sk round-trip mismatch"
+        );
+    }
+}
+
 /// Generate a fresh key, sign a random message, verify.
 ///
 /// Run with: `cargo test --lib --release sign_fresh -- --ignored`.
