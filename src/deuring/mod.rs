@@ -551,7 +551,7 @@ impl LeftIdeal<4> {
         #[cfg(test)]
         let _t1 = std::time::Instant::now();
         let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
-        let (e_u, phi_u_p, phi_u_q, _phi_u_pmq) =
+        let (e_u, phi_u_p, phi_u_q, phi_u_pmq) =
             fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(u): {:?}", _t1.elapsed());
@@ -691,15 +691,16 @@ impl LeftIdeal<4> {
         // published KAT vectors.
         let mut kp_first = phi_u_p;
         let mut kq_first = phi_u_q;
-        let mut kpmq_first = _phi_u_pmq;
+        let mut kpmq_first = phi_u_pmq;
         let mut kp_second = p_step6;
         let mut kq_second = q_step6;
         let mut kpmq_second = pmq_step6;
 
-        // Double kernel points by f − e to reduce from order 2^f to 2^e.
-        // The chain exponent is e − 2 (not e), because the chain consumes
-        // e−2+2 = e torsion levels (the gluing adds 2). The C ref doubles
-        // by `TORSION_EVEN_POWER − exp` (dim2id2iso.c:1030).
+        // Double kernel points by `f − sui.e` to reduce from order
+        // 2^f to 2^sui.e. The chain below passes `chain_e = sui.e − 2`
+        // to [`Kernel::isogeny_extra_torsion`], which expects
+        // generators of order 2^(chain_e + 2) = 2^sui.e — matching
+        // what we produce here for every valid `sui.e ≤ f`.
         let scale = f.value() - sui.e.value();
         #[cfg(test)]
         eprintln!("[to_isogeny] outer chain: sui.e={}, scale={scale}", sui.e.value());
@@ -712,6 +713,50 @@ impl LeftIdeal<4> {
             kpmq_second = kpmq_second.double();
         }
 
+        // Diagnostics: kernel order and curve-membership checks.
+        //
+        // The (2,2)-chain requires each component of the generators
+        // to have order exactly 2^(e_chain+2) = 2^sui.e on its
+        // respective curve, matching the C reference's
+        // `test_point_order_twof(&ker.T1.P1, &E01.E1, exp)` assertion
+        // (`dim2id2iso.c:1109`).
+        #[cfg(test)]
+        {
+            let on_curve = |c: &Curve, p: &ProjectiveXOnlyPoint| c.recover_y(&p.to_affine_x()).is_some();
+            let has_order = |p: ProjectiveXOnlyPoint, e: u32| -> (bool, bool) {
+                let mut q = p;
+                for _ in 0..(e - 1) {
+                    q = q.double();
+                }
+                let half = !bool::from(q.is_identity());
+                q = q.double();
+                (half, bool::from(q.is_identity()))
+            };
+            let e = sui.e.value();
+            eprintln!(
+                "[OUTER_KER] kp_first on E_u: {}, kp_second on E_v: {}",
+                on_curve(&e_u, &kp_first),
+                on_curve(&e_v, &kp_second),
+            );
+            eprintln!(
+                "[OUTER_KER] kq_first on E_u: {}, kq_second on E_v: {}",
+                on_curve(&e_u, &kq_first),
+                on_curve(&e_v, &kq_second),
+            );
+            eprintln!(
+                "[OUTER_KER] kpmq_first on E_u: {}, kpmq_second on E_v: {}",
+                on_curve(&e_u, &kpmq_first),
+                on_curve(&e_v, &kpmq_second),
+            );
+            let (kp1_half, kp1_full) = has_order(kp_first, e);
+            let (kp2_half, kp2_full) = has_order(kp_second, e);
+            let (kq1_half, kq1_full) = has_order(kq_first, e);
+            let (kq2_half, kq2_full) = has_order(kq_second, e);
+            eprintln!(
+                "[OUTER_KER] order 2^{e}: kp_first={kp1_half}/{kp1_full} kp_second={kp2_half}/{kp2_full} kq_first={kq1_half}/{kq1_full} kq_second={kq2_half}/{kq2_full}"
+            );
+        }
+
         // Step 9: (2,2)-isogeny chain on E_u × E_v.
         let product = surfaces::EllipticProduct::new(e_u, e_v);
         let kernel = surfaces::Kernel::from_montgomery(
@@ -721,21 +766,14 @@ impl LeftIdeal<4> {
             (kpmq_first, kpmq_second),
         )?;
 
-        // Chain exponent is e − 2: the chain consumes (e−2)+2 = e
-        // torsion levels, matching the kernel order 2^e.
-        //
-        // Unlike the inner FDI chain, the outer chain uses the
-        // non-`extra_torsion` mode: the C reference
-        // (`dim2id2iso.c:1128`) calls
-        // `theta_chain_compute_and_eval_randomized(..., false, ...)`
-        // here, vs `true` for the inner FDI call on line 181. Mixing
-        // them up leaves the final codomain in the wrong (standard
-        // vs dual) Hadamard form and the splitting step sees a
-        // non-product theta null point.
+        // Chain exponent is `sui.e − 2`. [`Kernel::isogeny_extra_torsion`]
+        // runs a `chain_e`-step chain of 8-torsion isogenies,
+        // consuming a kernel of order 2^(chain_e + 2) = 2^sui.e to
+        // produce the `(2^sui.e, 2^sui.e)`-isogeny.
         let chain_e = TorsionExponent::try_from(sui.e.value() - 2).ok()?;
         let zero_v = ProjectiveXOnlyPoint::identity(&e_v);
         let (codomain, images) =
-            kernel.isogeny(chain_e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
+            kernel.isogeny_extra_torsion(chain_e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
 
         // Steps 10–13: Pick correct output curve.
         // Per Algorithm 8.47 remark, E is always correct when using

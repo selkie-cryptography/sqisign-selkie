@@ -148,7 +148,7 @@ fn kat_sk_pk_match_all() {
 #[test]
 fn kat_sk_roundtrip_all() {
     for (i, &(_, _, sk_hex, ..)) in crate::keys::kat_data::KAT_VECTORS.iter().enumerate() {
-        let sk_bytes: [u8; crate::params::SIGNING_KEY_BYTES] =
+        let sk_bytes: [u8; SIGNING_KEY_BYTES] =
             hex::decode(sk_hex).expect("valid hex").try_into().unwrap();
 
         let sk = SigningKey::from_bytes(&sk_bytes)

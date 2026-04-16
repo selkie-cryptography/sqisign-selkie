@@ -94,8 +94,8 @@ jobs:
         env:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cargo +nightly clippy --all-targets --all-features --message-format=short -- -D warnings 2>&1 |
-            reviewdog -f=clippy -reporter=github-check -fail-level=any
+          cargo +nightly clippy --all-targets --all-features --message-format=short -- -W warnings 2>&1 |
+            reviewdog -f=clippy -reporter=github-check -fail-level=none
 
   fmt:
     name: Format

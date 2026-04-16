@@ -552,3 +552,83 @@ fn all_torsion_bases_on_curve() {
         );
     }
 }
+
+/// Action-matrix composition matches direct decomposition of the
+/// quaternion product.
+///
+/// The outer `to_isogeny` builds
+/// `M_{β₂ · conj(β₁)} = M_{β₂} · M_{conj(β₁)} = M_{β₂} · adj(M_{β₁})`
+/// on the fly rather than first constructing the wide quaternion
+/// `β₂ · conj(β₁)` and decomposing it on O₀. This test checks the
+/// two routes agree mod 2^f for several small, hand-chosen pairs
+/// that fit without widening.
+#[test]
+fn action_matrix_composition_equals_direct() {
+    let order = &EXTREMAL_ORDERS[0];
+    let gen_matrices = [
+        ACTION_MATRICES[0][3],
+        ACTION_MATRICES[0][4],
+        ACTION_MATRICES[0][5],
+    ];
+    let f = TorsionExponent::FULL;
+    let fv = f.value();
+
+    // β pairs: each a primitive element of O₀ = {1, i, (i+j)/2, (1+k)/2}.
+    // Stored in the {1, i, j, k} basis with an explicit denominator.
+    //
+    // In the {1, i, j, k} basis, c₀·1 + c₁·i + c₂·(i+j)/2 + c₃·(1+k)/2
+    // equals ((2c₀+c₃) + (2c₁+c₂) i + c₂ j + c₃ k) / 2, so an
+    // O₀-primitive element has coords (2c₀+c₃, 2c₁+c₂, c₂, c₃) with
+    // denom 2. We list a few combinations.
+    type QuatTuple = (i64, i64, i64, i64, i64);
+    let cases: &[(QuatTuple, QuatTuple)] = &[
+        // β₁ = 1, β₂ = i  → coords/denom as quaternions in {1,i,j,k}/denom.
+        ((1, 0, 0, 0, 1), (0, 1, 0, 0, 1)),
+        // β₁ = i, β₂ = (i+j)/2
+        ((0, 1, 0, 0, 1), (0, 1, 1, 0, 2)),
+        // β₁ = (1+k)/2, β₂ = (i+j)/2
+        ((1, 0, 0, 1, 2), (0, 1, 1, 0, 2)),
+        // β₁ = 1 + (i+j)/2 = (2+i+j)/2, β₂ = 1 + (1+k)/2 = (3+k)/2
+        ((2, 1, 1, 0, 2), (3, 0, 0, 1, 2)),
+    ];
+
+    for (n, ((a1, b1, c1, d1, dn1), (a2, b2, c2, d2, dn2))) in cases.iter().enumerate() {
+        let beta1 = Element::<4>::new(
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*a1)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*b1)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*c1)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*d1)),
+            Denominator::from_bigint_unchecked(BigInt::<4>::from_i64(*dn1)),
+        );
+        let beta2 = Element::<4>::new(
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*a2)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*b2)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*c2)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*d2)),
+            Denominator::from_bigint_unchecked(BigInt::<4>::from_i64(*dn2)),
+        );
+
+        let m_beta1 = action_matrix(&beta1, order.order(), &gen_matrices, f)
+            .unwrap_or_else(|| panic!("case {n}: action_matrix(β₁) failed"));
+        let m_beta2 = action_matrix(&beta2, order.order(), &gen_matrices, f)
+            .unwrap_or_else(|| panic!("case {n}: action_matrix(β₂) failed"));
+
+        // Route A: matrix composition, M_{β₂} · adj(M_{β₁}).
+        let m_composed = m_beta2.mat_mul_mod(&m_beta1.adjugate_mod(fv), fv);
+
+        // Route B: direct action_matrix on the quaternion product.
+        let theta = beta2.mul(&beta1.conjugate());
+        let m_direct = action_matrix(&theta, order.order(), &gen_matrices, f)
+            .unwrap_or_else(|| panic!("case {n}: action_matrix(θ) failed"));
+
+        for row in 0..2 {
+            for col in 0..2 {
+                assert_eq!(
+                    m_composed.entry(row, col),
+                    m_direct.entry(row, col),
+                    "case {n}: composition ≠ direct at [{row}][{col}]",
+                );
+            }
+        }
+    }
+}
