@@ -66,6 +66,15 @@ pub struct SigningKey {
     verifying_key: VerifyingKey,
     /// The secret ideal I_sk (left O₀-ideal).
     ideal: LeftIdeal<4>,
+    /// Generator α of I_sk where I_sk = O₀⟨α, nrd(I_sk)⟩.
+    ///
+    /// The wire format ([§4.6]) encodes α's {1,i,j,k} coordinates
+    /// directly. We store it alongside the HNF lattice because
+    /// recovering α from HNF requires a brute-force search
+    /// ([`LeftIdeal::generator`]).
+    ///
+    /// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
+    ideal_gen: Element<4>,
     /// Change-of-basis matrix M_sk from (φ_sk(P₀), φ_sk(Q₀)) to B_pk.
     mat_sk: SecretKeyMatrix,
 }
@@ -118,6 +127,43 @@ impl From<ChangeOfBasisMatrix> for SecretKeyMatrix {
 }
 
 impl SigningKey {
+    /// Construct a `SigningKey` from validated components.
+    ///
+    /// Enforces the invariant that `ideal_gen` generates `ideal`:
+    /// `LeftIdeal::new(&ideal_gen, &norm, order)` must produce the
+    /// same HNF lattice as `ideal`. All construction paths go through
+    /// this method.
+    ///
+    /// # Constant-time
+    ///
+    /// The `debug_assert` reconstructs the ideal from `ideal_gen` and
+    /// compares lattice bases. This leaks timing information in debug
+    /// builds but compiles out in release.
+    fn from_parts(
+        verifying_key: VerifyingKey,
+        ideal: LeftIdeal<4>,
+        ideal_gen: Element<4>,
+        mat_sk: SecretKeyMatrix,
+    ) -> Self {
+        debug_assert!(
+            {
+                let reconstructed = LeftIdeal::new(
+                    &ideal_gen,
+                    ideal.norm(),
+                    EXTREMAL_ORDERS[0].order(),
+                );
+                reconstructed.lattice().basis() == ideal.lattice().basis()
+            },
+            "ideal_gen must generate the same ideal"
+        );
+        Self {
+            verifying_key,
+            ideal,
+            ideal_gen,
+            mat_sk,
+        }
+    }
+
     /// Generate a new random signing key.
     ///
     /// Corresponds to `SQIsign.KeyGen` ([§4.3], Algorithm 4.1):
@@ -227,11 +273,16 @@ impl SigningKey {
                 bytes: vk_bytes,
             };
 
-            return Ok(SigningKey {
+            let Some(ideal_gen) = i_sk_narrow.generator() else {
+                continue; // generator too large for brute-force recovery — retry
+            };
+
+            return Ok(Self::from_parts(
                 verifying_key,
-                ideal: i_sk_narrow,
+                i_sk_narrow,
+                ideal_gen,
                 mat_sk,
-            });
+            ));
         }
         Err(SignatureError::KeyGenFailed)
     }
@@ -290,17 +341,82 @@ impl SigningKey {
         let mat_sk = SecretKeyMatrix::new(entries);
         debug_assert_eq!(pos, SIGNING_KEY_BYTES);
 
-        Ok(SigningKey {
-            verifying_key,
-            ideal,
-            mat_sk,
-        })
+        Ok(Self::from_parts(verifying_key, ideal, gen, mat_sk))
     }
 
     /// Serialize this signing key to bytes.
+    ///
+    /// Layout: `[pk (65 B) | norm (32 B) | gen[0..3] (4×32 B) | M_sk (4×32 B)]`.
+    ///
+    /// `gen[i]` are the {1,i,j,k} coordinates of the ideal generator α
+    /// where I_sk = O₀⟨α, norm⟩, encoded as signed (two's complement)
+    /// little-endian. `norm` and M_sk entries are unsigned LE.
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time. TODO(ct): the two's complement negation branches
+    /// on the sign of secret generator coordinates. The signing key is
+    /// secret-derived (Algorithm 4.1).
     pub fn to_bytes(&self) -> [u8; SIGNING_KEY_BYTES] {
-        // TODO: encode from parsed fields (ideal + mat_sk + vk).
-        todo!("SigningKey::to_bytes")
+        use crate::params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES};
+
+        let mut out = [0u8; SIGNING_KEY_BYTES];
+        let mut pos = 0;
+
+        // pk (65 bytes).
+        out[..VERIFYING_KEY_BYTES].copy_from_slice(&self.verifying_key.to_bytes());
+        pos += VERIFYING_KEY_BYTES;
+
+        // norm (32 bytes, unsigned LE).
+        let norm = self.ideal.norm();
+        for limb in norm.as_limbs() {
+            out[pos..pos + 8].copy_from_slice(&limb.to_le_bytes());
+            pos += 8;
+        }
+
+        // gen[0..3] (4 × 32 bytes, signed two's complement LE).
+        let gen = &self.ideal_gen;
+        let coords = [
+            gen.a.as_bigint(),
+            gen.b.as_bigint(),
+            gen.c.as_bigint(),
+            gen.d.as_bigint(),
+        ];
+        for coord in &coords {
+            let is_neg = bool::from(coord.is_negative()) && !bool::from(coord.is_zero());
+            // Write magnitude as LE bytes.
+            for limb in coord.as_limbs() {
+                out[pos..pos + 8].copy_from_slice(&limb.to_le_bytes());
+                pos += 8;
+            }
+            if is_neg {
+                // Two's complement: negate the 32-byte block.
+                // Flip all bits, then add 1.
+                let block = &mut out[pos - FP_ENCODED_BYTES..pos];
+                for b in block.iter_mut() {
+                    *b = !*b;
+                }
+                // Add 1 with carry.
+                let mut carry = 1u16;
+                for b in block.iter_mut() {
+                    carry += *b as u16;
+                    *b = carry as u8;
+                    carry >>= 8;
+                }
+            }
+        }
+
+        // M_sk (4 × 32 bytes, unsigned LE, row-major).
+        for row in &self.mat_sk.entries {
+            for entry in row {
+                out[pos..pos + TORSION_2POWER_BYTES]
+                    .copy_from_slice(&entry.to_le_bytes());
+                pos += TORSION_2POWER_BYTES;
+            }
+        }
+
+        debug_assert_eq!(pos, SIGNING_KEY_BYTES);
+        out
     }
 
     /// Get the verifying key corresponding to this signing key.

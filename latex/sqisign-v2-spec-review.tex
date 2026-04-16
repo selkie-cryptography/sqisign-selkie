@@ -671,4 +671,30 @@ than assuming uniqueness.  A verification implementation should treat
 a missing or ambiguous splitting index as signature rejection, not an
 assertion failure.
 
+%% ---------------------------------------------------------------
+\subsection*{Signing key encoding requires caching the ideal generator}
+\label{sec:sk-generator}
+
+\paragraph{Severity.} Low (implementation note).
+
+\paragraph{Affected algorithm.} Key encoding (\S4.6).
+
+\paragraph{Current spec text.}
+The signing key wire format encodes the generator~$\alpha$ of the
+secret ideal $I_{\mathrm{sk}} = O_0\langle\alpha, N\rangle$ as four
+signed 32-byte coordinates.  The ideal is defined by~$\alpha$ and
+the norm~$N$; $\alpha$ is part of the key.
+
+\paragraph{What goes wrong.}
+An implementation that converts the ideal to HNF for internal use
+(as we do for lattice operations) loses the original generator.
+Recovering~$\alpha$ from HNF requires a brute-force search over
+small linear combinations of basis vectors.  The spec does not
+mention this recovery problem.
+
+\paragraph{Recommendation.}
+Note in \S4.6 that implementations should cache~$\alpha$ at
+parse/keygen time rather than attempting to recover it from the
+lattice representation.
+
 \end{document}
