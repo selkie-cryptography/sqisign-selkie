@@ -18,8 +18,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
-      # gh-pages deployment on push to main
-      contents: write
       # PR comments with benchmark comparison
       pull-requests: write
     steps:
@@ -38,31 +36,62 @@ jobs:
           cargo bench --features bench-internals -- --color never 2>&1 | \
             .github/scripts/divan-to-json.sh > bench-output.json
 
-      - name: Store benchmark result (push to main)
+      # On push to main: upload results to Fly CI site.
+      - name: Generate site JSON
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: benchmark-action/github-action-benchmark@d48d326b4ca9ba73ca0cd0d59f108f9e02a381c7
-        with:
-          name: sqisign-selkie benchmarks
-          tool: customSmallerIsBetter
-          output-file-path: bench-output.json
-          gh-pages-branch: gh-pages
-          benchmark-data-dir-path: bench
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          alert-threshold: "115%"
-          comment-on-alert: true
-          comment-always: true
-          fail-on-alert: false
+        run: |
+          mkdir -p bench-out
+          jq -n --argjson benches "$(cat bench-output.json)" '{
+            sha: "${{ github.sha }}",
+            updated_at: (now | todate),
+            groups: [
+              $benches
+              | group_by(.name | split("::")[0])
+              | .[]
+              | {
+                  name: .[0].name | split("::")[0],
+                  benchmarks: [
+                    .[] | {
+                      name: (.name | split("::")[1:] | join("::")),
+                      time_ns: .value
+                    }
+                  ]
+                }
+            ]
+          }' > bench-out/bench.json
 
-      - name: Compare against baseline (pull request)
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+      - name: Upload benchmarks to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl ssh sftp shell -a sqisign-selkie-ci <<'SFTP'
+          put bench-out/bench.json /data/bench/bench.json
+          SFTP
+
+      # PR: compare against stored baseline and comment.
+      - name: Download baseline
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          # Try to fetch the baseline from the CI site.
+          curl -sf https://sqisign-selkie-ci.fly.dev/bench/bench.json \
+            | jq '[.groups[].benchmarks[] as $b | .groups[] |
+                {name: (.name + "::" + $b.name), unit: "ns/iter", value: $b.time_ns}
+              ]' > baseline.json 2>/dev/null || echo "[]" > baseline.json
+
+      - name: Compare benchmarks (pull request)
         if: github.event_name == 'pull_request'
         uses: benchmark-action/github-action-benchmark@d48d326b4ca9ba73ca0cd0d59f108f9e02a381c7
         with:
           name: sqisign-selkie benchmarks
           tool: customSmallerIsBetter
           output-file-path: bench-output.json
-          gh-pages-branch: gh-pages
-          benchmark-data-dir-path: bench
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: false
           comment-on-alert: true
