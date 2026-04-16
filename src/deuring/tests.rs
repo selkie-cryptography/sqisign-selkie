@@ -4,6 +4,7 @@
 use precomputed::{ACTION_MATRICES, torsion_basis};
 
 use super::*;
+use crate::curves::montgomery::JacobianPoint;
 use crate::quaternions::algebra::{Coordinate, Denominator};
 
 /// Pinned commit of the SQIsign C reference implementation.
@@ -450,7 +451,6 @@ fn action_matrix_scalar_three() {
     assert_eq!(*m.entry(0, 1), Scalar::ZERO, "m01 should be 0");
     assert_eq!(*m.entry(1, 0), Scalar::ZERO, "m10 should be 0");
 }
-
 
 /// Compare Montgomery ladder vs biladder for [3]*P.
 #[test]
