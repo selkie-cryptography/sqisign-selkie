@@ -553,8 +553,13 @@ fn try_find_uv(
         return None;
     }
 
-    // Factor out the 2-adic part of u.
-    let e_val = u.trailing_zeros();
+    // Factor out the 2-adic part of gcd(u, v), matching the C ref's
+    // `ibz_two_adic(gcd(u, v))` (dim2id2iso.c:833). Using just
+    // `u.trailing_zeros()` is wrong: when u is odd but v is even,
+    // the chain exponent would equal f (248), causing a u32 underflow
+    // in the subsequent `f - 2 - e` doubling count.
+    let g = u.gcd(&v);
+    let e_val = g.trailing_zeros() as u32;
     let e = TorsionExponent::try_from(f.value() - e_val).ok()?;
 
     Some(SuitableIdealResult {
