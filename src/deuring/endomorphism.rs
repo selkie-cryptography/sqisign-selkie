@@ -137,6 +137,33 @@ impl ActionMatrix {
         TorsionBasis::from((p_prime, q_prime))
     }
 
+    /// Determinant mod 2^f: `ad − bc`.
+    pub fn det_mod(&self, f: u32) -> Scalar {
+        self.entries[0][0]
+            .mul_mod2k(&self.entries[1][1], f)
+            .sub_mod2k(
+                &self.entries[0][1].mul_mod2k(&self.entries[1][0], f),
+                f,
+            )
+    }
+
+    /// Classical adjugate mod 2^f: `[[d, −b], [−c, a]]`.
+    pub fn adjugate_mod(&self, f: u32) -> Self {
+        let zero = Scalar::ZERO;
+        Self {
+            entries: [
+                [
+                    self.entries[1][1],
+                    zero.sub_mod2k(&self.entries[0][1], f),
+                ],
+                [
+                    zero.sub_mod2k(&self.entries[1][0], f),
+                    self.entries[0][0],
+                ],
+            ],
+        }
+    }
+
     /// Matrix-matrix multiplication mod 2^f.
     pub fn mat_mul_mod(&self, rhs: &Self, f: u32) -> Self {
         Self {

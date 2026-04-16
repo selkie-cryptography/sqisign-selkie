@@ -565,14 +565,51 @@ impl LeftIdeal<4> {
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(v): {:?}", _t2.elapsed());
 
-        // Step 6: [P, Q]^T ← (1/(nrd(I)·nrd(J_t))) M_{β₂} [φ_v(P_t), φ_v(Q_t)]^T
+        // Step 6: second component of the outer kernel.
         //
-        // For t=0, nrd(J_0) = 1, so the scalar is 1/nrd(I) mod 2^f.
-        // TODO: For t > 0, multiply by 1/nrd(J_t) as well.
+        // # Divergences
+        //
+        // The spec (Algorithm 3.13, line 6) writes
+        // `(1/(nrd(I) · nrd(J_t))) · M_{β₁⁻¹ · β₂}` applied to
+        // `(φ_v(P_t), φ_v(Q_t))`, paired with `[d₁] φ_u(P_s)` on the
+        // first component (line 7). The C reference
+        // (`dim2id2iso.c:881-1014`) instead builds
+        // `θ = β₂ · conj(β₁)` as a quaternion, multiplies its coords
+        // by `invmod(d₁ · nrd(connecting ideal), 2^f)`, and applies
+        // it on the second component — with `φ_u(P_s)` (no `[d₁]`)
+        // on the first.
+        //
+        // The two conventions differ at the quaternion level
+        // (`conj(β₁)·β₂` vs `β₂·conj(β₁)` — quaternions do not
+        // commute), in the scaling factor (spec `1/(nrd(I)²·d₁)` vs
+        // C ref `1/(nrd(I)·d₁)`), and in whether `[d₁]` appears on
+        // the first component. We follow the C ref because it is
+        // the implementation whose signatures verify against the
+        // published KAT vectors; the spec's matrix-product ordering
+        // is flagged in `latex/sqisign-v2-spec-review.tex`.
+        //
+        // Using the identity `M_{conj(β)} ≡ adj(M_β) (mod 2^f)` —
+        // both have determinant `nrd(β)`, and
+        // `M_β · M_{conj(β)} = nrd(β) · I` — we assemble
+        //
+        //   M_θ = M_{β₂} · M_{conj(β₁)} = M_{β₂} · adj(M_{β₁}).
+        //
+        // For s = t = 0: `nrd(J_t) = 1` and
+        // `nrd(β₁) = d₁ · nrd(parent_ideal)`, so the total scalar
+        // applied to `M_θ` before acting on the basis is
+        // `1 / (nrd(parent_ideal) · d₁)`.
+        //
+        // TODO: generalize for s, t > 0 (needs nrd(J_t) and per-order
+        // connecting ideal norms).
         let modulus = BigInt::<4>::ONE.shl(f.value());
-        let norm_inv = self.norm().invert_mod(&modulus)?;
-
-        // Look up generator action matrices for order O_t.
+        let s_index = EXTREMAL_ORDERS
+            .iter()
+            .position(|o| o.q() == sui.factor1.order.q())?;
+        let gen_matrices_s = [
+            ACTION_MATRICES[s_index][3],
+            ACTION_MATRICES[s_index][4],
+            ACTION_MATRICES[s_index][5],
+        ];
         let t_index = EXTREMAL_ORDERS
             .iter()
             .position(|o| o.q() == sui.factor2.order.q())?;
@@ -581,21 +618,54 @@ impl LeftIdeal<4> {
             ACTION_MATRICES[t_index][4],
             ACTION_MATRICES[t_index][5],
         ];
-        let m_beta2 = action_matrix(
+        let m_beta1 = match action_matrix(
+            &sui.factor1.beta,
+            sui.factor1.order.order(),
+            &gen_matrices_s,
+            f,
+        ) {
+            Some(m) => m,
+            None => {
+                #[cfg(test)]
+                eprintln!("[to_isogeny] action_matrix(β₁) failed — β₁ not decomposable on O_s");
+                return None;
+            }
+        };
+        let m_beta2 = match action_matrix(
             &sui.factor2.beta,
             sui.factor2.order.order(),
             &gen_matrices_t,
             f,
-        )?;
-        // Apply scaled M_β₂ to the propagated basis (P, Q, PmQ) from FDI(v).
-        // Using the propagated PmQ avoids projective_difference, which
-        // gives inconsistent representatives for Okeya-Sakurai.
-        let s = Scalar::from(norm_inv);
+        ) {
+            Some(m) => m,
+            None => {
+                #[cfg(test)]
+                eprintln!("[to_isogeny] action_matrix(β₂) failed — β₂ not decomposable on O_t");
+                return None;
+            }
+        };
+        let m_beta1_adj = m_beta1.adjugate_mod(f.value());
+        let m_prod = m_beta2.mat_mul_mod(&m_beta1_adj, f.value());
+
+        // scale = 1 / (nrd(parent_ideal) · d₁) mod 2^f (for s = t = 0).
+        //
+        // `parent_ideal.norm()` is the norm of the ideal β₁ (and β₂)
+        // was enumerated from — the smallest equivalent of the
+        // caller-supplied `self`, not `self` itself. Using
+        // `self.norm()` here would be wrong whenever the reduction
+        // step replaced `I`; the invariant
+        // `nrd(β) = d · nrd(parent_ideal)` is what ties the matrix
+        // identity `det(M_{β₁}) = nrd(β₁)` to the scaling factor.
+        let parent_norm = *sui.factor1.parent_ideal.norm();
+        let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
+        let scale_denom = parent_norm.ct_mul(&d1_big).ct_mod(&modulus);
+        let scale_inv = scale_denom.invert_mod(&modulus)?;
+        let s = Scalar::from(scale_inv);
         let fv = f.value();
-        let s00 = s.mul_mod2k(m_beta2.entry(0, 0), fv);
-        let s01 = s.mul_mod2k(m_beta2.entry(0, 1), fv);
-        let s10 = s.mul_mod2k(m_beta2.entry(1, 0), fv);
-        let s11 = s.mul_mod2k(m_beta2.entry(1, 1), fv);
+        let s00 = s.mul_mod2k(m_prod.entry(0, 0), fv);
+        let s01 = s.mul_mod2k(m_prod.entry(0, 1), fv);
+        let s10 = s.mul_mod2k(m_prod.entry(1, 0), fv);
+        let s11 = s.mul_mod2k(m_prod.entry(1, 1), fv);
         let fdi_v_basis = TorsionBasis::from_propagated(phi_v_p, phi_v_q, phi_v_pmq);
         let p_step6 = fdi_v_basis.eval_decomposition(&s00, &s10);
         let q_step6 = fdi_v_basis.eval_decomposition(&s01, &s11);
@@ -605,10 +675,23 @@ impl LeftIdeal<4> {
         );
 
         // Steps 7–8: Build kernel points on E_u × E_v.
-        let d1_scalar = d1.to_scalar();
-        let mut kp_first = &d1_scalar * &phi_u_p;
-        let mut kq_first = &d1_scalar * &phi_u_q;
-        let mut kpmq_first = &d1_scalar * &_phi_u_pmq;
+        //
+        // # Divergences
+        //
+        // The spec (Algorithm 3.13, line 7) writes `[d₁] φ_u(P_s)`
+        // for the first component. The C reference
+        // (`dim2id2iso.c:949-951`) uses `φ_u(P_s)` directly — no
+        // `[d₁]` multiplication. The two are equivalent for
+        // splitting (the spec's `[d₁]` factor cancels against the
+        // extra `1/d₁` implicit in the spec's second-component
+        // scaling of `1/(nrd(I)²·d₁)` vs. the C ref's
+        // `1/(nrd(parent)·d₁)`). We follow the C ref's convention
+        // on both sides of the kernel since it is the
+        // implementation whose signatures verify against the
+        // published KAT vectors.
+        let mut kp_first = phi_u_p;
+        let mut kq_first = phi_u_q;
+        let mut kpmq_first = _phi_u_pmq;
         let mut kp_second = p_step6;
         let mut kq_second = q_step6;
         let mut kpmq_second = pmq_step6;
@@ -640,10 +723,19 @@ impl LeftIdeal<4> {
 
         // Chain exponent is e − 2: the chain consumes (e−2)+2 = e
         // torsion levels, matching the kernel order 2^e.
+        //
+        // Unlike the inner FDI chain, the outer chain uses the
+        // non-`extra_torsion` mode: the C reference
+        // (`dim2id2iso.c:1128`) calls
+        // `theta_chain_compute_and_eval_randomized(..., false, ...)`
+        // here, vs `true` for the inner FDI call on line 181. Mixing
+        // them up leaves the final codomain in the wrong (standard
+        // vs dual) Hadamard form and the splitting step sees a
+        // non-product theta null point.
         let chain_e = TorsionExponent::try_from(sui.e.value() - 2).ok()?;
         let zero_v = ProjectiveXOnlyPoint::identity(&e_v);
         let (codomain, images) =
-            kernel.isogeny_extra_torsion(chain_e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
+            kernel.isogeny(chain_e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
 
         // Steps 10–13: Pick correct output curve.
         // Per Algorithm 8.47 remark, E is always correct when using
