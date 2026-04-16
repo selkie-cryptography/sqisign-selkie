@@ -147,7 +147,7 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@5939f3337e40968c39aa70f5ecb1417a92fb25a0
         with:
           tool: cargo-llvm-cov
       - name: Generate coverage report
@@ -202,7 +202,7 @@ jobs:
         with:
           persist-credentials: false
       # cargo-deny only reads Cargo.toml/lock, no compilation needed.
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@5939f3337e40968c39aa70f5ecb1417a92fb25a0
         with:
           tool: cargo-deny
       - run: cargo deny check advisories bans
@@ -225,7 +225,7 @@ jobs:
         run: git diff "origin/${BASE_REF}".. > git.diff
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@5939f3337e40968c39aa70f5ecb1417a92fb25a0
         with:
           tool: cargo-mutants
       - name: Run cargo-mutants on changed code
