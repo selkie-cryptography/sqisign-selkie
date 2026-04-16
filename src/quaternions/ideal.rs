@@ -14,10 +14,12 @@
 //! [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
 //! [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
 
+use core::ops::Deref;
+
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
-    lattice::{ExtremalOrder, HnfLattice, Lattice, NrdBasis},
+    lattice::{ExtremalOrder, HnfLattice, Lattice, LeftIdeal, NrdBasis},
     linear::{Matrix, Vector},
     precomputed::{EXTREMAL_ORDERS, P_WIDE},
 };
@@ -377,13 +379,24 @@ impl ExtremalOrder<8> {
 /// extremal order it came from and its degree d = nrd(β) / nrd(J_t · I).
 /// Grouping these prevents accidentally pairing one factor's degree
 /// with another factor's element.
-pub struct IdealFactor {
+pub(crate) struct IdealFactor {
     /// The extremal order that produced this factor.
-    pub order: &'static ExtremalOrder<4>,
-    /// The element β (a short vector in J_t · I).
-    pub beta: Element<4>,
-    /// Degree d = nrd(β) / nrd(J_t · I).
-    pub degree: IsogenyDegree,
+    pub(crate) order: &'static ExtremalOrder<4>,
+    /// The short vector β.
+    pub(crate) beta: ShortVector,
+    /// Degree `d = nrd(β) / nrd(parent_ideal)`.
+    pub(crate) degree: IsogenyDegree,
+    /// The ideal β was enumerated from: for `t = 0` this is the
+    /// caller-supplied ideal `I` (possibly replaced by its smallest
+    /// equivalent), for `t > 0` it will be `J_t · I`.
+    ///
+    /// Carrying the parent ideal here keeps the invariant
+    /// `nrd(β) = degree · nrd(parent_ideal)` local to the factor,
+    /// so downstream scaling formulas needing `nrd(J_t · I)` read
+    /// it through [`LeftIdeal::norm`] on this field rather than
+    /// reaching for the caller-supplied ideal whose norm no longer
+    /// matches β after the reduction step.
+    pub(crate) parent_ideal: LeftIdeal<4>,
 }
 
 /// Result of [Alg. 3.16][Alg. 3.16] (SuitableIdeals).
@@ -394,30 +407,63 @@ pub struct IdealFactor {
 /// and [`factor2`](Self::factor2).
 ///
 /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
-pub struct SuitableIdealResult {
+pub(crate) struct SuitableIdealResult {
     /// Odd positive integer u.
     // TODO: Replace with a positive-integer newtype.
-    pub u: BigInt<4>,
+    pub(crate) u: BigInt<4>,
     /// Positive integer v.
     // TODO: Replace with a positive-integer newtype.
-    pub v: BigInt<4>,
+    pub(crate) v: BigInt<4>,
     /// Exponent e ≤ f.
-    pub e: TorsionExponent,
+    pub(crate) e: TorsionExponent,
     /// First factor (β₁, d₁, order index s).
-    pub factor1: IdealFactor,
+    pub(crate) factor1: IdealFactor,
     /// Second factor (β₂, d₂, order index t).
-    pub factor2: IdealFactor,
+    pub(crate) factor2: IdealFactor,
 }
 
-/// An element from the short-vector enumeration, paired with its
-/// degree (reduced norm divided by the ideal norm).
-struct ShortVector {
-    /// Quaternion element β (linear combination of reduced basis).
+/// A candidate from the short-vector enumeration, retaining its
+/// degree both as a membership invariant and as the sort key.
+///
+/// A single enumeration batch uses a fixed parent ideal, so
+/// `nrd(parent_ideal)` is constant across every candidate and
+/// sorting by `degree = nrd(β) / nrd(parent_ideal)` gives the same
+/// ordering as sorting by `nrd(β)` itself. Promoted to an
+/// [`IdealFactor`] once a viable pair is selected in
+/// [`try_find_uv`].
+struct ShortVectorCandidate {
+    /// Quaternion element β, a linear combination of the reduced basis.
     elem: Element<4>,
-    /// Degree: nrd(β) / nrd(I), as a positive odd integer.
+    /// Degree: `nrd(β) / nrd(parent_ideal)`, a positive odd integer.
     degree: IsogenyDegree,
-    /// Approximate norm for sorting (f64 precision, 53-bit mantissa).
-    norm_approx: f64,
+}
+
+/// A quaternion element that is a short vector in some ideal lattice.
+///
+/// Wraps an [`Element<4>`] with a stronger contract than a bare
+/// algebra element: a `ShortVector` was produced by the
+/// short-vector enumeration inside [`LeftIdeal::suitable_ideals`]
+/// and lives in a specific [`LeftIdeal<4>`] (tracked by the
+/// consumer via [`IdealFactor::parent_ideal`]) with norm on the
+/// order of `√nrd(parent_ideal)`.
+///
+/// Construction is private to this module — there is no public
+/// constructor — so a `ShortVector` in hand is a proof-by-type
+/// that the enumeration has already validated the underlying
+/// element.
+///
+/// The inner [`Element<4>`] is reachable through [`Deref`], so any
+/// site that wants `&Element<4>` (for example `action_matrix` in
+/// the deuring module) works by deref coercion.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ShortVector(Element<4>);
+
+impl Deref for ShortVector {
+    type Target = Element<4>;
+
+    fn deref(&self) -> &Element<4> {
+        &self.0
+    }
 }
 
 impl NrdBasis<8> {
@@ -431,7 +477,7 @@ impl NrdBasis<8> {
         &self,
         ideal_norm: &BigInt<8>,
         lattice_denom: &BigInt<8>,
-    ) -> Vec<ShortVector> {
+    ) -> Vec<ShortVectorCandidate> {
         let m = crate::params::FINDUV_BOX_SIZE;
         let denom_sq = lattice_denom.ct_mul(lattice_denom);
         let divisor = ideal_norm.ct_mul(&denom_sq);
@@ -489,7 +535,7 @@ impl NrdBasis<8> {
                             continue;
                         };
 
-                        vectors.push(ShortVector {
+                        vectors.push(ShortVectorCandidate {
                             elem: Element::<4>::new(
                                 Coordinate::from_bigint(a),
                                 Coordinate::from_bigint(b),
@@ -498,32 +544,44 @@ impl NrdBasis<8> {
                                 Denominator::from_bigint_unchecked(den_4),
                             ),
                             degree,
-                            norm_approx: nrd_scaled.to_f64(),
                         });
                     }
                 }
             }
         }
 
-        // Stable sort: preserves insertion order for equal-norm vectors,
-        // ensuring deterministic pair selection in the search phase.
-        // Determinism matters for signing — non-deterministic pair choice
-        // could leak information about which short vectors matched.
-        vectors.sort_by(|a, b| {
-            a.norm_approx
-                .partial_cmp(&b.norm_approx)
-                .unwrap_or(core::cmp::Ordering::Equal)
-        });
+        // Stable sort by `degree`: `nrd(parent_ideal)` is constant
+        // across this batch, so ordering by degree matches ordering
+        // by `nrd(β)` exactly — no `f64` precision concerns. A
+        // stable sort preserves insertion order for equal-degree
+        // candidates, giving deterministic pair selection in
+        // [`try_find_uv`]; determinism matters for signing because a
+        // non-deterministic pair choice could leak information about
+        // which short vectors matched.
+        vectors.sort_by_key(|c| c.degree);
         vectors
     }
 }
 
-/// Try to find coprime odd degrees and matching u, v from a pair
-/// of short vectors. Returns `None` if the pair doesn't satisfy
-/// the SuitableIdeals conditions.
+/// Try to find coprime odd degrees and matching `u`, `v` from a
+/// pair of short-vector candidates.
+///
+/// `parent_ideal` is the ideal the candidates were enumerated from
+/// (the caller-supplied ideal `I` or its smallest equivalent);
+/// both β₁ and β₂ carry it through to the resulting
+/// [`IdealFactor`]s so that downstream scaling formulas can read
+/// `nrd(parent_ideal)` without re-deriving it and without
+/// accidentally reaching for the original `I` when β lives in the
+/// reduced equivalent.
+///
+/// Returns `None` when the pair fails any of the SuitableIdeals
+/// conditions: non-coprime degrees, no solution to
+/// `u·d₁ + v·d₂ = 2^f` with `u, v > 0`, or an exponent that would
+/// push `e` out of range.
 fn try_find_uv(
-    sv1: &ShortVector,
-    sv2: &ShortVector,
+    sv1: &ShortVectorCandidate,
+    sv2: &ShortVectorCandidate,
+    parent_ideal: &LeftIdeal<4>,
     two_f: &BigInt<8>,
     f: TorsionExponent,
     order: &'static ExtremalOrder<4>,
@@ -553,13 +611,15 @@ fn try_find_uv(
         return None;
     }
 
-    // Factor out the 2-adic part of gcd(u, v), matching the C ref's
-    // `ibz_two_adic(gcd(u, v))` (dim2id2iso.c:833). Using just
-    // `u.trailing_zeros()` is wrong: when u is odd but v is even,
-    // the chain exponent would equal f (248), causing a u32 underflow
-    // in the subsequent `f - 2 - e` doubling count.
-    let g = u.gcd(&v);
-    let e_val = g.trailing_zeros() as u32;
+    // Factor out the 2-adic part of `gcd(u, v)`, matching the C
+    // reference (`dim2id2iso.c:833`: `ibz_two_adic(&gcd(u, v))`).
+    // The spec writes `v_2(u)` in Algorithm 3.16 line 14, but that
+    // is only equivalent to `v_2(gcd(u, v))` when `v_2(u) ≤ v_2(v)`;
+    // when `u` is odd but `v` is even, dividing only by `2^v_2(u)`
+    // leaves `v` even so `gcd(u·d₁, v·d₂) ≠ 1`, and when `u` is
+    // the more-2-divisible of the two, `u.shr(e_val)` silently
+    // drops low bits of `v` that were carrying real value.
+    let e_val = u.gcd(&v).trailing_zeros();
     let e = TorsionExponent::try_from(f.value() - e_val).ok()?;
 
     Some(SuitableIdealResult {
@@ -568,18 +628,20 @@ fn try_find_uv(
         e,
         factor1: IdealFactor {
             order,
-            beta: sv1.elem,
+            beta: ShortVector(sv1.elem),
             degree: *d1,
+            parent_ideal: *parent_ideal,
         },
         factor2: IdealFactor {
             order,
-            beta: sv2.elem,
+            beta: ShortVector(sv2.elem),
             degree: *d2,
+            parent_ideal: *parent_ideal,
         },
     })
 }
 
-impl super::lattice::LeftIdeal<4> {
+impl LeftIdeal<4> {
     /// Decompose this ideal for id2iso via [Alg. 3.16][Alg. 3.16]
     /// (SuitableIdeals).
     ///
@@ -729,7 +791,7 @@ impl super::lattice::LeftIdeal<4> {
     }
 
     /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
-    pub fn suitable_ideals(&self) -> Option<SuitableIdealResult> {
+    pub(crate) fn suitable_ideals(&self) -> Option<SuitableIdealResult> {
         let f = TorsionExponent::FULL;
         let two_f = BigInt::<8>::ONE.shl(f.value());
 
@@ -773,7 +835,7 @@ impl super::lattice::LeftIdeal<4> {
         for (i, sv1) in short_vecs.iter().enumerate() {
             for sv2 in &short_vecs[i..] {
                 _pairs_tried += 1;
-                if let Some(result) = try_find_uv(sv1, sv2, &two_f, f, order) {
+                if let Some(result) = try_find_uv(sv1, sv2, &ideal, &two_f, f, order) {
                     return Some(result);
                 }
             }
