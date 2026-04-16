@@ -182,15 +182,14 @@ jobs:
             ] | sort_by(-.percent)
           }' > coverage-out/coverage.json
 
-      - name: Upload coverage to CI site
+      - uses: superfly/flyctl-actions/setup-flyctl@master
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Upload coverage to CI site (sftp)
+      - name: Upload coverage to CI site
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          flyctl ssh sftp shell -a sqisign-selkie-ci <<'SFTP'
+          flyctl ssh sftp shell -a sqisign-selkie-ci --wait-timeout 30 <<'SFTP'
           put coverage-out/coverage.json /data/coverage/coverage.json
           SFTP
 
@@ -221,7 +220,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Generate diff against base branch
-        run: git diff origin/${{ github.base_ref }}.. > git.diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git diff "origin/${BASE_REF}".. > git.diff
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
@@ -345,4 +346,4 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         working-directory: .github/site
-        run: fly deploy
+        run: flyctl deploy
