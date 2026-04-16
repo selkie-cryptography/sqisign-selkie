@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark light">
   <title>sqisign-selkie CI</title>
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32-dark.png" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16-dark.png" media="(prefers-color-scheme: dark)">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
@@ -73,6 +78,25 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+    }
+
+    .header__left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo {
+      height: 32px;
+      width: auto;
+    }
+
+    .logo--dark { display: block; }
+    .logo--light { display: none; }
+
+    @media (prefers-color-scheme: light) {
+      .logo--dark { display: none; }
+      .logo--light { display: block; }
     }
 
     .header__title {
@@ -306,9 +330,15 @@
   <header class="header">
     <div class="container">
       <div class="header__inner">
-        <div>
-          <div class="header__title">sqisign-selkie</div>
-          <div class="header__subtitle">CI artifacts</div>
+        <div class="header__left">
+          <a href="https://selkiecryptography.com">
+            <img src="/selkie-solid-white-on-transparent.svg" alt="Selkie" class="logo logo--dark">
+            <img src="/selkie-solid-black-on-transparent.svg" alt="Selkie" class="logo logo--light">
+          </a>
+          <div>
+            <div class="header__title">sqisign-selkie</div>
+            <div class="header__subtitle">CI artifacts</div>
+          </div>
         </div>
         <a class="header__org" href="https://github.com/selkie-cryptography/sqisign-selkie">GitHub</a>
       </div>
@@ -352,6 +382,17 @@
   <script>
     const REPO = 'selkie-cryptography/sqisign-selkie';
     const API = 'https://api.github.com';
+    const POLL_INTERVAL = 15000;
+
+    // Track last-seen SHAs to detect new data.
+    let lastCovSha = null;
+    let lastBenchSha = null;
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = String(s);
+      return d.innerHTML;
+    }
 
     function covColor(pct) {
       if (pct >= 80) return 'var(--green)';
@@ -369,7 +410,7 @@
     }
 
     function commitLink(sha) {
-      return `<a href="https://github.com/${REPO}/commit/${sha}">${sha.slice(0, 7)}</a>`;
+      return `<a href="https://github.com/${REPO}/commit/${esc(sha)}">${esc(sha.slice(0, 7))}</a>`;
     }
 
     async function isWorkflowRunning(workflowFile) {
@@ -385,37 +426,17 @@
       }
     }
 
-    async function renderCoverage() {
-      const metaEl = document.getElementById('coverage-meta');
-      const contentEl = document.getElementById('coverage-content');
+    async function fetchJson(url) {
+      const r = await fetch(url, { cache: 'no-cache' });
+      if (!r.ok) return null;
+      return r.json();
+    }
 
-      let data;
-      try {
-        const r = await fetch('/coverage/coverage.json');
-        if (!r.ok) throw new Error();
-        data = await r.json();
-      } catch {
-        if (await isWorkflowRunning('ci.yml')) {
-          metaEl.innerHTML = '<span class="status status--updating">building</span>';
-        }
-        return;
-      }
-
-      // Meta line
-      const parts = [];
-      if (data.sha) parts.push(commitLink(data.sha));
-      if (data.updated_at) parts.push(timeAgo(data.updated_at));
-      if (await isWorkflowRunning('ci.yml')) {
-        parts.push('<span class="status status--updating">updating</span>');
-      }
-      metaEl.innerHTML = parts.join(' &middot; ');
-
-      // Summary number
+    function renderCoverageData(data) {
       const total = data.total || {};
       const totalPct = total.percent != null ? total.percent.toFixed(1) : '—';
-
-      // Module table
       const modules = data.modules || [];
+
       let html = `<div class="cov-summary" style="color:${covColor(total.percent)}">${totalPct}%</div>`;
 
       if (modules.length > 0) {
@@ -431,8 +452,8 @@
           const pct = m.percent.toFixed(1);
           const color = covColor(m.percent);
           html += `<tr>
-            <td class="module-name">${m.name}</td>
-            <td>${m.covered}/${m.total}</td>
+            <td class="module-name">${esc(m.name)}</td>
+            <td>${esc(m.covered)}/${esc(m.total)}</td>
             <td style="color:${color}">${pct}%</td>
             <td class="cov-bar-cell">
               <div class="cov-bar">
@@ -444,36 +465,12 @@
         html += '</tbody></table>';
       }
 
-      contentEl.innerHTML = html;
+      return html;
     }
 
-    async function renderBenchmarks() {
-      const metaEl = document.getElementById('bench-meta');
-      const contentEl = document.getElementById('bench-content');
-
-      let data;
-      try {
-        const r = await fetch('/bench/bench.json');
-        if (!r.ok) throw new Error();
-        data = await r.json();
-      } catch {
-        if (await isWorkflowRunning('bench.yml')) {
-          metaEl.innerHTML = '<span class="status status--updating">running</span>';
-        }
-        return;
-      }
-
-      // Meta line
-      const parts = [];
-      if (data.sha) parts.push(commitLink(data.sha));
-      if (data.updated_at) parts.push(timeAgo(data.updated_at));
-      if (await isWorkflowRunning('bench.yml')) {
-        parts.push('<span class="status status--updating">updating</span>');
-      }
-      metaEl.innerHTML = parts.join(' &middot; ');
-
+    function renderBenchmarkData(data) {
       const groups = data.groups || [];
-      if (groups.length === 0) return;
+      if (groups.length === 0) return '';
 
       let html = `<table class="bench-table">
         <thead><tr>
@@ -483,7 +480,7 @@
         </tr></thead><tbody>`;
 
       for (const g of groups) {
-        html += `<tr><td class="bench-group" colspan="3">${g.name}</td></tr>`;
+        html += `<tr><td class="bench-group" colspan="3">${esc(g.name)}</td></tr>`;
         for (const b of g.benchmarks) {
           const time = b.time_ns < 1000
             ? `${b.time_ns.toFixed(0)} ns`
@@ -492,19 +489,74 @@
             : `${(b.time_ns / 1_000_000).toFixed(2)} ms`;
           const tp = b.throughput || '—';
           html += `<tr>
-            <td class="bench-name">${b.name}</td>
+            <td class="bench-name">${esc(b.name)}</td>
             <td>${time}</td>
-            <td>${tp}</td>
+            <td>${esc(tp)}</td>
           </tr>`;
         }
       }
 
       html += '</tbody></table>';
-      contentEl.innerHTML = html;
+      return html;
     }
 
-    renderCoverage();
-    renderBenchmarks();
+    function metaLine(data, running) {
+      const parts = [];
+      if (data && data.sha) parts.push(commitLink(data.sha));
+      if (data && data.updated_at) parts.push(timeAgo(data.updated_at));
+      if (running) {
+        parts.push(data
+          ? '<span class="status status--updating">updating</span>'
+          : '<span class="status status--updating">building</span>');
+      }
+      return parts.join(' &middot; ');
+    }
+
+    async function updateCoverage() {
+      const metaEl = document.getElementById('coverage-meta');
+      const contentEl = document.getElementById('coverage-content');
+
+      const data = await fetchJson('/coverage/coverage.json');
+      const running = await isWorkflowRunning('ci.yml');
+
+      metaEl.innerHTML = metaLine(data, running);
+
+      if (data) {
+        if (data.sha !== lastCovSha) {
+          contentEl.innerHTML = renderCoverageData(data);
+          lastCovSha = data.sha;
+        }
+      } else if (!running) {
+        contentEl.innerHTML = '<p class="empty">No coverage data yet.</p>';
+      }
+    }
+
+    async function updateBenchmarks() {
+      const metaEl = document.getElementById('bench-meta');
+      const contentEl = document.getElementById('bench-content');
+
+      const data = await fetchJson('/bench/bench.json');
+      const running = await isWorkflowRunning('bench.yml');
+
+      metaEl.innerHTML = metaLine(data, running);
+
+      if (data) {
+        if (data.sha !== lastBenchSha) {
+          contentEl.innerHTML = renderBenchmarkData(data);
+          lastBenchSha = data.sha;
+        }
+      } else if (!running) {
+        contentEl.innerHTML = '<p class="empty">No benchmark data yet.</p>';
+      }
+    }
+
+    async function poll() {
+      await Promise.all([updateCoverage(), updateBenchmarks()]);
+    }
+
+    // Initial render, then poll.
+    poll();
+    setInterval(poll, POLL_INTERVAL);
   </script>
 
 </body>
