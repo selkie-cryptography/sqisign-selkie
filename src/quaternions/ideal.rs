@@ -850,10 +850,8 @@ mod tests {
         }
     }
 
-    /// Slow test (~35s): tries all seven orders with NIST-I p.
-    /// Run with: `cargo test represent_integer_any -- --ignored`
+    /// Tries all seven extremal orders with NIST-I p.
     #[test]
-    #[ignore]
     fn represent_integer_any_order_verifies_norm() {
         let p: BigInt<8> = P_WIDE;
         let m = p.ct_add(&BigInt::TWO);
