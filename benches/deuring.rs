@@ -12,7 +12,7 @@ fn ideal_to_isogeny(bencher: divan::Bencher) {
     let norm = BigInt::<4>::from_limbs([0xDEAD_BEEF_CAFE_BABE, 0, 0, 0]);
     if let Some(ideal) = LeftIdeal::<4>::random_prime_norm(&norm, order) {
         bencher
-            .with_inputs(|| ideal.clone())
+            .with_inputs(|| ideal)
             .bench_values(|i| i.to_isogeny());
     }
 }
@@ -22,7 +22,7 @@ fn reduce_to_prime_norm(bencher: divan::Bencher) {
     let order = &EXTREMAL_ORDERS[0];
     let norm = BigInt::<4>::from_limbs([0xCAFE_BABE_0000_0001, 0, 0, 0]);
     if let Some(ideal) = LeftIdeal::<4>::random_norm(&norm, order) {
-        bencher.with_inputs(|| ideal.clone()).bench_values(|mut i| {
+        bencher.with_inputs(|| ideal).bench_values(|mut i| {
             let mut rng = rand_core::OsRng;
             i.reduce_to_prime_norm::<4, _>(&mut rng);
             i
