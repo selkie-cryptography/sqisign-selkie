@@ -318,7 +318,7 @@ fn action_matrix(
 fn fixed_degree_isogeny(
     order: &'static ExtremalOrder<4>,
     u: &IsogenyDegree,
-) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
+) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
     let f = TorsionExponent::FULL;
     let p_bits = 251u32; // ⌈log₂(p)⌉ for NIST-I
 
@@ -480,21 +480,21 @@ fn fixed_degree_isogeny(
     let product = surfaces::EllipticProduct::new(curve_t, curve_t);
     let kernel = surfaces::Kernel::from_jacobian(product, k1_jac, k2_jac);
 
+    // Push all three basis points (P, Q, PmQ) through the chain,
+    // matching the C ref (dim2id2iso.c:903-905). The outer chain
+    // needs all three for `apply_scaled` — using only P and Q forces
+    // `projective_difference` to recompute PmQ, giving an inconsistent
+    // projective representative that breaks the Okeya-Sakurai lift.
     let zero = ProjectiveXOnlyPoint::identity(&curve_t);
     let (codomain, images) = kernel.isogeny_extra_torsion(
         TorsionExponent::try_from(e_fdi).ok()?,
-        &[(basis_t.R, zero), (basis_t.S, zero)],
+        &[(basis_t.R, zero), (basis_t.S, zero), (basis_t.RS, zero)],
     );
 
-    // Validate: output points must be on the output curve.
-    // The chain may produce wrong output when the kernel's
-    // ActionByTranslation determinant is degenerate (zeros≠1
-    // in the splitting step). The C ref's gluing_compute would
-    // return 0 in this case; our chain silently produces wrong
-    // output. Check and return None to trigger retry.
     let e_out = &codomain.E1;
     let p_out = images[0].0;
     let q_out = images[1].0;
+    let pmq_out = images[2].0;
     if e_out.recover_y(&p_out.to_affine_x()).is_none()
         || e_out.recover_y(&q_out.to_affine_x()).is_none()
     {
@@ -502,8 +502,9 @@ fn fixed_degree_isogeny(
         return None;
     }
 
+    #[cfg(test)]
     eprintln!("[fixed_degree_isogeny] chain OK, e_fdi={e_fdi}");
-    Some((codomain.E1, p_out, q_out))
+    Some((codomain.E1, p_out, q_out, pmq_out))
 }
 
 /// [IdealToIsogeny][Alg. 3.13] (Algorithm [3.13][Alg. 3.13]).
@@ -550,7 +551,8 @@ impl LeftIdeal<4> {
         #[cfg(test)]
         let _t1 = std::time::Instant::now();
         let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
-        let (e_u, phi_u_p, phi_u_q) = fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
+        let (e_u, phi_u_p, phi_u_q, _phi_u_pmq) =
+            fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(u): {:?}", _t1.elapsed());
 
@@ -558,7 +560,8 @@ impl LeftIdeal<4> {
         #[cfg(test)]
         let _t2 = std::time::Instant::now();
         let v_deg = IsogenyDegree::new_odd(*sui.v.as_limbs())?;
-        let (e_v, phi_v_p, phi_v_q) = fixed_degree_isogeny(sui.factor2.order, &v_deg)?;
+        let (e_v, phi_v_p, phi_v_q, phi_v_pmq) =
+            fixed_degree_isogeny(sui.factor2.order, &v_deg)?;
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(v): {:?}", _t2.elapsed());
 
@@ -584,49 +587,63 @@ impl LeftIdeal<4> {
             &gen_matrices_t,
             f,
         )?;
-        let (p_step6, q_step6) = m_beta2.apply_scaled(&norm_inv, phi_v_p, phi_v_q, f);
+        // Apply scaled M_β₂ to the propagated basis (P, Q, PmQ) from FDI(v).
+        // Using the propagated PmQ avoids projective_difference, which
+        // gives inconsistent representatives for Okeya-Sakurai.
+        let s = Scalar::from(norm_inv);
+        let fv = f.value();
+        let s00 = s.mul_mod2k(m_beta2.entry(0, 0), fv);
+        let s01 = s.mul_mod2k(m_beta2.entry(0, 1), fv);
+        let s10 = s.mul_mod2k(m_beta2.entry(1, 0), fv);
+        let s11 = s.mul_mod2k(m_beta2.entry(1, 1), fv);
+        let fdi_v_basis = TorsionBasis::from_propagated(phi_v_p, phi_v_q, phi_v_pmq);
+        let p_step6 = fdi_v_basis.eval_decomposition(&s00, &s10);
+        let q_step6 = fdi_v_basis.eval_decomposition(&s01, &s11);
+        let pmq_step6 = fdi_v_basis.eval_decomposition(
+            &s00.sub_mod2k(&s01, fv),
+            &s10.sub_mod2k(&s11, fv),
+        );
 
         // Steps 7–8: Build kernel points on E_u × E_v.
-        //
-        // K_P ← [2^{f−2−e}]([d₁]φ_u(P_s), P)
-        // K_Q ← [2^{f−2−e}]([d₁]φ_u(Q_s), Q)
-        //
-        // The scaling is f−2−e (not f−e) so the kernel retains
-        // order 2^(e+2). The extra +2 provides the 8-torsion
-        // that the gluing step requires.
         let d1_scalar = d1.to_scalar();
         let mut kp_first = &d1_scalar * &phi_u_p;
         let mut kq_first = &d1_scalar * &phi_u_q;
+        let mut kpmq_first = &d1_scalar * &_phi_u_pmq;
         let mut kp_second = p_step6;
         let mut kq_second = q_step6;
+        let mut kpmq_second = pmq_step6;
 
-        let scale = f.value() - 2 - sui.e.value();
+        // Double kernel points by f − e to reduce from order 2^f to 2^e.
+        // The chain exponent is e − 2 (not e), because the chain consumes
+        // e−2+2 = e torsion levels (the gluing adds 2). The C ref doubles
+        // by `TORSION_EVEN_POWER − exp` (dim2id2iso.c:1030).
+        let scale = f.value() - sui.e.value();
+        #[cfg(test)]
+        eprintln!("[to_isogeny] outer chain: sui.e={}, scale={scale}", sui.e.value());
         for _ in 0..scale {
             kp_first = kp_first.double();
             kp_second = kp_second.double();
             kq_first = kq_first.double();
             kq_second = kq_second.double();
+            kpmq_first = kpmq_first.double();
+            kpmq_second = kpmq_second.double();
         }
 
         // Step 9: (2,2)-isogeny chain on E_u × E_v.
-        //
-        // The kernel has order 2^(e+2), matching the chain's
-        // requirement for extra_torsion mode (all steps use
-        // normal hadamard_bool).
         let product = surfaces::EllipticProduct::new(e_u, e_v);
-        let pmq1 = kp_first.projective_difference(&kq_first);
-        let pmq2 = kp_second.projective_difference(&kq_second);
-
         let kernel = surfaces::Kernel::from_montgomery(
             product,
             (kp_first, kp_second),
             (kq_first, kq_second),
-            (pmq1, pmq2),
+            (kpmq_first, kpmq_second),
         )?;
 
+        // Chain exponent is e − 2: the chain consumes (e−2)+2 = e
+        // torsion levels, matching the kernel order 2^e.
+        let chain_e = TorsionExponent::try_from(sui.e.value() - 2).ok()?;
         let zero_v = ProjectiveXOnlyPoint::identity(&e_v);
         let (codomain, images) =
-            kernel.isogeny_extra_torsion(sui.e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
+            kernel.isogeny_extra_torsion(chain_e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
 
         // Steps 10–13: Pick correct output curve.
         // Per Algorithm 8.47 remark, E is always correct when using

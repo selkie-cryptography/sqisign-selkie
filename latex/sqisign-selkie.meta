@@ -1,0 +1,11 @@
+author:
+  name: Deirdre Connolly
+  affil: 1
+  email: durumcrustulum@gmail.com
+  orcid: 0009-0005-9052-4018
+affiliation:
+  name: Selkie Cryptography
+  country: USA
+version: preprint
+title: sqisign-selkie: Implementing SQIsign v2.0.1 NIST-I in Rust
+keywords: SQIsign, isogeny-based cryptography, Rust, constant-time, post-quantum signatures
