@@ -253,16 +253,23 @@ jobs:
     name: Build LaTeX documents
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    container: ghcr.io/xu-cheng/texlive-full:latest
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
           submodules: true
 
-      - name: Build PDFs
-        working-directory: latex
-        run: make all
+      - name: Build paper
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: latex
+          root_file: sqisign-selkie.tex
+
+      - name: Build spec review
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: latex
+          root_file: sqisign-v2-spec-review.tex
 
       - name: Check PDFs are up to date
         working-directory: latex
