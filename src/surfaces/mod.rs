@@ -487,7 +487,7 @@ impl Kernel {
         &self,
         e: crate::curves::TorsionExponent,
         pts: &[ProductPoint],
-        extra_torsion: bool,
+        _extra_torsion: bool,
     ) -> (EllipticProduct, Vec<ProductPoint>) {
         // Algorithm 8.47 (Isogeny22ChainWithTorsion):
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
@@ -814,14 +814,14 @@ impl Kernel {
                 }
             }
 
-            // When extra_torsion=true (signing path), all steps use
-            // normal hadamard_bool (bool_1=0, bool_2=1). The C ref
-            // (theta_isogenies.c:1232) uses normal settings for all
-            // steps when extra_torsion=true, and the splitting expects
-            // the codomain in standard (Hadamard-transformed) form.
-            //
-            // When extra_torsion=false (verification path), the last
-            // two steps use special hadamard_bool to produce dual form.
+            // The C ref (theta_isogenies.c:1221-1226) uses three
+            // hadamard_bool configurations, keyed on the step index:
+            //   Penultimate (i == n-2): bool_1=0, bool_2=0
+            //   Ultimate (i == n-1):    bool_1=1, bool_2=0
+            //   All other steps:        bool_1=0, bool_2=1
+            // These apply unconditionally for both extra_torsion
+            // true and false. The penultimate/ultimate produce dual
+            // form directly, which the splitting step expects.
             let (dual, new_jac) = if steps_remaining == 1 {
                 // Ultimate: bool_1=1, bool_2=0
                 isogeny::codomain_8torsion_ultimate(&theta_strat[k].0, &theta_strat[k].1)
@@ -903,26 +903,8 @@ impl Kernel {
         //
         // The splitting step expects the codomain in dual form
         // (without the final Hadamard transform on the null point).
-        //
-        // For extra_torsion=false: the penultimate and ultimate
-        // steps use bool_2=0 (no Hadamard), producing dual form.
-        //
-        // For extra_torsion=true: ALL steps use bool_2=1 (with
-        // Hadamard), so the final codomain is in STANDARD form.
-        // Apply Hadamard to convert to dual form before splitting.
-        // (H is its own inverse up to a factor of 4, i.e.,
-        // H(H(x)) = 4x, so applying H once converts between
-        // standard and dual form up to scaling, which is fine
-        // since the splitting works projectively.)
-        // When extra_torsion=true, the codomain is in standard form
-        // (Hadamard-transformed). Apply Hadamard to convert to dual
-        // form for the splitting step. (H² = 4I, so one H converts
-        // between forms up to projective scaling.)
-        if extra_torsion {
-            let null = &current_jacobian.null;
-            let (a, b, c, d) = hadamard4(&null.a, &null.b, &null.c, &null.d);
-            current_jacobian = Jacobian::new(ThetaNullPoint::new(a, b, c, d));
-        }
+        // The penultimate and ultimate steps use bool_2=0, producing
+        // dual form directly — no post-chain Hadamard needed.
         #[cfg(test)]
         {
             let count = isogeny::get_index_splitting_count(&current_jacobian.null);

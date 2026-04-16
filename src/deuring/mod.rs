@@ -31,7 +31,7 @@ use crate::{
     curves::{
         TorsionBasis, TorsionExponent,
         isogeny::{IsogenyDegree, Kernel as CurveKernel},
-        montgomery::{Curve, JacobianPoint, ProjectiveXOnlyPoint},
+        montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
     },
     params::QUAT_REPRES_BOUND_INPUT,
@@ -335,7 +335,18 @@ fn fixed_degree_isogeny(
     };
     let p_t = ProjectiveXOnlyPoint::from_affine_x(px, &curve_t);
     let q_t = ProjectiveXOnlyPoint::from_affine_x(qx, &curve_t);
-    let basis_t = TorsionBasis::from((p_t, q_t));
+    // Use precomputed PmQ where available. The biladder's three-point
+    // ladder requires a PmQ whose projective representative is
+    // consistent with the precomputed action matrices. Computing PmQ
+    // via `projective_difference` gives a different representative
+    // that causes the Okeya-Sakurai lift to recover the wrong y-sign.
+    let basis_t = if t == 0 {
+        let pmq_t = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve_t);
+        TorsionBasis::from_propagated(p_t, q_t, pmq_t)
+    } else {
+        // TODO: precompute PmQ for all 7 curves.
+        TorsionBasis::from((p_t, q_t))
+    };
     let gen_matrices = [
         ACTION_MATRICES[t][3],
         ACTION_MATRICES[t][4],
@@ -399,41 +410,54 @@ fn fixed_degree_isogeny(
     let m10 = m_theta.entry(1, 0).mul_mod2k(&u_inv, e_fdi + 2);
     let m11 = m_theta.entry(1, 1).mul_mod2k(&u_inv, e_fdi + 2);
 
-    // Step 4–5: Match the C ref's flow exactly:
-    // 1. Lift full-torsion basis to Jacobian
-    // 2. Apply θ/u via the action matrix (biladder on Montgomery basis)
-    // 3. Lift the endomorphism output to Jacobian
-    // 4. Double everything in Jacobian to reduce to order 2^(e+2)
+    // Step 4–5: Match the C ref's flow (dim2id2iso.c:121–160):
     //
-    // The lift must happen BEFORE doubling so the Okeya-Sakurai sees
-    // consistent projective representatives. After lifting, Jacobian
-    // doublings preserve the group law exactly.
+    // 1. Double Montgomery basis from order 2^f to order 2^(e_fdi+2)
+    // 2. Apply θ/u via three biladder calls at e_fdi+2 precision
+    // 3. Lift both bases to Jacobian
     //
-    // Use (P, P-Q) as kernel generators to avoid the theta degeneracy
-    // on E₀×E₀ (see §4 of the paper).
-    // Apply θ/u to the basis via three biladder calls, matching the
-    // C ref's `matrix_application_even_basis`. All three use the same
-    // basis, so their projective representatives are consistent for
-    // the Okeya-Sakurai lift. Do NOT use `projective_difference` for
-    // the third output — the ambiguous square root picks the wrong
-    // branch for most theta values from represent_integer.
-    //
-    // The biladder PmQ can trigger alpha==gamma degeneracy for
-    // automorphisms (e.g. `i`), but this does not arise for general
-    // represent_integer outputs. The chain validates its output and
-    // returns None on failure, triggering a retry at the caller.
-    let theta_p = basis_t.eval_decomposition(&m00, &m10);
-    let theta_q = basis_t.eval_decomposition(&m01, &m11);
-    let theta_pmq = basis_t.eval_decomposition(
-        &m00.sub_mod2k(&m01, f.value()),
-        &m10.sub_mod2k(&m11, f.value()),
+    // The C ref doubles BEFORE the biladder (line 121), then applies
+    // at precision `length + HD_extra_torsion` (line 148). This is
+    // critical: the scalars are mod 2^(e_fdi+2), so the basis must
+    // have matching order. Using full-precision biladder on the full
+    // 2^f-order basis computes the WRONG endomorphism because the
+    // extra zero bits at positions e_fdi+2..f change the group
+    // element (verified empirically).
+    let doublings = f.value() - 2 - e_fdi;
+    let mut doubled_p = basis_t.R;
+    let mut doubled_q = basis_t.S;
+    let mut doubled_pmq = basis_t.RS;
+    for _ in 0..doublings {
+        doubled_p = doubled_p.double();
+        doubled_q = doubled_q.double();
+        doubled_pmq = doubled_pmq.double();
+    }
+    // Normalize to affine (Z=1) before the biladder. The C ref's
+    // `lift_basis` normalizes P.z to 1, and the biladder's output
+    // projective representative depends on the input's (X:Z). Without
+    // normalization, our doubling formula produces different (X:Z)
+    // than the C ref, which flows through the biladder and Okeya-Sakurai
+    // lift to give wrong y-coordinates.
+    let doubled_p =
+        ProjectiveXOnlyPoint::from_affine_x(*doubled_p.to_affine_x().as_fp2(), &curve_t);
+    let doubled_q =
+        ProjectiveXOnlyPoint::from_affine_x(*doubled_q.to_affine_x().as_fp2(), &curve_t);
+    let doubled_pmq =
+        ProjectiveXOnlyPoint::from_affine_x(*doubled_pmq.to_affine_x().as_fp2(), &curve_t);
+    let doubled_basis = TorsionBasis::from_propagated(doubled_p, doubled_q, doubled_pmq);
+
+    let endo_bits = TorsionExponent::try_from(e_fdi + 2).ok()?;
+    let theta_p = doubled_basis.biscalar_mul(&m00, &m10, endo_bits);
+    let theta_q = doubled_basis.biscalar_mul(&m01, &m11, endo_bits);
+    let theta_pmq = doubled_basis.biscalar_mul(
+        &m00.sub_mod2k(&m01, e_fdi + 2),
+        &m10.sub_mod2k(&m11, e_fdi + 2),
+        endo_bits,
     );
 
-    // Lift component 1: (P, P-Q, Q) from the precomputed basis.
-    let comp1 = TorsionBasis::from_propagated(basis_t.R, basis_t.RS, basis_t.S);
+    // Lift using (P, P-Q) kernel generators.
+    let comp1 = TorsionBasis::from_propagated(doubled_p, doubled_pmq, doubled_q);
     let (p_jac_1, pmq_jac_1) = comp1.lift(&curve_t)?;
-    // Lift component 2: (θ/u(P), θ/u(P-Q), θ/u(Q)) — three
-    // biladder outputs with consistent projective representatives.
     let comp2 = TorsionBasis::from_propagated(theta_p, theta_pmq, theta_q);
     let (p_jac_2, pmq_jac_2) = match comp2.lift(&curve_t) {
         Some(r) => {
@@ -448,16 +472,9 @@ fn fixed_degree_isogeny(
         }
     };
 
-    // Double in Jacobian to reduce from order 2^f to order 2^(e+2).
-    let doublings = f.value() - 2 - e_fdi;
-    let double_n = |mut pt: JacobianPoint, n: u32| -> JacobianPoint {
-        for _ in 0..n {
-            pt = pt.double_for_theta();
-        }
-        pt
-    };
-    let k1_jac = (double_n(p_jac_1, doublings), double_n(p_jac_2, doublings));
-    let k2_jac = (double_n(pmq_jac_1, doublings), double_n(pmq_jac_2, doublings));
+    // No Jacobian doubling needed — basis was doubled before biladder.
+    let k1_jac = (p_jac_1, p_jac_2);
+    let k2_jac = (pmq_jac_1, pmq_jac_2);
 
     // Step 6: (2,2)-isogeny chain on E_t × E_t.
     let product = surfaces::EllipticProduct::new(curve_t, curve_t);

@@ -243,34 +243,120 @@ impl ExtremalOrder<8> {
                 }
 
                 // Check: largest d with γ/d ∈ O is 2.
-                // γ's denom in {1,i,j,k} is common_d. Construct
-                // Element and normalize — normalization divides
-                // coords and denom by their GCD. If the GCD is
-                // 2·common_d, then d = 2.
+                //
+                // # Bug history (2026-04-15)
+                //
+                // The original code used `normalize()` (GCD of quaternion
+                // coords and denom) to find d. This is WRONG: normalize
+                // divides the {1,i,j,k} coordinates by their GCD, but the
+                // spec's "content" is the GCD of the ORDER-BASIS
+                // coefficients. For O₀ with common_d=2, gamma has coords
+                // (2x, 2y, 2z, -2t)/2. normalize() finds GCD(2x,...,2)=2,
+                // divides to get (x,y,z,-t)/1, giving nrd = 4M. But the
+                // spec requires nrd(gamma/d) = M, where d=2 is the content
+                // of gamma's ORDER-BASIS decomposition.
+                //
+                // The C ref's `quat_alg_make_primitive` decomposes gamma
+                // on the order basis and divides by the GCD of those
+                // coefficients. We replicate this via `order.decompose()`.
+                //
+                // This bug caused `represent_integer` to return elements
+                // with nrd = 4*M (4x the expected norm). The action matrix
+                // det(M) then equaled 4*M mod 2^f instead of M mod 2^f.
+                // The (2,2)-chain kernel had degree 4x too large, making
+                // it non-isotropic for the product Weil pairing, so the
+                // chain never produced a product surface (splitting:
+                // zeros=0). The bug was invisible for diagonal endomorphisms
+                // like [3] because the kernel was constructed differently
+                // (direct scalar mul, not action matrix). Tracking it down
+                // required:
+                //   - Verifying the action matrix (correct: det matches nrd)
+                //   - Verifying the biladder (correct: group elements match)
+                //   - Verifying the chain for [3] (correct: splits)
+                //   - Discovering nrd(theta) = 4*m via Python norm computation
+                //   - Tracing back to normalize() vs make_primitive
                 let narrow = |v: &BigInt<8>| -> BigInt<4> {
                     v.narrow_to::<4>()
                         .expect("γ coord fits in BigInt<4>: bounded by √M")
                 };
-                let mut gamma = Element::<4>::new(
+                let gamma = Element::<4>::new(
                     Coordinate::from_bigint(narrow(&gamma_coords[0])),
                     Coordinate::from_bigint(narrow(&gamma_coords[1])),
                     Coordinate::from_bigint(narrow(&gamma_coords[2])),
                     Coordinate::from_bigint(narrow(&gamma_coords[3])),
                     Denominator::from_bigint_unchecked(narrow(&common_d)),
                 );
-                // Save pre-normalize denom to detect the scaling.
-                let pre_denom = *gamma.denom.as_bigint();
-                gamma.normalize();
-                let post_denom = *gamma.denom.as_bigint();
 
-                // d = pre_denom / post_denom. Check d = 2.
-                let (d, rem) = pre_denom.div_rem(&post_denom);
-                if !bool::from(rem.is_zero()) || d != BigInt::TWO {
+                // Decompose gamma on the order basis to find the content
+                // (GCD of the order-basis coefficients), matching the C
+                // ref's `quat_alg_make_primitive`.
+                // Use the narrow (BigInt<4>) order for decomposition.
+                // The extremal order at width 8 wraps the same lattice;
+                // we narrow it to width 4 for the decompose call.
+                // Find the matching narrow order by q value.
+                let Some(narrow_order) = EXTREMAL_ORDERS
+                    .iter()
+                    .find(|o| o.q() == self.q())
+                else {
+                    continue;
+                };
+                let order_lattice: &Lattice<4> = narrow_order.order();
+                let Some(basis_coeffs) = order_lattice.decompose(&gamma) else {
+                    // gamma not in the order — skip.
+                    continue;
+                };
+
+                // Content = GCD of all 4 basis coefficients.
+                let mut content = basis_coeffs[0].abs();
+                for coeff in &basis_coeffs[1..] {
+                    content = content.gcd(&coeff.abs());
+                }
+
+                // d = content. Check d = 2.
+                if content != BigInt::TWO {
                     continue;
                 }
                 _parity_ok += 1;
 
-                return Some(gamma);
+                // Return gamma / content by halving the order-basis
+                // coefficients and reconstructing the quaternion element.
+                //
+                // Dividing the {1,i,j,k} coords by 2 is NOT equivalent
+                // to halving the order-basis coefficients (unless the
+                // basis is diagonal). We must reconstruct from the halved
+                // coefficients: gamma/2 = Σ (c_k/2) · basis_col_k / denom.
+                let half = |c: &BigInt<4>| -> BigInt<4> {
+                    let (q, _) = c.div_rem(&BigInt::TWO);
+                    q
+                };
+                let half_coeffs: [BigInt<4>; 4] = [
+                    half(&basis_coeffs[0]),
+                    half(&basis_coeffs[1]),
+                    half(&basis_coeffs[2]),
+                    half(&basis_coeffs[3]),
+                ];
+
+                // Reconstruct: gamma/2 = Σ (c_k/2) · basis_col_k / denom
+                let basis = order_lattice.basis();
+                let denom = *order_lattice.denom();
+                let mut result_coords = [BigInt::<4>::ZERO; 4];
+                for j in 0..4 {
+                    for k in 0..4 {
+                        result_coords[j] =
+                            result_coords[j].ct_add(&half_coeffs[k].ct_mul(&basis[j][k]));
+                    }
+                }
+
+                // The result has denom = order_lattice.denom().
+                let result = Element::<4>::new(
+                    Coordinate::from_bigint(result_coords[0]),
+                    Coordinate::from_bigint(result_coords[1]),
+                    Coordinate::from_bigint(result_coords[2]),
+                    Coordinate::from_bigint(result_coords[3]),
+                    Denominator::from_bigint_unchecked(denom),
+                );
+
+                return Some(result);
             }
         }
 
