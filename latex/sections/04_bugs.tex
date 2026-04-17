@@ -595,3 +595,66 @@ The type system did not prevent this because both \texttt{BigInt}
 and \texttt{Scalar} store the same \texttt{[u64; 4]} limbs --- only
 the interpretation differs.
 
+\subsection{\textsc{IdealToIsogeny} outer scaling uses the reduced
+  ideal's norm}
+\label{sec:bug-parent-ideal-norm}
+
+Algorithm~3.13 (\textsc{IdealToIsogeny}) line~6 scales the matrix that
+builds the second component of the outer kernel by
+$1/(\mathrm{nrd}(I)\,\mathrm{nrd}(J_t))$, where~$I$ is the input
+ideal.  The $\beta_i$ and~$d_i$ returned by
+\textsc{SuitableIdeals} (Algorithm~3.16) satisfy
+$\mathrm{nrd}(\beta_i) = d_i \cdot \mathrm{nrd}(J_i\,I)$.  An
+implementation that reads these literally and computes the
+scaling as $1/\mathrm{nrd}(I)$ is correct \emph{only if} $\beta_i$
+and~$d_i$ were computed with respect to the caller-supplied~$I$.
+
+Efficient implementations (and the C reference,
+\texttt{dim2id2iso.c:534--565}) first replace $I$ with its
+smallest equivalent $I' = I \cdot \widehat{\delta}/\mathrm{nrd}(I)$
+to make the short-vector search tractable.  The enumeration then
+returns $\beta_i$ and~$d_i$ relative to~$I'$, so
+$\mathrm{nrd}(\beta_i) = d_i \cdot \mathrm{nrd}(I')$, which is
+not equal to $d_i \cdot \mathrm{nrd}(I)$ in general.  We hit
+this: every outer-chain attempt printed
+\[
+  \det(M_{\beta_1}) \pmod{2^f}
+  \;\neq\;
+  d_1 \cdot \mathrm{nrd}(I) \pmod{2^f},
+\]
+with the mismatch tracking the ratio
+$\mathrm{nrd}(I')/\mathrm{nrd}(I)$ across KAT inputs.
+
+Two fixes produce the same behaviour:
+\begin{itemize}
+  \item \textbf{Send $\beta$ back.}  After \textsc{SuitableIdeals}
+    picks the pair, rewrite $\beta_i \leftarrow \delta \beta_i$ so
+    that the returned $\beta_i$ is in the caller's~$I$.  The C
+    reference does this at \texttt{dim2id2iso.c:670--684} so that
+    downstream callers can use $1/\mathrm{nrd}(I)$ literally.
+  \item \textbf{Track the provenance.}  Store the reduced ideal
+    alongside each returned $\beta_i$ (as an \texttt{IdealFactor}
+    field carrying the lattice $\beta$ lives in), and have the
+    caller read the scaling norm off that field.  This is what
+    \texttt{sqisign-selkie} does.
+\end{itemize}
+We chose provenance-tracking because it keeps
+\textsc{SuitableIdeals} free of the $\delta$-multiplication step
+and localizes the invariant
+$\mathrm{nrd}(\beta) = d \cdot \mathrm{nrd}(\mathtt{parent\_ideal})$
+to the \texttt{IdealFactor} type.  Adding the
+$\det(M_{\beta_1}) \stackrel{?}{=} d_1 \cdot
+\mathrm{nrd}(\mathtt{parent\_ideal}) \pmod{2^f}$ check as a
+diagnostic in test builds flagged the mismatch immediately.
+
+\noindent
+\textbf{Advice for implementers:} Algorithm~3.13 line~6's
+$\mathrm{nrd}(I)$ must be the norm of the \emph{same} ideal whose
+lattice produced~$\beta_i$.  If \textsc{SuitableIdeals}
+substitutes a reduced equivalent of~$I$, the downstream scaling
+must use the reduced ideal's norm (or $\beta$ must be transported
+back to~$I$ before leaving the algorithm).  Compare
+$\det(M_{\beta_1}) \pmod{2^f}$ to $d_1 \cdot \mathrm{nrd}(\cdot)
+\pmod{2^f}$ on every call in test builds: a mismatch catches this
+immediately and the check costs one matrix determinant.
+
