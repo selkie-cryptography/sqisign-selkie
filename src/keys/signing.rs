@@ -217,7 +217,19 @@ impl SigningKey {
         randomness: &[u8; crate::drbg::SEEDLEN],
     ) -> Result<SigningKey, SignatureError> {
         let mut drbg = crate::drbg::Aes256CtrDrbg::new(randomness);
-        let rng = &mut drbg;
+        Self::generate_with_rng(&mut drbg)
+    }
+
+    /// Key generation driven by a caller-owned RNG.
+    ///
+    /// Same algorithm as [`SigningKey::generate_derand`], but the
+    /// caller supplies the RNG instead of this method instantiating
+    /// its own AES-CTR-DRBG. Used by the keygen-then-sign cross-check
+    /// path, which threads a single DRBG through both phases so its
+    /// byte consumption pattern matches the SQIsign C reference.
+    pub(crate) fn generate_with_rng<R: rand_core::CryptoRngCore>(
+        rng: &mut R,
+    ) -> Result<SigningKey, SignatureError> {
         // Bound the retry loop. Each iteration may fail in
         // reduce_to_prime_norm, narrow, or to_isogeny.
         for _ in 0..1000 {
@@ -486,7 +498,23 @@ impl SigningKey {
         randomness: &[u8; crate::drbg::SEEDLEN],
     ) -> Result<Signature, SignatureError> {
         let mut drbg = crate::drbg::Aes256CtrDrbg::new(randomness);
-        let rng = &mut drbg;
+        self.sign_with_rng(msg, &mut drbg)
+    }
+
+    /// Signing driven by a caller-owned RNG.
+    ///
+    /// Same algorithm as [`SigningKey::sign_derand`], but the RNG is
+    /// provided by the caller rather than instantiated from a 48-byte
+    /// seed. Pair with [`SigningKey::generate_with_rng`] on the same
+    /// DRBG instance to reproduce the SQIsign C reference's
+    /// byte-consumption pattern (one DRBG seeded via
+    /// `randombytes_init`, consumed by `crypto_sign_keypair` and
+    /// then `crypto_sign` in order).
+    pub(crate) fn sign_with_rng<R: rand_core::CryptoRngCore>(
+        &self,
+        msg: &[u8],
+        rng: &mut R,
+    ) -> Result<Signature, SignatureError> {
         // Status: response phase operates at `LeftIdeal<N_RESP>`
         // (= 22 limbs, enough for the 1399-bit sampling radius).
         //

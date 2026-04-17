@@ -128,3 +128,44 @@ impl RngCore for Aes256CtrDrbg {
 }
 
 impl CryptoRng for Aes256CtrDrbg {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Known-answer cross-check against the SQIsign C reference.
+    ///
+    /// Seed the DRBG with the 48-byte entropy input from KAT vector
+    /// 0 of `PQCsignKAT_353_SQIsign_lvl1.req` (commit pinned in
+    /// `tests/fixtures/`) and draw 128 bytes. The expected prefix
+    /// was captured with the C reference's `randombytes_init +
+    /// randombytes` on the same seed; any divergence here means our
+    /// DRBG — or the byte-at-a-time ordering in `randombytes` — is
+    /// out of step with the reference, and every downstream KAT
+    /// cross-check would drift for reasons unrelated to the
+    /// SQIsign algorithm.
+    #[test]
+    fn matches_cref_seed_zero_first_128_bytes() {
+        const SEED: [u8; SEEDLEN] = [
+            0x06, 0x15, 0x50, 0x23, 0x4D, 0x15, 0x8C, 0x5E, 0xC9, 0x55,
+            0x95, 0xFE, 0x04, 0xEF, 0x7A, 0x25, 0x76, 0x7F, 0x2E, 0x24,
+            0xCC, 0x2B, 0xC4, 0x79, 0xD0, 0x9D, 0x86, 0xDC, 0x9A, 0xBC,
+            0xFD, 0xE7, 0x05, 0x6A, 0x8C, 0x26, 0x6F, 0x9E, 0xF9, 0x7E,
+            0xD0, 0x85, 0x41, 0xDB, 0xD2, 0xE1, 0xFF, 0xA1,
+        ];
+        const EXPECTED_HEX: &str = "\
+            7c9935a0b07694aa0c6d10e4db6b1add\
+            2fd81a25ccb148032dcd739936737f2d\
+            b505d7cfad1b497499323c8686325e47\
+            92f267aafa3f87ca60d01cb54f29202a\
+            3e784ccb7ebcdcfd45542b7f6af77874\
+            2e0f4479175084aa488b3b74340678aa\
+            38e22e9628b0a161fdeb0bd252173b9c\
+            4e4cd0dbbd9cd3f10ef5fe5e4b034745";
+        let mut drbg = Aes256CtrDrbg::new(&SEED);
+        let mut buf = [0u8; 128];
+        drbg.randombytes(&mut buf);
+        let got: String = buf.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(got, EXPECTED_HEX);
+    }
+}

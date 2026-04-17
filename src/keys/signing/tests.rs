@@ -213,3 +213,72 @@ fn sign_with_kat_key() {
     vk.verify(&msg, &sig)
         .expect("signature should verify against KAT pk");
 }
+
+/// Reproduce the SQIsign C reference's byte consumption for a KAT
+/// seed by threading a single AES-CTR-DRBG through both keygen and
+/// signing, matching `randombytes_init(seed); crypto_sign_keypair;
+/// crypto_sign` in `PQCgenKAT_sign.c`.
+///
+/// This is the cross-check partner for
+/// `scripts/cref_outer_ker.sh` and
+/// `tests/fixtures/cref_outer_ker_kat_vector_0.txt`: stderr lines
+/// emitted by the `[OUTER_KER]` diagnostic in `to_isogeny` should
+/// agree with the C reference's `OUTER_KER` block bit-for-bit for
+/// a correct implementation. If they diverge, our kernel is wrong
+/// upstream of the chain; if they agree but our chain still fails
+/// to split, the bug is in `Kernel::from_montgomery` or the
+/// `(2,2)`-chain internals.
+///
+/// Run with:
+/// ```text
+/// cargo test --lib --release \
+///   kat_cref_cross_check_vector_0 -- --ignored --nocapture \
+///   2> /tmp/rust-outer-ker.log
+/// scripts/cref_outer_ker.sh --vector 0 > /tmp/cref-outer-ker.txt
+/// diff <(grep '^\[OUTER_KER\]' /tmp/rust-outer-ker.log) \
+///      /tmp/cref-outer-ker.txt
+/// ```
+#[test]
+#[ignore]
+fn kat_cref_cross_check_vector_0() {
+    let (seed_hex, _pk_hex, _sk_hex, msg_hex, sm_hex) =
+        crate::keys::kat_data::KAT_VECTORS[0];
+    let seed: [u8; 48] = hex::decode(seed_hex)
+        .expect("valid seed hex")
+        .as_slice()
+        .try_into()
+        .expect("seed is 48 bytes");
+    let msg = hex::decode(msg_hex).expect("valid msg hex");
+
+    let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
+    let sk = match SigningKey::generate_with_rng(&mut drbg) {
+        Ok(sk) => sk,
+        Err(SignatureError::KeyGenFailed) => return, // probabilistic skip
+        Err(other) => panic!("unexpected keygen error: {other:?}"),
+    };
+
+    let sig = match sk.sign_with_rng(&msg, &mut drbg) {
+        Ok(s) => s,
+        Err(SignatureError::SigningFailed) => {
+            eprintln!(
+                "kat_cref_cross_check_vector_0: SigningFailed — outer-chain \
+                 bug still present, cross-check of [OUTER_KER] stderr lines \
+                 against tests/fixtures/cref_outer_ker_kat_vector_0.txt is \
+                 the reason we wrote this test."
+            );
+            return;
+        }
+        Err(other) => panic!("unexpected sign error: {other:?}"),
+    };
+
+    // Full byte-for-byte match: `sm` in the rsp file is `sig || msg`,
+    // so the signature prefix must equal the first CRYPTO_BYTES of
+    // the KAT's `sm` field.
+    let sm = hex::decode(sm_hex).expect("valid sm hex");
+    let sig_bytes = sig.to_bytes();
+    assert_eq!(
+        &sig_bytes[..],
+        &sm[..sig_bytes.len()],
+        "signature must match KAT `sm` prefix byte-for-byte"
+    );
+}

@@ -713,13 +713,16 @@ impl LeftIdeal<4> {
             kpmq_second = kpmq_second.double();
         }
 
-        // Diagnostics: kernel order and curve-membership checks.
-        //
-        // The (2,2)-chain requires each component of the generators
-        // to have order exactly 2^(e_chain+2) = 2^sui.e on its
-        // respective curve, matching the C reference's
-        // `test_point_order_twof(&ker.T1.P1, &E01.E1, exp)` assertion
-        // (`dim2id2iso.c:1109`).
+        // Diagnostics: kernel order and curve-membership checks, plus
+        // affine x-coordinates in the exact format the SQIsign C
+        // reference prints (see `dim2id2iso.c:1036-1107`). Callers
+        // with access to the C reference's stderr can diff the
+        // `OUTER_KER` lines here against the fixture in
+        // `tests/fixtures/cref_outer_ker_kat_vector_*.txt` to locate
+        // which stage first diverges. The on-curve and exact-order
+        // checks mirror the C reference's
+        // `test_point_order_twof(..., exp)` assertions at
+        // `dim2id2iso.c:1109-1110`.
         #[cfg(test)]
         {
             let on_curve = |c: &Curve, p: &ProjectiveXOnlyPoint| c.recover_y(&p.to_affine_x()).is_some();
@@ -732,28 +735,45 @@ impl LeftIdeal<4> {
                 q = q.double();
                 (half, bool::from(q.is_identity()))
             };
+            // Hex rendering matches `fp_encode` in the C reference:
+            // little-endian byte array, printed high-byte first.
+            let fp2_hex = |v: &crate::fields::fp2::Fp2| -> (String, String) {
+                let b = v.to_bytes();
+                let re: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                let im: String = b[32..].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                (re, im)
+            };
+            let point_hex = |p: &ProjectiveXOnlyPoint| -> (String, String) {
+                fp2_hex(&*p.to_affine_x().as_fp2())
+            };
             let e = sui.e.value();
-            eprintln!(
-                "[OUTER_KER] kp_first on E_u: {}, kp_second on E_v: {}",
-                on_curve(&e_u, &kp_first),
-                on_curve(&e_v, &kp_second),
-            );
-            eprintln!(
-                "[OUTER_KER] kq_first on E_u: {}, kq_second on E_v: {}",
-                on_curve(&e_u, &kq_first),
-                on_curve(&e_v, &kq_second),
-            );
-            eprintln!(
-                "[OUTER_KER] kpmq_first on E_u: {}, kpmq_second on E_v: {}",
-                on_curve(&e_u, &kpmq_first),
-                on_curve(&e_v, &kpmq_second),
-            );
+
+            let (p1re, p1im) = point_hex(&kp_first);
+            let (p2re, p2im) = point_hex(&kp_second);
+            let (q1re, q1im) = point_hex(&kq_first);
+            let (q2re, q2im) = point_hex(&kq_second);
+            eprintln!("OUTER_KER T1.P1_x_re=0x{p1re} T1.P1_x_im=0x{p1im}");
+            eprintln!("OUTER_KER T1.P2_x_re=0x{p2re} T1.P2_x_im=0x{p2im}");
+            eprintln!("OUTER_KER T2.P1_x_re=0x{q1re} T2.P1_x_im=0x{q1im}");
+            eprintln!("OUTER_KER T2.P2_x_re=0x{q2re} T2.P2_x_im=0x{q2im}");
+            let (e1re, _e1im) = fp2_hex(&e_u.j_invariant());
+            let (e2re, _e2im) = fp2_hex(&e_v.j_invariant());
+            eprintln!("OUTER_KER E1_j_re=0x{e1re}");
+            eprintln!("OUTER_KER E2_j_re=0x{e2re}");
+            eprintln!("OUTER_KER exp={e}");
+
             let (kp1_half, kp1_full) = has_order(kp_first, e);
             let (kp2_half, kp2_full) = has_order(kp_second, e);
             let (kq1_half, kq1_full) = has_order(kq_first, e);
             let (kq2_half, kq2_full) = has_order(kq_second, e);
             eprintln!(
-                "[OUTER_KER] order 2^{e}: kp_first={kp1_half}/{kp1_full} kp_second={kp2_half}/{kp2_full} kq_first={kq1_half}/{kq1_full} kq_second={kq2_half}/{kq2_full}"
+                "[OUTER_KER] on_curve kp=({},{}) kq=({},{}) kpmq=({},{}); order 2^{e}: kp=({kp1_half},{kp1_full})/({kp2_half},{kp2_full}) kq=({kq1_half},{kq1_full})/({kq2_half},{kq2_full})",
+                on_curve(&e_u, &kp_first),
+                on_curve(&e_v, &kp_second),
+                on_curve(&e_u, &kq_first),
+                on_curve(&e_v, &kq_second),
+                on_curve(&e_u, &kpmq_first),
+                on_curve(&e_v, &kpmq_second),
             );
         }
 
