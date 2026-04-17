@@ -1,0 +1,22 @@
+# C reference outer (2,2)-chain kernel for KAT seed 0.
+#
+# Source: the first `OUTER_KER` block emitted by the patched
+# `PQCgenKAT_sign_lvl1` built from the pinned commit
+# 91e9e464fe5400192d13e1f9240cbf180200a103 of
+# https://github.com/SQISign/the-sqisign. The harness in
+# `scripts/cref_outer_ker.sh` regenerates the full stderr log; this
+# file is the first outer-chain invocation (KAT vector 0, first
+# successful commitment, `to_isogeny` at `exp = 248`).
+#
+# Cross-check target: `to_isogeny` must produce these same kernel
+# x-coordinates on `E_u × E_v` for matching input (signing key +
+# message + DRBG state), and the chain must land on the E1/E2
+# curves below with `splitting: zeros = 1`. The format mirrors the
+# stderr lines verbatim.
+OUTER_KER T1.P1_x_re=0x031f4e65a343143e8e0904075b47a4a74750cf707353c46ebc9f728829bafd46 T1.P1_x_im=0x00b3ee8b4e7ecc9b73e9010d96bb036f5eb8f8a25bee7c0f030efde3c714ad17
+OUTER_KER T1.P2_x_re=0x045dcc888c6f7568b037a554073c532006eee421ae75261751ad8920aa71b7ba T1.P2_x_im=0x0271c9ab892e87519ae4bbe3d56bcef3f637b00775ec72cff4304d30ea37f7dc
+OUTER_KER T2.P1_x_re=0x016a591a10d057c655c8464c060652b4569c6319307a9e6834b809f01b5fa2f8 T2.P1_x_im=0x03d72c989d7c0bb3e7d37b7470df2897cde4a86368ca702e776b296595698ed2
+OUTER_KER T2.P2_x_re=0x0302a47fa6c3e0646f49c5829ea4c5a85211f24e4fd0840decf02ecb1e2704ca T2.P2_x_im=0x049b91f5c69c4eae4baa2bda9def833575d17f789e900c825dca842252b2a33f
+OUTER_KER E1_j_re=0x01fae718a65e65516cadc18017554b7674ff1185d705546e5165811cb2c22307
+OUTER_KER E2_j_re=0x032d505323ecbbdc10d728e18ecef911cf535ee87125b9d5fd11e3ed52833d2d
+OUTER_KER exp=248

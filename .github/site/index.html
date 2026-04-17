@@ -204,10 +204,77 @@
       font-variant-numeric: tabular-nums;
     }
 
-    .cov-table .module-name {
+    .cov-table .module-name,
+    .cov-table .file-name {
       font-family: 'Inter', monospace;
       font-size: 13px;
     }
+
+    .cov-table .expandable {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .cov-table .expandable:hover {
+      background: var(--bar-bg);
+    }
+
+    .cov-table .chevron {
+      display: inline-block;
+      width: 1em;
+      font-size: 10px;
+      color: var(--fg-dim);
+      transition: transform 0.2s;
+    }
+
+    .cov-table .chevron.open {
+      transform: rotate(90deg);
+    }
+
+    .cov-table .file-row td {
+      padding-left: 24px;
+      font-size: 13px;
+    }
+
+    .cov-table .file-row td:first-child {
+      padding-left: 32px;
+    }
+
+    .line-grid {
+      padding: 8px 8px 8px 32px;
+      font-family: 'JetBrains Mono', 'Menlo', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      max-height: 400px;
+      overflow-y: auto;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .line-grid table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    .line-grid td {
+      padding: 0 8px;
+      white-space: pre;
+    }
+
+    .line-grid .ln {
+      color: var(--fg-dim);
+      text-align: right;
+      user-select: none;
+      width: 1%;
+    }
+
+    .line-grid .ct {
+      text-align: right;
+      width: 1%;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .line-grid .hit { color: var(--green); }
+    .line-grid .miss { color: var(--red); background: rgba(248, 81, 73, 0.08); }
 
     .cov-bar-cell { width: 40%; }
 
@@ -432,7 +499,11 @@
       return r.json();
     }
 
+    // Store coverage data globally for drill-down.
+    let covData = null;
+
     function renderCoverageData(data) {
+      covData = data;
       const total = data.total || {};
       const totalPct = total.percent != null ? total.percent.toFixed(1) : '—';
       const modules = data.modules || [];
@@ -448,11 +519,13 @@
             <th class="cov-bar-cell"></th>
           </tr></thead><tbody>`;
 
-        for (const m of modules) {
+        for (let mi = 0; mi < modules.length; mi++) {
+          const m = modules[mi];
           const pct = m.percent.toFixed(1);
           const color = covColor(m.percent);
-          html += `<tr>
-            <td class="module-name">${esc(m.name)}</td>
+          const modId = `mod-${mi}`;
+          html += `<tr class="expandable" onclick="toggleModule(${mi})">
+            <td class="module-name"><span class="chevron" id="chev-${modId}">&#9654;</span> ${esc(m.name)}</td>
             <td>${esc(m.covered)}/${esc(m.total)}</td>
             <td style="color:${color}">${pct}%</td>
             <td class="cov-bar-cell">
@@ -461,11 +534,83 @@
               </div>
             </td>
           </tr>`;
+
+          // File rows (hidden by default).
+          const files = m.files || [];
+          for (let fi = 0; fi < files.length; fi++) {
+            const f = files[fi];
+            const fpct = f.percent.toFixed(1);
+            const fcolor = covColor(f.percent);
+            const fileId = `file-${mi}-${fi}`;
+            // File name: strip module prefix for display.
+            const fname = f.name.includes('/') ? f.name.split('/').slice(1).join('/') : f.name;
+            html += `<tr class="file-row expandable" id="frow-${fileId}" style="display:none" onclick="toggleFile(${mi},${fi},event)">
+              <td class="file-name"><span class="chevron" id="chev-${fileId}">&#9654;</span> ${esc(fname)}</td>
+              <td>${esc(f.covered)}/${esc(f.total)}</td>
+              <td style="color:${fcolor}">${fpct}%</td>
+              <td class="cov-bar-cell">
+                <div class="cov-bar">
+                  <div class="cov-bar__fill" style="width:${f.percent}%;background:${fcolor}"></div>
+                </div>
+              </td>
+            </tr>`;
+            // Line coverage container (hidden).
+            html += `<tr id="lines-${fileId}" style="display:none">
+              <td colspan="4" class="line-grid-cell"></td>
+            </tr>`;
+          }
         }
         html += '</tbody></table>';
       }
 
       return html;
+    }
+
+    function toggleModule(mi) {
+      const modId = `mod-${mi}`;
+      const chev = document.getElementById(`chev-${modId}`);
+      const isOpen = chev.classList.toggle('open');
+      const files = covData.modules[mi].files || [];
+      for (let fi = 0; fi < files.length; fi++) {
+        const row = document.getElementById(`frow-file-${mi}-${fi}`);
+        const linesRow = document.getElementById(`lines-file-${mi}-${fi}`);
+        if (row) row.style.display = isOpen ? '' : 'none';
+        if (linesRow && !isOpen) linesRow.style.display = 'none';
+        // Close file chevrons when collapsing module.
+        if (!isOpen) {
+          const fc = document.getElementById(`chev-file-${mi}-${fi}`);
+          if (fc) fc.classList.remove('open');
+        }
+      }
+    }
+
+    function toggleFile(mi, fi, ev) {
+      ev.stopPropagation();
+      const fileId = `file-${mi}-${fi}`;
+      const chev = document.getElementById(`chev-${fileId}`);
+      const linesRow = document.getElementById(`lines-${fileId}`);
+      const isOpen = chev.classList.toggle('open');
+
+      if (isOpen) {
+        const f = covData.modules[mi].files[fi];
+        const lines = f.lines || [];
+        const sha = covData.sha;
+        const ghBase = `https://github.com/${REPO}/blob/${sha}/src/${esc(f.name)}`;
+
+        let grid = '<div class="line-grid"><table>';
+        for (const [ln, ct] of lines) {
+          const cls = ct > 0 ? 'hit' : 'miss';
+          grid += `<tr class="${cls}">`;
+          grid += `<td class="ln"><a href="${ghBase}#L${ln}" style="color:inherit">${ln}</a></td>`;
+          grid += `<td class="ct">${ct > 0 ? ct + '×' : '—'}</td>`;
+          grid += `</tr>`;
+        }
+        grid += '</table></div>';
+        linesRow.querySelector('td').innerHTML = grid;
+        linesRow.style.display = '';
+      } else {
+        linesRow.style.display = 'none';
+      }
     }
 
     function renderBenchmarkData(data) {
