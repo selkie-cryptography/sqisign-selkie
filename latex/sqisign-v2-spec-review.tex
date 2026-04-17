@@ -697,4 +697,175 @@ Note in \S4.6 that implementations should cache~$\alpha$ at
 parse/keygen time rather than attempting to recover it from the
 lattice representation.
 
+% =====================================================================
+\section{\textsc{IdealToIsogeny} line 6: matrix formula is under-specified}
+\label{sec:id2iso-line6}
+
+\finding{Affects \algo{3.13} (\textsc{IdealToIsogeny}), line~6.}{\high}
+
+\algo{3.13} line~6 writes
+\[
+  [P, Q]^T \leftarrow \tfrac{1}{\mathrm{nrd}(I)\,\mathrm{nrd}(J_t)}\,
+    M_{\beta_1^{-1}}\, M_{\beta_2}\, [\varphi_v(P_t), \varphi_v(Q_t)]^T.
+\]
+The $\beta_1^{-1}$ factor is a quaternion inverse, not a matrix
+inverse.  The identity derived in the surrounding text,
+\[
+  \beta_2 \circ \varphi_{J_t} \circ \widehat{\varphi_{J_s}} \circ
+    \widehat{\beta_1}
+  = [\mathrm{nrd}(I)\,\mathrm{nrd}(J_s)\,\mathrm{nrd}(J_t)]
+    \widehat{\varphi_{I_2}} \circ \varphi_{I_1},
+\]
+uses the conjugate~$\widehat{\beta_1}$, and $\beta_1^{-1} =
+\widehat{\beta_1}/\mathrm{nrd}(\beta_1)$ only as quaternions.  An
+implementor writing $M_{\beta_1^{-1}}$ as a \emph{matrix inverse}
+gets a different matrix from the intended
+$M_{\widehat{\beta_1}}/\mathrm{nrd}(\beta_1) =
+\mathrm{adj}(M_{\beta_1})/\mathrm{nrd}(\beta_1) \pmod{2^f}$ in
+general.
+
+\paragraph{What the C reference does.}
+\texttt{dim2id2iso.c:881--1014} builds the quaternion
+$\theta = \beta_2 \cdot \widehat{\beta_1}$ directly and scales its
+coordinates by $\mathrm{invmod}(d_1 \cdot \mathrm{nrd}(J_t),
+2^f)$ before decomposing on~$\mathcal{O}_0$.  This is
+$\beta_2 \cdot \widehat{\beta_1}$, whereas the spec's
+$\beta_1^{-1}\,\beta_2 = \widehat{\beta_1}\,\beta_2 /
+\mathrm{nrd}(\beta_1)$ has the factors in the opposite order; the
+two quaternion products agree only after the subsequent
+$\mathrm{nrd}(\beta_1)$ scaling, and quaternion multiplication is
+not commutative in general.
+
+\paragraph{Impact.}
+An implementor has two independent traps: (a) interpreting
+$M_{\beta_1^{-1}}$ as the matrix inverse rather than the action
+matrix of~$\beta_1^{-1}$ viewed as a quaternion; (b) writing the
+quaternion product in the opposite order from the derivation.
+
+\paragraph{Recommendation.}
+Write line~6 with the conjugate factored out and the scaling
+collected:
+\[
+  [P, Q]^T \leftarrow
+    \tfrac{1}{\mathrm{nrd}(I)\,\mathrm{nrd}(J_t)\,\mathrm{nrd}(\beta_1)}
+    M_{\widehat{\beta_1}}\, M_{\beta_2}\, [\varphi_v(P_t),
+    \varphi_v(Q_t)]^T,
+\]
+and state which quaternion-product order the matrix composition
+uses (equivalently, specify whether $M_{\alpha\beta} = M_\alpha
+M_\beta$ or $M_\beta M_\alpha$).
+
+% =====================================================================
+\section{\textsc{IdealToIsogeny}:
+  \texorpdfstring{$\beta$}{beta} lives in the reduced ideal, not the
+  input \texorpdfstring{$I$}{I}}
+\label{sec:id2iso-reduced-ideal}
+
+\finding{Affects \algo{3.13}, \algo{3.16} (\textsc{SuitableIdeals}),
+  and anywhere the scaling $1/\mathrm{nrd}(I)$ appears downstream
+  of short-vector enumeration.}{\high}
+
+\algo{3.16} (\textsc{SuitableIdeals}) returns $\beta_i$ obtained
+from the short-vector enumeration inside $J_i\,I$, and~$d_i =
+\mathrm{nrd}(\beta_i)/\mathrm{nrd}(J_i\,I)$.  Efficient
+implementations (and the C reference,
+\texttt{dim2id2iso.c:534--565}) first replace~$I$ by the
+\emph{smallest equivalent ideal}~$I' = I \cdot
+\widehat{\delta}/\mathrm{nrd}(I)$, so that the short-vector
+search produces usable degrees.  The returned $\beta$ and~$d$ are
+relative to~$I'$, not to~$I$, so the downstream invariant is
+\[
+  \mathrm{nrd}(\beta) = d \cdot \mathrm{nrd}(I')
+  \neq d \cdot \mathrm{nrd}(I).
+\]
+
+\paragraph{What the C reference does.}
+\texttt{dim2id2iso.c:670--684} ``sends~$\beta$ back'' to the
+original ideal after the pair is selected (multiplying
+by~$\delta$), so that by the time \algo{3.13} line~6 applies the
+scaling $1/\mathrm{nrd}(I)$, the identity
+$\mathrm{nrd}(\beta_1) = d_1 \cdot \mathrm{nrd}(I)$ holds in
+terms of the caller-supplied~$I$.
+
+\paragraph{What goes wrong.}
+An implementor who keeps~$\beta$ in the reduced ideal~$I'$ (a
+natural data representation) must also use $\mathrm{nrd}(I')$ in
+every downstream scaling formula.  Using the spec's
+$\mathrm{nrd}(I)$ literal gives $\det(M_{\beta_1}) \neq d_1 \cdot
+\mathrm{nrd}(I) \pmod{2^f}$, silently producing a non-isotropic
+outer kernel and \texttt{zeros=0} in the final splitting step.
+
+\paragraph{Recommendation.}
+State in \algo{3.16} that the returned~$\beta$ must be expressed
+in the input ideal's lattice (so $\mathrm{nrd}(\beta) = d \cdot
+\mathrm{nrd}(I)$), or name the lattice that~$\beta$ lives in and
+refer to its norm throughout \algo{3.13}.
+
+% =====================================================================
+\section{\textsc{SuitableIdeals} line 14:
+  \texorpdfstring{$v_2(u)$}{v2(u)} vs.\
+  \texorpdfstring{$v_2(\gcd(u, v))$}{v2(gcd(u,v))}}
+\label{sec:suitableideals-e-val}
+
+\finding{Affects \algo{3.16} (\textsc{SuitableIdeals}), line~14.}{\medium}
+
+\algo{3.16} line~14 writes ``$e \leftarrow v_2(u)$'' and line~15
+divides both~$u$ and~$v$ by~$2^e$.  Using $v_2(u)$ is only
+equivalent to $v_2(\gcd(u, v))$ when $v_2(u) \le v_2(v)$:
+\begin{itemize}
+  \item If $v_2(u) > v_2(v)$, dividing~$v$ by~$2^{v_2(u)}$ loses
+    low bits of~$v$ that were carrying real value.
+  \item If $v_2(u) < v_2(v)$, dividing by~$2^{v_2(u)}$ leaves~$v$
+    still even, so the next algorithm's precondition
+    $\gcd(u \cdot d_1, v \cdot d_2) = 1$ fails.
+\end{itemize}
+
+\paragraph{What the C reference does.}
+\texttt{dim2id2iso.c:833} computes
+\texttt{ibz\_two\_adic(\&gcd(u, v))}, i.e.\ $v_2(\gcd(u, v))$.
+
+\paragraph{Recommendation.}
+Write line~14 as ``$e \leftarrow v_2(\gcd(u, v))$''.
+
+% =====================================================================
+\section{\algo{8.47} implementation variants are not specified}
+\label{sec:iso22chain-variants}
+
+\finding{Affects \algo{8.47} (\textsc{Isogeny22ChainWithTorsion})
+  and its callers, primarily \algo{3.13} line~9.}{\low}
+
+The spec describes a single uniform chain of $e$ 8-torsion
+isogenies with a kernel of order~$2^{e+2}$.  The C reference
+implementation in \texttt{theta\_isogenies.c} splits this into two
+variants, keyed on a boolean \texttt{extra\_torsion}:
+\begin{itemize}
+  \item \texttt{extra\_torsion = true}: as in the spec, an
+    $e$-length chain of 8-torsion isogenies.
+  \item \texttt{extra\_torsion = false}: an $(e-2)$-length chain
+    of 8-torsion isogenies followed by a 4-isogeny and a
+    2-isogeny step.  This consumes a kernel of order~$2^e$ rather
+    than~$2^{e+2}$, and the final two steps use square roots.
+\end{itemize}
+\algo{3.13} line~9 calls the outer chain with
+\texttt{extra\_torsion = false} (\texttt{dim2id2iso.c:1128})
+whereas the inner \algo{3.15} calls it with
+\texttt{extra\_torsion = true} (\texttt{dim2id2iso.c:181}).  The
+two variants produce the same $(2^e, 2^e)$-isogeny but require
+different kernel torsions and different implementation paths.
+
+\paragraph{Impact.}
+Implementations that only supply the $e$-length 8-torsion variant
+must pad the kernel to order~$2^{e+2}$, which is impossible when
+$e$ is close to the target curve's available 2-power torsion~$f$.
+In particular, for $e \in \{f-1, f\}$ the padded kernel does not
+exist.  The C reference handles this by falling back to the
+shorter chain with 4-iso/2-iso tails, but the spec gives no
+guidance.
+
+\paragraph{Recommendation.}
+Either describe both variants in \algo{8.47} with a note on when
+each is required, or specify the 4-iso/2-iso tail as part of the
+algorithm so that implementations can support the full range of
+$e \le f$ without ad-hoc workarounds.
+
 \end{document}
