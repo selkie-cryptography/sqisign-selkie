@@ -241,16 +241,31 @@ fn main() -> io::Result<()> {
                 pct(file.hit, file.found)
             )?;
 
-            let src_lines = source_cache.get(&file.abspath);
-            for (li, &(lineno, count)) in file.lines.iter().enumerate() {
-                if li > 0 {
-                    write!(w, ",")?;
+            // Emit every line of the source file.
+            // Instrumented lines get their count; non-instrumented lines
+            // (comments, blanks, declarations) get -1.
+            let cov_map: std::collections::HashMap<u32, u64> =
+                file.lines.iter().copied().collect();
+            if let Some(src_lines) = source_cache.get(&file.abspath) {
+                for (i, line_text) in src_lines.iter().enumerate() {
+                    let lineno = (i + 1) as u32;
+                    let count = cov_map.get(&lineno).copied().unwrap_or_default();
+                    let instrumented = cov_map.contains_key(&lineno);
+                    if i > 0 {
+                        write!(w, ",")?;
+                    }
+                    // [line_number, count (-1 = not instrumented), "source"]
+                    let ct: i64 = if instrumented { count as i64 } else { -1 };
+                    write!(w, "[{},{},{}]", lineno, ct, json_str(line_text))?;
                 }
-                let text = src_lines
-                    .and_then(|lines| lines.get((lineno as usize).wrapping_sub(1)))
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                write!(w, "[{},{},{}]", lineno, count, json_str(text))?;
+            } else {
+                // Fallback: only instrumented lines.
+                for (li, &(lineno, count)) in file.lines.iter().enumerate() {
+                    if li > 0 {
+                        write!(w, ",")?;
+                    }
+                    write!(w, "[{},{},\"\"]", lineno, count)?;
+                }
             }
 
             write!(w, "]}}")?;

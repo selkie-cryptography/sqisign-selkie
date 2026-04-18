@@ -13,10 +13,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/rust.min.js"></script>
   <style>
     :root {
       --bg: #0b0d0f;
@@ -297,6 +293,37 @@
     .line-grid tr.miss .ln,
     .line-grid tr.miss .ct { color: var(--red); }
     .line-grid tr.miss { background: rgba(248, 81, 73, 0.08); }
+
+    /* GitHub-style Rust syntax highlighting (dark) */
+    .syn-kw { color: #ff7b72; }
+    .syn-type { color: #79c0ff; }
+    .syn-fn { color: #d2a8ff; }
+    .syn-macro { color: #79c0ff; }
+    .syn-str { color: #a5d6ff; }
+    .syn-num { color: #79c0ff; }
+    .syn-comment { color: #8b949e; font-style: italic; }
+    .syn-attr { color: #d2a8ff; }
+    .syn-lifetime { color: #ffa657; }
+    .syn-self { color: #ff7b72; }
+    .syn-const { color: #79c0ff; }
+    .syn-op { color: #ff7b72; }
+    .syn-punct { color: var(--fg-dim); }
+
+    @media (prefers-color-scheme: light) {
+      .syn-kw { color: #cf222e; }
+      .syn-type { color: #0550ae; }
+      .syn-fn { color: #8250df; }
+      .syn-macro { color: #0550ae; }
+      .syn-str { color: #0a3069; }
+      .syn-num { color: #0550ae; }
+      .syn-comment { color: #6e7781; font-style: italic; }
+      .syn-attr { color: #8250df; }
+      .syn-lifetime { color: #953800; }
+      .syn-self { color: #cf222e; }
+      .syn-const { color: #0550ae; }
+      .syn-op { color: #cf222e; }
+      .syn-punct { color: var(--fg-dim); }
+    }
 
     .cov-bar-cell { width: 40%; }
 
@@ -592,6 +619,51 @@
       }
     }
 
+    // GitHub-style Rust syntax highlighter.
+    function synRust(text) {
+      let s = esc(text);
+
+      // Order matters: comments must go first to prevent inner matches.
+
+      // Line comments (// ...)
+      s = s.replace(/(\/\/.*)$/, '<span class="syn-comment">$1</span>');
+
+      // Attributes (#[...] and #![...])
+      s = s.replace(/(#!?\[.*?\])/g, '<span class="syn-attr">$1</span>');
+
+      // Strings ("..." and b"...")
+      s = s.replace(/(b?&quot;(?:[^&]|&(?!quot;))*?&quot;)/g, '<span class="syn-str">$1</span>');
+
+      // Char literals
+      s = s.replace(/(&#39;[^&#]*(?:&#39;)?)/g, '<span class="syn-str">$1</span>');
+
+      // Lifetimes ('a, 'static, etc.)
+      s = s.replace(/(&#39;[a-z_]\w*)/g, '<span class="syn-lifetime">$1</span>');
+
+      // Macros (name!)
+      s = s.replace(/\b([a-z_]\w*!)/g, '<span class="syn-macro">$1</span>');
+
+      // Numeric literals
+      s = s.replace(/\b(0x[0-9a-fA-F_]+|0b[01_]+|0o[0-7_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:e[+-]?\d+)?)\b/g, '<span class="syn-num">$1</span>');
+
+      // Type names (capitalized identifiers)
+      s = s.replace(/\b([A-Z][A-Za-z0-9_]*)\b/g, '<span class="syn-type">$1</span>');
+
+      // self, Self
+      s = s.replace(/\b(self|Self)\b/g, '<span class="syn-self">$1</span>');
+
+      // Keywords
+      s = s.replace(/\b(fn|let|mut|const|pub|use|mod|struct|enum|impl|trait|type|where|for|in|if|else|match|return|super|crate|as|ref|move|async|await|unsafe|extern|dyn|static|true|false|loop|while|break|continue)\b/g, '<span class="syn-kw">$1</span>');
+
+      // Function definitions (fn name)
+      s = s.replace(/(<span class="syn-kw">fn<\/span>) (\w+)/g, '$1 <span class="syn-fn">$2</span>');
+
+      // Operators
+      s = s.replace(/(&amp;&amp;|&amp;|\|\||[=!<>]=|\.\.=?|-&gt;|=&gt;)/g, '<span class="syn-op">$1</span>');
+
+      return s;
+    }
+
     function toggleFile(mi, fi, ev) {
       ev.stopPropagation();
       const fileId = `file-${mi}-${fi}`;
@@ -605,42 +677,18 @@
         const sha = covData.sha;
         const ghBase = `https://github.com/${REPO}/blob/${sha}/src/${esc(f.name)}`;
 
-        // Build a coverage map: line number → [count, source].
-        const covMap = new Map();
-        for (const entry of lines) {
-          covMap.set(entry[0], [entry[1], entry.length > 2 ? entry[2] : '']);
-        }
-
-        // Find the full line range.
-        const allLineNos = lines.map(e => e[0]);
-        const minLine = Math.min(...allLineNos);
-        const maxLine = Math.max(...allLineNos);
-
-        // Assemble full source text for highlight.js (preserves parser
-        // state across lines for multi-line comments, strings, etc.).
-        const srcLines = [];
-        for (let ln = minLine; ln <= maxLine; ln++) {
-          const entry = covMap.get(ln);
-          srcLines.push(entry ? entry[1] : '');
-        }
-        const highlighted = hljs.highlight(srcLines.join('\n'), {
-          language: 'rust',
-          ignoreIllegals: true,
-        }).value.split('\n');
-
-        // Render the table with highlighted source.
         let grid = '<div class="line-grid"><table>';
-        for (let i = 0; i < highlighted.length; i++) {
-          const ln = minLine + i;
-          const entry = covMap.get(ln);
-          // Lines not in the coverage map are non-instrumented (blank,
-          // comments, declarations) — show them without hit/miss styling.
-          const cls = entry ? (entry[0] > 0 ? 'hit' : 'miss') : '';
-          const ct = entry ? (entry[0] > 0 ? esc(String(entry[0])) + '\u00d7' : '\u2014') : '';
+        for (const entry of lines) {
+          const ln = entry[0];
+          const ct = entry[1];
+          const src = entry.length > 2 ? entry[2] : '';
+          // ct == -1 means non-instrumented (comment, blank, declaration).
+          const cls = ct < 0 ? '' : ct > 0 ? 'hit' : 'miss';
+          const ctLabel = ct < 0 ? '' : ct > 0 ? esc(String(ct)) + '\u00d7' : '\u2014';
           grid += `<tr class="${cls}">`;
           grid += `<td class="ln"><a href="${ghBase}#L${ln}" style="color:inherit">${ln}</a></td>`;
-          grid += `<td class="ct">${ct}</td>`;
-          grid += `<td class="src"><code>${highlighted[i]}</code></td>`;
+          grid += `<td class="ct">${ctLabel}</td>`;
+          grid += `<td class="src"><code>${synRust(src)}</code></td>`;
           grid += `</tr>`;
         }
         grid += '</table></div>';
