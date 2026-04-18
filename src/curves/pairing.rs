@@ -69,6 +69,32 @@ impl RootOfUnity {
         Self(result)
     }
 
+    /// Compute ζ^k for a [`Scalar`]-sized exponent.
+    ///
+    /// Iterates over the scalar's little-endian byte representation
+    /// and performs a standard square-and-multiply loop.
+    /// Variable-time in `k` — only use on public values such as the
+    /// codomain-disambiguation exponent `d₁·u²` in
+    /// `IdealToIsogeny`, which is derived from the public
+    /// decomposition `(u, d₁)` of the caller-supplied ideal.
+    #[must_use]
+    pub fn pow_scalar(&self, k: &Scalar) -> Self {
+        let bytes = k.to_le_bytes();
+        let mut result = Fp2::ONE;
+        let mut base = self.0;
+        for byte in bytes.iter() {
+            let mut b = *byte;
+            for _ in 0..8 {
+                if b & 1 == 1 {
+                    result = &result * &base;
+                }
+                base = base.square();
+                b >>= 1;
+            }
+        }
+        Self(result)
+    }
+
     /// Compute the discrete log k ∈ \[0, 2^e) such that target = self^k.
     ///
     /// Uses the Pohlig-Hellman algorithm for 2-power order groups.

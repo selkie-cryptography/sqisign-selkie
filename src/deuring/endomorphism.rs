@@ -141,10 +141,7 @@ impl ActionMatrix {
     pub fn det_mod(&self, f: u32) -> Scalar {
         self.entries[0][0]
             .mul_mod2k(&self.entries[1][1], f)
-            .sub_mod2k(
-                &self.entries[0][1].mul_mod2k(&self.entries[1][0], f),
-                f,
-            )
+            .sub_mod2k(&self.entries[0][1].mul_mod2k(&self.entries[1][0], f), f)
     }
 
     /// Classical adjugate mod 2^f: `[[d, −b], [−c, a]]`.
@@ -152,14 +149,8 @@ impl ActionMatrix {
         let zero = Scalar::ZERO;
         Self {
             entries: [
-                [
-                    self.entries[1][1],
-                    zero.sub_mod2k(&self.entries[0][1], f),
-                ],
-                [
-                    zero.sub_mod2k(&self.entries[1][0], f),
-                    self.entries[0][0],
-                ],
+                [self.entries[1][1], zero.sub_mod2k(&self.entries[0][1], f)],
+                [zero.sub_mod2k(&self.entries[1][0], f), self.entries[0][0]],
             ],
         }
     }
