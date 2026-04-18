@@ -318,7 +318,12 @@ fn action_matrix(
 fn fixed_degree_isogeny(
     order: &'static ExtremalOrder<4>,
     u: &IsogenyDegree,
-) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
+) -> Option<(
+    Curve,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+)> {
     let f = TorsionExponent::FULL;
     let p_bits = 251u32; // ⌈log₂(p)⌉ for NIST-I
 
@@ -489,7 +494,7 @@ fn fixed_degree_isogeny(
     let (codomain, images) = kernel.isogeny_extra_torsion(
         TorsionExponent::try_from(e_fdi).ok()?,
         &[(basis_t.R, zero), (basis_t.S, zero), (basis_t.RS, zero)],
-    );
+    )?;
 
     let e_out = &codomain.E1;
     let p_out = images[0].0;
@@ -551,8 +556,7 @@ impl LeftIdeal<4> {
         #[cfg(test)]
         let _t1 = std::time::Instant::now();
         let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
-        let (e_u, phi_u_p, phi_u_q, phi_u_pmq) =
-            fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
+        let (e_u, phi_u_p, phi_u_q, phi_u_pmq) = fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(u): {:?}", _t1.elapsed());
 
@@ -560,8 +564,7 @@ impl LeftIdeal<4> {
         #[cfg(test)]
         let _t2 = std::time::Instant::now();
         let v_deg = IsogenyDegree::new_odd(*sui.v.as_limbs())?;
-        let (e_v, phi_v_p, phi_v_q, phi_v_pmq) =
-            fixed_degree_isogeny(sui.factor2.order, &v_deg)?;
+        let (e_v, phi_v_p, phi_v_q, phi_v_pmq) = fixed_degree_isogeny(sui.factor2.order, &v_deg)?;
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(v): {:?}", _t2.elapsed());
 
@@ -618,45 +621,44 @@ impl LeftIdeal<4> {
             ACTION_MATRICES[t_index][4],
             ACTION_MATRICES[t_index][5],
         ];
-        let m_beta1 = match action_matrix(
+        let m_beta1 = action_matrix(
             &sui.factor1.beta,
             sui.factor1.order.order(),
             &gen_matrices_s,
             f,
-        ) {
-            Some(m) => m,
-            None => {
-                #[cfg(test)]
-                eprintln!("[to_isogeny] action_matrix(β₁) failed — β₁ not decomposable on O_s");
-                return None;
-            }
-        };
-        let m_beta2 = match action_matrix(
+        )?;
+        let m_beta2 = action_matrix(
             &sui.factor2.beta,
             sui.factor2.order.order(),
             &gen_matrices_t,
             f,
-        ) {
-            Some(m) => m,
-            None => {
-                #[cfg(test)]
-                eprintln!("[to_isogeny] action_matrix(β₂) failed — β₂ not decomposable on O_t");
-                return None;
-            }
-        };
+        )?;
         let m_beta1_adj = m_beta1.adjugate_mod(f.value());
         let m_prod = m_beta2.mat_mul_mod(&m_beta1_adj, f.value());
 
-        // scale = 1 / (nrd(parent_ideal) · d₁) mod 2^f (for s = t = 0).
+        // scale = 1 / (nrd(I) · d₁) mod 2^f (for s = t = 0).
         //
-        // `parent_ideal.norm()` is the norm of the ideal β₁ (and β₂)
-        // was enumerated from — the smallest equivalent of the
-        // caller-supplied `self`, not `self` itself. Using
-        // `self.norm()` here would be wrong whenever the reduction
-        // step replaced `I`; the invariant
-        // `nrd(β) = d · nrd(parent_ideal)` is what ties the matrix
-        // identity `det(M_{β₁}) = nrd(β₁)` to the scaling factor.
-        let parent_norm = *sui.factor1.parent_ideal.norm();
+        // The spec formula uses `nrd(I)` for the caller-supplied
+        // ideal, not the reduced equivalent `parent_ideal` that β
+        // was enumerated from. The C reference (`dim2id2iso.c:885`,
+        // `ibz_mul(&theta.denom, &theta.denom, &lideal->norm)`)
+        // matches: `lideal` is the original input, not the reduced
+        // copy used internally by `find_uv`. Using the reduced
+        // ideal's norm here breaks whenever `nrd(parent_ideal)` is
+        // even (the reduced norm is `nrd(δ)/nrd(I)` for an
+        // LLL-first vector δ ∈ I, and that ratio can be even even
+        // for odd-prime `nrd(I)`), which leaves
+        // `invmod(parent_norm · d₁, 2^f)` undefined.
+        //
+        // The translation between β's reduced-ideal provenance
+        // (where `nrd(β) = d · nrd(parent_ideal)`) and the
+        // original-ideal scaling is absorbed by the identity
+        // `parent_ideal = I · δ̄/nrd(I)` — conjugate multiplication
+        // by δ in the quaternion algebra shifts `nrd(β)` by
+        // `nrd(δ)/nrd(I)`, and the resulting matrix equation
+        // collapses back to the spec's `1/nrd(I)` scaling modulo
+        // 2^f.
+        let parent_norm = *self.norm();
         let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
         let scale_denom = parent_norm.ct_mul(&d1_big).ct_mod(&modulus);
         let scale_inv = scale_denom.invert_mod(&modulus)?;
@@ -669,10 +671,8 @@ impl LeftIdeal<4> {
         let fdi_v_basis = TorsionBasis::from_propagated(phi_v_p, phi_v_q, phi_v_pmq);
         let p_step6 = fdi_v_basis.eval_decomposition(&s00, &s10);
         let q_step6 = fdi_v_basis.eval_decomposition(&s01, &s11);
-        let pmq_step6 = fdi_v_basis.eval_decomposition(
-            &s00.sub_mod2k(&s01, fv),
-            &s10.sub_mod2k(&s11, fv),
-        );
+        let pmq_step6 =
+            fdi_v_basis.eval_decomposition(&s00.sub_mod2k(&s01, fv), &s10.sub_mod2k(&s11, fv));
 
         // Steps 7–8: Build kernel points on E_u × E_v.
         //
@@ -703,7 +703,10 @@ impl LeftIdeal<4> {
         // what we produce here for every valid `sui.e ≤ f`.
         let scale = f.value() - sui.e.value();
         #[cfg(test)]
-        eprintln!("[to_isogeny] outer chain: sui.e={}, scale={scale}", sui.e.value());
+        eprintln!(
+            "[to_isogeny] outer chain: sui.e={}, scale={scale}",
+            sui.e.value()
+        );
         for _ in 0..scale {
             kp_first = kp_first.double();
             kp_second = kp_second.double();
@@ -725,7 +728,8 @@ impl LeftIdeal<4> {
         // `dim2id2iso.c:1109-1110`.
         #[cfg(test)]
         {
-            let on_curve = |c: &Curve, p: &ProjectiveXOnlyPoint| c.recover_y(&p.to_affine_x()).is_some();
+            let on_curve =
+                |c: &Curve, p: &ProjectiveXOnlyPoint| c.recover_y(&p.to_affine_x()).is_some();
             let has_order = |p: ProjectiveXOnlyPoint, e: u32| -> (bool, bool) {
                 let mut q = p;
                 for _ in 0..(e - 1) {
@@ -744,7 +748,7 @@ impl LeftIdeal<4> {
                 (re, im)
             };
             let point_hex = |p: &ProjectiveXOnlyPoint| -> (String, String) {
-                fp2_hex(&*p.to_affine_x().as_fp2())
+                fp2_hex(p.to_affine_x().as_fp2())
             };
             let e = sui.e.value();
 
@@ -786,18 +790,48 @@ impl LeftIdeal<4> {
             (kpmq_first, kpmq_second),
         )?;
 
-        // Chain exponent is `sui.e − 2`. [`Kernel::isogeny_extra_torsion`]
-        // runs a `chain_e`-step chain of 8-torsion isogenies,
-        // consuming a kernel of order 2^(chain_e + 2) = 2^sui.e to
-        // produce the `(2^sui.e, 2^sui.e)`-isogeny.
-        let chain_e = TorsionExponent::try_from(sui.e.value() - 2).ok()?;
+        // Chain exponent is `sui.e`. The C ref calls
+        // `theta_chain_compute_and_eval_randomized(exp=sui.e, ...,
+        // extra_torsion=false)` here
+        // (`dim2id2iso.c:1128`) — full-length chain, no extra
+        // torsion bits, kernel of order exactly 2^sui.e. The chain
+        // produces a `(2^sui.e, 2^sui.e)`-isogeny of length sui.e.
+        //
+        // The earlier version of this call used
+        // `isogeny_extra_torsion(chain_e = sui.e − 2)`, expecting
+        // kernel 2^(chain_e + 2) = 2^sui.e with two spare
+        // torsion bits for the internal double-and-add. That only
+        // produced a `(2^(sui.e − 2), 2^(sui.e − 2))`-isogeny — four
+        // bits too small — so the codomain landed at
+        // `A / [2²](P, Q)` rather than `A / (P, Q)`, and the
+        // splitting check at the end of the chain found zero
+        // candidate indices.
+        let chain_e = sui.e;
         let zero_v = ProjectiveXOnlyPoint::identity(&e_v);
         let (codomain, images) =
-            kernel.isogeny_extra_torsion(chain_e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
+            kernel.isogeny(chain_e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)])?;
 
         // Steps 10–13: Pick correct output curve.
-        // Per Algorithm 8.47 remark, E is always correct when using
-        // Isogeny22ChainWithTorsion. Skip pairing check.
+        //
+        // The (2,2)-chain on `E_u × E_v` splits as a product of two
+        // curves; one is `E_I` (what we want), the other is an
+        // auxiliary. A full Weil-pairing disambiguation matching
+        // `dim2id2iso.c:1148-1178` would compare
+        // `tate(images on E_i)` against `tate(E_s basis)^{d₁·u²}`
+        // for each side. Our Tate-pairing push-forward
+        // compatibility with the (2,2)-chain restriction is not
+        // yet fully verified — some valid splits have pairings
+        // that don't match the spec's degree formula under our
+        // implementation. Until that relation is pinned down,
+        // default to `codomain.E1` (which is the convention the
+        // C reference lands on after its optional swap), and
+        // detect gross failures via the downstream curve-membership
+        // checks in `from_bases` and the KAT comparison.
+        //
+        // TODO: finish the pairing-based disambiguation once the
+        // Tate push-forward sign is known. For now this matches
+        // the behavior the test suite was validated against
+        // (generate_runs + sign-pipeline tests).
         let e_i = codomain.E1;
         let (p_chain, q_chain) = (images[0].0, images[1].0);
 
