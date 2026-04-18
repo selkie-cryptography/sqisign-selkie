@@ -592,12 +592,6 @@
       }
     }
 
-    function highlightLine(src) {
-      // Use highlight.js to highlight a single line of Rust.
-      const result = hljs.highlight(src, { language: 'rust', ignoreIllegals: true });
-      return result.value;
-    }
-
     function toggleFile(mi, fi, ev) {
       ev.stopPropagation();
       const fileId = `file-${mi}-${fi}`;
@@ -611,16 +605,42 @@
         const sha = covData.sha;
         const ghBase = `https://github.com/${REPO}/blob/${sha}/src/${esc(f.name)}`;
 
-        let grid = '<div class="line-grid"><table>';
+        // Build a coverage map: line number → [count, source].
+        const covMap = new Map();
         for (const entry of lines) {
-          const ln = entry[0];
-          const ct = entry[1];
-          const src = entry.length > 2 ? entry[2] : '';
-          const cls = ct > 0 ? 'hit' : 'miss';
+          covMap.set(entry[0], [entry[1], entry.length > 2 ? entry[2] : '']);
+        }
+
+        // Find the full line range.
+        const allLineNos = lines.map(e => e[0]);
+        const minLine = Math.min(...allLineNos);
+        const maxLine = Math.max(...allLineNos);
+
+        // Assemble full source text for highlight.js (preserves parser
+        // state across lines for multi-line comments, strings, etc.).
+        const srcLines = [];
+        for (let ln = minLine; ln <= maxLine; ln++) {
+          const entry = covMap.get(ln);
+          srcLines.push(entry ? entry[1] : '');
+        }
+        const highlighted = hljs.highlight(srcLines.join('\n'), {
+          language: 'rust',
+          ignoreIllegals: true,
+        }).value.split('\n');
+
+        // Render the table with highlighted source.
+        let grid = '<div class="line-grid"><table>';
+        for (let i = 0; i < highlighted.length; i++) {
+          const ln = minLine + i;
+          const entry = covMap.get(ln);
+          // Lines not in the coverage map are non-instrumented (blank,
+          // comments, declarations) — show them without hit/miss styling.
+          const cls = entry ? (entry[0] > 0 ? 'hit' : 'miss') : '';
+          const ct = entry ? (entry[0] > 0 ? esc(String(entry[0])) + '\u00d7' : '\u2014') : '';
           grid += `<tr class="${cls}">`;
           grid += `<td class="ln"><a href="${ghBase}#L${ln}" style="color:inherit">${ln}</a></td>`;
-          grid += `<td class="ct">${ct > 0 ? esc(String(ct)) + '\u00d7' : '\u2014'}</td>`;
-          grid += `<td class="src"><code>${highlightLine(src)}</code></td>`;
+          grid += `<td class="ct">${ct}</td>`;
+          grid += `<td class="src"><code>${highlighted[i]}</code></td>`;
           grid += `</tr>`;
         }
         grid += '</table></div>';
