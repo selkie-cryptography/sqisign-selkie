@@ -631,10 +631,14 @@
       return html;
     }
 
-    function metaLine(data) {
+    function metaLine(data, status) {
       const parts = [];
       if (data && data.sha) parts.push(commitLink(data.sha));
       if (data && data.updated_at) parts.push(timeAgo(data.updated_at));
+      if (status && status.state === 'running') {
+        const label = data ? 'updating' : 'building';
+        parts.push(`<span class="status status--updating">${label}</span>`);
+      }
       return parts.join(' &middot; ');
     }
 
@@ -642,9 +646,12 @@
       const metaEl = document.getElementById('coverage-meta');
       const contentEl = document.getElementById('coverage-content');
 
-      const data = await fetchJson('/coverage/coverage.json');
+      const [data, status] = await Promise.all([
+        fetchJson('/coverage/coverage.json'),
+        fetchJson('/coverage/status.json'),
+      ]);
 
-      metaEl.innerHTML = metaLine(data);
+      metaEl.innerHTML = metaLine(data, status);
 
       if (data) {
         if (data.sha !== lastCovSha) {
@@ -660,9 +667,12 @@
       const metaEl = document.getElementById('bench-meta');
       const contentEl = document.getElementById('bench-content');
 
-      const data = await fetchJson('/bench/bench.json');
+      const [data, status] = await Promise.all([
+        fetchJson('/bench/bench.json'),
+        fetchJson('/bench/status.json'),
+      ]);
 
-      metaEl.innerHTML = metaLine(data);
+      metaEl.innerHTML = metaLine(data, status);
 
       if (data) {
         if (data.sha !== lastBenchSha) {

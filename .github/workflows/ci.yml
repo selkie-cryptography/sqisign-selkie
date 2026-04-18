@@ -173,10 +173,23 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
+          # Signal "building" to the site.
+          echo '{"state":"running","sha":"${{ github.sha }}"}' > /tmp/cov-status.json
           flyctl apps restart sqisign-selkie-ci --skip-health-checks
           sleep 5
           flyctl ssh sftp shell -a sqisign-selkie-ci <<'SFTP'
+          put /tmp/cov-status.json /data/coverage/status.json
+          SFTP
+
+          # Upload the actual data.
+          flyctl ssh sftp shell -a sqisign-selkie-ci <<'SFTP'
           put coverage-out/coverage.json /data/coverage/coverage.json
+          SFTP
+
+          # Signal "done".
+          echo '{"state":"done","sha":"${{ github.sha }}"}' > /tmp/cov-status.json
+          flyctl ssh sftp shell -a sqisign-selkie-ci <<'SFTP'
+          put /tmp/cov-status.json /data/coverage/status.json
           SFTP
 
   audit:
