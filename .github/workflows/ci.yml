@@ -181,7 +181,8 @@ jobs:
           put /tmp/cov-status.json /data/coverage/status.json
           SFTP
 
-          # Upload the actual data.
+          # Upload the actual data (rm first — sftp put doesn't overwrite).
+          flyctl ssh console -a sqisign-selkie-ci -C "rm -f /data/coverage/coverage.json"
           flyctl ssh sftp shell -a sqisign-selkie-ci <<'SFTP'
           put coverage-out/coverage.json /data/coverage/coverage.json
           SFTP

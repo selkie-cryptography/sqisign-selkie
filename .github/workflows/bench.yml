@@ -76,6 +76,7 @@ jobs:
           put /tmp/bench-status.json /data/bench/status.json
           SFTP
 
+          flyctl ssh console -a sqisign-selkie-ci -C "rm -f /data/bench/bench.json"
           flyctl ssh sftp shell -a sqisign-selkie-ci <<'SFTP'
           put bench-out/bench.json /data/bench/bench.json
           SFTP
