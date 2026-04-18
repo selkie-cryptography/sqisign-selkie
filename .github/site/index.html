@@ -13,6 +13,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/rust.min.js"></script>
   <style>
     :root {
       --bg: #0b0d0f;
@@ -256,8 +260,9 @@
     }
 
     .line-grid td {
-      padding: 0 8px;
+      padding: 0 6px;
       white-space: pre;
+      vertical-align: top;
     }
 
     .line-grid .ln {
@@ -265,16 +270,33 @@
       text-align: right;
       user-select: none;
       width: 1%;
+      border-right: 1px solid var(--border);
     }
 
     .line-grid .ct {
       text-align: right;
       width: 1%;
       font-variant-numeric: tabular-nums;
+      border-right: 1px solid var(--border);
+      padding: 0 8px;
     }
 
-    .line-grid .hit { color: var(--green); }
-    .line-grid .miss { color: var(--red); background: rgba(248, 81, 73, 0.08); }
+    .line-grid .src {
+      width: 100%;
+    }
+
+    .line-grid .src code {
+      background: none;
+      padding: 0;
+    }
+
+    .line-grid tr.hit .ln,
+    .line-grid tr.hit .ct { color: var(--green); }
+    .line-grid tr.hit { background: rgba(63, 185, 80, 0.06); }
+
+    .line-grid tr.miss .ln,
+    .line-grid tr.miss .ct { color: var(--red); }
+    .line-grid tr.miss { background: rgba(248, 81, 73, 0.08); }
 
     .cov-bar-cell { width: 40%; }
 
@@ -570,6 +592,12 @@
       }
     }
 
+    function highlightLine(src) {
+      // Use highlight.js to highlight a single line of Rust.
+      const result = hljs.highlight(src, { language: 'rust', ignoreIllegals: true });
+      return result.value;
+    }
+
     function toggleFile(mi, fi, ev) {
       ev.stopPropagation();
       const fileId = `file-${mi}-${fi}`;
@@ -584,11 +612,15 @@
         const ghBase = `https://github.com/${REPO}/blob/${sha}/src/${esc(f.name)}`;
 
         let grid = '<div class="line-grid"><table>';
-        for (const [ln, ct] of lines) {
+        for (const entry of lines) {
+          const ln = entry[0];
+          const ct = entry[1];
+          const src = entry.length > 2 ? entry[2] : '';
           const cls = ct > 0 ? 'hit' : 'miss';
           grid += `<tr class="${cls}">`;
           grid += `<td class="ln"><a href="${ghBase}#L${ln}" style="color:inherit">${ln}</a></td>`;
-          grid += `<td class="ct">${ct > 0 ? ct + '×' : '—'}</td>`;
+          grid += `<td class="ct">${ct > 0 ? esc(String(ct)) + '\u00d7' : '\u2014'}</td>`;
+          grid += `<td class="src"><code>${highlightLine(src)}</code></td>`;
           grid += `</tr>`;
         }
         grid += '</table></div>';

@@ -14,6 +14,7 @@ use std::io::{self, Write};
 use std::time::SystemTime;
 
 struct FileCoverage {
+    abspath: String,
     relpath: String,
     module: String,
     /// (line_number, execution_count)
@@ -44,6 +45,7 @@ fn parse_lcov(contents: &str) -> Vec<FileCoverage> {
             };
 
             current = Some(FileCoverage {
+                abspath: path.to_string(),
                 relpath: relpath.to_string(),
                 module: module.to_string(),
                 lines: Vec::new(),
@@ -180,6 +182,19 @@ fn main() -> io::Result<()> {
     let total_hit: u32 = files.iter().map(|f| f.hit).sum();
     let total_found: u32 = files.iter().map(|f| f.found).sum();
 
+    // Read source files for line text.
+    let mut source_cache: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for f in &files {
+        if !source_cache.contains_key(&f.abspath) {
+            if let Ok(src) = fs::read_to_string(&f.abspath) {
+                source_cache.insert(
+                    f.abspath.clone(),
+                    src.lines().map(|l| l.to_string()).collect(),
+                );
+            }
+        }
+    }
+
     // Group by module, preserving order.
     let mut modules: BTreeMap<&str, Vec<&FileCoverage>> = BTreeMap::new();
     for f in &files {
@@ -226,11 +241,16 @@ fn main() -> io::Result<()> {
                 pct(file.hit, file.found)
             )?;
 
+            let src_lines = source_cache.get(&file.abspath);
             for (li, &(lineno, count)) in file.lines.iter().enumerate() {
                 if li > 0 {
                     write!(w, ",")?;
                 }
-                write!(w, "[{},{}]", lineno, count)?;
+                let text = src_lines
+                    .and_then(|lines| lines.get((lineno as usize).wrapping_sub(1)))
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                write!(w, "[{},{},{}]", lineno, count, json_str(text))?;
             }
 
             write!(w, "]}}")?;
