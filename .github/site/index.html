@@ -253,6 +253,7 @@
     .line-grid table {
       border-collapse: collapse;
       width: 100%;
+      table-layout: fixed;
     }
 
     .line-grid td {
@@ -265,21 +266,21 @@
       color: var(--fg-dim);
       text-align: right;
       user-select: none;
-      width: 1%;
+      width: 50px;
       border-right: 1px solid var(--border);
     }
 
     .line-grid .ct {
       text-align: right;
-      width: 1%;
+      width: 60px;
       font-variant-numeric: tabular-nums;
       border-right: 1px solid var(--border);
       padding: 0 8px;
     }
 
     .line-grid .src {
-      width: 100%;
       text-align: left;
+      overflow-x: auto;
     }
 
     .line-grid .src code {
