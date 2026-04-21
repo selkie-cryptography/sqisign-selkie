@@ -245,25 +245,23 @@
 
     .line-grid {
       font-family: 'JetBrains Mono', 'Menlo', monospace;
-      font-size: 12px;
-      line-height: 1.7;
+      font-size: 11px;
+      line-height: 1.6;
       max-height: 500px;
-      overflow: auto;
+      overflow-y: auto;
+      overflow-x: hidden;
       border-bottom: 1px solid var(--border);
-      max-width: calc(100vw - 40px);
     }
 
     .line-grid table {
       border-collapse: collapse;
-      width: max-content;
-      min-width: 100%;
+      width: 100%;
     }
 
     .line-grid td {
-      white-space: pre;
       vertical-align: top;
       text-align: left;
-      padding: 0 8px;
+      padding: 0 4px;
     }
 
     .line-grid .ln {
@@ -272,7 +270,8 @@
       user-select: none;
       white-space: nowrap;
       border-right: 1px solid var(--border);
-      padding: 0 12px 0 8px;
+      padding: 0 6px;
+      width: 1px;
     }
 
     .line-grid .ct {
@@ -280,7 +279,14 @@
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
       border-right: 1px solid var(--border);
-      padding: 0 12px;
+      padding: 0 6px;
+      width: 1px;
+    }
+
+    .line-grid .src {
+      white-space: pre;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .line-grid .src code {
