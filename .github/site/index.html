@@ -387,6 +387,68 @@
       padding: 12px 8px 4px;
     }
 
+    /* Mutants */
+    .mutants-summary {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 16px;
+      padding-left: 8px;
+    }
+
+    .mutants-stat {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .mutants-stat .value {
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: -1px;
+    }
+
+    .mutants-stat .label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+    }
+
+    .mutants-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .mutants-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .mutants-table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .mutants-table .mutant-name {
+      font-family: 'Inter', monospace;
+      font-size: 12px;
+      color: var(--red);
+    }
+
+    .mutants-table .mutant-loc {
+      font-family: 'Inter', monospace;
+      font-size: 12px;
+      color: var(--fg-dim);
+      white-space: nowrap;
+    }
+
     /* Status banner */
     .status-banner {
       padding: 8px 20px;
@@ -525,6 +587,16 @@
         </div>
       </section>
 
+      <section class="section" id="mutants-section">
+        <div class="section__header">
+          <h2 class="section__title">Mutation Testing</h2>
+          <span class="meta" id="mutants-meta"></span>
+        </div>
+        <div id="mutants-content">
+          <p class="empty">No mutation testing data yet.</p>
+        </div>
+      </section>
+
     </div>
   </div>
 
@@ -543,8 +615,16 @@
     // State.
     let covIndex = [];      // [{sha, percent, updated_at}, ...]
     let benchIndex = [];    // [{sha, updated_at}, ...]
+    let mutantsIndex = [];  // [{sha, updated_at}, ...]
     let selectedSha = null; // Currently viewed commit.
     let covData = null;     // Current coverage data for drill-down.
+
+    // Track what's currently rendered to avoid clobbering state
+    // (expanded modules, scroll position) on no-op poll cycles.
+    let renderedCov = null;   // SHA of rendered coverage data
+    let renderedBench = null; // SHA of rendered bench data
+    let renderedMut = null;   // SHA of rendered mutants data
+    let renderedForSha = null; // The selectedSha we last rendered for
 
     function esc(s) {
       const d = document.createElement('div');
@@ -739,6 +819,43 @@
       }
     }
 
+    function renderMutantsData(data) {
+      const s = data.summary || {};
+      const survivors = data.survivors || [];
+      const tested = (s.caught || 0) + (s.missed || 0) + (s.timeout || 0);
+      const killPct = tested > 0 ? ((s.caught / tested) * 100).toFixed(1) : '—';
+      const killColor = tested > 0
+        ? (s.caught / tested >= 0.8 ? 'var(--green)' : s.caught / tested >= 0.5 ? 'var(--yellow)' : 'var(--red)')
+        : 'var(--fg-dim)';
+
+      let html = '<div class="mutants-summary">';
+      html += `<div class="mutants-stat"><span class="value" style="color:${killColor}">${killPct}%</span><span class="label">kill rate</span></div>`;
+      html += `<div class="mutants-stat"><span class="value" style="color:var(--green)">${esc(String(s.caught || 0))}</span><span class="label">caught</span></div>`;
+      html += `<div class="mutants-stat"><span class="value" style="color:var(--red)">${esc(String(s.missed || 0))}</span><span class="label">missed</span></div>`;
+      if (s.timeout) html += `<div class="mutants-stat"><span class="value" style="color:var(--yellow)">${esc(String(s.timeout))}</span><span class="label">timeout</span></div>`;
+      html += `<div class="mutants-stat"><span class="value">${esc(String(s.unviable || 0))}</span><span class="label">unviable</span></div>`;
+      html += '</div>';
+
+      if (survivors.length > 0) {
+        const sha = data.sha;
+        html += `<table class="mutants-table">
+          <thead><tr><th>Survivor</th><th>Location</th></tr></thead><tbody>`;
+        for (const m of survivors) {
+          const desc = m.name.includes(':') ? m.name.split(': ').slice(1).join(': ') : m.name;
+          const ghLink = sha
+            ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(m.file)}#L${m.line}`
+            : '#';
+          html += `<tr>
+            <td class="mutant-name">${esc(desc)}</td>
+            <td class="mutant-loc"><a href="${ghLink}">${esc(m.function || m.file)}:${m.line}</a></td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+      }
+
+      return html;
+    }
+
     function renderBenchmarkData(data) {
       const groups = data.groups || [];
       if (groups.length === 0) return '';
@@ -775,13 +892,15 @@
 
     async function updateStatus() {
       const banner = document.getElementById('status-banner');
-      const [covStatus, benchStatus] = await Promise.all([
+      const [covStatus, benchStatus, mutStatus] = await Promise.all([
         fetchJson('/coverage/status.json'),
         fetchJson('/bench/status.json'),
+        fetchJson('/mutants/status.json'),
       ]);
       const parts = [];
       if (covStatus && covStatus.state === 'running') parts.push('coverage');
       if (benchStatus && benchStatus.state === 'running') parts.push('benchmarks');
+      if (mutStatus && mutStatus.state === 'running') parts.push('mutation testing');
       if (parts.length > 0) {
         banner.textContent = `Building ${parts.join(' and ')}...`;
         banner.style.display = 'block';
@@ -797,14 +916,22 @@
       // A commit appears if it has coverage, benchmarks, or both.
       const map = new Map();
       for (const e of covIndex) {
-        map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: true, hasBench: false, percent: e.percent });
+        map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: true, hasBench: false, hasMutants: false, percent: e.percent });
       }
       for (const e of benchIndex) {
         const existing = map.get(e.sha);
         if (existing) {
           existing.hasBench = true;
         } else {
-          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: true });
+          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: true, hasMutants: false });
+        }
+      }
+      for (const e of mutantsIndex) {
+        const existing = map.get(e.sha);
+        if (existing) {
+          existing.hasMutants = true;
+        } else {
+          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: false, hasMutants: true });
         }
       }
       // Sort by updated_at descending.
@@ -826,6 +953,7 @@
         const tags = [];
         if (c.hasCov) tags.push('cov');
         if (c.hasBench) tags.push('bench');
+        if (c.hasMutants) tags.push('mutants');
         label += ` [${tags.join('+')}]`;
         opt.textContent = label;
         select.appendChild(opt);
@@ -854,35 +982,63 @@
       selectedSha = sha;
       const commits = buildCommitList();
       updateCommitTime(commits);
-      await loadCommitData(sha);
+      await loadCommitData(sha, true);
     }
 
-    async function loadCommitData(sha) {
+    async function loadCommitData(sha, force) {
       const covEl = document.getElementById('coverage-content');
       const covMeta = document.getElementById('coverage-meta');
       const benchEl = document.getElementById('bench-content');
       const benchMeta = document.getElementById('bench-meta');
+      const mutEl = document.getElementById('mutants-content');
+      const mutMeta = document.getElementById('mutants-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench] = await Promise.all([
+      const [cov, bench, mut] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
+        fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
       ]);
 
-      if (cov) {
+      // Only re-render a section if the commit changed or the data
+      // SHA changed (new upload arrived). This preserves UI state
+      // like expanded modules and scroll positions.
+      const shaChanged = force || sha !== renderedForSha;
+      renderedForSha = sha;
+
+      const covSha = cov && cov.sha;
+      if (cov && (shaChanged || covSha !== renderedCov)) {
         covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines`;
         covEl.innerHTML = renderCoverageData(cov);
-      } else {
+        renderedCov = covSha;
+      } else if (!cov && renderedCov !== null) {
         covMeta.textContent = '';
         covEl.innerHTML = '<p class="empty">No coverage data for this commit.</p>';
+        renderedCov = null;
       }
 
-      if (bench) {
+      const benchSha = bench && bench.sha;
+      if (bench && (shaChanged || benchSha !== renderedBench)) {
         benchMeta.textContent = '';
         benchEl.innerHTML = renderBenchmarkData(bench);
-      } else {
+        renderedBench = benchSha;
+      } else if (!bench && renderedBench !== null) {
         benchMeta.textContent = '';
         benchEl.innerHTML = '<p class="empty">No benchmark data for this commit.</p>';
+        renderedBench = null;
+      }
+
+      const mutSha = mut && mut.sha;
+      if (mut && (shaChanged || mutSha !== renderedMut)) {
+        const s = mut.summary || {};
+        const tested = (s.caught || 0) + (s.missed || 0) + (s.timeout || 0);
+        mutMeta.innerHTML = `${esc(String(tested))} tested`;
+        mutEl.innerHTML = renderMutantsData(mut);
+        renderedMut = mutSha;
+      } else if (!mut && renderedMut !== null) {
+        mutMeta.textContent = '';
+        mutEl.innerHTML = '<p class="empty">No mutation testing data for this commit.</p>';
+        renderedMut = null;
       }
     }
 
@@ -890,12 +1046,14 @@
 
     async function poll() {
       // Fetch indices and status.
-      const [ci, bi] = await Promise.all([
+      const [ci, bi, mi] = await Promise.all([
         fetchJson('/coverage/index.json'),
         fetchJson('/bench/index.json'),
+        fetchJson('/mutants/index.json'),
       ]);
       covIndex = ci || [];
       benchIndex = bi || [];
+      mutantsIndex = mi || [];
 
       const commits = buildCommitList();
       renderCommitSelect(commits);

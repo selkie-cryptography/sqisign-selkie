@@ -39,5 +39,40 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mutants-shard-${{ matrix.shard }}.out
+          name: mutants-shard-${{ matrix.shard }}
           path: mutants.out
+
+  upload:
+    name: Merge and upload results
+    needs: mutants
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download all shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mutants-shard-*
+          path: shards
+
+      - name: Merge outcomes
+        run: |
+          # Merge all shard outcomes.json into one.
+          jq -s '{outcomes: map(.outcomes) | add}' \
+            shards/*/outcomes.json > merged-outcomes.json
+
+      - name: Generate site JSON
+        run: |
+          bash .github/scripts/mutants-to-json.sh \
+            merged-outcomes.json "${{ github.sha }}" \
+            > mutants.json
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Upload to CI site
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: bash .github/scripts/ci-upload.sh mutants mutants.json "${{ github.sha }}"
