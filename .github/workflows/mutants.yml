@@ -1,6 +1,6 @@
 name: Mutation testing (full)
 
-# Full mutation run, sharded across 8 workers.
+# Full mutation run, sharded across 16 workers.
 # Runs weekly and on-demand.  PRs get incremental coverage in ci.yml.
 on:
   schedule:
@@ -15,13 +15,13 @@ env:
 
 jobs:
   mutants:
-    name: Shard ${{ matrix.shard }}/8
+    name: Shard ${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -32,9 +32,14 @@ jobs:
           key: mutants-${{ matrix.shard }}
       - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
         with:
-          tool: cargo-mutants
-      - name: Run cargo-mutants (shard ${{ matrix.shard }}/8)
-        run: cargo mutants --shard ${{ matrix.shard }}/8 -vV -- --lib
+          tool: cargo-mutants,cargo-nextest
+      - name: Run cargo-mutants (shard ${{ matrix.shard }}/16)
+        run: |
+          cargo mutants --shard ${{ matrix.shard }}/16 \
+            --test-tool nextest \
+            --timeout 180 \
+            --in-place \
+            -vV -- --lib
       - name: Archive mutants.out
         uses: actions/upload-artifact@v7
         if: always()

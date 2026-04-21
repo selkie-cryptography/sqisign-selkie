@@ -60,7 +60,11 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           key: ${{ matrix.target }}
-      - run: cargo test --target ${{ matrix.target }}
+      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --target ${{ matrix.target }}
+      - run: cargo test --doc --target ${{ matrix.target }}
 
   msrv:
     name: MSRV (1.81.0)
