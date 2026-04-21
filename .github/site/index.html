@@ -189,17 +189,16 @@
       border-bottom: 1px solid var(--border);
     }
 
-    .cov-table th:nth-child(2),
-    .cov-table th:nth-child(3) { text-align: right; }
-
-    .cov-table td {
+    .cov-table > tbody > tr > td {
       padding: 8px;
       border-bottom: 1px solid var(--border);
       font-weight: 500;
     }
 
-    .cov-table td:nth-child(2),
-    .cov-table td:nth-child(3) {
+    .cov-table > thead > tr > th:nth-child(2),
+    .cov-table > thead > tr > th:nth-child(3),
+    .cov-table > tbody > tr > td:nth-child(2),
+    .cov-table > tbody > tr > td:nth-child(3) {
       text-align: right;
       font-variant-numeric: tabular-nums;
     }
