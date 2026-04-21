@@ -212,7 +212,7 @@ jobs:
       - name: Run cargo-mutants on changed code
         run: cargo mutants --no-shuffle -vV --in-diff git.diff -- --lib
       - name: Archive mutants.out
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutants-incremental.out
@@ -295,7 +295,7 @@ jobs:
 
       - name: Upload PDFs
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: latex-pdfs
           path: |
