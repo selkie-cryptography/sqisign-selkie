@@ -632,22 +632,30 @@ fn try_find_uv(
             let e_val = u.gcd(&v).trailing_zeros();
             // Require `sui.e = f − e_val ≤ f − 2` — i.e., `e_val ≥ 2`.
             //
-            // Our [`surfaces::Kernel::isogeny`] runs the balanced-strategy
-            // chain of Algorithm 8.47 with the convention that the
-            // kernel generators have order `2^(chain_e + 2)`, leaving
-            // two torsion bits above the kernel subgroup for the
-            // penultimate/ultimate steps. The outer-chain kernel
-            // generators are 2^sui.e-torsion on `E_u × E_v`, so we
-            // need `sui.e ≥ chain_e + 2`, i.e., `chain_e ≤ f − 2`.
+            // [`LeftIdeal::to_isogeny`]'s outer (2,2)-chain feeds
+            // [`surfaces::Kernel::isogeny`] a kernel of order
+            // `2^(sui.e + 2)` — two torsion bits above the
+            // `2^sui.e`-subgroup that is the chain's real kernel.
+            // Those 2 bits are mandatory (the chain's penultimate
+            // and ultimate steps consume 4- and 2-torsion residue
+            // via the `hadamard_bool` mechanism of Algorithm 8.41)
+            // and come from the `2^f`-torsion image basis
+            // `(phi_u(P_0), theta·phi_v(P_0))` via `scale = f −
+            // sui.e − 2` doublings. The padding only works when
+            // `sui.e ≤ f − 2`.
             //
-            // The C reference's `theta_chain_compute_and_eval_
-            // randomized(exp=sui.e, …, extra_torsion=false)`
-            // (`dim2id2iso.c:1128`) supports `sui.e = f` with a
-            // kernel of order exactly `2^f` via the hadamard_bool
-            // `extra_torsion=false` path; we don't implement that
-            // variant yet. Pairs with `e_val < 2` get skipped; the
-            // outer v-loop enumerates more `(u, v)` solutions for
-            // the same (β₁, β₂), so the acceptance cost is small.
+            // The C reference's alternate `extra_torsion = false`
+            // chain path (`theta_isogenies.c:1088`) accepts a
+            // kernel of order exactly `2^sui.e` by running a
+            // shorter 8-torsion chain followed by dedicated
+            // 4-isogeny and 2-isogeny tail steps, so it handles
+            // `sui.e ∈ {f-1, f}` directly. We don't implement
+            // that variant, so we reject those cases here.
+            //
+            // Pairs with `e_val < 2` get skipped; the outer v-loop
+            // enumerates more `(u, v)` solutions for the same
+            // `(β₁, β₂)`, so the acceptance cost is small (≈ 20%
+            // of pairs on NIST-I in practice).
             if e_val < 2 {
                 u = u.ct_add(&d2_w);
                 if v <= d1_w {

@@ -688,29 +688,41 @@ impl SplittingKernel {
     /// Returns the codomain product E₃ × E₄ and the images of `pts`
     /// converted back to Montgomery coordinates, or [`None`] if the
     /// chain's final theta null does not admit a product splitting
-    /// (i.e., [`get_index_splitting_count`] is not exactly 1).
+    /// (i.e., [`count_splitting_indices`] is not exactly 1).
     ///
     /// Implements `SplittingIsomorphism` + `ThetaToProduct` +
     /// `ThetaProductPointToMontgomery` ([§8.5.7]).
+    ///
+    /// # Divergences
+    ///
+    /// The spec's Algorithm 8.42 says to "find the unique index
+    /// such that `U_{i,j}(0) = 0`" without stating that exactly
+    /// one must vanish. In practice the splitting-index count is
+    /// a load-bearing invariant: a malformed input (e.g., an
+    /// upstream chain that was fed a kernel short on torsion)
+    /// produces a terminal theta null where either 0 or 10 of the
+    /// ten `U_{i,j}(0)` coordinates vanish, and the splitting
+    /// machinery then silently picks a wrong branch and emits
+    /// bad curves. Treating `count != 1` as an explicit error
+    /// is the difference between "signing key is wrong but
+    /// keygen looks successful" and "keygen retries with a fresh
+    /// random ideal." The SQIsign v2 spec review flags this as
+    /// a recommended spec clarification (§\textsc{SplittingIsomorphism}
+    /// must handle malformed input).
     ///
     /// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.7
     pub(crate) fn isogeny(
         &self,
         pts: &[JacobianPoint],
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
-        // 0. Verify the codomain admits a product splitting. Exactly one of the 10
-        //    `U_{i,j}(0)` coordinates must vanish; if none do, the chain produced a
-        //    non-split abelian surface and the downstream `theta_to_product` +
-        //    Montgomery recovery would yield a garbage curve.
-        //
-        // TODO: reinstate the strict check once the outer chain
-        // reliably splits (task #8). Currently some sui.e values in
-        // [243, 246] still produce zeros=0 ~50% of the time, and
-        // strict detection causes the 1000-iteration keygen retry
-        // loop to exceed its bound before succeeding. Keeping the
-        // ratio logic threaded through the Option return so callers
-        // can later choose to enforce it.
-        let _count = count_splitting_indices(&self.domain.null);
+        // Exactly one of the 10 `U_{i,j}(0)` coordinates must
+        // vanish for the chain's terminal theta null to
+        // correspond to a product of elliptic curves. Anything
+        // else is a malformed chain output (see Divergences
+        // above).
+        if count_splitting_indices(&self.domain.null) != 1 {
+            return None;
+        }
 
         // 1. SplittingIsomorphism: find the matrix M (Algorithm 8.42).
         let M = splitting_isomorphism(&self.domain.null);
@@ -1090,7 +1102,7 @@ fn chi(i: usize, j: usize) -> i8 {
 /// `U_{i,j}(0)` is zero (it identifies which product decomposition
 /// applies). Any other count — particularly 0 — signals that the
 /// codomain is not a product and the splitting machinery will produce
-/// garbage if applied.
+/// bad output if applied.
 pub(crate) fn count_splitting_indices(null: &ThetaNullPoint) -> u32 {
     let coords = [&null.a, &null.b, &null.c, &null.d];
     let mut count = 0u32;
