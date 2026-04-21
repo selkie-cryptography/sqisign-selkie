@@ -388,27 +388,56 @@
       padding: 12px 8px 4px;
     }
 
-    /* Status indicators */
-    .status {
-      display: inline-block;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      padding: 2px 8px;
-      border-radius: 3px;
-      white-space: nowrap;
-    }
-
-    .status--updating {
+    /* Status banner */
+    .status-banner {
+      padding: 8px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
       color: var(--yellow);
-      border: 1px solid rgba(210, 153, 34, 0.3);
+      background: rgba(210, 153, 34, 0.08);
+      border-bottom: 1px solid rgba(210, 153, 34, 0.2);
       animation: pulse 2s ease-in-out infinite;
+      display: none;
     }
 
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.5; }
+    }
+
+    /* Commit nav */
+    .commit-nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .commit-nav label {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+    }
+
+    .commit-nav select {
+      font-family: 'Inter', monospace;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg-raised);
+      color: var(--fg);
+      cursor: pointer;
+    }
+
+    .commit-nav .commit-time {
+      font-size: 12px;
+      color: var(--fg-dim);
     }
 
     .empty {
@@ -464,7 +493,17 @@
     </div>
   </header>
 
+  <div class="status-banner" id="status-banner"></div>
+
   <div class="container">
+    <div class="commit-nav">
+      <label for="commit-select">Commit</label>
+      <select id="commit-select" onchange="onCommitChange(this.value)">
+        <option value="">loading...</option>
+      </select>
+      <span class="commit-time" id="commit-time"></span>
+    </div>
+
     <div class="sections">
 
       <section class="section" id="coverage-section">
@@ -502,9 +541,11 @@
     const REPO = 'selkie-cryptography/sqisign-selkie';
     const POLL_INTERVAL = 15000;
 
-    // Track last-seen SHAs to detect new data.
-    let lastCovSha = null;
-    let lastBenchSha = null;
+    // State.
+    let covIndex = [];      // [{sha, percent, updated_at}, ...]
+    let benchIndex = [];    // [{sha, updated_at}, ...]
+    let selectedSha = null; // Currently viewed commit.
+    let covData = null;     // Current coverage data for drill-down.
 
     function esc(s) {
       const d = document.createElement('div');
@@ -536,9 +577,6 @@
       if (!r.ok) return null;
       return r.json();
     }
-
-    // Store coverage data globally for drill-down.
-    let covData = null;
 
     function renderCoverageData(data) {
       covData = data;
@@ -734,61 +772,141 @@
       return html;
     }
 
-    function metaLine(data, status) {
-      const parts = [];
-      if (data && data.sha) parts.push(commitLink(data.sha));
-      if (data && data.updated_at) parts.push(timeAgo(data.updated_at));
-      if (status && status.state === 'running') {
-        const label = data ? 'updating' : 'building';
-        parts.push(`<span class="status status--updating">${label}</span>`);
-      }
-      return parts.join(' &middot; ');
-    }
+    // --- Status banner ---
 
-    async function updateCoverage() {
-      const metaEl = document.getElementById('coverage-meta');
-      const contentEl = document.getElementById('coverage-content');
-
-      const [data, status] = await Promise.all([
-        fetchJson('/coverage/coverage.json'),
+    async function updateStatus() {
+      const banner = document.getElementById('status-banner');
+      const [covStatus, benchStatus] = await Promise.all([
         fetchJson('/coverage/status.json'),
-      ]);
-
-      metaEl.innerHTML = metaLine(data, status);
-
-      if (data) {
-        if (data.sha !== lastCovSha) {
-          contentEl.innerHTML = renderCoverageData(data);
-          lastCovSha = data.sha;
-        }
-      } else {
-        contentEl.innerHTML = '<p class="empty">No coverage data yet.</p>';
-      }
-    }
-
-    async function updateBenchmarks() {
-      const metaEl = document.getElementById('bench-meta');
-      const contentEl = document.getElementById('bench-content');
-
-      const [data, status] = await Promise.all([
-        fetchJson('/bench/bench.json'),
         fetchJson('/bench/status.json'),
       ]);
-
-      metaEl.innerHTML = metaLine(data, status);
-
-      if (data) {
-        if (data.sha !== lastBenchSha) {
-          contentEl.innerHTML = renderBenchmarkData(data);
-          lastBenchSha = data.sha;
-        }
+      const parts = [];
+      if (covStatus && covStatus.state === 'running') parts.push('coverage');
+      if (benchStatus && benchStatus.state === 'running') parts.push('benchmarks');
+      if (parts.length > 0) {
+        banner.textContent = `Building ${parts.join(' and ')}...`;
+        banner.style.display = 'block';
       } else {
-        contentEl.innerHTML = '<p class="empty">No benchmark data yet.</p>';
+        banner.style.display = 'none';
       }
     }
 
+    // --- Commit nav ---
+
+    function buildCommitList() {
+      // Merge coverage and bench indices into a unified commit list.
+      // A commit appears if it has coverage, benchmarks, or both.
+      const map = new Map();
+      for (const e of covIndex) {
+        map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: true, hasBench: false, percent: e.percent });
+      }
+      for (const e of benchIndex) {
+        const existing = map.get(e.sha);
+        if (existing) {
+          existing.hasBench = true;
+        } else {
+          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: true });
+        }
+      }
+      // Sort by updated_at descending.
+      return [...map.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    }
+
+    function renderCommitSelect(commits) {
+      const select = document.getElementById('commit-select');
+      select.innerHTML = '';
+      if (commits.length === 0) {
+        select.innerHTML = '<option value="">no data</option>';
+        return;
+      }
+      for (const c of commits) {
+        const opt = document.createElement('option');
+        opt.value = c.sha;
+        let label = c.sha.slice(0, 7);
+        if (c.percent != null) label += ` (${c.percent.toFixed(1)}%)`;
+        const tags = [];
+        if (c.hasCov) tags.push('cov');
+        if (c.hasBench) tags.push('bench');
+        label += ` [${tags.join('+')}]`;
+        opt.textContent = label;
+        select.appendChild(opt);
+      }
+      // Select current or default to first.
+      if (selectedSha && commits.some(c => c.sha === selectedSha)) {
+        select.value = selectedSha;
+      } else {
+        select.value = commits[0].sha;
+        selectedSha = commits[0].sha;
+      }
+      updateCommitTime(commits);
+    }
+
+    function updateCommitTime(commits) {
+      const timeEl = document.getElementById('commit-time');
+      const c = commits.find(c => c.sha === selectedSha);
+      if (c && c.updated_at) {
+        timeEl.innerHTML = timeAgo(c.updated_at) + ' &middot; ' + commitLink(c.sha);
+      } else {
+        timeEl.textContent = '';
+      }
+    }
+
+    async function onCommitChange(sha) {
+      selectedSha = sha;
+      const commits = buildCommitList();
+      updateCommitTime(commits);
+      await loadCommitData(sha);
+    }
+
+    async function loadCommitData(sha) {
+      const covEl = document.getElementById('coverage-content');
+      const covMeta = document.getElementById('coverage-meta');
+      const benchEl = document.getElementById('bench-content');
+      const benchMeta = document.getElementById('bench-meta');
+
+      // Try per-commit files, fall back to latest.
+      const [cov, bench] = await Promise.all([
+        fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
+        fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
+      ]);
+
+      if (cov) {
+        covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines`;
+        covEl.innerHTML = renderCoverageData(cov);
+      } else {
+        covMeta.textContent = '';
+        covEl.innerHTML = '<p class="empty">No coverage data for this commit.</p>';
+      }
+
+      if (bench) {
+        benchMeta.textContent = '';
+        benchEl.innerHTML = renderBenchmarkData(bench);
+      } else {
+        benchMeta.textContent = '';
+        benchEl.innerHTML = '<p class="empty">No benchmark data for this commit.</p>';
+      }
+    }
+
+    // --- Polling ---
+
     async function poll() {
-      await Promise.all([updateCoverage(), updateBenchmarks()]);
+      // Fetch indices and status.
+      const [ci, bi] = await Promise.all([
+        fetchJson('/coverage/index.json'),
+        fetchJson('/bench/index.json'),
+      ]);
+      covIndex = ci || [];
+      benchIndex = bi || [];
+
+      const commits = buildCommitList();
+      renderCommitSelect(commits);
+
+      await updateStatus();
+
+      // Load data for the selected commit (or latest).
+      if (selectedSha) {
+        await loadCommitData(selectedSha);
+      }
     }
 
     // Initial render, then poll.
