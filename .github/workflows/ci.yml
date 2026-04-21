@@ -237,17 +237,20 @@ jobs:
           name: mutants-incremental.out
           path: mutants.out
 
-      - name: Generate mutants JSON for CI site
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Generate and merge mutants JSON for CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
         run: |
           bash .github/scripts/mutants-to-json.sh \
             mutants.out/outcomes.json "${{ github.sha }}" \
+            > mutants-incremental.json
+          bash .github/scripts/merge-mutants.sh \
+            mutants-incremental.json "${{ github.sha }}" \
             > mutants.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
       - name: Upload mutants to CI site
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: bash .github/scripts/ci-upload.sh mutants mutants.json "${{ github.sha }}"
