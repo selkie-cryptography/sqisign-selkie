@@ -251,17 +251,20 @@
       max-height: 500px;
       overflow: auto;
       border-bottom: 1px solid var(--border);
+      max-width: calc(100vw - 40px);
     }
 
     .line-grid table {
       border-collapse: collapse;
+      width: max-content;
       min-width: 100%;
     }
 
     .line-grid td {
-      padding: 0 8px;
       white-space: pre;
       vertical-align: top;
+      text-align: left;
+      padding: 0 8px;
     }
 
     .line-grid .ln {
@@ -270,7 +273,7 @@
       user-select: none;
       white-space: nowrap;
       border-right: 1px solid var(--border);
-      padding-right: 12px;
+      padding: 0 12px 0 8px;
     }
 
     .line-grid .ct {
@@ -279,11 +282,6 @@
       font-variant-numeric: tabular-nums;
       border-right: 1px solid var(--border);
       padding: 0 12px;
-    }
-
-    .line-grid .src {
-      text-align: left;
-      width: 100%;
     }
 
     .line-grid .src code {
