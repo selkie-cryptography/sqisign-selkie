@@ -696,12 +696,54 @@ impl LeftIdeal<4> {
         let mut kq_second = q_step6;
         let mut kpmq_second = pmq_step6;
 
-        // Double kernel points by `f − sui.e` to reduce from order
-        // 2^f to 2^sui.e. The chain below passes `chain_e = sui.e − 2`
-        // to [`Kernel::isogeny_extra_torsion`], which expects
-        // generators of order 2^(chain_e + 2) = 2^sui.e — matching
-        // what we produce here for every valid `sui.e ≤ f`.
-        let scale = f.value() - sui.e.value();
+        // # Divergences
+        //
+        // The spec (Algorithm 3.13, between lines 8 and 9) says
+        // to double the kernel "to reduce to 2^sui.e-torsion"
+        // before passing it to Algorithm 8.47. The natural
+        // reading -- double by `f - sui.e` -- is wrong.
+        //
+        // Algorithm 8.47 as described in the spec, and as
+        // implemented by our [`Kernel::isogeny`], runs a chain
+        // of `sui.e` 8-torsion isogenies. The chain's internal
+        // penultimate and ultimate steps fold the kernel's
+        // 4-torsion and 2-torsion residues into the last two
+        // `(2,2)`-isogenies via the `hadamard_bool` mechanism
+        // of Algorithm 8.41. This requires the kernel to enter
+        // the chain with order `2^(sui.e + 2)` -- two torsion
+        // bits above the kernel subgroup.
+        //
+        // The C reference implements two chain variants
+        // (`theta_isogenies.c:1088`) keyed on `extra_torsion`.
+        // With `extra_torsion = true`, the chain matches the
+        // spec's uniform 8-torsion formulation and needs a
+        // `2^(sui.e + 2)`-torsion kernel. With
+        // `extra_torsion = false`, the chain runs 2 fewer
+        // 8-torsion steps and adds dedicated 4-torsion and
+        // 2-torsion steps at the tail, consuming only a
+        // `2^sui.e`-torsion kernel. `dim2id2iso.c:1128` calls
+        // the outer chain with `extra_torsion = false`, while
+        // `dim2id2iso.c:181` (Algorithm 3.15) uses
+        // `extra_torsion = true`.
+        //
+        // Our chain only supports the `extra_torsion = true`
+        // variant, so we pad the kernel by leaving 2 extra
+        // torsion bits instead of doubling down to
+        // `2^sui.e` exactly. The `try_find_uv` filter
+        // `v_2(gcd(u, v)) >= 2` ensures `sui.e <= f - 2`, so
+        // `scale = f - sui.e - 2 >= 0` is always well-defined.
+        //
+        // Without this compensation the chain runs to
+        // completion but produces a degenerate theta null: the
+        // penultimate/ultimate steps double past identity, and
+        // the splitting routine (`count_splitting_indices`)
+        // sees either 0 or 10 vanishing `U_{i,j}(0)`
+        // coordinates rather than the unique 1 that identifies
+        // a genuine elliptic product. Downstream consumers
+        // accept the malformed codomain silently, producing
+        // wrong signing keys that fail only against KAT
+        // vectors.
+        let scale = f.value() - sui.e.value() - 2;
         #[cfg(test)]
         eprintln!(
             "[to_isogeny] outer chain: sui.e={}, scale={scale}",
@@ -750,7 +792,7 @@ impl LeftIdeal<4> {
             let point_hex = |p: &ProjectiveXOnlyPoint| -> (String, String) {
                 fp2_hex(p.to_affine_x().as_fp2())
             };
-            let e = sui.e.value();
+            let e = sui.e.value() + 2;
 
             let (p1re, p1im) = point_hex(&kp_first);
             let (p2re, p2im) = point_hex(&kp_second);

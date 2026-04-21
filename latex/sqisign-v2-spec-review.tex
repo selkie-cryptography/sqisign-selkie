@@ -832,40 +832,114 @@ Write line~14 as ``$e \leftarrow v_2(\gcd(u, v))$''.
 \label{sec:iso22chain-variants}
 
 \finding{Affects \algo{8.47} (\textsc{Isogeny22ChainWithTorsion})
-  and its callers, primarily \algo{3.13} line~9.}{\low}
+  and its callers, primarily \algo{3.13} line~9.  Observed
+  $99\%$-wrong-codomain failure rate in keygen before the
+  implementation accounted for the kernel-torsion convention.}{\high}
 
 The spec describes a single uniform chain of $e$ 8-torsion
-isogenies with a kernel of order~$2^{e+2}$.  The C reference
-implementation in \texttt{theta\_isogenies.c} splits this into two
-variants, keyed on a boolean \texttt{extra\_torsion}:
+isogenies, with the phrasing ``a chain of $e$ $(2,2)$-isogenies of
+2-power degree.''  It does not make explicit either
+\begin{enumerate}
+  \item what kernel torsion the chain consumes, nor
+  \item that \algo{3.13} and \algo{3.15} call the chain with
+    different conventions.
+\end{enumerate}
+The C reference implementation in
+\texttt{theta\_isogenies.c} splits \algo{8.47} into two variants
+keyed on a boolean \texttt{extra\_torsion}:
 \begin{itemize}
-  \item \texttt{extra\_torsion = true}: as in the spec, an
-    $e$-length chain of 8-torsion isogenies.
+  \item \texttt{extra\_torsion = true}: an $e$-length chain of
+    8-torsion isogenies.  Kernel must have order~$2^{e+2}$.  The
+    last two chain steps use the \texttt{hadamard\_bool}
+    convention from \algo{8.41} to fold the kernel's 4-torsion
+    and 2-torsion residues into the penultimate and ultimate
+    $(2,2)$-isogenies.
   \item \texttt{extra\_torsion = false}: an $(e-2)$-length chain
-    of 8-torsion isogenies followed by a 4-isogeny and a
-    2-isogeny step.  This consumes a kernel of order~$2^e$ rather
-    than~$2^{e+2}$, and the final two steps use square roots.
+    of 8-torsion isogenies, followed by a dedicated 4-isogeny
+    step (\texttt{theta\_isogeny\_compute\_4}) and a dedicated
+    2-isogeny step (\texttt{theta\_isogeny\_compute\_2}).
+    Consumes a kernel of order~$2^e$.  The final two steps
+    compute square roots rather than relying on extra torsion.
 \end{itemize}
-\algo{3.13} line~9 calls the outer chain with
-\texttt{extra\_torsion = false} (\texttt{dim2id2iso.c:1128})
-whereas the inner \algo{3.15} calls it with
+\algo{3.13} line~9 (the outer chain) calls the implementation
+with \texttt{extra\_torsion = false}
+(\texttt{dim2id2iso.c:1128}); the inner \algo{3.15} calls it with
 \texttt{extra\_torsion = true} (\texttt{dim2id2iso.c:181}).  The
-two variants produce the same $(2^e, 2^e)$-isogeny but require
-different kernel torsions and different implementation paths.
+two variants produce the same abstract~$(2^e, 2^e)$-isogeny but
+require different kernel torsions.
 
-\paragraph{Impact.}
-Implementations that only supply the $e$-length 8-torsion variant
-must pad the kernel to order~$2^{e+2}$, which is impossible when
-$e$ is close to the target curve's available 2-power torsion~$f$.
-In particular, for $e \in \{f-1, f\}$ the padded kernel does not
-exist.  The C reference handles this by falling back to the
-shorter chain with 4-iso/2-iso tails, but the spec gives no
-guidance.
+\paragraph{Concrete impact (Selkie experience).}
+We implemented the 8-torsion chain corresponding to
+\texttt{extra\_torsion = true} and used it for every call.
+\algo{3.13} line~9 passes a kernel whose natural order is
+$2^e$ (from doubling the $2^f$-torsion image basis by $f-e$),
+so our chain received a kernel that was two torsion bits short of
+what the \texttt{extra\_torsion = true} path expects.  The chain
+ran to completion in every instance, the splitting code
+(\algo{8.41}) silently selected one of the ten $U_{i,j}(0)$
+indices, and keygen returned a curve that is not the public
+key~$E_\mathrm{pk}$.  $100\%$ of outer chains produced
+terminal splits with either~$0$ or~$10$ vanishing $U_{i,j}(0)$
+coordinates rather than the unique~$1$ that identifies a genuine
+elliptic product.  Downstream code paths did not detect the
+failure: \algo{4.3}, \algo{4.6}, and \algo{4.9} all accept
+whichever curve the chain produces.
+
+We resolved this by over-padding the kernel: instead of
+doubling~$f-e$ times, we double~$f-e-2$ times, so the kernel
+enters the chain with order~$2^{e+2}$ and the
+\texttt{extra\_torsion = true} path works unchanged.  This
+requires $e \le f-2$.  The side condition reduces to
+$v_2(\gcd(u,v)) \ge 2$ in \textsc{find\_uv\_from\_lists}, which
+we filter for in \algo{3.16}.
+
+\paragraph{Why this is hard to catch in testing.}
+\begin{itemize}
+  \item The chain does not fault when given a short kernel; it
+    returns a malformed abelian surface.
+  \item The splitting routine \algo{8.42}
+    (\textsc{SplittingIsomorphism}) picks a codomain side by
+    locating a zero among the ten~$U_{i,j}(0)$ coordinates and
+    does not check that exactly one vanishes.  When all ten
+    vanish (the fully degenerate case), any of the ten branches
+    is ``valid''; the spec doesn't say which to pick.  When none
+    vanish, the function should error but the text only says
+    ``find the unique index such that~$U_{i,j}(0) = 0$.''
+  \item Downstream consumers of the split codomain (basis
+    computation in \algo{2.3}, Tate pairing in \algo{2.5},
+    kernel-to-ideal conversion in \algo{3.17}) accept
+    non-product curves without visible failure.  They compute
+    \emph{something}, but it's not the object the protocol
+    calls for.
+  \item Only byte-for-byte comparison with KAT vectors reveals
+    the divergence; unit tests on synthetic kernels with small
+    $e$ do not exhibit the bug because $f - e \gg 2$ leaves
+    enough spare torsion implicitly.
+\end{itemize}
 
 \paragraph{Recommendation.}
-Either describe both variants in \algo{8.47} with a note on when
-each is required, or specify the 4-iso/2-iso tail as part of the
-algorithm so that implementations can support the full range of
-$e \le f$ without ad-hoc workarounds.
+We suggest three spec-level changes, in decreasing order of
+priority:
+\begin{enumerate}
+  \item \algo{8.47} should state the kernel-torsion requirement
+    explicitly.  ``A chain of~$e$ $(2,2)$-isogenies consumes a
+    kernel of order~$2^{e+2}$'' (current implicit convention) or
+    ``of order~$2^e$'' (shorter variant)
+    unambiguously pins down the caller's contract.
+  \item \algo{8.41} (\textsc{SplittingIsomorphism}) or
+    \algo{8.42} should add a precondition:
+    \emph{exactly one} $U_{i,j}(0)$ must vanish at the chain's
+    terminal theta null.  An implementer who checks this
+    invariant gets a clear failure signal instead of silent
+    corruption.
+  \item \algo{3.13} line~9 should state explicitly which chain
+    variant it uses, so that an implementer who supplies only
+    one variant knows the coupling fails and either adapts
+    (pad kernel up, pad chain down) or implements the
+    missing variant.
+\end{enumerate}
+Absent these changes, a faithful implementation that reads the
+spec straight through will silently produce invalid signing keys
+that fail only when compared against known-answer test vectors.
 
 \end{document}
