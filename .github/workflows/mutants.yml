@@ -36,7 +36,7 @@ jobs:
       - name: Run cargo-mutants (shard ${{ matrix.shard }}/8)
         run: cargo mutants --shard ${{ matrix.shard }}/8 -vV -- --lib
       - name: Archive mutants.out
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutants-shard-${{ matrix.shard }}
