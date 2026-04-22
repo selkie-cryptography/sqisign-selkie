@@ -209,12 +209,12 @@
       font-size: 13px;
     }
 
-    .cov-table .expandable {
+    .expandable {
       cursor: pointer;
       user-select: none;
     }
 
-    .cov-table .expandable:hover {
+    .expandable:hover {
       background: var(--bar-bg);
     }
 
@@ -678,7 +678,13 @@
 
       <section class="section" id="mutants-section">
         <div class="section__header">
-          <h2 class="section__title">Mutation Testing</h2>
+          <h2 class="section__title">Mutation Testing<span class="help-icon">?<span class="tooltip"><dl>
+            <dt>Kill rate</dt><dd>Percentage of mutants detected by the test suite. Higher is better.</dd>
+            <dt>Caught</dt><dd>Mutants that caused a test failure.</dd>
+            <dt>Missed (survivors)</dt><dd>Mutants that passed all tests — potential gaps in test coverage.</dd>
+            <dt>Timeout</dt><dd>Mutants where tests took too long. Treated as caught.</dd>
+            <dt>Unviable</dt><dd>Mutations that failed to compile. Not counted in the kill rate.</dd>
+            </dl></span></span></h2>
           <span class="meta" id="mutants-meta"></span>
         </div>
         <div id="mutants-content">
@@ -918,13 +924,7 @@
         : 'var(--fg-dim)';
 
       let html = '<div class="mutants-summary">';
-      html += `<div class="mutants-stat"><span class="value" style="color:${killColor}">${killPct}%</span><span class="label">kill rate<span class="help-icon">?<span class="tooltip"><dl>
-        <dt>Kill rate</dt><dd>Percentage of mutants detected by the test suite. Higher is better.</dd>
-        <dt>Caught</dt><dd>Mutants that caused a test failure — the test suite detected the change.</dd>
-        <dt>Missed (survivors)</dt><dd>Mutants that passed all tests — potential gaps in test coverage.</dd>
-        <dt>Timeout</dt><dd>Mutants where tests took too long. Treated as caught.</dd>
-        <dt>Unviable</dt><dd>Mutations that failed to compile. Not counted in the kill rate.</dd>
-        </dl></span></span></span></div>`;
+      html += `<div class="mutants-stat"><span class="value" style="color:${killColor}">${killPct}%</span><span class="label">kill rate</span></div>`;
       html += `<div class="mutants-stat"><span class="value" style="color:var(--green)">${esc(String(s.caught || 0))}</span><span class="label">caught</span></div>`;
       html += `<div class="mutants-stat"><span class="value" style="color:var(--red)">${esc(String(s.missed || 0))}</span><span class="label">missed</span></div>`;
       if (s.timeout) html += `<div class="mutants-stat"><span class="value" style="color:var(--yellow)">${esc(String(s.timeout))}</span><span class="label">timeout</span></div>`;
@@ -950,7 +950,7 @@
 
         html += `<table class="mutants-table">
           <thead><tr>
-            <th>Function<span class="help-icon">?<span class="tooltip">Mutations that passed all tests, grouped by function. Each function lists what was changed. Click the location to view the source at that commit.</span></span></th>
+            <th>Function</th>
             <th>Survivors</th>
             <th>Location</th>
           </tr></thead><tbody>`;
