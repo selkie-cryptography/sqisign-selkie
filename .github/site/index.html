@@ -1046,7 +1046,10 @@
         const f = covData.modules[mi].files[fi];
         const lines = f.lines || [];
         const sha = covData.sha;
-        const ghBase = `https://github.com/${REPO}/blob/${sha}/src/${esc(f.name)}`;
+        const ghBase = `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(f.name)}`;
+
+        // Find max hit count in this file for relative heat scaling.
+        const maxCt = Math.max(1, ...lines.map(e => e[1]));
 
         // Find max hit count in this file for relative heat scaling.
         const maxCt = Math.max(1, ...lines.map(e => e[1]));
