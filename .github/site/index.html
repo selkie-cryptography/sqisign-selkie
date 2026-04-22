@@ -634,6 +634,71 @@
       margin: 0 0 2px 0;
     }
 
+    /* Analysis section */
+    .analysis-grid {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .analysis-grid .cov-insight {
+      flex: 1;
+      min-width: 250px;
+    }
+
+    .health-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .health-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .health-table th:nth-child(n+2) { text-align: right; }
+
+    .health-table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+
+    .health-table td:nth-child(n+2) {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .health-table .module-name {
+      font-family: 'Inter', monospace;
+      font-size: 13px;
+    }
+
+    .health-bar {
+      display: inline-block;
+      width: 40px;
+      height: 8px;
+      border-radius: 4px;
+      background: var(--bar-bg);
+      overflow: hidden;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    .health-bar span {
+      display: block;
+      height: 100%;
+      border-radius: 4px;
+    }
+
     /* Status banner */
     .status-banner {
       padding: 8px 20px;
@@ -795,6 +860,20 @@
         <div id="mutants-content">
           <p class="empty">No mutation testing data yet.</p>
         </div>
+      </section>
+
+      <section class="section" id="analysis-section" style="display:none">
+        <div class="section__header">
+          <h2 class="section__title">Analysis<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Cross-references coverage, mutation testing, and benchmark data to surface actionable insights.</p>
+            <dl>
+            <dt>Untested hot paths</dt><dd>Functions with high hit counts but surviving mutants — code that runs a lot but isn't verified.</dd>
+            <dt>CT + mutant overlap</dt><dd>Secret-data paths (TODO(ct)) with surviving mutants — a side-channel fix here would be untested.</dd>
+            <dt>Benchmark blind spots</dt><dd>Hot functions without benchmarks, or benchmarked functions that aren't hot.</dd>
+            <dt>Module health</dt><dd>Combined score from coverage, kill rate, and hot path density.</dd>
+            </dl></span></span></h2>
+        </div>
+        <div id="analysis-content"></div>
       </section>
 
     </div>
@@ -1314,6 +1393,190 @@
       return html;
     }
 
+    // --- Cross-analysis ---
+
+    function renderAnalysis(cov, mut, bench) {
+      const section = document.getElementById('analysis-section');
+      const el = document.getElementById('analysis-content');
+
+      // Need at least coverage + one other source.
+      if (!cov || (!mut && !bench)) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+
+      const sha = cov.sha;
+      const modules = cov.modules || [];
+      const allFiles = modules.flatMap(m => (m.files || []).map(f => ({...f, module: m.name})));
+      const survivors = mut ? (mut.survivors || []) : [];
+      const benchNames = bench ? (bench.groups || []).flatMap(g => g.benchmarks.map(b => g.name + '::' + b.name)) : [];
+
+      let html = '<div class="analysis-grid">';
+
+      // Untested hot paths: functions with high hit counts AND surviving mutants.
+      if (mut && survivors.length > 0) {
+        // Build map of survivor counts per file.
+        const survivorsByFile = new Map();
+        for (const s of survivors) {
+          const key = s.file;
+          if (!survivorsByFile.has(key)) survivorsByFile.set(key, []);
+          survivorsByFile.get(key).push(s);
+        }
+
+        const hotUntested = [];
+        for (const f of allFiles) {
+          const fileSurvivors = survivorsByFile.get('src/' + f.name) || survivorsByFile.get(f.name) || [];
+          if (fileSurvivors.length === 0) continue;
+          const counts = (f.lines || []).filter(l => l[1] > 0).map(l => l[1]);
+          const maxHit = Math.max(0, ...counts);
+          if (maxHit > 100) {
+            hotUntested.push({ file: f.name, maxHit, survivors: fileSurvivors.length });
+          }
+        }
+        hotUntested.sort((a, b) => b.maxHit * b.survivors - a.maxHit * a.survivors);
+
+        if (hotUntested.length > 0) {
+          html += '<div class="cov-insight"><h4>Untested hot paths</h4><ul class="cov-insight-list">';
+          for (const h of hotUntested.slice(0, 5)) {
+            const fname = h.file.replace(/^.*\//, '');
+            const link = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(h.file)}` : '#';
+            html += `<li>
+              <a href="${link}">${esc(fname)}</a>
+              <span><span class="tag tag-hot">${esc(String(h.maxHit))}\u00d7</span> <span class="tag tag-ct">${h.survivors} surv</span></span>
+            </li>`;
+          }
+          html += '</ul></div>';
+        }
+      }
+
+      // CT + mutant overlap: TODO(ct) functions with surviving mutants.
+      if (mut && survivors.length > 0) {
+        const survivorFns = new Set(survivors.map(s => s.function).filter(Boolean));
+        const ctMutantOverlap = [];
+        for (const f of allFiles) {
+          for (const l of (f.lines || [])) {
+            if (l.length > 2 && /TODO\(ct\)/.test(l[2])) {
+              // Check if any survivor is in this file.
+              const fileSurvivors = survivors.filter(s =>
+                (s.file === 'src/' + f.name || s.file === f.name));
+              if (fileSurvivors.length > 0) {
+                ctMutantOverlap.push({
+                  file: f.name,
+                  line: l[0],
+                  survivors: fileSurvivors.length,
+                  src: l[2].trim()
+                });
+                break; // one entry per file
+              }
+            }
+          }
+        }
+
+        if (ctMutantOverlap.length > 0) {
+          html += '<div class="cov-insight"><h4>CT + mutant overlap</h4><ul class="cov-insight-list">';
+          for (const c of ctMutantOverlap.slice(0, 5)) {
+            const fname = c.file.replace(/^.*\//, '');
+            const link = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(c.file)}#L${c.line}` : '#';
+            html += `<li>
+              <a href="${link}">${esc(fname)}:${c.line}</a>
+              <span class="tag tag-ct">${c.survivors} untested mutants</span>
+            </li>`;
+          }
+          html += '</ul></div>';
+        }
+      }
+
+      // Benchmark blind spots.
+      if (bench && benchNames.length > 0) {
+        // Hot files not covered by any benchmark name.
+        const hotFiles = allFiles
+          .map(f => {
+            const counts = (f.lines || []).filter(l => l[1] > 0).map(l => l[1]);
+            return { name: f.name, module: f.module, maxHit: Math.max(0, ...counts) };
+          })
+          .filter(f => f.maxHit > 1000)
+          .sort((a, b) => b.maxHit - a.maxHit);
+
+        // Check if any benchmark name contains the module name.
+        const benchModules = new Set(benchNames.map(n => n.split('::')[0]));
+        const unbenchedHot = hotFiles.filter(f => !benchModules.has(f.module));
+
+        if (unbenchedHot.length > 0) {
+          html += '<div class="cov-insight"><h4>Benchmark blind spots</h4><ul class="cov-insight-list">';
+          for (const f of unbenchedHot.slice(0, 5)) {
+            const fname = f.name.replace(/^.*\//, '');
+            html += `<li>
+              <span>${esc(fname)}</span>
+              <span><span class="tag tag-hot">${esc(String(f.maxHit))}\u00d7</span> <span class="tag tag-cold">no bench</span></span>
+            </li>`;
+          }
+          html += '</ul></div>';
+        }
+      }
+
+      html += '</div>';
+
+      // Module health score table.
+      const modSurvivors = new Map();
+      for (const s of survivors) {
+        const mod = s.file.replace(/^src\//, '').split('/')[0];
+        modSurvivors.set(mod, (modSurvivors.get(mod) || 0) + 1);
+      }
+
+      const healthRows = modules.map(m => {
+        const covPct = m.percent || 0;
+        const missed = modSurvivors.get(m.name) || 0;
+        const tested = mut ? ((mut.summary.caught || 0) + (mut.summary.missed || 0) + (mut.summary.timeout || 0)) : 0;
+        // Approximate module kill rate from survivors.
+        // We know missed count; estimate total mutants proportionally.
+        const totalMutants = tested > 0 ? Math.round(tested * (m.total / (cov.total.total || 1))) : 0;
+        const modKillPct = totalMutants > 0 ? Math.max(0, ((totalMutants - missed) / totalMutants) * 100) : null;
+
+        // Hot path density: fraction of lines hit > 1000x.
+        const fileLines = (m.files || []).flatMap(f => (f.lines || []).filter(l => l[1] > 0));
+        const hotLines = fileLines.filter(l => l[1] > 1000).length;
+        const hotDensity = fileLines.length > 0 ? (hotLines / fileLines.length * 100) : 0;
+
+        // Health score: weighted combination (higher = needs more attention).
+        // Low coverage, low kill rate, high hot density = high priority.
+        const covScore = Math.max(0, 100 - covPct);
+        const killScore = modKillPct !== null ? Math.max(0, 100 - modKillPct) : 0;
+        const hotScore = Math.min(100, hotDensity * 5);
+        const health = (covScore * 0.3 + killScore * 0.5 + hotScore * 0.2);
+
+        return { name: m.name, covPct, modKillPct, missed, hotDensity, health };
+      }).sort((a, b) => b.health - a.health);
+
+      if (healthRows.length > 0) {
+        html += `<table class="health-table">
+          <thead><tr>
+            <th>Module</th>
+            <th>Coverage</th>
+            <th>Survivors</th>
+            <th>Hot density</th>
+            <th>Priority</th>
+          </tr></thead><tbody>`;
+
+        const maxHealth = Math.max(1, ...healthRows.map(r => r.health));
+        for (const r of healthRows) {
+          const covCol = covColor(r.covPct);
+          const prio = (r.health / maxHealth * 100).toFixed(0);
+          const prioColor = r.health / maxHealth >= 0.7 ? 'var(--red)' : r.health / maxHealth >= 0.4 ? 'var(--yellow)' : 'var(--green)';
+          html += `<tr>
+            <td class="module-name">${esc(r.name)}</td>
+            <td style="color:${covCol}">${r.covPct.toFixed(0)}%</td>
+            <td style="color:var(--red)">${r.missed > 0 ? r.missed : '\u2014'}</td>
+            <td>${r.hotDensity.toFixed(1)}%</td>
+            <td><span class="health-bar"><span style="width:${prio}%;background:${prioColor}"></span></span>${r.health.toFixed(0)}</td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+      }
+
+      el.innerHTML = html;
+    }
+
     // --- Status banner ---
 
     async function updateStatus() {
@@ -1466,6 +1729,9 @@
         mutEl.innerHTML = '<p class="empty">No mutation testing data for this commit.</p>';
         renderedMut = null;
       }
+
+      // Cross-analysis — needs at least coverage + one other source.
+      renderAnalysis(cov, mut, bench);
     }
 
     // --- Polling ---
