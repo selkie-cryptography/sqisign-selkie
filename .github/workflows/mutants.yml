@@ -1,11 +1,13 @@
-name: Mutation testing (full)
+name: Mutation testing
 
-# Full mutation run, sharded across 16 workers.
-# Runs weekly and on-demand.  PRs get incremental coverage in ci.yml.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
-    - cron: "0 6 * * 1"   # every Monday at 06:00 UTC
-  workflow_dispatch:       # manual trigger
+    - cron: "0 6 * * 1"   # full run every Monday at 06:00 UTC
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,9 +16,73 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  mutants:
-    name: Shard ${{ matrix.shard }}
+  # --- Incremental: runs on every push/PR, tests only changed code ---
+  incremental:
+    name: Incremental
     runs-on: ubuntu-24.04
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Generate diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff "origin/${BASE_REF}".. > git.diff
+          else
+            git diff "${BEFORE_SHA}..HEAD" > git.diff
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: cargo-mutants,cargo-nextest
+
+      - name: Run cargo-mutants on changed code
+        run: |
+          cargo mutants --no-shuffle -vV \
+            --test-tool nextest \
+            --timeout 180 \
+            --in-place \
+            --in-diff git.diff -- --lib
+
+      - name: Archive mutants.out
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutants-incremental.out
+          path: mutants.out
+
+      - name: Generate and merge mutants JSON for CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
+        run: |
+          bash .github/scripts/mutants-to-json.sh \
+            mutants.out/outcomes.json "${{ github.sha }}" \
+            > mutants-incremental.json
+          bash .github/scripts/merge-mutants.sh \
+            mutants-incremental.json "${{ github.sha }}" \
+            > mutants.json
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
+      - name: Upload mutants to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: bash .github/scripts/ci-upload.sh mutants mutants.json "${{ github.sha }}"
+
+  # --- Full: sharded across 16 workers, weekly + manual ---
+  full:
+    name: Full shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -48,10 +114,10 @@ jobs:
           name: mutants-shard-${{ matrix.shard }}
           path: mutants.out
 
-  upload:
-    name: Merge and upload results
-    needs: mutants
-    if: always()
+  full-upload:
+    name: Merge and upload full results
+    needs: full
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -67,8 +133,6 @@ jobs:
 
       - name: Merge outcomes
         run: |
-          # Merge all available shard outcomes (some may be missing
-          # if runners were preempted).
           FOUND=$(find shards -name outcomes.json 2>/dev/null)
           if [ -z "$FOUND" ]; then
             echo "No shard outcomes found, skipping upload."
