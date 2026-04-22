@@ -296,10 +296,7 @@ impl ExtremalOrder<8> {
                 // The extremal order at width 8 wraps the same lattice;
                 // we narrow it to width 4 for the decompose call.
                 // Find the matching narrow order by q value.
-                let Some(narrow_order) = EXTREMAL_ORDERS
-                    .iter()
-                    .find(|o| o.q() == self.q())
-                else {
+                let Some(narrow_order) = EXTREMAL_ORDERS.iter().find(|o| o.q() == self.q()) else {
                     continue;
                 };
                 let order_lattice: &Lattice<4> = narrow_order.order();
@@ -597,48 +594,109 @@ fn try_find_uv(
         return None;
     }
 
-    // u = 2^f · d₁⁻¹ mod d₂.
+    // Enumerate every positive-integer solution `(u, v)` to
+    // `u·d₁ + v·d₂ = 2^f` along the line
+    // `(u, v) = (u_0 + k·d₂, v_0 − k·d₁)` for `k = 0, 1, 2, …` until
+    // `v ≤ 0`. The initial solution has `u_0 = 2^f · d₁⁻¹ mod d₂`,
+    // so `u_0 ∈ [0, d₂)` and `v_0 = (2^f − u_0·d₁)/d₂`. For each
+    // valid solution, factor out the 2-adic part of `gcd(u, v)` to
+    // obtain `(u', v', e)` with `u'·d₁ + v'·d₂ = 2^e`.
+    //
+    // Prior versions checked only the `k = 0` pair and returned
+    // `None` whenever the resulting `e` constraint failed.
+    // Matching the C reference's `find_uv_from_lists`
+    // (`dim2id2iso.c:382-460`), which walks the whole line with a
+    // `v += d₁` increment, improves acceptance by roughly an order
+    // of magnitude for short-vector pairs with `d₁·d₂ ≪ 2^f`.
     let d1_inv = d1_w.invert_mod(&d2_w)?;
-    let u = two_f.ct_mul(&d1_inv).ct_mod(&d2_w);
+    let u0 = two_f.ct_mul(&d1_inv).ct_mod(&d2_w);
+    let mut u = u0;
+    let mut v = {
+        let ud1 = u.ct_mul(&d1_w);
+        if ud1 >= *two_f {
+            return None;
+        }
+        let (v, rem) = two_f.ct_sub(&ud1).div_rem(&d2_w);
+        if !bool::from(rem.is_zero()) || bool::from(v.is_negative()) {
+            return None;
+        }
+        v
+    };
 
-    // v = (2^f − u · d₁) / d₂.
-    let ud1 = u.ct_mul(&d1_w);
-    if ud1 >= *two_f {
-        return None;
+    loop {
+        if !bool::from(u.is_zero()) && !bool::from(v.is_zero()) {
+            // Factor out the 2-adic part of `gcd(u, v)`, matching the
+            // C reference (`dim2id2iso.c:833`). The spec writes
+            // `v_2(u)` in Algorithm 3.16 line 14, but that is only
+            // equivalent to `v_2(gcd(u, v))` when `v_2(u) ≤ v_2(v)`.
+            let e_val = u.gcd(&v).trailing_zeros();
+            // Require `sui.e = f − e_val ≤ f − 2` — i.e., `e_val ≥ 2`.
+            //
+            // [`LeftIdeal::to_isogeny`]'s outer (2,2)-chain feeds
+            // [`surfaces::Kernel::isogeny`] a kernel of order
+            // `2^(sui.e + 2)` — two torsion bits above the
+            // `2^sui.e`-subgroup that is the chain's real kernel.
+            // Those 2 bits are mandatory (the chain's penultimate
+            // and ultimate steps consume 4- and 2-torsion residue
+            // via the `hadamard_bool` mechanism of Algorithm 8.41)
+            // and come from the `2^f`-torsion image basis
+            // `(phi_u(P_0), theta·phi_v(P_0))` via `scale = f −
+            // sui.e − 2` doublings. The padding only works when
+            // `sui.e ≤ f − 2`.
+            //
+            // The C reference's alternate `extra_torsion = false`
+            // chain path (`theta_isogenies.c:1088`) accepts a
+            // kernel of order exactly `2^sui.e` by running a
+            // shorter 8-torsion chain followed by dedicated
+            // 4-isogeny and 2-isogeny tail steps, so it handles
+            // `sui.e ∈ {f-1, f}` directly. We don't implement
+            // that variant, so we reject those cases here.
+            //
+            // Pairs with `e_val < 2` get skipped; the outer v-loop
+            // enumerates more `(u, v)` solutions for the same
+            // `(β₁, β₂)`, so the acceptance cost is small (≈ 20%
+            // of pairs on NIST-I in practice).
+            if e_val < 2 {
+                u = u.ct_add(&d2_w);
+                if v <= d1_w {
+                    return None;
+                }
+                v = v.ct_sub(&d1_w);
+                continue;
+            }
+            if let Ok(e) = TorsionExponent::try_from(f.value() - e_val) {
+                if let (Some(u_narrow), Some(v_narrow)) =
+                    (u.shr(e_val).narrow(), v.shr(e_val).narrow())
+                {
+                    return Some(SuitableIdealResult {
+                        u: u_narrow,
+                        v: v_narrow,
+                        e,
+                        factor1: IdealFactor {
+                            order,
+                            beta: ShortVector(sv1.elem),
+                            degree: *d1,
+                            parent_ideal: *parent_ideal,
+                        },
+                        factor2: IdealFactor {
+                            order,
+                            beta: ShortVector(sv2.elem),
+                            degree: *d2,
+                            parent_ideal: *parent_ideal,
+                        },
+                    });
+                }
+            }
+        }
+
+        // Advance to the next solution on the line: `u += d₂`,
+        // `v −= d₁`. Stop when `v` would go non-positive.
+        u = u.ct_add(&d2_w);
+        if v <= d1_w {
+            return None;
+        }
+        v = v.ct_sub(&d1_w);
     }
-    let (v, rem) = two_f.ct_sub(&ud1).div_rem(&d2_w);
-    if !bool::from(rem.is_zero()) || bool::from(v.is_zero()) || bool::from(v.is_negative()) {
-        return None;
-    }
-
-    // Factor out the 2-adic part of `gcd(u, v)`, matching the C
-    // reference (`dim2id2iso.c:833`: `ibz_two_adic(&gcd(u, v))`).
-    // The spec writes `v_2(u)` in Algorithm 3.16 line 14, but that
-    // is only equivalent to `v_2(gcd(u, v))` when `v_2(u) ≤ v_2(v)`;
-    // when `u` is odd but `v` is even, dividing only by `2^v_2(u)`
-    // leaves `v` even so `gcd(u·d₁, v·d₂) ≠ 1`, and when `u` is
-    // the more-2-divisible of the two, `u.shr(e_val)` silently
-    // drops low bits of `v` that were carrying real value.
-    let e_val = u.gcd(&v).trailing_zeros();
-    let e = TorsionExponent::try_from(f.value() - e_val).ok()?;
-
-    Some(SuitableIdealResult {
-        u: u.shr(e_val).narrow()?,
-        v: v.shr(e_val).narrow()?,
-        e,
-        factor1: IdealFactor {
-            order,
-            beta: ShortVector(sv1.elem),
-            degree: *d1,
-            parent_ideal: *parent_ideal,
-        },
-        factor2: IdealFactor {
-            order,
-            beta: ShortVector(sv2.elem),
-            degree: *d2,
-            parent_ideal: *parent_ideal,
-        },
-    })
 }
 
 impl LeftIdeal<4> {
@@ -795,32 +853,41 @@ impl LeftIdeal<4> {
         let f = TorsionExponent::FULL;
         let two_f = BigInt::<8>::ONE.shl(f.value());
 
-        // Phase 0: Replace the ideal with its smallest equivalent.
+        // Phase 1: L2-reduce the caller-supplied ideal's basis and
+        // enumerate short vectors.
         //
-        // The C reference (dim2id2iso.c, find_uv lines 526-546)
-        // does this before enumerating short vectors: LLL-reduce,
-        // take the first basis vector δ (shortest), construct
-        // I · δ̄ / nrd(I). The result has norm ~√p instead of the
-        // original (potentially much larger) norm. This makes the
-        // short-vector degrees small enough for the u·d₁ + v·d₂ =
-        // 2^e search to succeed.
-        let ideal = match self.smallest_equiv() {
-            Some(eq) => eq,
-            None => *self,
-        };
-
-        // Phase 1: L2-reduce and enumerate short vectors.
+        // The C reference (`dim2id2iso.c:535-542`) L2-reduces
+        // `lideal`'s basis in place — `ideal[0].lattice.basis =
+        // reduced[0]` — and then enumerates short vectors on that
+        // reduced basis (line 609,
+        // `enumerate_hypercube(small_vecs[0], ..., gram[0],
+        // adjusted_norm[0])`). The norm `ideal[0].norm = lideal.norm`
+        // is left untouched, so each β = reduced[0] · x has
+        // `nrd(β_rational) = degree · nrd(lideal)`, tying the
+        // `1/(nrd(I) · d₁)` scaling in `to_isogeny` directly to
+        // `self.norm()`.
         //
-        // For t = 0, the connecting ideal J_0 = O_0 and J_0 · I = I,
-        // so we operate directly on the ideal's own lattice.
+        // `reduced_id = lideal · δ̄/nrd(lideal)` (the "smallest
+        // equivalent") is only used downstream to derive connecting
+        // ideals for the j > 0 alternate-order searches, which we
+        // don't yet implement. Using `smallest_equiv` as the search
+        // lattice — as an earlier version of this code did — breaks
+        // the nrd(β) ↔ nrd(I) identity that `to_isogeny`'s scaling
+        // depends on: it gives β's with `nrd(β_rat) = degree ·
+        // nrd(parent)`, where `nrd(parent) = nrd(δ)/nrd(I)`, so the
+        // resulting (2^e,2^e)-isogeny lands on the codomain of
+        // `parent_ideal`, not of `lideal`.
         //
         // TODO: Add connecting ideals for t = 1..6 to search across
-        // all seven extremal orders (§3.1.7.2).
-        let lattice: Lattice<4> = (*ideal.lattice()).into();
+        // all seven extremal orders (§3.1.7.2). For non-principal
+        // ideals whose first minimum is too large in the j=0
+        // lattice, the j>0 search finds short vectors in
+        // `J_t · lideal`.
+        let lattice: Lattice<4> = (*self.lattice()).into();
         let cols_4 = lattice.basis().columns();
         let cols_8: [Vector<8>; 4] = core::array::from_fn(|j| cols_4[j].into());
         let denom_8: BigInt<8> = (*lattice.denom()).into();
-        let norm_8: BigInt<8> = (*ideal.norm()).into();
+        let norm_8: BigInt<8> = (*self.norm()).into();
 
         let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
         let short_vecs = nrd_basis.enumerate_short_vectors(&norm_8, &denom_8);
@@ -835,7 +902,7 @@ impl LeftIdeal<4> {
         for (i, sv1) in short_vecs.iter().enumerate() {
             for sv2 in &short_vecs[i..] {
                 _pairs_tried += 1;
-                if let Some(result) = try_find_uv(sv1, sv2, &ideal, &two_f, f, order) {
+                if let Some(result) = try_find_uv(sv1, sv2, self, &two_f, f, order) {
                     return Some(result);
                 }
             }

@@ -147,11 +147,8 @@ impl SigningKey {
     ) -> Self {
         debug_assert!(
             {
-                let reconstructed = LeftIdeal::new(
-                    &ideal_gen,
-                    ideal.norm(),
-                    EXTREMAL_ORDERS[0].order(),
-                );
+                let reconstructed =
+                    LeftIdeal::new(&ideal_gen, ideal.norm(), EXTREMAL_ORDERS[0].order());
                 reconstructed.lattice().basis() == ideal.lattice().basis()
             },
             "ideal_gen must generate the same ideal"
@@ -358,7 +355,8 @@ impl SigningKey {
 
     /// Serialize this signing key to bytes.
     ///
-    /// Layout: `[pk (65 B) | norm (32 B) | gen[0..3] (4×32 B) | M_sk (4×32 B)]`.
+    /// Layout: `[pk (65 B) | norm (32 B) | gen[0..3] (4×32 B) | M_sk (4×32
+    /// B)]`.
     ///
     /// `gen[i]` are the {1,i,j,k} coordinates of the ideal generator α
     /// where I_sk = O₀⟨α, norm⟩, encoded as signed (two's complement)
@@ -421,8 +419,7 @@ impl SigningKey {
         // M_sk (4 × 32 bytes, unsigned LE, row-major).
         for row in &self.mat_sk.entries {
             for entry in row {
-                out[pos..pos + TORSION_2POWER_BYTES]
-                    .copy_from_slice(&entry.to_le_bytes());
+                out[pos..pos + TORSION_2POWER_BYTES].copy_from_slice(&entry.to_le_bytes());
                 pos += TORSION_2POWER_BYTES;
             }
         }
@@ -660,7 +657,7 @@ impl SigningKey {
             // elimination may grow them. W=120 is the safe Hadamard
             // bound but 4x slower. W=60 is adequate in practice —
             // validate by completing a full signing round-trip.
-            let i_chl_sk = i_chl_lat.intersection_via_kernel::<40>(&i_sk_lat);
+            let i_chl_sk = i_chl_lat.intersection_via_kernel::<80>(&i_sk_lat);
             #[cfg(test)]
             eprintln!(
                 "[sign {_iter}] intersection 1: {:?} (cumul {:?})",
@@ -674,7 +671,7 @@ impl SigningKey {
 
             #[cfg(test)]
             let _t_int2 = std::time::Instant::now();
-            let intersection = i_chl_sk_lat.intersection_via_kernel::<40>(&i_com_conj_lat);
+            let intersection = i_chl_sk_lat.intersection_via_kernel::<80>(&i_com_conj_lat);
             #[cfg(test)]
             eprintln!(
                 "[sign {_iter}] intersection 2: {:?} (cumul {:?})",
@@ -1145,7 +1142,7 @@ pub(crate) fn split_auxiliary_isogeny(
     let (codomain, images) = kernel.isogeny(
         e_chain,
         &[(p1_double_prime, zero_e2), (q1_double_prime, zero_e2)],
-    );
+    )?;
 
     // Line 6: return F₁, S₁, R₁, F₂, S₂, R₂
     // The codomain is F₁ × F₂; images are (S₁,S₂) and (R₁,R₂).

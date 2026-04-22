@@ -4,8 +4,10 @@
 use precomputed::{ACTION_MATRICES, torsion_basis};
 
 use super::*;
-use crate::curves::montgomery::JacobianPoint;
-use crate::quaternions::algebra::{Coordinate, Denominator};
+use crate::{
+    curves::montgomery::JacobianPoint,
+    quaternions::algebra::{Coordinate, Denominator},
+};
 
 /// Pinned commit of the SQIsign C reference implementation.
 /// Used by cross-check tests that fetch precomputed data.
@@ -515,7 +517,9 @@ fn scalar_mul_kernel_splits() {
     let kernel = surfaces::Kernel::from_jacobian(product, k1, k2);
 
     let te = TorsionExponent::try_from(e).unwrap();
-    let (_codomain, _images) = kernel.isogeny_extra_torsion(te, &[]);
+    let (_codomain, _images) = kernel
+        .isogeny_extra_torsion(te, &[])
+        .expect("test kernel must split as product");
 }
 
 /// Verify all 7 torsion bases: points on curve, correct order.
