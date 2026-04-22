@@ -21,7 +21,7 @@ use super::{
     bigint::BigInt,
     lattice::{ExtremalOrder, HnfLattice, Lattice, LeftIdeal, NrdBasis},
     linear::{Matrix, Vector},
-    precomputed::{EXTREMAL_ORDERS, P_WIDE},
+    precomputed::{EXTREMAL_ORDERS, NUM_EXTREMAL_ORDERS, P_WIDE, connecting_ideal},
 };
 use crate::curves::{TorsionExponent, isogeny::IsogenyDegree};
 
@@ -446,6 +446,21 @@ struct ShortVectorCandidate {
     degree: IsogenyDegree,
 }
 
+/// One per-order enumeration batch: the extremal order the batch
+/// belongs to, the ideal the short vectors were enumerated from
+/// (`I` for `t = 0`, typically `J_t · I` or an equivalent for
+/// `t > 0`), and the resulting candidate list sorted by degree.
+///
+/// Passing this through [`try_find_uv`] keeps the per-factor
+/// `(order, parent_ideal)` pair local to each β; in the
+/// multi-order search the two factors come from different batches.
+struct ShortVectorBatch {
+    /// The extremal order that produced this batch.
+    order: &'static ExtremalOrder<4>,
+    /// The ideal the short vectors live in.
+    parent_ideal: LeftIdeal<4>,
+}
+
 /// A quaternion element that is a short vector in some ideal lattice.
 ///
 /// Wraps an [`Element<4>`] with a stronger contract than a bare
@@ -572,15 +587,17 @@ impl NrdBasis<8> {
 }
 
 /// Try to find coprime odd degrees and matching `u`, `v` from a
-/// pair of short-vector candidates.
+/// pair of short-vector candidates enumerated from potentially
+/// different extremal orders.
 ///
-/// `parent_ideal` is the ideal the candidates were enumerated from
-/// (the caller-supplied ideal `I` or its smallest equivalent);
-/// both β₁ and β₂ carry it through to the resulting
-/// [`IdealFactor`]s so that downstream scaling formulas can read
-/// `nrd(parent_ideal)` without re-deriving it and without
-/// accidentally reaching for the original `I` when β lives in the
-/// reduced equivalent.
+/// `(order1, parent_ideal1)` is the (extremal order, ideal) pair
+/// that produced `sv1`; `(order2, parent_ideal2)` is the same for
+/// `sv2`. For the `t = 0` single-order search both pairs are
+/// identical; for the multi-order search they select different
+/// rows of `ACTION_MATRICES` and different `nrd(J_t · I)` scaling
+/// factors downstream. Carrying each β's origin through to the
+/// resulting [`IdealFactor`] keeps the `nrd(β) = degree ·
+/// nrd(parent_ideal)` invariant local to each factor.
 ///
 /// Returns `None` when the pair fails any of the SuitableIdeals
 /// conditions: non-coprime degrees, no solution to
@@ -589,10 +606,10 @@ impl NrdBasis<8> {
 fn try_find_uv(
     sv1: &ShortVectorCandidate,
     sv2: &ShortVectorCandidate,
-    parent_ideal: &LeftIdeal<4>,
+    batch1: &ShortVectorBatch,
+    batch2: &ShortVectorBatch,
     two_f: &BigInt<8>,
     f: TorsionExponent,
-    order: &'static ExtremalOrder<4>,
 ) -> Option<SuitableIdealResult> {
     let d1 = &sv1.degree;
     let d2 = &sv2.degree;
@@ -684,16 +701,16 @@ fn try_find_uv(
                         v: v_narrow,
                         e,
                         factor1: IdealFactor {
-                            order,
+                            order: batch1.order,
                             beta: ShortVector(sv1.elem),
                             degree: *d1,
-                            parent_ideal: *parent_ideal,
+                            parent_ideal: batch1.parent_ideal,
                         },
                         factor2: IdealFactor {
-                            order,
+                            order: batch2.order,
                             beta: ShortVector(sv2.elem),
                             degree: *d2,
-                            parent_ideal: *parent_ideal,
+                            parent_ideal: batch2.parent_ideal,
                         },
                     });
                 }
@@ -1047,57 +1064,88 @@ impl LeftIdeal<4> {
         let f = TorsionExponent::FULL;
         let two_f = BigInt::<8>::ONE.shl(f.value());
 
-        // Phase 1: L2-reduce the caller-supplied ideal's basis and
-        // enumerate short vectors.
+        // Phase 1: for each of the seven extremal orders O_t, build
+        // the corresponding ideal in which β is enumerated:
         //
-        // The C reference (`dim2id2iso.c:535-542`) L2-reduces
-        // `lideal`'s basis in place — `ideal[0].lattice.basis =
-        // reduced[0]` — and then enumerates short vectors on that
-        // reduced basis (line 609,
-        // `enumerate_hypercube(small_vecs[0], ..., gram[0],
-        // adjusted_norm[0])`). The norm `ideal[0].norm = lideal.norm`
-        // is left untouched, so each β = reduced[0] · x has
-        // `nrd(β_rational) = degree · nrd(lideal)`, tying the
-        // `1/(nrd(I) · d₁)` scaling in `to_isogeny` directly to
-        // `self.norm()`.
+        // - `t = 0`: the caller-supplied ideal `self`. Short vectors β ∈ `self` have
+        //   `nrd(β) = degree · nrd(self)`.
+        // - `t > 0`: the pushforward `J_t · self` (see [§3.1.6.1][§3.1.6.1]), where
+        //   `J_t = connecting_ideal(t)` is the precomputed left-O_0 ideal with
+        //   right-order O_t. `pushforward` returns the left-O_t ideal `J_t^{-1} · (J_t
+        //   ∩ self)`, which has the same norm as `self` but lives in a different
+        //   lattice — β's enumerated here act on `E_t` via `ACTION_MATRICES[t][*]`.
         //
-        // `reduced_id = lideal · δ̄/nrd(lideal)` (the "smallest
-        // equivalent") is only used downstream to derive connecting
-        // ideals for the j > 0 alternate-order searches, which we
-        // don't yet implement. Using `smallest_equiv` as the search
-        // lattice — as an earlier version of this code did — breaks
-        // the nrd(β) ↔ nrd(I) identity that `to_isogeny`'s scaling
-        // depends on: it gives β's with `nrd(β_rat) = degree ·
-        // nrd(parent)`, where `nrd(parent) = nrd(δ)/nrd(I)`, so the
-        // resulting (2^e,2^e)-isogeny lands on the codomain of
-        // `parent_ideal`, not of `lideal`.
+        // The C reference (`dim2id2iso.c:535-609`) does an equivalent
+        // multi-order L2 reduction + enumeration via
+        // `conj(I_reduced) · J_t`, which produces the same degrees
+        // and a right-O_t lattice; the pushforward shape here
+        // matches the spec literal and avoids the delta-transport
+        // step. See [§3.1.7.2].
         //
-        // TODO: Add connecting ideals for t = 1..6 to search across
-        // all seven extremal orders (§3.1.7.2). For non-principal
-        // ideals whose first minimum is too large in the j=0
-        // lattice, the j>0 search finds short vectors in
-        // `J_t · lideal`.
-        let lattice: Lattice<4> = (*self.lattice()).into();
-        let cols_4 = lattice.basis().columns();
-        let cols_8: [Vector<8>; 4] = core::array::from_fn(|j| cols_4[j].into());
-        let denom_8: BigInt<8> = (*lattice.denom()).into();
-        let norm_8: BigInt<8> = (*self.norm()).into();
+        // [§3.1.6.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.6.1
+        // [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
 
-        let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
-        let short_vecs = nrd_basis.enumerate_short_vectors(&norm_8, &denom_8);
+        // Per-order enumeration: compute an L2-reduced basis and
+        // short-vector list for each extremal order, then stage a
+        // `ShortVectorBatch` pointing at the matching parent ideal.
+        let mut batches: [Option<ShortVectorBatch>; NUM_EXTREMAL_ORDERS] = Default::default();
+        let mut short_vecs_per_order: [Vec<ShortVectorCandidate>; NUM_EXTREMAL_ORDERS] =
+            Default::default();
 
-        // Phase 2: Search pairs (β₁, β₂) sorted by ascending norm.
-        //
-        // Currently both β₁ and β₂ come from L_0 (standard order).
-        // When connecting ideals are added, this becomes a nested loop
-        // over all (s, t) order-index pairs.
-        let order = &EXTREMAL_ORDERS[0];
+        for t in 0..NUM_EXTREMAL_ORDERS {
+            // Build the parent ideal for this order.
+            let parent_ideal_t = if t == 0 {
+                *self
+            } else {
+                let j_t = connecting_ideal(t);
+                j_t.pushforward(self, EXTREMAL_ORDERS[t].order())
+            };
+
+            let lattice_t: Lattice<4> = (*parent_ideal_t.lattice()).into();
+            let cols_4 = lattice_t.basis().columns();
+            let cols_8: [Vector<8>; 4] = core::array::from_fn(|j| cols_4[j].into());
+            let denom_8: BigInt<8> = (*lattice_t.denom()).into();
+            let norm_8: BigInt<8> = (*parent_ideal_t.norm()).into();
+
+            let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
+            short_vecs_per_order[t] = nrd_basis.enumerate_short_vectors(&norm_8, &denom_8);
+            batches[t] = Some(ShortVectorBatch {
+                order: &EXTREMAL_ORDERS[t],
+                parent_ideal: parent_ideal_t,
+            });
+        }
+
+        // Phase 2: iterate (s, t) pairs with `t ≥ s` (matching the
+        // C ref's diag filter) and search for a viable (β_s, β_t).
+        // First success wins. `try_find_uv` handles all the coprime
+        // and `u·d_s + v·d_t = 2^e` checks.
         let mut _pairs_tried = 0u64;
-        for (i, sv1) in short_vecs.iter().enumerate() {
-            for sv2 in &short_vecs[i..] {
-                _pairs_tried += 1;
-                if let Some(result) = try_find_uv(sv1, sv2, self, &two_f, f, order) {
-                    return Some(result);
+        for s in 0..NUM_EXTREMAL_ORDERS {
+            let Some(batch_s) = batches[s].as_ref() else {
+                continue;
+            };
+            for t in s..NUM_EXTREMAL_ORDERS {
+                let Some(batch_t) = batches[t].as_ref() else {
+                    continue;
+                };
+                let svs_s = &short_vecs_per_order[s];
+                let svs_t = &short_vecs_per_order[t];
+
+                let same_batch = s == t;
+                for (i, sv1) in svs_s.iter().enumerate() {
+                    // When s == t we iterate the upper-triangular
+                    // half to avoid pairing a candidate with itself
+                    // or double-counting (β_a, β_b) / (β_b, β_a).
+                    // When s != t both orderings are distinct
+                    // enumerations so we iterate the full cross
+                    // product.
+                    let inner_start = if same_batch { i } else { 0 };
+                    for sv2 in &svs_t[inner_start..] {
+                        _pairs_tried += 1;
+                        if let Some(result) = try_find_uv(sv1, sv2, batch_s, batch_t, &two_f, f) {
+                            return Some(result);
+                        }
+                    }
                 }
             }
         }
