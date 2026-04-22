@@ -34,6 +34,7 @@ jobs:
         with:
           tool: cargo-mutants,cargo-nextest
       - name: Run cargo-mutants (shard ${{ matrix.shard }}/16)
+        continue-on-error: true
         run: |
           cargo mutants --shard ${{ matrix.shard }}/16 \
             --test-tool nextest \
@@ -66,18 +67,27 @@ jobs:
 
       - name: Merge outcomes
         run: |
-          # Merge all shard outcomes.json into one.
-          jq -s '{outcomes: map(.outcomes) | add}' \
-            shards/*/outcomes.json > merged-outcomes.json
+          # Merge all available shard outcomes (some may be missing
+          # if runners were preempted).
+          FOUND=$(find shards -name outcomes.json 2>/dev/null)
+          if [ -z "$FOUND" ]; then
+            echo "No shard outcomes found, skipping upload."
+            echo "SKIP_UPLOAD=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          jq -s '{outcomes: map(.outcomes) | add}' $FOUND > merged-outcomes.json
 
       - name: Generate site JSON
+        if: env.SKIP_UPLOAD != 'true'
         run: |
           bash .github/scripts/mutants-to-json.sh \
             merged-outcomes.json "${{ github.sha }}" \
             > mutants.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: env.SKIP_UPLOAD != 'true'
       - name: Upload to CI site
+        if: env.SKIP_UPLOAD != 'true'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: bash .github/scripts/ci-upload.sh mutants mutants.json "${{ github.sha }}"
