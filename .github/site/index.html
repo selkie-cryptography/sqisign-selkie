@@ -602,10 +602,9 @@
     .help-icon .tooltip {
       display: none;
       position: absolute;
-      bottom: calc(100% + 8px);
-      left: 50%;
-      transform: translateX(-50%);
-      width: 280px;
+      top: calc(100% + 8px);
+      left: 0;
+      width: 320px;
       padding: 12px;
       background: var(--bg-raised);
       border: 1px solid var(--border);
@@ -756,12 +755,13 @@
 
       <section class="section" id="coverage-section">
         <div class="section__header">
-          <h2 class="section__title">Coverage<span class="help-icon">?<span class="tooltip"><dl>
-            <dt>Line coverage</dt><dd>Percentage of instrumented source lines executed by the test suite.</dd>
-            <dt>Heat map</dt><dd>Expand a file to see per-line hit counts. Color intensity shows how hot each line is relative to the file's max.</dd>
-            <dt>Hottest files</dt><dd>Files with the highest peak hit counts — your inner loops and performance-critical code.</dd>
-            <dt>CT audit</dt><dd>Hot lines marked TODO(ct) — code on potentially secret data that needs constant-time hardening.</dd>
-            <dt>Fragile coverage</dt><dd>Files where every covered line is hit at most twice, suggesting thin test coverage.</dd>
+          <h2 class="section__title">Coverage<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Line coverage from the test suite, collected with <code>cargo-llvm-cov</code> and <code>nextest</code>. Click a module to see per-file breakdowns, click a file to see source with per-line hit counts.</p>
+            <dl>
+            <dt>Heat map</dt><dd>Color intensity shows how hot each line is relative to the file's peak. Amber = inner loops.</dd>
+            <dt>Hottest files</dt><dd>Files with the highest peak hit counts — performance-critical code.</dd>
+            <dt>CT audit</dt><dd>Hot lines marked TODO(ct) — code on secret data that needs constant-time hardening.</dd>
+            <dt>Fragile coverage</dt><dd>Files where every covered line is hit at most twice — thin test coverage.</dd>
             </dl></span></span></h2>
           <span class="meta" id="coverage-meta"></span>
         </div>
@@ -782,12 +782,14 @@
 
       <section class="section" id="mutants-section">
         <div class="section__header">
-          <h2 class="section__title">Mutation Testing<span class="help-icon">?<span class="tooltip"><dl>
-            <dt>Kill rate</dt><dd>Percentage of mutants detected by the test suite. Higher is better.</dd>
+          <h2 class="section__title">Mutation Testing<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Mutation testing introduces small changes (mutants) to the source and checks if the test suite catches them. Survivors indicate code where tests execute the lines but don't verify correctness.</p>
+            <dl>
+            <dt>Kill rate</dt><dd>Percentage of mutants detected. Higher is better.</dd>
             <dt>Caught</dt><dd>Mutants that caused a test failure.</dd>
-            <dt>Missed (survivors)</dt><dd>Mutants that passed all tests — potential gaps in test coverage.</dd>
-            <dt>Timeout</dt><dd>Mutants where tests took too long. Treated as caught.</dd>
-            <dt>Unviable</dt><dd>Mutations that failed to compile. Not counted in the kill rate.</dd>
+            <dt>Missed</dt><dd>Mutants that passed all tests — gaps in test quality.</dd>
+            <dt>Survivor patterns</dt><dd>Groups survivors by mutation type to reveal categories of untested behavior.</dd>
+            <dt>High coverage, low kill rate</dt><dd>Modules where tests execute code but don't verify it — the most misleading coverage.</dd>
             </dl></span></span></h2>
           <span class="meta" id="mutants-meta"></span>
         </div>
@@ -905,7 +907,8 @@
             html += '<div class="cov-insight"><h4>Hottest files</h4><ul class="cov-insight-list">';
             for (const f of hotFiles) {
               const fname = f.name.replace(/^.*\//, '');
-              html += `<li><span>${esc(fname)}</span><span class="tag tag-hot">${esc(String(f.maxHit))}\u00d7 peak</span></li>`;
+              const link = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(f.name)}` : '#';
+              html += `<li><a href="${link}">${esc(fname)}</a><span class="tag tag-hot">${esc(String(f.maxHit))}\u00d7 peak</span></li>`;
             }
             html += '</ul></div>';
           }
