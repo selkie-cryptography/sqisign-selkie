@@ -60,7 +60,7 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           key: ${{ matrix.target }}
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
           tool: cargo-nextest
       - run: cargo nextest run --target ${{ matrix.target }}
@@ -151,7 +151,7 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
           tool: cargo-llvm-cov,cargo-nextest
       - name: Collect coverage (nextest + doctests)
@@ -191,7 +191,7 @@ jobs:
         with:
           persist-credentials: false
       # cargo-deny only reads Cargo.toml/lock, no compilation needed.
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
           tool: cargo-deny
       - run: cargo deny check advisories bans
@@ -220,7 +220,7 @@ jobs:
           fi
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
           tool: cargo-mutants,cargo-nextest
       - name: Run cargo-mutants on changed code
@@ -236,6 +236,24 @@ jobs:
         with:
           name: mutants-incremental.out
           path: mutants.out
+
+      - name: Generate and merge mutants JSON for CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
+        run: |
+          bash .github/scripts/mutants-to-json.sh \
+            mutants.out/outcomes.json "${{ github.sha }}" \
+            > mutants-incremental.json
+          bash .github/scripts/merge-mutants.sh \
+            mutants-incremental.json "${{ github.sha }}" \
+            > mutants.json
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
+      - name: Upload mutants to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: bash .github/scripts/ci-upload.sh mutants mutants.json "${{ github.sha }}"
 
   sage-precompute-check:
     name: Sage precompute cross-check

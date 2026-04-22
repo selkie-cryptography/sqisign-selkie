@@ -30,7 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           key: mutants-${{ matrix.shard }}
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
           tool: cargo-mutants,cargo-nextest
       - name: Run cargo-mutants (shard ${{ matrix.shard }}/16)
