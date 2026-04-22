@@ -16,7 +16,9 @@
 //! [§2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.3
 //! [§8.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.4
 
-use subtle::ConstantTimeEq;
+use core::cmp::Ordering;
+
+use subtle::{Choice, ConstantTimeEq, ConstantTimeGreater};
 
 use crate::{
     curves::{
@@ -90,6 +92,58 @@ impl From<IsogenyDegree> for Scalar {
     #[inline]
     fn from(d: IsogenyDegree) -> Scalar {
         Scalar::from_limbs(d.0)
+    }
+}
+
+impl Ord for IsogenyDegree {
+    /// Numeric comparison, most-significant limb first.
+    ///
+    /// A derived `Ord` on `[u64; 4]` would compare lexicographically
+    /// starting at index 0 — the *least*-significant limb in our
+    /// little-endian encoding — giving the wrong answer whenever
+    /// two degrees differ above the bottom 64 bits.
+    ///
+    /// `IsogenyDegree` is non-negative and non-zero by construction
+    /// (via [`IsogenyDegree::new_odd`]), so this is a magnitude
+    /// compare with no sign or zero special cases.
+    ///
+    /// # Constant-time
+    ///
+    /// Each comparison is data-flow-uniform: the loop visits every
+    /// limb, and per-limb tests use [`ConstantTimeGreater`] on
+    /// `u64` from the `subtle` crate. A single comparison therefore
+    /// does not leak the operands through its memory access pattern
+    /// or through branches on the limb values.
+    ///
+    /// The final return lowers the CT accumulator [`Choice`] values
+    /// into an [`Ordering`], and sort algorithms branch on that
+    /// result — so `sort_by_key` / `sort_by` on secret-derived
+    /// degrees remains variable-time overall. CT callers must avoid
+    /// those sorts in favour of a sorting network built on
+    /// `ConditionallySelectable::conditional_swap`.
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Walk MSB → LSB; `undecided` gates further updates so the
+        // first differing limb wins without a data-dependent branch.
+        let mut gt = Choice::from(0u8);
+        let mut lt = Choice::from(0u8);
+        for i in (0..4).rev() {
+            let undecided = !(gt | lt);
+            gt |= undecided & self.0[i].ct_gt(&other.0[i]);
+            lt |= undecided & other.0[i].ct_gt(&self.0[i]);
+        }
+        if bool::from(gt) {
+            Ordering::Greater
+        } else if bool::from(lt) {
+            Ordering::Less
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
+impl PartialOrd for IsogenyDegree {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

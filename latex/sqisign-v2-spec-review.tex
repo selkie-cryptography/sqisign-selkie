@@ -635,4 +635,311 @@ recomputing \textsc{DifferencePoint} on the outputs.  The same
 constraint applies to every other site that constructs a basis
 triple for the Okeya-Sakurai lift.
 
+% =====================================================================
+\section{\textsc{GetIndexSplitting} must handle malformed input}
+\label{sec:splitting-panic}
+
+\finding{Affects \algo{8.42}
+(\textsc{GetIndexSplitting}), and transitively verification
+(\algo{4.9}).}{\medium}
+
+\algo{8.42} searches the null point $U_{i,j}(0)$ for the unique
+index $(i,j)$ where it vanishes.  The spec states this index
+``exists and is unique'' (Proposition~8.5.3), which is true for
+honestly generated signatures.
+
+\paragraph{What goes wrong.}
+For \emph{malformed} signatures (corrupted \texttt{E\_aux},
+\texttt{M\_chl}, or \texttt{chl}), the $(2,2)$-isogeny chain may
+produce a null point with zero or multiple vanishing entries.
+An implementation that asserts uniqueness (e.g., via
+\texttt{debug\_assert!}) will panic on such inputs, providing a
+denial-of-service vector: any untrusted signature can crash the
+verifier in debug builds.  In release builds, the assertion compiles
+out and the function returns a wrong index, leading to silent
+misbehavior rather than a clean rejection.
+
+We discovered this via negative test vectors
+(\S\ref{sec:splitting-panic}): single-bit flips in
+\texttt{E\_aux}, \texttt{M\_chl}, and \texttt{chl} all triggered
+the assertion.
+
+\paragraph{Recommendation.}
+Note in \algo{8.42} that implementations must handle the case where
+no (or multiple) vanishing indices exist, returning an error rather
+than assuming uniqueness.  A verification implementation should treat
+a missing or ambiguous splitting index as signature rejection, not an
+assertion failure.
+
+%% ---------------------------------------------------------------
+\subsection*{Signing key encoding requires caching the ideal generator}
+\label{sec:sk-generator}
+
+\paragraph{Severity.} Low (implementation note).
+
+\paragraph{Affected algorithm.} Key encoding (\S4.6).
+
+\paragraph{Current spec text.}
+The signing key wire format encodes the generator~$\alpha$ of the
+secret ideal $I_{\mathrm{sk}} = O_0\langle\alpha, N\rangle$ as four
+signed 32-byte coordinates.  The ideal is defined by~$\alpha$ and
+the norm~$N$; $\alpha$ is part of the key.
+
+\paragraph{What goes wrong.}
+An implementation that converts the ideal to HNF for internal use
+(as we do for lattice operations) loses the original generator.
+Recovering~$\alpha$ from HNF requires a brute-force search over
+small linear combinations of basis vectors.  The spec does not
+mention this recovery problem.
+
+\paragraph{Recommendation.}
+Note in \S4.6 that implementations should cache~$\alpha$ at
+parse/keygen time rather than attempting to recover it from the
+lattice representation.
+
+% =====================================================================
+\section{\textsc{IdealToIsogeny} line 6: matrix formula is under-specified}
+\label{sec:id2iso-line6}
+
+\finding{Affects \algo{3.13} (\textsc{IdealToIsogeny}), line~6.}{\high}
+
+\algo{3.13} line~6 writes
+\[
+  [P, Q]^T \leftarrow \tfrac{1}{\mathrm{nrd}(I)\,\mathrm{nrd}(J_t)}\,
+    M_{\beta_1^{-1}}\, M_{\beta_2}\, [\varphi_v(P_t), \varphi_v(Q_t)]^T.
+\]
+The $\beta_1^{-1}$ factor is a quaternion inverse, not a matrix
+inverse.  The identity derived in the surrounding text,
+\[
+  \beta_2 \circ \varphi_{J_t} \circ \widehat{\varphi_{J_s}} \circ
+    \widehat{\beta_1}
+  = [\mathrm{nrd}(I)\,\mathrm{nrd}(J_s)\,\mathrm{nrd}(J_t)]
+    \widehat{\varphi_{I_2}} \circ \varphi_{I_1},
+\]
+uses the conjugate~$\widehat{\beta_1}$, and $\beta_1^{-1} =
+\widehat{\beta_1}/\mathrm{nrd}(\beta_1)$ only as quaternions.  An
+implementor writing $M_{\beta_1^{-1}}$ as a \emph{matrix inverse}
+gets a different matrix from the intended
+$M_{\widehat{\beta_1}}/\mathrm{nrd}(\beta_1) =
+\mathrm{adj}(M_{\beta_1})/\mathrm{nrd}(\beta_1) \pmod{2^f}$ in
+general.
+
+\paragraph{What the C reference does.}
+\texttt{dim2id2iso.c:881--1014} builds the quaternion
+$\theta = \beta_2 \cdot \widehat{\beta_1}$ directly and scales its
+coordinates by $\mathrm{invmod}(d_1 \cdot \mathrm{nrd}(J_t),
+2^f)$ before decomposing on~$\mathcal{O}_0$.  This is
+$\beta_2 \cdot \widehat{\beta_1}$, whereas the spec's
+$\beta_1^{-1}\,\beta_2 = \widehat{\beta_1}\,\beta_2 /
+\mathrm{nrd}(\beta_1)$ has the factors in the opposite order; the
+two quaternion products agree only after the subsequent
+$\mathrm{nrd}(\beta_1)$ scaling, and quaternion multiplication is
+not commutative in general.
+
+\paragraph{Impact.}
+An implementor has two independent traps: (a) interpreting
+$M_{\beta_1^{-1}}$ as the matrix inverse rather than the action
+matrix of~$\beta_1^{-1}$ viewed as a quaternion; (b) writing the
+quaternion product in the opposite order from the derivation.
+
+\paragraph{Recommendation.}
+Write line~6 with the conjugate factored out and the scaling
+collected:
+\[
+  [P, Q]^T \leftarrow
+    \tfrac{1}{\mathrm{nrd}(I)\,\mathrm{nrd}(J_t)\,\mathrm{nrd}(\beta_1)}
+    M_{\widehat{\beta_1}}\, M_{\beta_2}\, [\varphi_v(P_t),
+    \varphi_v(Q_t)]^T,
+\]
+and state which quaternion-product order the matrix composition
+uses (equivalently, specify whether $M_{\alpha\beta} = M_\alpha
+M_\beta$ or $M_\beta M_\alpha$).
+
+% =====================================================================
+\section{\textsc{IdealToIsogeny}:
+  \texorpdfstring{$\beta$}{beta} lives in the reduced ideal, not the
+  input \texorpdfstring{$I$}{I}}
+\label{sec:id2iso-reduced-ideal}
+
+\finding{Affects \algo{3.13}, \algo{3.16} (\textsc{SuitableIdeals}),
+  and anywhere the scaling $1/\mathrm{nrd}(I)$ appears downstream
+  of short-vector enumeration.}{\high}
+
+\algo{3.16} (\textsc{SuitableIdeals}) returns $\beta_i$ obtained
+from the short-vector enumeration inside $J_i\,I$, and~$d_i =
+\mathrm{nrd}(\beta_i)/\mathrm{nrd}(J_i\,I)$.  Efficient
+implementations (and the C reference,
+\texttt{dim2id2iso.c:534--565}) first replace~$I$ by the
+\emph{smallest equivalent ideal}~$I' = I \cdot
+\widehat{\delta}/\mathrm{nrd}(I)$, so that the short-vector
+search produces usable degrees.  The returned $\beta$ and~$d$ are
+relative to~$I'$, not to~$I$, so the downstream invariant is
+\[
+  \mathrm{nrd}(\beta) = d \cdot \mathrm{nrd}(I')
+  \neq d \cdot \mathrm{nrd}(I).
+\]
+
+\paragraph{What the C reference does.}
+\texttt{dim2id2iso.c:670--684} ``sends~$\beta$ back'' to the
+original ideal after the pair is selected (multiplying
+by~$\delta$), so that by the time \algo{3.13} line~6 applies the
+scaling $1/\mathrm{nrd}(I)$, the identity
+$\mathrm{nrd}(\beta_1) = d_1 \cdot \mathrm{nrd}(I)$ holds in
+terms of the caller-supplied~$I$.
+
+\paragraph{What goes wrong.}
+An implementor who keeps~$\beta$ in the reduced ideal~$I'$ (a
+natural data representation) must also use $\mathrm{nrd}(I')$ in
+every downstream scaling formula.  Using the spec's
+$\mathrm{nrd}(I)$ literal gives $\det(M_{\beta_1}) \neq d_1 \cdot
+\mathrm{nrd}(I) \pmod{2^f}$, silently producing a non-isotropic
+outer kernel and \texttt{zeros=0} in the final splitting step.
+
+\paragraph{Recommendation.}
+State in \algo{3.16} that the returned~$\beta$ must be expressed
+in the input ideal's lattice (so $\mathrm{nrd}(\beta) = d \cdot
+\mathrm{nrd}(I)$), or name the lattice that~$\beta$ lives in and
+refer to its norm throughout \algo{3.13}.
+
+% =====================================================================
+\section{\textsc{SuitableIdeals} line 14:
+  \texorpdfstring{$v_2(u)$}{v2(u)} vs.\
+  \texorpdfstring{$v_2(\gcd(u, v))$}{v2(gcd(u,v))}}
+\label{sec:suitableideals-e-val}
+
+\finding{Affects \algo{3.16} (\textsc{SuitableIdeals}), line~14.}{\medium}
+
+\algo{3.16} line~14 writes ``$e \leftarrow v_2(u)$'' and line~15
+divides both~$u$ and~$v$ by~$2^e$.  Using $v_2(u)$ is only
+equivalent to $v_2(\gcd(u, v))$ when $v_2(u) \le v_2(v)$:
+\begin{itemize}
+  \item If $v_2(u) > v_2(v)$, dividing~$v$ by~$2^{v_2(u)}$ loses
+    low bits of~$v$ that were carrying real value.
+  \item If $v_2(u) < v_2(v)$, dividing by~$2^{v_2(u)}$ leaves~$v$
+    still even, so the next algorithm's precondition
+    $\gcd(u \cdot d_1, v \cdot d_2) = 1$ fails.
+\end{itemize}
+
+\paragraph{What the C reference does.}
+\texttt{dim2id2iso.c:833} computes
+\texttt{ibz\_two\_adic(\&gcd(u, v))}, i.e.\ $v_2(\gcd(u, v))$.
+
+\paragraph{Recommendation.}
+Write line~14 as ``$e \leftarrow v_2(\gcd(u, v))$''.
+
+% =====================================================================
+\section{\algo{8.47} implementation variants are not specified}
+\label{sec:iso22chain-variants}
+
+\finding{Affects \algo{8.47} (\textsc{Isogeny22ChainWithTorsion})
+  and its callers, primarily \algo{3.13} line~9.  Observed
+  $99\%$-wrong-codomain failure rate in keygen before the
+  implementation accounted for the kernel-torsion convention.}{\high}
+
+The spec describes a single uniform chain of $e$ 8-torsion
+isogenies, with the phrasing ``a chain of $e$ $(2,2)$-isogenies of
+2-power degree.''  It does not make explicit either
+\begin{enumerate}
+  \item what kernel torsion the chain consumes, nor
+  \item that \algo{3.13} and \algo{3.15} call the chain with
+    different conventions.
+\end{enumerate}
+The C reference implementation in
+\texttt{theta\_isogenies.c} splits \algo{8.47} into two variants
+keyed on a boolean \texttt{extra\_torsion}:
+\begin{itemize}
+  \item \texttt{extra\_torsion = true}: an $e$-length chain of
+    8-torsion isogenies.  Kernel must have order~$2^{e+2}$.  The
+    last two chain steps use the \texttt{hadamard\_bool}
+    convention from \algo{8.41} to fold the kernel's 4-torsion
+    and 2-torsion residues into the penultimate and ultimate
+    $(2,2)$-isogenies.
+  \item \texttt{extra\_torsion = false}: an $(e-2)$-length chain
+    of 8-torsion isogenies, followed by a dedicated 4-isogeny
+    step (\texttt{theta\_isogeny\_compute\_4}) and a dedicated
+    2-isogeny step (\texttt{theta\_isogeny\_compute\_2}).
+    Consumes a kernel of order~$2^e$.  The final two steps
+    compute square roots rather than relying on extra torsion.
+\end{itemize}
+\algo{3.13} line~9 (the outer chain) calls the implementation
+with \texttt{extra\_torsion = false}
+(\texttt{dim2id2iso.c:1128}); the inner \algo{3.15} calls it with
+\texttt{extra\_torsion = true} (\texttt{dim2id2iso.c:181}).  The
+two variants produce the same abstract~$(2^e, 2^e)$-isogeny but
+require different kernel torsions.
+
+\paragraph{Concrete impact (Selkie experience).}
+We implemented the 8-torsion chain corresponding to
+\texttt{extra\_torsion = true} and used it for every call.
+\algo{3.13} line~9 passes a kernel whose natural order is
+$2^e$ (from doubling the $2^f$-torsion image basis by $f-e$),
+so our chain received a kernel that was two torsion bits short of
+what the \texttt{extra\_torsion = true} path expects.  The chain
+ran to completion in every instance, the splitting code
+(\algo{8.41}) silently selected one of the ten $U_{i,j}(0)$
+indices, and keygen returned a curve that is not the public
+key~$E_\mathrm{pk}$.  $100\%$ of outer chains produced
+terminal splits with either~$0$ or~$10$ vanishing $U_{i,j}(0)$
+coordinates rather than the unique~$1$ that identifies a genuine
+elliptic product.  Downstream code paths did not detect the
+failure: \algo{4.3}, \algo{4.6}, and \algo{4.9} all accept
+whichever curve the chain produces.
+
+We resolved this by over-padding the kernel: instead of
+doubling~$f-e$ times, we double~$f-e-2$ times, so the kernel
+enters the chain with order~$2^{e+2}$ and the
+\texttt{extra\_torsion = true} path works unchanged.  This
+requires $e \le f-2$.  The side condition reduces to
+$v_2(\gcd(u,v)) \ge 2$ in \textsc{find\_uv\_from\_lists}, which
+we filter for in \algo{3.16}.
+
+\paragraph{Why this is hard to catch in testing.}
+\begin{itemize}
+  \item The chain does not fault when given a short kernel; it
+    returns a malformed abelian surface.
+  \item The splitting routine \algo{8.42}
+    (\textsc{SplittingIsomorphism}) picks a codomain side by
+    locating a zero among the ten~$U_{i,j}(0)$ coordinates and
+    does not check that exactly one vanishes.  When all ten
+    vanish (the fully degenerate case), any of the ten branches
+    is ``valid''; the spec doesn't say which to pick.  When none
+    vanish, the function should error but the text only says
+    ``find the unique index such that~$U_{i,j}(0) = 0$.''
+  \item Downstream consumers of the split codomain (basis
+    computation in \algo{2.3}, Tate pairing in \algo{2.5},
+    kernel-to-ideal conversion in \algo{3.17}) accept
+    non-product curves without visible failure.  They compute
+    \emph{something}, but it's not the object the protocol
+    calls for.
+  \item Only byte-for-byte comparison with KAT vectors reveals
+    the divergence; unit tests on synthetic kernels with small
+    $e$ do not exhibit the bug because $f - e \gg 2$ leaves
+    enough spare torsion implicitly.
+\end{itemize}
+
+\paragraph{Recommendation.}
+We suggest three spec-level changes, in decreasing order of
+priority:
+\begin{enumerate}
+  \item \algo{8.47} should state the kernel-torsion requirement
+    explicitly.  ``A chain of~$e$ $(2,2)$-isogenies consumes a
+    kernel of order~$2^{e+2}$'' (current implicit convention) or
+    ``of order~$2^e$'' (shorter variant)
+    unambiguously pins down the caller's contract.
+  \item \algo{8.41} (\textsc{SplittingIsomorphism}) or
+    \algo{8.42} should add a precondition:
+    \emph{exactly one} $U_{i,j}(0)$ must vanish at the chain's
+    terminal theta null.  An implementer who checks this
+    invariant gets a clear failure signal instead of silent
+    corruption.
+  \item \algo{3.13} line~9 should state explicitly which chain
+    variant it uses, so that an implementer who supplies only
+    one variant knows the coupling fails and either adapts
+    (pad kernel up, pad chain down) or implements the
+    missing variant.
+\end{enumerate}
+Absent these changes, a faithful implementation that reads the
+spec straight through will silently produce invalid signing keys
+that fail only when compared against known-answer test vectors.
+
 \end{document}

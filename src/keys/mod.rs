@@ -9,9 +9,9 @@
 
 #[cfg(test)]
 mod kat_data;
+mod signing;
 #[cfg(test)]
 mod tests;
-mod signing;
 mod verifying;
 
 use core::ops::Mul;

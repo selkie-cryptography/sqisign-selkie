@@ -31,7 +31,7 @@ use crate::{
     curves::{
         TorsionBasis, TorsionExponent,
         isogeny::{IsogenyDegree, Kernel as CurveKernel},
-        montgomery::{Curve, JacobianPoint, ProjectiveXOnlyPoint},
+        montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
     },
     params::QUAT_REPRES_BOUND_INPUT,
@@ -276,10 +276,18 @@ fn action_matrix(
         let other = &gen_matrices[k];
         let fv = f.value();
         result = ActionMatrix::new(
-            result.entry(0, 0).add_mod2k(&s.mul_mod2k(other.entry(0, 0), fv), fv),
-            result.entry(0, 1).add_mod2k(&s.mul_mod2k(other.entry(0, 1), fv), fv),
-            result.entry(1, 0).add_mod2k(&s.mul_mod2k(other.entry(1, 0), fv), fv),
-            result.entry(1, 1).add_mod2k(&s.mul_mod2k(other.entry(1, 1), fv), fv),
+            result
+                .entry(0, 0)
+                .add_mod2k(&s.mul_mod2k(other.entry(0, 0), fv), fv),
+            result
+                .entry(0, 1)
+                .add_mod2k(&s.mul_mod2k(other.entry(0, 1), fv), fv),
+            result
+                .entry(1, 0)
+                .add_mod2k(&s.mul_mod2k(other.entry(1, 0), fv), fv),
+            result
+                .entry(1, 1)
+                .add_mod2k(&s.mul_mod2k(other.entry(1, 1), fv), fv),
         );
     }
 
@@ -310,7 +318,12 @@ fn action_matrix(
 fn fixed_degree_isogeny(
     order: &'static ExtremalOrder<4>,
     u: &IsogenyDegree,
-) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
+) -> Option<(
+    Curve,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+)> {
     let f = TorsionExponent::FULL;
     let p_bits = 251u32; // ⌈log₂(p)⌉ for NIST-I
 
@@ -327,7 +340,18 @@ fn fixed_degree_isogeny(
     };
     let p_t = ProjectiveXOnlyPoint::from_affine_x(px, &curve_t);
     let q_t = ProjectiveXOnlyPoint::from_affine_x(qx, &curve_t);
-    let basis_t = TorsionBasis::from((p_t, q_t));
+    // Use precomputed PmQ where available. The biladder's three-point
+    // ladder requires a PmQ whose projective representative is
+    // consistent with the precomputed action matrices. Computing PmQ
+    // via `projective_difference` gives a different representative
+    // that causes the Okeya-Sakurai lift to recover the wrong y-sign.
+    let basis_t = if t == 0 {
+        let pmq_t = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve_t);
+        TorsionBasis::from_propagated(p_t, q_t, pmq_t)
+    } else {
+        // TODO: precompute PmQ for all 7 curves.
+        TorsionBasis::from((p_t, q_t))
+    };
     let gen_matrices = [
         ACTION_MATRICES[t][3],
         ACTION_MATRICES[t][4],
@@ -391,41 +415,54 @@ fn fixed_degree_isogeny(
     let m10 = m_theta.entry(1, 0).mul_mod2k(&u_inv, e_fdi + 2);
     let m11 = m_theta.entry(1, 1).mul_mod2k(&u_inv, e_fdi + 2);
 
-    // Step 4–5: Match the C ref's flow exactly:
-    // 1. Lift full-torsion basis to Jacobian
-    // 2. Apply θ/u via the action matrix (biladder on Montgomery basis)
-    // 3. Lift the endomorphism output to Jacobian
-    // 4. Double everything in Jacobian to reduce to order 2^(e+2)
+    // Step 4–5: Match the C ref's flow (dim2id2iso.c:121–160):
     //
-    // The lift must happen BEFORE doubling so the Okeya-Sakurai sees
-    // consistent projective representatives. After lifting, Jacobian
-    // doublings preserve the group law exactly.
+    // 1. Double Montgomery basis from order 2^f to order 2^(e_fdi+2)
+    // 2. Apply θ/u via three biladder calls at e_fdi+2 precision
+    // 3. Lift both bases to Jacobian
     //
-    // Use (P, P-Q) as kernel generators to avoid the theta degeneracy
-    // on E₀×E₀ (see §4 of the paper).
-    // Apply θ/u to the basis via three biladder calls, matching the
-    // C ref's `matrix_application_even_basis`. All three use the same
-    // basis, so their projective representatives are consistent for
-    // the Okeya-Sakurai lift. Do NOT use `projective_difference` for
-    // the third output — the ambiguous square root picks the wrong
-    // branch for most theta values from represent_integer.
-    //
-    // The biladder PmQ can trigger alpha==gamma degeneracy for
-    // automorphisms (e.g. `i`), but this does not arise for general
-    // represent_integer outputs. The chain validates its output and
-    // returns None on failure, triggering a retry at the caller.
-    let theta_p = basis_t.eval_decomposition(&m00, &m10);
-    let theta_q = basis_t.eval_decomposition(&m01, &m11);
-    let theta_pmq = basis_t.eval_decomposition(
-        &m00.sub_mod2k(&m01, f.value()),
-        &m10.sub_mod2k(&m11, f.value()),
+    // The C ref doubles BEFORE the biladder (line 121), then applies
+    // at precision `length + HD_extra_torsion` (line 148). This is
+    // critical: the scalars are mod 2^(e_fdi+2), so the basis must
+    // have matching order. Using full-precision biladder on the full
+    // 2^f-order basis computes the WRONG endomorphism because the
+    // extra zero bits at positions e_fdi+2..f change the group
+    // element (verified empirically).
+    let doublings = f.value() - 2 - e_fdi;
+    let mut doubled_p = basis_t.R;
+    let mut doubled_q = basis_t.S;
+    let mut doubled_pmq = basis_t.RS;
+    for _ in 0..doublings {
+        doubled_p = doubled_p.double();
+        doubled_q = doubled_q.double();
+        doubled_pmq = doubled_pmq.double();
+    }
+    // Normalize to affine (Z=1) before the biladder. The C ref's
+    // `lift_basis` normalizes P.z to 1, and the biladder's output
+    // projective representative depends on the input's (X:Z). Without
+    // normalization, our doubling formula produces different (X:Z)
+    // than the C ref, which flows through the biladder and Okeya-Sakurai
+    // lift to give wrong y-coordinates.
+    let doubled_p =
+        ProjectiveXOnlyPoint::from_affine_x(*doubled_p.to_affine_x().as_fp2(), &curve_t);
+    let doubled_q =
+        ProjectiveXOnlyPoint::from_affine_x(*doubled_q.to_affine_x().as_fp2(), &curve_t);
+    let doubled_pmq =
+        ProjectiveXOnlyPoint::from_affine_x(*doubled_pmq.to_affine_x().as_fp2(), &curve_t);
+    let doubled_basis = TorsionBasis::from_propagated(doubled_p, doubled_q, doubled_pmq);
+
+    let endo_bits = TorsionExponent::try_from(e_fdi + 2).ok()?;
+    let theta_p = doubled_basis.biscalar_mul(&m00, &m10, endo_bits);
+    let theta_q = doubled_basis.biscalar_mul(&m01, &m11, endo_bits);
+    let theta_pmq = doubled_basis.biscalar_mul(
+        &m00.sub_mod2k(&m01, e_fdi + 2),
+        &m10.sub_mod2k(&m11, e_fdi + 2),
+        endo_bits,
     );
 
-    // Lift component 1: (P, P-Q, Q) from the precomputed basis.
-    let comp1 = TorsionBasis::from_propagated(basis_t.R, basis_t.RS, basis_t.S);
+    // Lift using (P, P-Q) kernel generators.
+    let comp1 = TorsionBasis::from_propagated(doubled_p, doubled_pmq, doubled_q);
     let (p_jac_1, pmq_jac_1) = comp1.lift(&curve_t)?;
-    // Lift component 2: (θ/u(P), θ/u(P-Q), θ/u(Q)) — three
-    // biladder outputs with consistent projective representatives.
     let comp2 = TorsionBasis::from_propagated(theta_p, theta_pmq, theta_q);
     let (p_jac_2, pmq_jac_2) = match comp2.lift(&curve_t) {
         Some(r) => {
@@ -440,36 +477,29 @@ fn fixed_degree_isogeny(
         }
     };
 
-    // Double in Jacobian to reduce from order 2^f to order 2^(e+2).
-    let doublings = f.value() - 2 - e_fdi;
-    let double_n = |mut pt: JacobianPoint, n: u32| -> JacobianPoint {
-        for _ in 0..n {
-            pt = pt.double_for_theta();
-        }
-        pt
-    };
-    let k1_jac = (double_n(p_jac_1, doublings), double_n(p_jac_2, doublings));
-    let k2_jac = (double_n(pmq_jac_1, doublings), double_n(pmq_jac_2, doublings));
+    // No Jacobian doubling needed — basis was doubled before biladder.
+    let k1_jac = (p_jac_1, p_jac_2);
+    let k2_jac = (pmq_jac_1, pmq_jac_2);
 
     // Step 6: (2,2)-isogeny chain on E_t × E_t.
     let product = surfaces::EllipticProduct::new(curve_t, curve_t);
     let kernel = surfaces::Kernel::from_jacobian(product, k1_jac, k2_jac);
 
+    // Push all three basis points (P, Q, PmQ) through the chain,
+    // matching the C ref (dim2id2iso.c:903-905). The outer chain
+    // needs all three for `apply_scaled` — using only P and Q forces
+    // `projective_difference` to recompute PmQ, giving an inconsistent
+    // projective representative that breaks the Okeya-Sakurai lift.
     let zero = ProjectiveXOnlyPoint::identity(&curve_t);
     let (codomain, images) = kernel.isogeny_extra_torsion(
         TorsionExponent::try_from(e_fdi).ok()?,
-        &[(basis_t.R, zero), (basis_t.S, zero)],
-    );
+        &[(basis_t.R, zero), (basis_t.S, zero), (basis_t.RS, zero)],
+    )?;
 
-    // Validate: output points must be on the output curve.
-    // The chain may produce wrong output when the kernel's
-    // ActionByTranslation determinant is degenerate (zeros≠1
-    // in the splitting step). The C ref's gluing_compute would
-    // return 0 in this case; our chain silently produces wrong
-    // output. Check and return None to trigger retry.
     let e_out = &codomain.E1;
     let p_out = images[0].0;
     let q_out = images[1].0;
+    let pmq_out = images[2].0;
     if e_out.recover_y(&p_out.to_affine_x()).is_none()
         || e_out.recover_y(&q_out.to_affine_x()).is_none()
     {
@@ -477,8 +507,9 @@ fn fixed_degree_isogeny(
         return None;
     }
 
+    #[cfg(test)]
     eprintln!("[fixed_degree_isogeny] chain OK, e_fdi={e_fdi}");
-    Some((codomain.E1, p_out, q_out))
+    Some((codomain.E1, p_out, q_out, pmq_out))
 }
 
 /// [IdealToIsogeny][Alg. 3.13] (Algorithm [3.13][Alg. 3.13]).
@@ -525,7 +556,7 @@ impl LeftIdeal<4> {
         #[cfg(test)]
         let _t1 = std::time::Instant::now();
         let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
-        let (e_u, phi_u_p, phi_u_q) = fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
+        let (e_u, phi_u_p, phi_u_q, phi_u_pmq) = fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(u): {:?}", _t1.elapsed());
 
@@ -533,18 +564,55 @@ impl LeftIdeal<4> {
         #[cfg(test)]
         let _t2 = std::time::Instant::now();
         let v_deg = IsogenyDegree::new_odd(*sui.v.as_limbs())?;
-        let (e_v, phi_v_p, phi_v_q) = fixed_degree_isogeny(sui.factor2.order, &v_deg)?;
+        let (e_v, phi_v_p, phi_v_q, phi_v_pmq) = fixed_degree_isogeny(sui.factor2.order, &v_deg)?;
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(v): {:?}", _t2.elapsed());
 
-        // Step 6: [P, Q]^T ← (1/(nrd(I)·nrd(J_t))) M_{β₂} [φ_v(P_t), φ_v(Q_t)]^T
+        // Step 6: second component of the outer kernel.
         //
-        // For t=0, nrd(J_0) = 1, so the scalar is 1/nrd(I) mod 2^f.
-        // TODO: For t > 0, multiply by 1/nrd(J_t) as well.
+        // # Divergences
+        //
+        // The spec (Algorithm 3.13, line 6) writes
+        // `(1/(nrd(I) · nrd(J_t))) · M_{β₁⁻¹ · β₂}` applied to
+        // `(φ_v(P_t), φ_v(Q_t))`, paired with `[d₁] φ_u(P_s)` on the
+        // first component (line 7). The C reference
+        // (`dim2id2iso.c:881-1014`) instead builds
+        // `θ = β₂ · conj(β₁)` as a quaternion, multiplies its coords
+        // by `invmod(d₁ · nrd(connecting ideal), 2^f)`, and applies
+        // it on the second component — with `φ_u(P_s)` (no `[d₁]`)
+        // on the first.
+        //
+        // The two conventions differ at the quaternion level
+        // (`conj(β₁)·β₂` vs `β₂·conj(β₁)` — quaternions do not
+        // commute), in the scaling factor (spec `1/(nrd(I)²·d₁)` vs
+        // C ref `1/(nrd(I)·d₁)`), and in whether `[d₁]` appears on
+        // the first component. We follow the C ref because it is
+        // the implementation whose signatures verify against the
+        // published KAT vectors; the spec's matrix-product ordering
+        // is flagged in `latex/sqisign-v2-spec-review.tex`.
+        //
+        // Using the identity `M_{conj(β)} ≡ adj(M_β) (mod 2^f)` —
+        // both have determinant `nrd(β)`, and
+        // `M_β · M_{conj(β)} = nrd(β) · I` — we assemble
+        //
+        //   M_θ = M_{β₂} · M_{conj(β₁)} = M_{β₂} · adj(M_{β₁}).
+        //
+        // For s = t = 0: `nrd(J_t) = 1` and
+        // `nrd(β₁) = d₁ · nrd(parent_ideal)`, so the total scalar
+        // applied to `M_θ` before acting on the basis is
+        // `1 / (nrd(parent_ideal) · d₁)`.
+        //
+        // TODO: generalize for s, t > 0 (needs nrd(J_t) and per-order
+        // connecting ideal norms).
         let modulus = BigInt::<4>::ONE.shl(f.value());
-        let norm_inv = self.norm().invert_mod(&modulus)?;
-
-        // Look up generator action matrices for order O_t.
+        let s_index = EXTREMAL_ORDERS
+            .iter()
+            .position(|o| o.q() == sui.factor1.order.q())?;
+        let gen_matrices_s = [
+            ACTION_MATRICES[s_index][3],
+            ACTION_MATRICES[s_index][4],
+            ACTION_MATRICES[s_index][5],
+        ];
         let t_index = EXTREMAL_ORDERS
             .iter()
             .position(|o| o.q() == sui.factor2.order.q())?;
@@ -553,59 +621,259 @@ impl LeftIdeal<4> {
             ACTION_MATRICES[t_index][4],
             ACTION_MATRICES[t_index][5],
         ];
+        let m_beta1 = action_matrix(
+            &sui.factor1.beta,
+            sui.factor1.order.order(),
+            &gen_matrices_s,
+            f,
+        )?;
         let m_beta2 = action_matrix(
             &sui.factor2.beta,
             sui.factor2.order.order(),
             &gen_matrices_t,
             f,
         )?;
-        let (p_step6, q_step6) = m_beta2.apply_scaled(&norm_inv, phi_v_p, phi_v_q, f);
+        let m_beta1_adj = m_beta1.adjugate_mod(f.value());
+        let m_prod = m_beta2.mat_mul_mod(&m_beta1_adj, f.value());
+
+        // scale = 1 / (nrd(I) · d₁) mod 2^f (for s = t = 0).
+        //
+        // The spec formula uses `nrd(I)` for the caller-supplied
+        // ideal, not the reduced equivalent `parent_ideal` that β
+        // was enumerated from. The C reference (`dim2id2iso.c:885`,
+        // `ibz_mul(&theta.denom, &theta.denom, &lideal->norm)`)
+        // matches: `lideal` is the original input, not the reduced
+        // copy used internally by `find_uv`. Using the reduced
+        // ideal's norm here breaks whenever `nrd(parent_ideal)` is
+        // even (the reduced norm is `nrd(δ)/nrd(I)` for an
+        // LLL-first vector δ ∈ I, and that ratio can be even even
+        // for odd-prime `nrd(I)`), which leaves
+        // `invmod(parent_norm · d₁, 2^f)` undefined.
+        //
+        // The translation between β's reduced-ideal provenance
+        // (where `nrd(β) = d · nrd(parent_ideal)`) and the
+        // original-ideal scaling is absorbed by the identity
+        // `parent_ideal = I · δ̄/nrd(I)` — conjugate multiplication
+        // by δ in the quaternion algebra shifts `nrd(β)` by
+        // `nrd(δ)/nrd(I)`, and the resulting matrix equation
+        // collapses back to the spec's `1/nrd(I)` scaling modulo
+        // 2^f.
+        let parent_norm = *self.norm();
+        let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
+        let scale_denom = parent_norm.ct_mul(&d1_big).ct_mod(&modulus);
+        let scale_inv = scale_denom.invert_mod(&modulus)?;
+        let s = Scalar::from(scale_inv);
+        let fv = f.value();
+        let s00 = s.mul_mod2k(m_prod.entry(0, 0), fv);
+        let s01 = s.mul_mod2k(m_prod.entry(0, 1), fv);
+        let s10 = s.mul_mod2k(m_prod.entry(1, 0), fv);
+        let s11 = s.mul_mod2k(m_prod.entry(1, 1), fv);
+        let fdi_v_basis = TorsionBasis::from_propagated(phi_v_p, phi_v_q, phi_v_pmq);
+        let p_step6 = fdi_v_basis.eval_decomposition(&s00, &s10);
+        let q_step6 = fdi_v_basis.eval_decomposition(&s01, &s11);
+        let pmq_step6 =
+            fdi_v_basis.eval_decomposition(&s00.sub_mod2k(&s01, fv), &s10.sub_mod2k(&s11, fv));
 
         // Steps 7–8: Build kernel points on E_u × E_v.
         //
-        // K_P ← [2^{f−2−e}]([d₁]φ_u(P_s), P)
-        // K_Q ← [2^{f−2−e}]([d₁]φ_u(Q_s), Q)
+        // # Divergences
         //
-        // The scaling is f−2−e (not f−e) so the kernel retains
-        // order 2^(e+2). The extra +2 provides the 8-torsion
-        // that the gluing step requires.
-        let d1_scalar = d1.to_scalar();
-        let mut kp_first = &d1_scalar * &phi_u_p;
-        let mut kq_first = &d1_scalar * &phi_u_q;
+        // The spec (Algorithm 3.13, line 7) writes `[d₁] φ_u(P_s)`
+        // for the first component. The C reference
+        // (`dim2id2iso.c:949-951`) uses `φ_u(P_s)` directly — no
+        // `[d₁]` multiplication. The two are equivalent for
+        // splitting (the spec's `[d₁]` factor cancels against the
+        // extra `1/d₁` implicit in the spec's second-component
+        // scaling of `1/(nrd(I)²·d₁)` vs. the C ref's
+        // `1/(nrd(parent)·d₁)`). We follow the C ref's convention
+        // on both sides of the kernel since it is the
+        // implementation whose signatures verify against the
+        // published KAT vectors.
+        let mut kp_first = phi_u_p;
+        let mut kq_first = phi_u_q;
+        let mut kpmq_first = phi_u_pmq;
         let mut kp_second = p_step6;
         let mut kq_second = q_step6;
+        let mut kpmq_second = pmq_step6;
 
-        let scale = f.value() - 2 - sui.e.value();
+        // # Divergences
+        //
+        // The spec (Algorithm 3.13, between lines 8 and 9) says
+        // to double the kernel "to reduce to 2^sui.e-torsion"
+        // before passing it to Algorithm 8.47. The natural
+        // reading -- double by `f - sui.e` -- is wrong.
+        //
+        // Algorithm 8.47 as described in the spec, and as
+        // implemented by our [`Kernel::isogeny`], runs a chain
+        // of `sui.e` 8-torsion isogenies. The chain's internal
+        // penultimate and ultimate steps fold the kernel's
+        // 4-torsion and 2-torsion residues into the last two
+        // `(2,2)`-isogenies via the `hadamard_bool` mechanism
+        // of Algorithm 8.41. This requires the kernel to enter
+        // the chain with order `2^(sui.e + 2)` -- two torsion
+        // bits above the kernel subgroup.
+        //
+        // The C reference implements two chain variants
+        // (`theta_isogenies.c:1088`) keyed on `extra_torsion`.
+        // With `extra_torsion = true`, the chain matches the
+        // spec's uniform 8-torsion formulation and needs a
+        // `2^(sui.e + 2)`-torsion kernel. With
+        // `extra_torsion = false`, the chain runs 2 fewer
+        // 8-torsion steps and adds dedicated 4-torsion and
+        // 2-torsion steps at the tail, consuming only a
+        // `2^sui.e`-torsion kernel. `dim2id2iso.c:1128` calls
+        // the outer chain with `extra_torsion = false`, while
+        // `dim2id2iso.c:181` (Algorithm 3.15) uses
+        // `extra_torsion = true`.
+        //
+        // Our chain only supports the `extra_torsion = true`
+        // variant, so we pad the kernel by leaving 2 extra
+        // torsion bits instead of doubling down to
+        // `2^sui.e` exactly. The `try_find_uv` filter
+        // `v_2(gcd(u, v)) >= 2` ensures `sui.e <= f - 2`, so
+        // `scale = f - sui.e - 2 >= 0` is always well-defined.
+        //
+        // Without this compensation the chain runs to
+        // completion but produces a degenerate theta null: the
+        // penultimate/ultimate steps double past identity, and
+        // the splitting routine (`count_splitting_indices`)
+        // sees either 0 or 10 vanishing `U_{i,j}(0)`
+        // coordinates rather than the unique 1 that identifies
+        // a genuine elliptic product. Downstream consumers
+        // accept the malformed codomain silently, producing
+        // wrong signing keys that fail only against KAT
+        // vectors.
+        let scale = f.value() - sui.e.value() - 2;
+        #[cfg(test)]
+        eprintln!(
+            "[to_isogeny] outer chain: sui.e={}, scale={scale}",
+            sui.e.value()
+        );
         for _ in 0..scale {
             kp_first = kp_first.double();
             kp_second = kp_second.double();
             kq_first = kq_first.double();
             kq_second = kq_second.double();
+            kpmq_first = kpmq_first.double();
+            kpmq_second = kpmq_second.double();
+        }
+
+        // Diagnostics: kernel order and curve-membership checks, plus
+        // affine x-coordinates in the exact format the SQIsign C
+        // reference prints (see `dim2id2iso.c:1036-1107`). Callers
+        // with access to the C reference's stderr can diff the
+        // `OUTER_KER` lines here against the fixture in
+        // `tests/fixtures/cref_outer_ker_kat_vector_*.txt` to locate
+        // which stage first diverges. The on-curve and exact-order
+        // checks mirror the C reference's
+        // `test_point_order_twof(..., exp)` assertions at
+        // `dim2id2iso.c:1109-1110`.
+        #[cfg(test)]
+        {
+            let on_curve =
+                |c: &Curve, p: &ProjectiveXOnlyPoint| c.recover_y(&p.to_affine_x()).is_some();
+            let has_order = |p: ProjectiveXOnlyPoint, e: u32| -> (bool, bool) {
+                let mut q = p;
+                for _ in 0..(e - 1) {
+                    q = q.double();
+                }
+                let half = !bool::from(q.is_identity());
+                q = q.double();
+                (half, bool::from(q.is_identity()))
+            };
+            // Hex rendering matches `fp_encode` in the C reference:
+            // little-endian byte array, printed high-byte first.
+            let fp2_hex = |v: &crate::fields::fp2::Fp2| -> (String, String) {
+                let b = v.to_bytes();
+                let re: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                let im: String = b[32..].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                (re, im)
+            };
+            let point_hex = |p: &ProjectiveXOnlyPoint| -> (String, String) {
+                fp2_hex(p.to_affine_x().as_fp2())
+            };
+            let e = sui.e.value() + 2;
+
+            let (p1re, p1im) = point_hex(&kp_first);
+            let (p2re, p2im) = point_hex(&kp_second);
+            let (q1re, q1im) = point_hex(&kq_first);
+            let (q2re, q2im) = point_hex(&kq_second);
+            eprintln!("OUTER_KER T1.P1_x_re=0x{p1re} T1.P1_x_im=0x{p1im}");
+            eprintln!("OUTER_KER T1.P2_x_re=0x{p2re} T1.P2_x_im=0x{p2im}");
+            eprintln!("OUTER_KER T2.P1_x_re=0x{q1re} T2.P1_x_im=0x{q1im}");
+            eprintln!("OUTER_KER T2.P2_x_re=0x{q2re} T2.P2_x_im=0x{q2im}");
+            let (e1re, _e1im) = fp2_hex(&e_u.j_invariant());
+            let (e2re, _e2im) = fp2_hex(&e_v.j_invariant());
+            eprintln!("OUTER_KER E1_j_re=0x{e1re}");
+            eprintln!("OUTER_KER E2_j_re=0x{e2re}");
+            eprintln!("OUTER_KER exp={e}");
+
+            let (kp1_half, kp1_full) = has_order(kp_first, e);
+            let (kp2_half, kp2_full) = has_order(kp_second, e);
+            let (kq1_half, kq1_full) = has_order(kq_first, e);
+            let (kq2_half, kq2_full) = has_order(kq_second, e);
+            eprintln!(
+                "[OUTER_KER] on_curve kp=({},{}) kq=({},{}) kpmq=({},{}); order 2^{e}: kp=({kp1_half},{kp1_full})/({kp2_half},{kp2_full}) kq=({kq1_half},{kq1_full})/({kq2_half},{kq2_full})",
+                on_curve(&e_u, &kp_first),
+                on_curve(&e_v, &kp_second),
+                on_curve(&e_u, &kq_first),
+                on_curve(&e_v, &kq_second),
+                on_curve(&e_u, &kpmq_first),
+                on_curve(&e_v, &kpmq_second),
+            );
         }
 
         // Step 9: (2,2)-isogeny chain on E_u × E_v.
-        //
-        // The kernel has order 2^(e+2), matching the chain's
-        // requirement for extra_torsion mode (all steps use
-        // normal hadamard_bool).
         let product = surfaces::EllipticProduct::new(e_u, e_v);
-        let pmq1 = kp_first.projective_difference(&kq_first);
-        let pmq2 = kp_second.projective_difference(&kq_second);
-
         let kernel = surfaces::Kernel::from_montgomery(
             product,
             (kp_first, kp_second),
             (kq_first, kq_second),
-            (pmq1, pmq2),
+            (kpmq_first, kpmq_second),
         )?;
 
+        // Chain exponent is `sui.e`. The C ref calls
+        // `theta_chain_compute_and_eval_randomized(exp=sui.e, ...,
+        // extra_torsion=false)` here
+        // (`dim2id2iso.c:1128`) — full-length chain, no extra
+        // torsion bits, kernel of order exactly 2^sui.e. The chain
+        // produces a `(2^sui.e, 2^sui.e)`-isogeny of length sui.e.
+        //
+        // The earlier version of this call used
+        // `isogeny_extra_torsion(chain_e = sui.e − 2)`, expecting
+        // kernel 2^(chain_e + 2) = 2^sui.e with two spare
+        // torsion bits for the internal double-and-add. That only
+        // produced a `(2^(sui.e − 2), 2^(sui.e − 2))`-isogeny — four
+        // bits too small — so the codomain landed at
+        // `A / [2²](P, Q)` rather than `A / (P, Q)`, and the
+        // splitting check at the end of the chain found zero
+        // candidate indices.
+        let chain_e = sui.e;
         let zero_v = ProjectiveXOnlyPoint::identity(&e_v);
         let (codomain, images) =
-            kernel.isogeny_extra_torsion(sui.e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)]);
+            kernel.isogeny(chain_e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)])?;
 
         // Steps 10–13: Pick correct output curve.
-        // Per Algorithm 8.47 remark, E is always correct when using
-        // Isogeny22ChainWithTorsion. Skip pairing check.
+        //
+        // The (2,2)-chain on `E_u × E_v` splits as a product of two
+        // curves; one is `E_I` (what we want), the other is an
+        // auxiliary. A full Weil-pairing disambiguation matching
+        // `dim2id2iso.c:1148-1178` would compare
+        // `tate(images on E_i)` against `tate(E_s basis)^{d₁·u²}`
+        // for each side. Our Tate-pairing push-forward
+        // compatibility with the (2,2)-chain restriction is not
+        // yet fully verified — some valid splits have pairings
+        // that don't match the spec's degree formula under our
+        // implementation. Until that relation is pinned down,
+        // default to `codomain.E1` (which is the convention the
+        // C reference lands on after its optional swap), and
+        // detect gross failures via the downstream curve-membership
+        // checks in `from_bases` and the KAT comparison.
+        //
+        // TODO: finish the pairing-based disambiguation once the
+        // Tate push-forward sign is known. For now this matches
+        // the behavior the test suite was validated against
+        // (generate_runs + sign-pipeline tests).
         let e_i = codomain.E1;
         let (p_chain, q_chain) = (images[0].0, images[1].0);
 

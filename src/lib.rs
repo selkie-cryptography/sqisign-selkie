@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-
 // Projective coordinates traditionally use uppercase letters,
 // lowercase for affine coordinates.
 #![allow(non_snake_case)]

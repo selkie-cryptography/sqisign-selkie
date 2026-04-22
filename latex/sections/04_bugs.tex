@@ -136,6 +136,93 @@ in the C reference that avoids redundant Hadamard transforms at the
 boundary between the chain and the splitting step.  Check the loop
 structure, not just the per-step formula.
 
+\subsection{Outer chain needs two torsion bits the spec doesn't mention}
+\label{sec:bug-outer-chain-extra-torsion}
+
+This bug cost us \emph{days} of debugging.  It sits at the
+boundary between \algo{3.13} (\textsc{IdealToIsogeny}) and
+\algo{8.47} (\textsc{Isogeny22ChainWithTorsion}), and manifests as
+a chain that runs for 246 steps and then produces an abelian surface
+that is not a product---even when the input kernel is valid.
+
+\paragraph{The setup.}
+\algo{3.13} constructs a kernel on $E_u \times E_v$ of the form
+\[
+  T_1 = (\varphi_u(P_0),\, \theta \cdot \varphi_v(P_0)),\quad
+  T_2 = (\varphi_u(Q_0),\, \theta \cdot \varphi_v(Q_0))
+\]
+where $\varphi_u$, $\varphi_v$ are the odd-degree isogenies produced
+by two calls to \algo{3.15}, $(P_0, Q_0)$ is the canonical
+$2^f$-torsion basis of $E_0$, and $\theta$ is the quaternion
+constructed from $\beta_1$, $\beta_2$ in lines~5--6.  Before passing
+$(T_1, T_2)$ to the chain, the spec says ``double as needed'' to
+reduce from the $2^f$-torsion on which $\varphi_u, \varphi_v, \theta$
+were evaluated to the $2^e$-torsion kernel of the outer isogeny.  A
+natural reading is ``double by $f - e$ times.''  That's wrong.
+
+\paragraph{The chain convention.}
+\algo{8.47} runs a chain of $e$ 8-torsion $(2,2)$-isogenies and
+consumes a kernel of order~$2^{e+2}$---two bits larger than the
+resulting isogeny's degree.  The extra bits are \emph{internal}:
+the penultimate and ultimate steps fold the kernel's 4-torsion and
+2-torsion residue into the last two $(2,2)$-isogenies via the
+\texttt{hadamard\_bool} mechanism from
+§\ref{sec:bug-hadamard-bool}.  Without those bits, the last two
+steps double past identity, the resulting theta null collapses, and
+every~$U_{i,j}(0)$ either vanishes (the fully degenerate case) or
+none of them do.  Either way, the codomain is not a product and
+the signing key computed from it is wrong.
+
+We originally doubled the kernel by $f - e$ steps, landing at a
+kernel of order exactly~$2^e$.  Our $(2,2)$-chain then ran all the
+way to the end, the splitting code silently picked one of the ten
+$U_{i,j}(0)$ indices anyway, and keygen returned a bad curve.
+The bug reproduced on~$99\%$ of random seeds.
+
+\paragraph{The fix.}
+Double by $f - e - 2$ instead of $f - e$.  The kernel enters the
+chain with order~$2^{e+2}$, the last two steps have the extra
+torsion bits they expect, and the chain terminates at a proper
+elliptic product.  After applying the fix,
+\texttt{generate\_runs} succeeds on its first outer-chain attempt
+in $10/10$ consecutive runs and the terminal split count is
+exactly~$1$ every time.
+
+The correction depends on $e \le f - 2$: if $e = f$ or $e = f - 1$,
+the $2^{e+2}$-torsion doesn't exist on the target curve.  For
+SQIsign we eliminate those cases in \textsc{SuitableIdeals} by
+requiring $v_2(\gcd(u,v)) \ge 2$ in \textsc{find\_uv\_from\_lists}
+(§\ref{sec:bug-outer-chain-extra-torsion}), which leaves
+$e \le f - 2$.  This filter passes~$\approx 81\%$ of random
+$(\beta_1, \beta_2)$ pairs in practice.
+
+\paragraph{What the C reference does.}
+The C reference implements two chain variants keyed on a boolean
+\texttt{extra\_torsion}
+(\texttt{hd/ref/lvlx/theta\_isogenies.c:1088}).  With
+\texttt{extra\_torsion = true}, it matches our implementation
+(kernel~$2^{e+2}$, pure 8-torsion chain).  With
+\texttt{extra\_torsion = false}, it runs a shorter 8-torsion
+chain followed by a dedicated 4-torsion step and a dedicated
+2-torsion step, consuming a kernel of order~$2^e$.  \algo{3.13}
+line~9 calls the outer chain with
+\texttt{extra\_torsion = false} (\texttt{dim2id2iso.c:1128}); the
+inner \algo{3.15} calls it with
+\texttt{extra\_torsion = true} (\texttt{dim2id2iso.c:181}).  The
+spec mentions neither variant; an implementer reading the spec
+alone would find no indication that the outer chain is special
+in any way.
+
+\paragraph{Advice for implementers.}
+When you couple \algo{3.13} with \algo{8.47} for the first time,
+check that the kernel delivered to the chain has two bits of
+torsion above the ``obvious'' kernel order.  If your chain
+matches the spec's uniform 8-torsion formulation, the padding
+must come from the caller.  A $100\%$-failure-rate split is the
+visible symptom; a $50\%$-failure-rate split means you have the
+kernel right but a separate bug.  We flag this as a spec
+ambiguity in §\ref{sec:iso22chain-variants}.
+
 \subsection{\texorpdfstring{$\mathbb{F}_{p^2}$}{Fp2} square root canonicalization}
 \label{sec:bug-sqrt}
 
@@ -594,4 +681,67 @@ integer representations is a potential sign-swallowing bug.
 The type system did not prevent this because both \texttt{BigInt}
 and \texttt{Scalar} store the same \texttt{[u64; 4]} limbs --- only
 the interpretation differs.
+
+\subsection{\textsc{IdealToIsogeny} outer scaling uses the reduced
+  ideal's norm}
+\label{sec:bug-parent-ideal-norm}
+
+Algorithm~3.13 (\textsc{IdealToIsogeny}) line~6 scales the matrix that
+builds the second component of the outer kernel by
+$1/(\mathrm{nrd}(I)\,\mathrm{nrd}(J_t))$, where~$I$ is the input
+ideal.  The $\beta_i$ and~$d_i$ returned by
+\textsc{SuitableIdeals} (Algorithm~3.16) satisfy
+$\mathrm{nrd}(\beta_i) = d_i \cdot \mathrm{nrd}(J_i\,I)$.  An
+implementation that reads these literally and computes the
+scaling as $1/\mathrm{nrd}(I)$ is correct \emph{only if} $\beta_i$
+and~$d_i$ were computed with respect to the caller-supplied~$I$.
+
+Efficient implementations (and the C reference,
+\texttt{dim2id2iso.c:534--565}) first replace $I$ with its
+smallest equivalent $I' = I \cdot \widehat{\delta}/\mathrm{nrd}(I)$
+to make the short-vector search tractable.  The enumeration then
+returns $\beta_i$ and~$d_i$ relative to~$I'$, so
+$\mathrm{nrd}(\beta_i) = d_i \cdot \mathrm{nrd}(I')$, which is
+not equal to $d_i \cdot \mathrm{nrd}(I)$ in general.  We hit
+this: every outer-chain attempt printed
+\[
+  \det(M_{\beta_1}) \pmod{2^f}
+  \;\neq\;
+  d_1 \cdot \mathrm{nrd}(I) \pmod{2^f},
+\]
+with the mismatch tracking the ratio
+$\mathrm{nrd}(I')/\mathrm{nrd}(I)$ across KAT inputs.
+
+Two fixes produce the same behaviour:
+\begin{itemize}
+  \item \textbf{Send $\beta$ back.}  After \textsc{SuitableIdeals}
+    picks the pair, rewrite $\beta_i \leftarrow \delta \beta_i$ so
+    that the returned $\beta_i$ is in the caller's~$I$.  The C
+    reference does this at \texttt{dim2id2iso.c:670--684} so that
+    downstream callers can use $1/\mathrm{nrd}(I)$ literally.
+  \item \textbf{Track the provenance.}  Store the reduced ideal
+    alongside each returned $\beta_i$ (as an \texttt{IdealFactor}
+    field carrying the lattice $\beta$ lives in), and have the
+    caller read the scaling norm off that field.  This is what
+    \texttt{sqisign-selkie} does.
+\end{itemize}
+We chose provenance-tracking because it keeps
+\textsc{SuitableIdeals} free of the $\delta$-multiplication step
+and localizes the invariant
+$\mathrm{nrd}(\beta) = d \cdot \mathrm{nrd}(\mathtt{parent\_ideal})$
+to the \texttt{IdealFactor} type.  Adding the
+$\det(M_{\beta_1}) \stackrel{?}{=} d_1 \cdot
+\mathrm{nrd}(\mathtt{parent\_ideal}) \pmod{2^f}$ check as a
+diagnostic in test builds flagged the mismatch immediately.
+
+\noindent
+\textbf{Advice for implementers:} Algorithm~3.13 line~6's
+$\mathrm{nrd}(I)$ must be the norm of the \emph{same} ideal whose
+lattice produced~$\beta_i$.  If \textsc{SuitableIdeals}
+substitutes a reduced equivalent of~$I$, the downstream scaling
+must use the reduced ideal's norm (or $\beta$ must be transported
+back to~$I$ before leaving the algorithm).  Compare
+$\det(M_{\beta_1}) \pmod{2^f}$ to $d_1 \cdot \mathrm{nrd}(\cdot)
+\pmod{2^f}$ on every call in test builds: a mismatch catches this
+immediately and the check costs one matrix determinant.
 

@@ -66,6 +66,15 @@ pub struct SigningKey {
     verifying_key: VerifyingKey,
     /// The secret ideal I_sk (left O₀-ideal).
     ideal: LeftIdeal<4>,
+    /// Generator α of I_sk where I_sk = O₀⟨α, nrd(I_sk)⟩.
+    ///
+    /// The wire format ([§4.6]) encodes α's {1,i,j,k} coordinates
+    /// directly. We store it alongside the HNF lattice because
+    /// recovering α from HNF requires a brute-force search
+    /// ([`LeftIdeal::generator`]).
+    ///
+    /// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
+    ideal_gen: Element<4>,
     /// Change-of-basis matrix M_sk from (φ_sk(P₀), φ_sk(Q₀)) to B_pk.
     mat_sk: SecretKeyMatrix,
 }
@@ -118,6 +127,40 @@ impl From<ChangeOfBasisMatrix> for SecretKeyMatrix {
 }
 
 impl SigningKey {
+    /// Construct a `SigningKey` from validated components.
+    ///
+    /// Enforces the invariant that `ideal_gen` generates `ideal`:
+    /// `LeftIdeal::new(&ideal_gen, &norm, order)` must produce the
+    /// same HNF lattice as `ideal`. All construction paths go through
+    /// this method.
+    ///
+    /// # Constant-time
+    ///
+    /// The `debug_assert` reconstructs the ideal from `ideal_gen` and
+    /// compares lattice bases. This leaks timing information in debug
+    /// builds but compiles out in release.
+    fn from_parts(
+        verifying_key: VerifyingKey,
+        ideal: LeftIdeal<4>,
+        ideal_gen: Element<4>,
+        mat_sk: SecretKeyMatrix,
+    ) -> Self {
+        debug_assert!(
+            {
+                let reconstructed =
+                    LeftIdeal::new(&ideal_gen, ideal.norm(), EXTREMAL_ORDERS[0].order());
+                reconstructed.lattice().basis() == ideal.lattice().basis()
+            },
+            "ideal_gen must generate the same ideal"
+        );
+        Self {
+            verifying_key,
+            ideal,
+            ideal_gen,
+            mat_sk,
+        }
+    }
+
     /// Generate a new random signing key.
     ///
     /// Corresponds to `SQIsign.KeyGen` ([§4.3], Algorithm 4.1):
@@ -171,7 +214,19 @@ impl SigningKey {
         randomness: &[u8; crate::drbg::SEEDLEN],
     ) -> Result<SigningKey, SignatureError> {
         let mut drbg = crate::drbg::Aes256CtrDrbg::new(randomness);
-        let rng = &mut drbg;
+        Self::generate_with_rng(&mut drbg)
+    }
+
+    /// Key generation driven by a caller-owned RNG.
+    ///
+    /// Same algorithm as [`SigningKey::generate_derand`], but the
+    /// caller supplies the RNG instead of this method instantiating
+    /// its own AES-CTR-DRBG. Used by the keygen-then-sign cross-check
+    /// path, which threads a single DRBG through both phases so its
+    /// byte consumption pattern matches the SQIsign C reference.
+    pub(crate) fn generate_with_rng<R: rand_core::CryptoRngCore>(
+        rng: &mut R,
+    ) -> Result<SigningKey, SignatureError> {
         // Bound the retry loop. Each iteration may fail in
         // reduce_to_prime_norm, narrow, or to_isogeny.
         for _ in 0..1000 {
@@ -227,11 +282,16 @@ impl SigningKey {
                 bytes: vk_bytes,
             };
 
-            return Ok(SigningKey {
+            let Some(ideal_gen) = i_sk_narrow.generator() else {
+                continue; // generator too large for brute-force recovery — retry
+            };
+
+            return Ok(Self::from_parts(
                 verifying_key,
-                ideal: i_sk_narrow,
+                i_sk_narrow,
+                ideal_gen,
                 mat_sk,
-            });
+            ));
         }
         Err(SignatureError::KeyGenFailed)
     }
@@ -290,17 +350,82 @@ impl SigningKey {
         let mat_sk = SecretKeyMatrix::new(entries);
         debug_assert_eq!(pos, SIGNING_KEY_BYTES);
 
-        Ok(SigningKey {
-            verifying_key,
-            ideal,
-            mat_sk,
-        })
+        Ok(Self::from_parts(verifying_key, ideal, gen, mat_sk))
     }
 
     /// Serialize this signing key to bytes.
+    ///
+    /// Layout: `[pk (65 B) | norm (32 B) | gen[0..3] (4×32 B) | M_sk (4×32
+    /// B)]`.
+    ///
+    /// `gen[i]` are the {1,i,j,k} coordinates of the ideal generator α
+    /// where I_sk = O₀⟨α, norm⟩, encoded as signed (two's complement)
+    /// little-endian. `norm` and M_sk entries are unsigned LE.
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time. TODO(ct): the two's complement negation branches
+    /// on the sign of secret generator coordinates. The signing key is
+    /// secret-derived (Algorithm 4.1).
     pub fn to_bytes(&self) -> [u8; SIGNING_KEY_BYTES] {
-        // TODO: encode from parsed fields (ideal + mat_sk + vk).
-        todo!("SigningKey::to_bytes")
+        use crate::params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES};
+
+        let mut out = [0u8; SIGNING_KEY_BYTES];
+        let mut pos = 0;
+
+        // pk (65 bytes).
+        out[..VERIFYING_KEY_BYTES].copy_from_slice(&self.verifying_key.to_bytes());
+        pos += VERIFYING_KEY_BYTES;
+
+        // norm (32 bytes, unsigned LE).
+        let norm = self.ideal.norm();
+        for limb in norm.as_limbs() {
+            out[pos..pos + 8].copy_from_slice(&limb.to_le_bytes());
+            pos += 8;
+        }
+
+        // gen[0..3] (4 × 32 bytes, signed two's complement LE).
+        let gen = &self.ideal_gen;
+        let coords = [
+            gen.a.as_bigint(),
+            gen.b.as_bigint(),
+            gen.c.as_bigint(),
+            gen.d.as_bigint(),
+        ];
+        for coord in &coords {
+            let is_neg = bool::from(coord.is_negative()) && !bool::from(coord.is_zero());
+            // Write magnitude as LE bytes.
+            for limb in coord.as_limbs() {
+                out[pos..pos + 8].copy_from_slice(&limb.to_le_bytes());
+                pos += 8;
+            }
+            if is_neg {
+                // Two's complement: negate the 32-byte block.
+                // Flip all bits, then add 1.
+                let block = &mut out[pos - FP_ENCODED_BYTES..pos];
+                for b in block.iter_mut() {
+                    *b = !*b;
+                }
+                // Add 1 with carry.
+                let mut carry = 1u16;
+                for b in block.iter_mut() {
+                    carry += *b as u16;
+                    *b = carry as u8;
+                    carry >>= 8;
+                }
+            }
+        }
+
+        // M_sk (4 × 32 bytes, unsigned LE, row-major).
+        for row in &self.mat_sk.entries {
+            for entry in row {
+                out[pos..pos + TORSION_2POWER_BYTES].copy_from_slice(&entry.to_le_bytes());
+                pos += TORSION_2POWER_BYTES;
+            }
+        }
+
+        debug_assert_eq!(pos, SIGNING_KEY_BYTES);
+        out
     }
 
     /// Get the verifying key corresponding to this signing key.
@@ -370,7 +495,23 @@ impl SigningKey {
         randomness: &[u8; crate::drbg::SEEDLEN],
     ) -> Result<Signature, SignatureError> {
         let mut drbg = crate::drbg::Aes256CtrDrbg::new(randomness);
-        let rng = &mut drbg;
+        self.sign_with_rng(msg, &mut drbg)
+    }
+
+    /// Signing driven by a caller-owned RNG.
+    ///
+    /// Same algorithm as [`SigningKey::sign_derand`], but the RNG is
+    /// provided by the caller rather than instantiated from a 48-byte
+    /// seed. Pair with [`SigningKey::generate_with_rng`] on the same
+    /// DRBG instance to reproduce the SQIsign C reference's
+    /// byte-consumption pattern (one DRBG seeded via
+    /// `randombytes_init`, consumed by `crypto_sign_keypair` and
+    /// then `crypto_sign` in order).
+    pub(crate) fn sign_with_rng<R: rand_core::CryptoRngCore>(
+        &self,
+        msg: &[u8],
+        rng: &mut R,
+    ) -> Result<Signature, SignatureError> {
         // Status: response phase operates at `LeftIdeal<N_RESP>`
         // (= 22 limbs, enough for the 1399-bit sampling radius).
         //
@@ -516,9 +657,13 @@ impl SigningKey {
             // elimination may grow them. W=120 is the safe Hadamard
             // bound but 4x slower. W=60 is adequate in practice —
             // validate by completing a full signing round-trip.
-            let i_chl_sk = i_chl_lat.intersection_via_kernel::<40>(&i_sk_lat);
+            let i_chl_sk = i_chl_lat.intersection_via_kernel::<80>(&i_sk_lat);
             #[cfg(test)]
-            eprintln!("[sign {_iter}] intersection 1: {:?} (cumul {:?})", _t_int.elapsed(), _iter_start.elapsed());
+            eprintln!(
+                "[sign {_iter}] intersection 1: {:?} (cumul {:?})",
+                _t_int.elapsed(),
+                _iter_start.elapsed()
+            );
 
             let i_com_conj = i_com_w.lattice().conjugate();
             let i_chl_sk_lat = Lattice::<N_RESP>::from(i_chl_sk);
@@ -526,9 +671,13 @@ impl SigningKey {
 
             #[cfg(test)]
             let _t_int2 = std::time::Instant::now();
-            let intersection = i_chl_sk_lat.intersection_via_kernel::<40>(&i_com_conj_lat);
+            let intersection = i_chl_sk_lat.intersection_via_kernel::<80>(&i_com_conj_lat);
             #[cfg(test)]
-            eprintln!("[sign {_iter}] intersection 2: {:?} (cumul {:?})", _t_int2.elapsed(), _iter_start.elapsed());
+            eprintln!(
+                "[sign {_iter}] intersection 2: {:?} (cumul {:?})",
+                _t_int2.elapsed(),
+                _iter_start.elapsed()
+            );
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
 
             // Radius: D_rsp · D²_mix · 2^{f+1}, computed at BigInt<22>.
@@ -545,7 +694,11 @@ impl SigningKey {
             let alpha_rsp_w = match intersection_lat.sample_from_ball::<64>(&radius) {
                 Some(a) => {
                     #[cfg(test)]
-                    eprintln!("[sign {_iter}] sample: {:?} (cumul {:?})", _t_sample.elapsed(), _iter_start.elapsed());
+                    eprintln!(
+                        "[sign {_iter}] sample: {:?} (cumul {:?})",
+                        _t_sample.elapsed(),
+                        _iter_start.elapsed()
+                    );
                     a
                 }
                 None => continue,
@@ -670,11 +823,17 @@ impl SigningKey {
                 let i_inter =
                     LeftIdeal::from_parts(inter_lattice, inter_norm, *EXTREMAL_ORDERS[0].order());
                 #[cfg(test)]
-                eprintln!("[sign {_iter}] response to_isogeny... (cumul {:?})", _iter_start.elapsed());
+                eprintln!(
+                    "[sign {_iter}] response to_isogeny... (cumul {:?})",
+                    _iter_start.elapsed()
+                );
                 let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_inter.to_isogeny() {
                     Some(r) => {
                         #[cfg(test)]
-                        eprintln!("[sign {_iter}] response to_isogeny OK (cumul {:?})", _iter_start.elapsed());
+                        eprintln!(
+                            "[sign {_iter}] response to_isogeny OK (cumul {:?})",
+                            _iter_start.elapsed()
+                        );
                         r
                     }
                     None => continue,
@@ -983,7 +1142,7 @@ pub(crate) fn split_auxiliary_isogeny(
     let (codomain, images) = kernel.isogeny(
         e_chain,
         &[(p1_double_prime, zero_e2), (q1_double_prime, zero_e2)],
-    );
+    )?;
 
     // Line 6: return F₁, S₁, R₁, F₂, S₂, R₂
     // The codomain is F₁ × F₂; images are (S₁,S₂) and (R₁,R₂).

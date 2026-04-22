@@ -8,6 +8,8 @@
 //! Since all quaternion algebras ramified at p and ∞ are isomorphic,
 //! there is a unique such algebra for each p. See [§3.1] of the spec.
 //!
+//! [§3.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.1
+//!
 //! The types [`Coordinate`], [`Denominator`], and [`Element`] are generic
 //! over a const parameter `N` (the number of `u64` limbs in `BigInt<N>`).
 //! Use `Element<4>` for verification/torsion (256-bit) and `Element<110>`
@@ -31,7 +33,6 @@
 // const generic when Rust supports `where N <= 110`) to prevent
 // accidentally using oversized types. For now, the valid values
 // are: N=4 (verification), N=9 (D_MIX commitment), N=110 (signing).
-//! [§3.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.1
 
 use core::fmt;
 
