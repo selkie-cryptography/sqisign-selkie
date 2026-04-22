@@ -294,13 +294,31 @@
       padding: 0;
     }
 
-    .line-grid tr.hit .ln,
-    .line-grid tr.hit .ct { color: var(--green); }
-    .line-grid tr.hit { background: rgba(63, 185, 80, 0.06); }
-
+    /* Coverage heat map: intensity scales with hit count */
     .line-grid tr.miss .ln,
     .line-grid tr.miss .ct { color: var(--red); }
     .line-grid tr.miss { background: rgba(248, 81, 73, 0.08); }
+
+    .line-grid tr.hit-cold .ln,
+    .line-grid tr.hit-cold .ct { color: var(--green); }
+    .line-grid tr.hit-cold { background: rgba(63, 185, 80, 0.04); }
+
+    .line-grid tr.hit-warm .ln,
+    .line-grid tr.hit-warm .ct { color: var(--green); }
+    .line-grid tr.hit-warm { background: rgba(63, 185, 80, 0.08); }
+
+    .line-grid tr.hit-hot .ln,
+    .line-grid tr.hit-hot .ct { color: var(--green); }
+    .line-grid tr.hit-hot { background: rgba(63, 185, 80, 0.14); }
+
+    .line-grid tr.hit-blazing .ln,
+    .line-grid tr.hit-blazing .ct { color: #f0b030; }
+    .line-grid tr.hit-blazing { background: rgba(240, 176, 48, 0.10); }
+
+    /* Cold coverage warning */
+    .line-grid tr.hit-fragile .ln,
+    .line-grid tr.hit-fragile .ct { color: var(--yellow); }
+    .line-grid tr.hit-fragile { background: rgba(210, 153, 34, 0.06); }
 
     /* GitHub-style Rust syntax highlighting (dark) */
     .syn-kw { color: #ff7b72; }
@@ -481,6 +499,58 @@
       border-bottom: none;
     }
 
+    /* Coverage insights */
+    .cov-insights {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .cov-insight {
+      flex: 1;
+      min-width: 250px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+    }
+
+    .cov-insight h4 {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      margin-bottom: 8px;
+    }
+
+    .cov-insight-list {
+      list-style: none;
+      font-size: 12px;
+      font-family: 'Inter', monospace;
+    }
+
+    .cov-insight-list li {
+      padding: 3px 0;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .cov-insight-list .tag {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      padding: 1px 5px;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+
+    .tag-hot { color: #f0b030; border: 1px solid rgba(240, 176, 48, 0.3); }
+    .tag-cold { color: var(--yellow); border: 1px solid rgba(210, 153, 34, 0.3); }
+    .tag-ct { color: var(--red); border: 1px solid rgba(248, 81, 73, 0.3); }
+
     /* Help tooltip */
     .help-icon {
       display: inline-block;
@@ -658,7 +728,13 @@
 
       <section class="section" id="coverage-section">
         <div class="section__header">
-          <h2 class="section__title">Coverage</h2>
+          <h2 class="section__title">Coverage<span class="help-icon">?<span class="tooltip"><dl>
+            <dt>Line coverage</dt><dd>Percentage of instrumented source lines executed by the test suite.</dd>
+            <dt>Heat map</dt><dd>Expand a file to see per-line hit counts. Color intensity shows how hot each line is relative to the file's max.</dd>
+            <dt>Hottest files</dt><dd>Files with the highest peak hit counts — your inner loops and performance-critical code.</dd>
+            <dt>CT audit</dt><dd>Hot lines marked TODO(ct) — code on potentially secret data that needs constant-time hardening.</dd>
+            <dt>Fragile coverage</dt><dd>Files where every covered line is hit at most twice, suggesting thin test coverage.</dd>
+            </dl></span></span></h2>
           <span class="meta" id="coverage-meta"></span>
         </div>
         <div id="coverage-content">
@@ -759,6 +835,75 @@
       const modules = data.modules || [];
 
       let html = `<div class="cov-summary" style="color:${covColor(total.percent)}">${totalPct}%</div>`;
+
+      // Analyze all files for insights.
+      if (modules.length > 0) {
+        const allFiles = modules.flatMap(m => (m.files || []).map(f => ({...f, module: m.name})));
+
+        // Hot functions: files with highest max hit count.
+        const hotFiles = allFiles
+          .map(f => {
+            const counts = (f.lines || []).filter(l => l[1] > 0).map(l => l[1]);
+            return { name: f.name, maxHit: Math.max(0, ...counts), totalHits: counts.reduce((a, b) => a + b, 0) };
+          })
+          .filter(f => f.maxHit > 0)
+          .sort((a, b) => b.maxHit - a.maxHit)
+          .slice(0, 5);
+
+        // Cold coverage: files where covered lines are all hit <= 2 times.
+        const coldFiles = allFiles
+          .filter(f => {
+            const hits = (f.lines || []).filter(l => l[1] > 0);
+            return hits.length > 0 && hits.every(l => l[1] <= 2);
+          })
+          .map(f => ({ name: f.name, covered: f.covered, total: f.total }))
+          .slice(0, 5);
+
+        // CT concerns: files with TODO(ct) in source on hot lines.
+        const ctConcerns = [];
+        for (const f of allFiles) {
+          for (const l of (f.lines || [])) {
+            if (l.length > 2 && l[1] > 100 && /TODO\(ct\)/.test(l[2])) {
+              ctConcerns.push({ file: f.name, line: l[0], count: l[1], src: l[2].trim() });
+            }
+          }
+        }
+
+        const sha = data.sha;
+        if (hotFiles.length > 0 || coldFiles.length > 0 || ctConcerns.length > 0) {
+          html += '<div class="cov-insights">';
+
+          if (hotFiles.length > 0) {
+            html += '<div class="cov-insight"><h4>Hottest files</h4><ul class="cov-insight-list">';
+            for (const f of hotFiles) {
+              const fname = f.name.replace(/^.*\//, '');
+              html += `<li><span>${esc(fname)}</span><span class="tag tag-hot">${esc(String(f.maxHit))}\u00d7 peak</span></li>`;
+            }
+            html += '</ul></div>';
+          }
+
+          if (ctConcerns.length > 0) {
+            html += '<div class="cov-insight"><h4>CT audit</h4><ul class="cov-insight-list">';
+            for (const c of ctConcerns.slice(0, 5)) {
+              const fname = c.file.replace(/^.*\//, '');
+              const link = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/${esc(c.file)}#L${c.line}` : '#';
+              html += `<li><a href="${link}">${esc(fname)}:${c.line}</a><span class="tag tag-ct">${esc(String(c.count))}\u00d7 hot</span></li>`;
+            }
+            html += '</ul></div>';
+          }
+
+          if (coldFiles.length > 0) {
+            html += '<div class="cov-insight"><h4>Fragile coverage</h4><ul class="cov-insight-list">';
+            for (const f of coldFiles) {
+              const fname = f.name.replace(/^.*\//, '');
+              html += `<li><span>${esc(fname)}</span><span class="tag tag-cold">${esc(String(f.covered))} lines \u2264 2\u00d7</span></li>`;
+            }
+            html += '</ul></div>';
+          }
+
+          html += '</div>';
+        }
+      }
 
       if (modules.length > 0) {
         html += `<table class="cov-table">
@@ -879,6 +1024,17 @@
       return s;
     }
 
+    // Classify a hit count into a heat level relative to file max.
+    function heatClass(ct, maxCt) {
+      if (ct <= 0) return ct < 0 ? '' : 'miss';
+      if (ct <= 2) return 'hit-fragile';  // cold: possibly single test
+      const ratio = ct / maxCt;
+      if (ratio >= 0.5) return 'hit-blazing';
+      if (ratio >= 0.1) return 'hit-hot';
+      if (ratio >= 0.01) return 'hit-warm';
+      return 'hit-cold';
+    }
+
     function toggleFile(mi, fi, ev) {
       ev.stopPropagation();
       const fileId = `file-${mi}-${fi}`;
@@ -892,13 +1048,15 @@
         const sha = covData.sha;
         const ghBase = `https://github.com/${REPO}/blob/${sha}/src/${esc(f.name)}`;
 
+        // Find max hit count in this file for relative heat scaling.
+        const maxCt = Math.max(1, ...lines.map(e => e[1]));
+
         let grid = '<div class="line-grid"><table>';
         for (const entry of lines) {
           const ln = entry[0];
           const ct = entry[1];
           const src = entry.length > 2 ? entry[2] : '';
-          // ct == -1 means non-instrumented (comment, blank, declaration).
-          const cls = ct < 0 ? '' : ct > 0 ? 'hit' : 'miss';
+          const cls = heatClass(ct, maxCt);
           const ctLabel = ct < 0 ? '' : ct > 0 ? esc(String(ct)) + '\u00d7' : '\u2014';
           grid += `<tr class="${cls}">`;
           grid += `<td class="ln"><a href="${ghBase}#L${ln}" style="color:inherit">${ln}</a></td>`;
