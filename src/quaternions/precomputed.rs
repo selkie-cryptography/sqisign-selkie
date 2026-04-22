@@ -14,7 +14,11 @@
 //! [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
 //! [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
 
-use super::{bigint::BigInt, lattice::ExtremalOrder};
+use super::{
+    bigint::BigInt,
+    lattice::{ExtremalOrder, HnfLattice, Lattice, LeftIdeal},
+    linear::{Matrix, Vector},
+};
 
 /// Number of precomputed extremal orders.
 pub const NUM_EXTREMAL_ORDERS: usize = 7;
@@ -406,6 +410,45 @@ pub const CONNECTING_IDEAL_Y: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
     ), // q=97
 ];
 
+/// The connecting ideal `J_t` from `O_0` to `O_t` as a left-`O_0`
+/// ideal in `LeftIdeal<4>` form, for `t ∈ 0..7`.
+///
+/// Assembled from the precomputed HNF data in [`CONNECTING_IDEAL_NORMS`],
+/// [`CONNECTING_IDEAL_X`], and [`CONNECTING_IDEAL_Y`]. The basis is
+/// already in canonical HNF by construction, so the
+/// [`From<Lattice<4>>`] conversion to [`HnfLattice<4>`] is idempotent
+/// here; computing the HNF again just re-validates it.
+///
+/// For `t = 0` the returned ideal is `O_0` itself (norm 2,
+/// `x = y = 1`), which lets the alternate-order search in
+/// [`LeftIdeal::suitable_ideals`] treat `t = 0` uniformly with
+/// `t > 0`.
+///
+/// See [§3.1.7.2] of the spec for the connecting-ideal construction.
+///
+/// [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
+#[must_use]
+pub fn connecting_ideal(t: usize) -> LeftIdeal<4> {
+    assert!(t < NUM_EXTREMAL_ORDERS);
+    let norm = CONNECTING_IDEAL_NORMS[t];
+    let x = CONNECTING_IDEAL_X[t];
+    let y = CONNECTING_IDEAL_Y[t];
+    // Columns are basis vectors (α₀, α₁, α₂, α₃) in the {1, i, j, k}
+    // basis; rows are components. Pre-denom basis:
+    //   α₀ = N,     α₁ = N·i,     α₂ = x·i + j,   α₃ = y + k,
+    // after dividing by denom = 2. For t = 0 this is the standard
+    // order basis (1, i, (i+j)/2, (1+k)/2).
+    let basis = Matrix::from_rows(
+        Vector::new(norm, BigInt::ZERO, BigInt::ZERO, y),
+        Vector::new(BigInt::ZERO, norm, x, BigInt::ZERO),
+        Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ONE, BigInt::ZERO),
+        Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ZERO, BigInt::ONE),
+    );
+    let denom = BigInt::<4>::from_u64(2);
+    let hnf = HnfLattice::from(Lattice::new(basis, denom));
+    LeftIdeal::<4>::from_parts(hnf, norm, *STANDARD_ORDER.order())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -416,6 +459,24 @@ mod tests {
     #[test]
     fn standard_order_q_is_one() {
         assert_eq!(STANDARD_ORDER.q(), 1);
+    }
+
+    /// Every connecting ideal builds without panicking and
+    /// round-trips its stored norm through
+    /// [`LeftIdeal::from_parts`]. Parent-order equality is checked
+    /// via the underlying `Lattice` basis since `Order` does not
+    /// derive `PartialEq`.
+    #[test]
+    fn connecting_ideal_norm_and_parent_roundtrip() {
+        for (t, expected_norm) in CONNECTING_IDEAL_NORMS.iter().enumerate() {
+            let j = connecting_ideal(t);
+            assert_eq!(*j.norm(), *expected_norm, "J_{t} norm mismatch");
+            assert_eq!(
+                j.parent_order().basis(),
+                STANDARD_ORDER.order().basis(),
+                "J_{t} parent-order basis mismatch",
+            );
+        }
     }
 
     /// Re-derive `D_HNF_MODULUS_COMMITMENT = 4 · d⁴ · D_MIX² · p`

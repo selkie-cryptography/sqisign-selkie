@@ -39,7 +39,7 @@ use crate::{
         algebra::Element,
         bigint::BigInt,
         lattice::{ExtremalOrder, Lattice, LeftIdeal},
-        precomputed::EXTREMAL_ORDERS,
+        precomputed::{CONNECTING_IDEAL_NORMS, EXTREMAL_ORDERS},
     },
     surfaces,
 };
@@ -602,8 +602,21 @@ impl LeftIdeal<4> {
         // applied to `M_θ` before acting on the basis is
         // `1 / (nrd(parent_ideal) · d₁)`.
         //
-        // TODO: generalize for s, t > 0 (needs nrd(J_t) and per-order
-        // connecting ideal norms).
+        // For `t > 0` the spec and C reference ( `dim2id2iso.c:885-889`)
+        // add a factor of `nrd(J_t)` to the denominator to account
+        // for the pushforward `β_2 ∈ J_t · self`: β_2 is scaled by
+        // `nrd(J_t)` relative to its O_0-representative, and the
+        // matrix action inherits that scale. The factor for `s` does
+        // not appear — β_1 enters through `fixed_degree_isogeny(s, u)`
+        // on the first component, which already handles the per-order
+        // embedding. See [§3.1.7.2].
+        //
+        // For `t = 0`, `CONNECTING_IDEAL_NORMS[0] = 2`, which is even
+        // and would invalidate `invmod(·, 2^f)`. Gate on
+        // `t_index > 0` to skip the extra factor in the single-order
+        // path.
+        //
+        // [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
         let modulus = BigInt::<4>::ONE.shl(f.value());
         let s_index = EXTREMAL_ORDERS
             .iter()
@@ -660,7 +673,15 @@ impl LeftIdeal<4> {
         // 2^f.
         let parent_norm = *self.norm();
         let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
-        let scale_denom = parent_norm.ct_mul(&d1_big).ct_mod(&modulus);
+        let scale_denom = {
+            let base = parent_norm.ct_mul(&d1_big).ct_mod(&modulus);
+            if t_index > 0 {
+                base.ct_mul(&CONNECTING_IDEAL_NORMS[t_index])
+                    .ct_mod(&modulus)
+            } else {
+                base
+            }
+        };
         let scale_inv = scale_denom.invert_mod(&modulus)?;
         let s = Scalar::from(scale_inv);
         let fv = f.value();
