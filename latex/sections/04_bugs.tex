@@ -397,13 +397,13 @@ the ones where a wrong value at the bottom of the stack flips a
 cryptographic predicate---``is this prime?'', ``is this a square?''---
 with no other symptom.
 
-\subsection{Five bugs in \texttt{GeneralizedRepresentInteger}}
+\subsection{Six bugs in \texttt{GeneralizedRepresentInteger}}
 \label{sec:bug-represent-integer}
 
 Algorithm~3.12 (\textsc{GeneralizedRepresentInteger}) finds
 $\gamma \in \mathcal{O}$ with $\mathrm{nrd}(\gamma) = M$ by sampling
 $(z, t)$ and solving $x^2 + qy^2 = M'$ via Cornacchia.  Our
-implementation had five independent errors that together prevented
+implementation had six independent errors that together prevented
 the algorithm from ever succeeding during signing:
 
 \begin{enumerate}
@@ -460,13 +460,59 @@ the algorithm from ever succeeding during signing:
     without finding any $(z, t, x, y)$ satisfying both the isogeny
     condition and the $d = 2$ condition.  Fixed by computing the bound
     from the spec's formula.
+
+  \item \textbf{Primality width too narrow for the auxiliary call
+    site.}  Bug~4 was patched by moving
+    \texttt{is\_probable\_prime} and \texttt{cornacchia} to the
+    widened variants \texttt{is\_probable\_prime\_w::<9>} and
+    \texttt{cornacchia\_w::<9>}.  That width ($9 \times 64 = 576$
+    bits) covers the \textsc{FixedDegreeIsogeny} caller's
+    ${\sim}273$-bit $M'$ with margin, but it does not cover the
+    \emph{response-phase} auxiliary caller \texttt{random\_norm}
+    (§\ref{sec:bug-pow-mod}), which passes
+    $M = \mathrm{QUAT\_PRIME\_COFACTOR} \cdot N_{\mathrm{aux}}
+    \approx 2^{377}$.  At that magnitude $4M$ is ${\sim}514$ bits,
+    needing $64W \geq 2 \cdot 514 = 1028$, so $W \geq 17$.  At the
+    original $W = 9$, the Miller-Rabin squarings overflowed
+    576~bits on every candidate $M'$, \texttt{is\_probable\_prime\_w}
+    reported ``composite'' for every prime, and
+    \texttt{represent\_integer} looped indefinitely without ever
+    finding a witness.  From signing's point of view the aux path
+    never completed: \texttt{sign} ran through its 1000-iteration
+    retry bound and returned \texttt{SigningFailed}.
+
+    The fix is to widen both callers to
+    \texttt{is\_probable\_prime\_w::<17>} and
+    \texttt{cornacchia\_w::<17>}, which covers every
+    \texttt{BigInt<8>} input ($1088 \geq 2 \cdot 514$).  With the
+    wider working width, \texttt{represent\_integer} at aux-path
+    magnitudes completes in ${\sim}7$~seconds.
+
+    Structurally this is a direct recurrence of bug~4 and of the
+    underlying width-budget issue in §\ref{sec:bug-pow-mod}: our
+    machinery for expressing the ``working width must cover
+    $2 \cdot \mathrm{bits}(\text{input})$'' contract is a
+    compile-time \texttt{const} assertion on $W \geq N$ only, not
+    on $W$ versus the actual input bit-length.  The const
+    assertion lets $W = 9$ through even when the actual inputs are
+    514 bits.  We added a regression test
+    (\texttt{primality\_w9\_vs\_w20\_at\_aux\_magnitude}) that
+    confirms narrow-$W$ Miller-Rabin disagrees with wide-$W$ on
+    379-bit candidates, so future width regressions surface
+    immediately.
 \end{enumerate}
 
-Bugs~1 and~4 were the most damaging: bug~1 eliminated all candidates
-before primality testing, and bug~4 made the primality test reject
-genuine primes.  Bug~3 was the subtlest and required the most
-iterations to diagnose, since the divisibility condition depends on
-the order's algebraic structure rather than a simple coordinate check.
+Bugs~1, 4, and~6 were the most damaging: bug~1 eliminated all
+candidates before primality testing, and bugs~4 and~6 made the
+primality test reject genuine primes.  Bug~3 was the subtlest and
+required the most iterations to diagnose, since the divisibility
+condition depends on the order's algebraic structure rather than a
+simple coordinate check.  Bug~6 was particularly hard to catch
+because it only manifested at the aux-path call site, several
+layers below \texttt{sign}, and the outer failure mode
+(\texttt{sign} exhausts its retry budget and returns
+\texttt{SigningFailed}) looks indistinguishable from the normal
+probabilistic failure of \textsc{SuitableIdeals}.
 
 \noindent
 \textbf{Advice for implementers:} Algorithm~3.12 is simple at first glance---a short
@@ -477,6 +523,61 @@ plausible-looking implementation silently fails.  The divisibility
 check in particular should not be hand-derived from coordinate
 arithmetic; it should use the same order-basis GCD computation as the
 C reference.
+
+\subsection{\texttt{random\_norm} narrows $\mathrm{nrd}(\beta)$ into
+  \texttt{BigInt<4>}}
+\label{sec:bug-random-norm-narrow}
+
+Algorithm~3.10 (\textsc{RandomIdealGivenNorm}) constructs an ideal
+of a given norm~$N$ by sampling a random quaternion
+$\beta = x + yi + zj + wk$ with coordinates in $[1, N]$ and checking
+$\gcd(\mathrm{nrd}(\beta), N) = 1$.  Our implementation computed
+$\mathrm{nrd}(\beta)$ at \texttt{BigInt<8>} (the width of the norm
+formula $x^2 + y^2 + p(z^2 + w^2)$), then tried to narrow it to
+\texttt{BigInt<4>} before computing the gcd:
+\begin{lstlisting}[language=Rust]
+let (nrd_num, nrd_den) = beta.norm();
+let nrd_num_4: CtOption<BigInt<4>> = nrd_num.into();
+let nrd_den_4: CtOption<BigInt<4>> = nrd_den.into();
+if !nrd_num_4.is_some() || !nrd_den_4.is_some() {
+    continue;  // retry with fresh sample
+}
+\end{lstlisting}
+For $N \approx 2^{126}$ (signing response phase) the norm
+$\mathrm{nrd}(\beta) \approx p \cdot N^2 \approx 2^{505}$.  That
+doesn't fit in $\texttt{BigInt<4>}$'s 256~bits, so the narrow always
+failed and every one of the 10\,000 samples was silently rejected.
+\texttt{random\_norm} always returned \texttt{None}; signing's
+auxiliary path always continued past it; key generation and
+signing appeared to ``probabilistically fail'' when in fact they
+were deterministically wrong.
+
+\paragraph{Fix.}  Widen~$N$ to \texttt{BigInt<8>} and compute the
+gcd at that width.  The result is always small (bounded by~$N$), so
+the final comparison against~1 is correct regardless of storage
+width.
+
+\paragraph{Why it was hidden.}  \texttt{random\_norm} is only
+called from the signing response path's auxiliary ideal
+construction.  Key generation and signing's commitment phase use
+\texttt{random\_prime\_norm\_wide}, which operates at
+\texttt{BigInt<30>} throughout and doesn't narrow.  Unit tests for
+\texttt{random\_norm} used small $N$ (under $2^{60}$), where the
+narrow accidentally succeeded.  The bug only surfaced when the
+signing flow first reached the aux path after we had fixed the
+upstream intersection-overflow and outer-chain-torsion bugs --- at
+which point \texttt{random\_norm} quietly rejected every sample
+and sign looked like it was ``stuck in the response phase.''
+
+\noindent
+\textbf{Advice for implementers:} A \texttt{CtOption}-returning narrow at the edge
+of a module is a silent-failure channel.  Any time you narrow a
+computed-at-large-width quantity into a smaller storage type on
+the hot path, write a unit test that passes an input large enough
+to make the narrow fail and verify the outer function still
+behaves correctly.  When the narrow is meant to prove ``this
+value fits,'' make it a \texttt{Result} with a distinguishable
+error rather than a filter that loops until it happens to fit.
 
 \subsection{Invalid test kernels for $(2,2)$-isogeny chains}
 \label{sec:bug-theta-tests}

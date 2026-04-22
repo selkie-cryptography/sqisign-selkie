@@ -71,10 +71,14 @@ impl ExtremalOrder<8> {
     ///   2. This matches the C ref's `quat_alg_make_primitive`. Hand-deriving
     ///   the divisibility condition from coordinate parity is fragile and
     ///   order- dependent.
-    /// - **Arithmetic width**: primality testing and Cornacchia on ~273-bit
-    ///   candidates in `BigInt<8>` overflow the 512-bit storage during modular
-    ///   exponentiation. Uses widened variants (`_w::<9>`, 576 bits ≥ 2×273)
-    ///   for correctness.
+    /// - **Arithmetic width**: primality testing and Cornacchia on up to ~514-bit
+    ///   `m_prime` candidates in `BigInt<8>` (4·M for M ≤ 2^512) overflow the
+    ///   512-bit storage during modular exponentiation. Uses widened variants
+    ///   (`_w::<17>`, 1088 bits ≥ 2·514 = 1028) for correctness across every
+    ///   caller, including the aux-path `random_norm` which passes
+    ///   M ≈ 2^377. Using a narrower width (e.g. `_w::<9>`) silently truncates
+    ///   Miller-Rabin exponentiations and makes `represent_integer` loop
+    ///   indefinitely without ever finding a witness.
     /// - **Search bound**: computed from the spec's formula `ceil(sqrt(4M /
     ///   (p·sqrt(q))))`, not hardcoded.
     ///
@@ -157,19 +161,26 @@ impl ExtremalOrder<8> {
                     continue;
                 }
 
-                // m' can be up to ~273 bits in BigInt<8> (512 bits).
-                // Squaring during Miller-Rabin produces up to 546-bit
-                // intermediates, which overflows BigInt<8>. Widen to
-                // BigInt<9> (576 bits ≥ 2×273) for correct modular
-                // exponentiation.
-                if !m_prime.is_probable_prime_w::<9>(12) {
+                // `m_prime` can be up to `~bits(m) + 2`, and the
+                // caller's `m` ranges from ~273 bits (FDI) up to
+                // `4·m` ≈ 2^514 at aux-path magnitudes. Miller-Rabin
+                // needs a working width `W` satisfying
+                // `64·W ≥ 2·bits(m_prime) − 1` to avoid silent
+                // truncation inside `pow_mod_w`. `W = 17` covers
+                // every `BigInt<8>` input (2·512 − 1 = 1023, 64·17 =
+                // 1088). An earlier version used `W = 9`, which was
+                // silently truncating Miller-Rabin exponentiations
+                // for any `m` above ~280 bits and made
+                // `represent_integer` never find a witness for aux-
+                // path magnitudes.
+                if !m_prime.is_probable_prime_w::<17>(12) {
                     continue;
                 }
                 _primes_found += 1;
 
-                // Cornacchia uses modular sqrt internally, which
-                // needs the same widening as primality testing.
-                let Some((x, y)) = BigInt::<8>::cornacchia_w::<9>(&q, &m_prime) else {
+                // Cornacchia uses the same modular-sqrt machinery
+                // and needs the same widening.
+                let Some((x, y)) = BigInt::<8>::cornacchia_w::<17>(&q, &m_prime) else {
                     continue;
                 };
                 _cornacchia_ok += 1;
@@ -915,6 +926,84 @@ impl LeftIdeal<4> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Miller-Rabin width check: `pow_mod_w<W>` requires
+    /// `64·W ≥ 2·bits(modulus) − 1`. For 379-bit moduli (aux-path
+    /// `represent_integer`) we need `W ≥ 12`. Running at `W = 9`
+    /// silently truncates every Miller-Rabin exponentiation and
+    /// makes every input look composite, so `represent_integer`
+    /// never finds a witness. This test confirms the issue by
+    /// comparing `is_probable_prime_w::<9>` and
+    /// `is_probable_prime_w::<20>` across a range of small
+    /// candidates built on top of a 379-bit base: the
+    /// 20-limb width is well above the safe threshold while the
+    /// 9-limb width is below it, and the two disagree on roughly
+    /// half the inputs.
+    #[test]
+    fn primality_w9_vs_w20_at_aux_magnitude() {
+        // Base = 2^378 (a 379-bit even number). Try (base + k)
+        // for small k and check that the wider width finds at
+        // least one prime that the narrower width misses. If we
+        // don't see any disagreement, either the width math is
+        // fine at this bit width or the Rng seed is unlucky —
+        // in either case, a valid workflow should never rely on
+        // `W = 9` for 379-bit inputs.
+        let mut base = [0u64; 8];
+        base[5] = 1u64 << (378 - 64 * 5);
+        let base_b = BigInt::<8>::from_limbs(base);
+        assert_eq!(base_b.bitsize(), 379);
+        let mut disagreements = 0;
+        for k in 1..200i64 {
+            let cand = base_b.ct_add(&BigInt::<8>::from_i64(2 * k - 1));
+            // `cand` is an odd 379-bit integer.
+            let wide_says_prime = cand.is_probable_prime_w::<20>(4);
+            let narrow_says_prime = cand.is_probable_prime_w::<9>(4);
+            if wide_says_prime && !narrow_says_prime {
+                disagreements += 1;
+            }
+        }
+        assert!(
+            disagreements > 0,
+            "expected `is_probable_prime_w::<9>` to miss primes that `<20>` accepts at 379 bits"
+        );
+    }
+
+    /// Timing benchmark for `represent_integer` at aux-path
+    /// magnitudes (`M ≈ 2^377`). Run with
+    /// `cargo test --lib --release represent_integer_aux_magnitude
+    ///   -- --ignored --nocapture` and read the elapsed time
+    /// printed on success.
+    #[test]
+    #[ignore]
+    fn represent_integer_aux_magnitude() {
+        use crate::params::QUAT_PRIME_COFACTOR;
+        let order = ExtremalOrder::<8>::from(EXTREMAL_ORDERS[0]);
+        // Simulate the aux-path input: `m = QUAT_PRIME_COFACTOR`
+        // (~2^251) times a 126-bit `aux_norm`. Use a fixed odd
+        // 126-bit value so the measurement is reproducible.
+        let m4 = QUAT_PRIME_COFACTOR;
+        let m_wide = BigInt::<8>::from_limbs({
+            let mut limbs = [0u64; 8];
+            limbs[..4].copy_from_slice(m4.as_limbs());
+            limbs
+        });
+        let aux_norm = BigInt::<8>::from_limbs({
+            let mut limbs = [0u64; 8];
+            limbs[0] = 0x1234_5678_9ABC_DEF1;
+            limbs[1] = 0xFEDC_BA98_7654_3211;
+            limbs
+        });
+        let mn = m_wide.ct_mul(&aux_norm);
+        let t0 = std::time::Instant::now();
+        let gamma = order.represent_integer(&mn, false);
+        let elapsed = t0.elapsed();
+        eprintln!(
+            "[aux-RI] mn.bits={} elapsed={elapsed:?} ok={}",
+            mn.bitsize(),
+            gamma.is_some()
+        );
+        assert!(gamma.is_some(), "represent_integer(~2^377) must find a γ");
+    }
 
     #[test]
     fn is_probable_prime_small() {

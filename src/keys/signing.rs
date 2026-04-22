@@ -777,20 +777,17 @@ impl SigningKey {
             let i_com_rsp = match i_com_rsp_w.narrow() {
                 Some(i) => i,
                 None => {
-                    // Norm > 2^256. Call smallest_equiv at width 4
-                    // on a version where we can narrow the lattice
-                    // entries (they're bounded by ~norm ≈ 2^257,
-                    // barely exceeding BigInt<4>). Use reduce_to_
-                    // prime_norm as a fallback — it produces a
-                    // prime-norm equivalent that fits in BigInt<4>.
-                    let mut i_rsp = i_com_rsp_w;
-                    if !i_rsp.reduce_to_prime_norm::<44, _>(rng) {
-                        continue;
-                    }
-                    match i_rsp.narrow() {
-                        Some(i) => i,
-                        None => continue,
-                    }
+                    // Norm > 2^256 HNF entries. Falling back to
+                    // `reduce_to_prime_norm::<44>` here takes ~40 s
+                    // per call and usually fails (the rejection
+                    // sampling doesn't find a prime-norm equivalent
+                    // within its 2401-sample budget). Continuing
+                    // to the next sign iteration is faster in
+                    // practice. A proper fix is a generic
+                    // `smallest_equiv` on `LeftIdeal<N>` that can
+                    // shrink the ~2^258-norm ideal to ~√p ≈ 2^126
+                    // without the rejection loop.
+                    continue;
                 }
             };
 

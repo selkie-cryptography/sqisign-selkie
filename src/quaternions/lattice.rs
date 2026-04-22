@@ -707,7 +707,12 @@ impl<const N: usize> Lattice<N> {
         // Step 3: Rejection sampling.
         // Byte buffer for random sampling — sized for BigInt<W>.
         let byte_cap = W * 8;
-        for _ in 0..10_000 {
+        // Without LLL-based box tightening (TODO above), our
+        // per-axis bound `sqrt(rad / G[i][i])` is loose enough
+        // that typical acceptance rates sit around 10^-4; 10,000
+        // tries then fails most of the time for signing. Bump to
+        // 200,000 until the LLL bound lands.
+        for _ in 0..200_000 {
             // Sample uniform x[i] in [-bounds[i], bounds[i]].
             let mut x = [BigInt::<W>::ZERO; 4];
             for i in 0..4 {
@@ -1545,6 +1550,19 @@ impl LeftIdeal<4> {
     /// Uses [`ExtremalOrder::represent_integer`] to find γ with
     /// nrd(γ) = m·N, then samples random β with gcd(nrd(β), N) = 1.
     ///
+    /// # Divergences
+    ///
+    /// The `gcd(nrd(β), N) = 1` check runs at `BigInt<8>` rather
+    /// than narrowing down to `BigInt<4>` first. An earlier version
+    /// of this function narrowed `nrd(β) ≈ p·N² ≈ 2^505` (for
+    /// response-phase `N ≈ 2^126`) into `BigInt<4>`, which always
+    /// failed silently and rejected every one of the 10,000
+    /// samples. `random_norm` then always returned `None`, signing
+    /// quietly ran out of its 1000-iteration retry budget, and
+    /// failed as `SigningFailed`. See the paper's `§Bugs from Fixed
+    /// Width Arithmetic -> random_norm narrows nrd(β) into
+    /// BigInt<4>` entry.
+    ///
     /// WARNING: Not constant-time.
     ///
     /// TODO(ct): Make constant-time before production use.
@@ -1603,22 +1621,23 @@ impl LeftIdeal<4> {
                 Denominator::ONE,
             );
 
-            // Check gcd(nrd(β), N) = 1.
+            // Check gcd(nrd(β), N) = 1. `nrd(β) = x² + y² + p(z² +
+            // w²)` is about `p · N² ≈ 2^505` for N ~ 2^126, so it
+            // doesn't narrow to `BigInt<4>`. Compute the gcd at
+            // `BigInt<8>` against a widened N, then narrow the
+            // (always small) gcd back to check for 1. An earlier
+            // version of this function narrowed nrd before the
+            // gcd check, which silently rejected every sample for
+            // any N > ~2^64 and made `random_norm` return `None`
+            // after 10_000 futile iterations.
             let (nrd_num, nrd_den) = beta.norm();
-            let nrd_num_4: subtle::CtOption<BigInt<4>> = nrd_num.into();
-            let nrd_den_4: subtle::CtOption<BigInt<4>> = nrd_den.into();
-            if !bool::from(nrd_num_4.is_some()) || !bool::from(nrd_den_4.is_some()) {
-                continue;
-            }
-            let nrd_4 = nrd_num_4.unwrap();
-            let den_4 = nrd_den_4.unwrap();
-            let (nrd_val, rem) = nrd_4.div_rem(&den_4);
+            let (nrd_val_wide, rem) = nrd_num.div_rem(&nrd_den);
             if !bool::from(rem.is_zero()) {
                 continue;
             }
-
-            let gcd = nrd_val.gcd(n);
-            if gcd != BigInt::<4>::ONE {
+            let n_wide: BigInt<8> = n.widen();
+            let gcd_wide = nrd_val_wide.gcd(&n_wide);
+            if gcd_wide != BigInt::<8>::ONE {
                 continue;
             }
 
