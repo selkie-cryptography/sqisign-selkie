@@ -60,7 +60,11 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           key: ${{ matrix.target }}
-      - run: cargo test --target ${{ matrix.target }}
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --target ${{ matrix.target }}
+      - run: cargo test --doc --target ${{ matrix.target }}
 
   msrv:
     name: MSRV (1.81.0)
@@ -143,25 +147,29 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov,cargo-nextest
+      - name: Collect coverage (nextest + doctests)
+        run: |
+          cargo +nightly llvm-cov --no-report nextest
+          cargo +nightly llvm-cov --no-report --doc
       - name: Generate coverage report
         run: |
           echo '## Code Coverage' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cargo llvm-cov --fail-under-lines 50 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          cargo +nightly llvm-cov report --doctests --fail-under-lines 50 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate coverage JSON for CI site
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           mkdir -p coverage-out
-          cargo llvm-cov --lcov --output-path coverage-out/coverage.lcov
+          cargo +nightly llvm-cov report --doctests --lcov --output-path coverage-out/coverage.lcov
           rustc -O .github/scripts/lcov-to-json.rs -o /tmp/lcov-to-json
           /tmp/lcov-to-json coverage-out/coverage.lcov "${{ github.sha }}" \
             > coverage-out/coverage.json
@@ -172,12 +180,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          flyctl apps restart sqisign-selkie-ci --skip-health-checks
-          sleep 5
-          flyctl ssh sftp shell -a sqisign-selkie-ci <<'SFTP'
-          put coverage-out/coverage.json /data/coverage/coverage.json
-          SFTP
+        run: bash .github/scripts/ci-upload.sh coverage coverage-out/coverage.json "${{ github.sha }}"
 
   audit:
     name: cargo deny
@@ -188,40 +191,69 @@ jobs:
         with:
           persist-credentials: false
       # cargo-deny only reads Cargo.toml/lock, no compilation needed.
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
           tool: cargo-deny
       - run: cargo deny check advisories bans
 
-  # Incremental mutation testing: only mutate code changed in the PR.
-  # Full mutation testing runs on a weekly schedule (see mutants.yml).
+  # Incremental mutation testing: only mutate code changed in the
+  # push or PR.  Full run is weekly (see mutants.yml).
   mutants:
     name: Mutation testing (incremental)
     runs-on: ubuntu-24.04
-    if: github.event_name == 'pull_request'
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Generate diff against base branch
+      - name: Generate diff
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: git diff "origin/${BASE_REF}".. > git.diff
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff "origin/${BASE_REF}".. > git.diff
+          else
+            # Push to main: diff against previous commit.
+            git diff "${BEFORE_SHA}..HEAD" > git.diff
+          fi
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: taiki-e/install-action@fd0f63e180a477d7434580b6d80817978b9ff2b8
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
-          tool: cargo-mutants
+          tool: cargo-mutants,cargo-nextest
       - name: Run cargo-mutants on changed code
-        run: cargo mutants --no-shuffle -vV --in-diff git.diff -- --lib
+        run: |
+          cargo mutants --no-shuffle -vV \
+            --test-tool nextest \
+            --timeout 180 \
+            --in-place \
+            --in-diff git.diff -- --lib
       - name: Archive mutants.out
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutants-incremental.out
           path: mutants.out
+
+      - name: Generate and merge mutants JSON for CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
+        run: |
+          bash .github/scripts/mutants-to-json.sh \
+            mutants.out/outcomes.json "${{ github.sha }}" \
+            > mutants-incremental.json
+          bash .github/scripts/merge-mutants.sh \
+            mutants-incremental.json "${{ github.sha }}" \
+            > mutants.json
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
+      - name: Upload mutants to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: bash .github/scripts/ci-upload.sh mutants mutants.json "${{ github.sha }}"
 
   sage-precompute-check:
     name: Sage precompute cross-check
@@ -300,7 +332,7 @@ jobs:
 
       - name: Upload PDFs
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: latex-pdfs
           path: |

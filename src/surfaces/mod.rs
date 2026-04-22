@@ -459,7 +459,7 @@ impl Kernel {
         &self,
         e: crate::curves::TorsionExponent,
         pts: &[ProductPoint],
-    ) -> (EllipticProduct, Vec<ProductPoint>) {
+    ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         self.isogeny_inner(e, pts, false)
     }
 
@@ -479,7 +479,7 @@ impl Kernel {
         &self,
         e: crate::curves::TorsionExponent,
         pts: &[ProductPoint],
-    ) -> (EllipticProduct, Vec<ProductPoint>) {
+    ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         self.isogeny_inner(e, pts, true)
     }
 
@@ -488,7 +488,7 @@ impl Kernel {
         e: crate::curves::TorsionExponent,
         pts: &[ProductPoint],
         _extra_torsion: bool,
-    ) -> (EllipticProduct, Vec<ProductPoint>) {
+    ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         // Algorithm 8.47 (Isogeny22ChainWithTorsion):
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
         let e = e.value();
