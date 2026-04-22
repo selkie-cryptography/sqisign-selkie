@@ -20,7 +20,7 @@ MAX_INDEX=50
 MAX_FILES=30
 DIR="/data/${KIND}"
 
-# Build index entry fields. Coverage includes percent; benchmarks don't.
+# Build index entry fields per kind.
 UPDATED=$(jq -r '.updated_at' "$JSON")
 if [ "$KIND" = "coverage" ]; then
   TOTAL_PCT=$(jq -r '.total.percent' "$JSON")
@@ -28,6 +28,14 @@ if [ "$KIND" = "coverage" ]; then
     | [{sha: $sha, percent: ($pct | tonumber), updated_at: $at}] + .
     | .[0:$max]'
   JQ_ARGS=(--arg sha "$SHA" --arg pct "$TOTAL_PCT" --arg at "$UPDATED" --argjson max "$MAX_INDEX")
+elif [ "$KIND" = "mutants" ]; then
+  CAUGHT=$(jq -r '.summary.caught // 0' "$JSON")
+  MISSED=$(jq -r '.summary.missed // 0' "$JSON")
+  TIMEOUT=$(jq -r '.summary.timeout // 0' "$JSON")
+  INDEX_JQ='map(select(.sha != $sha))
+    | [{sha: $sha, caught: ($caught | tonumber), missed: ($missed | tonumber), timeout: ($timeout | tonumber), updated_at: $at}] + .
+    | .[0:$max]'
+  JQ_ARGS=(--arg sha "$SHA" --arg caught "$CAUGHT" --arg missed "$MISSED" --arg timeout "$TIMEOUT" --arg at "$UPDATED" --argjson max "$MAX_INDEX")
 else
   INDEX_JQ='map(select(.sha != $sha))
     | [{sha: $sha, updated_at: $at}] + .

@@ -482,6 +482,34 @@
       border-color: var(--fg-dim);
     }
 
+    /* Mutant insights */
+    .mutants-insights {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .mutants-insights .cov-insight {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .mutants-insights .cov-insight-list .bar-wrap {
+      flex: 1;
+      max-width: 80px;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--bar-bg);
+      overflow: hidden;
+      align-self: center;
+    }
+
+    .mutants-insights .cov-insight-list .bar-fill {
+      height: 100%;
+      border-radius: 3px;
+    }
+
     .mutant-detail-list {
       list-style: none;
       padding: 4px 8px 8px 24px;
@@ -1051,9 +1079,6 @@
         // Find max hit count in this file for relative heat scaling.
         const maxCt = Math.max(1, ...lines.map(e => e[1]));
 
-        // Find max hit count in this file for relative heat scaling.
-        const maxCt = Math.max(1, ...lines.map(e => e[1]));
-
         let grid = '<div class="line-grid"><table>';
         for (const entry of lines) {
           const ln = entry[0];
@@ -1084,18 +1109,138 @@
         ? (s.caught / tested >= 0.8 ? 'var(--green)' : s.caught / tested >= 0.5 ? 'var(--yellow)' : 'var(--red)')
         : 'var(--fg-dim)';
 
+      // Kill rate trend from index history.
+      let trendHtml = '';
+      if (mutantsIndex.length > 1) {
+        const history = mutantsIndex
+          .filter(e => e.caught != null)
+          .map(e => {
+            const t = (e.caught || 0) + (e.missed || 0) + (e.timeout || 0);
+            return t > 0 ? (e.caught / t * 100) : null;
+          })
+          .filter(v => v !== null)
+          .slice(0, 10)
+          .reverse();
+
+        if (history.length >= 2) {
+          const latest = history[history.length - 1];
+          const prev = history[history.length - 2];
+          const delta = latest - prev;
+          const arrow = delta > 0.5 ? '\u2197' : delta < -0.5 ? '\u2198' : '\u2192';
+          const dColor = delta > 0.5 ? 'var(--green)' : delta < -0.5 ? 'var(--red)' : 'var(--fg-dim)';
+          const sparkBlocks = history.map(v => {
+            const level = Math.min(7, Math.floor(v / 100 * 8));
+            return ['\u2581','\u2582','\u2583','\u2584','\u2585','\u2586','\u2587','\u2588'][level];
+          }).join('');
+          trendHtml = `<div class="mutants-stat">
+            <span class="value" style="color:${dColor};font-size:20px">${arrow} ${delta > 0 ? '+' : ''}${delta.toFixed(1)}%</span>
+            <span class="label">trend <span style="letter-spacing:1px;font-size:13px">${sparkBlocks}</span></span>
+          </div>`;
+        }
+      }
+
       let html = '<div class="mutants-summary">';
       html += `<div class="mutants-stat"><span class="value" style="color:${killColor}">${killPct}%</span><span class="label">kill rate</span></div>`;
       html += `<div class="mutants-stat"><span class="value" style="color:var(--green)">${esc(String(s.caught || 0))}</span><span class="label">caught</span></div>`;
       html += `<div class="mutants-stat"><span class="value" style="color:var(--red)">${esc(String(s.missed || 0))}</span><span class="label">missed</span></div>`;
       if (s.timeout) html += `<div class="mutants-stat"><span class="value" style="color:var(--yellow)">${esc(String(s.timeout))}</span><span class="label">timeout</span></div>`;
       html += `<div class="mutants-stat"><span class="value">${esc(String(s.unviable || 0))}</span><span class="label">unviable</span></div>`;
+      if (trendHtml) html += trendHtml;
       html += '</div>';
 
       if (survivors.length > 0) {
         const sha = data.sha;
 
-        // Group survivors by function.
+        // --- Survivor patterns (by mutation type) ---
+        const patternMap = new Map();
+        for (const m of survivors) {
+          const desc = m.name.includes(':') ? m.name.split(': ').slice(1).join(': ') : m.name;
+          // Extract the mutation pattern: "replace X with Y in fn" → "replace X with Y"
+          const pattern = desc.replace(/ in .+$/, '');
+          patternMap.set(pattern, (patternMap.get(pattern) || 0) + 1);
+        }
+        const patterns = [...patternMap.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8);
+
+        // --- Survivors per module ---
+        // We need both caught and missed per module. Survivors give us missed;
+        // we approximate caught from the summary if available.
+        const modSurvivors = new Map();
+        for (const m of survivors) {
+          const mod = m.file.replace(/^src\//, '').split('/')[0];
+          modSurvivors.set(mod, (modSurvivors.get(mod) || 0) + 1);
+        }
+        const moduleStats = [...modSurvivors.entries()]
+          .map(([mod, missed]) => ({ mod, missed }))
+          .sort((a, b) => b.missed - a.missed);
+
+        // --- Coverage vs mutation cross-reference ---
+        // If coverage data is loaded, find modules with high coverage
+        // but many surviving mutants.
+        const crossRef = [];
+        if (covData && covData.modules) {
+          for (const cm of covData.modules) {
+            const missed = modSurvivors.get(cm.name) || 0;
+            if (missed > 0 && cm.percent >= 50) {
+              crossRef.push({ mod: cm.name, coverage: cm.percent, missed });
+            }
+          }
+          crossRef.sort((a, b) => b.missed - a.missed);
+        }
+
+        // --- Render insights ---
+        html += '<div class="mutants-insights">';
+
+        // Patterns
+        if (patterns.length > 0) {
+          const maxP = patterns[0][1];
+          html += '<div class="cov-insight"><h4>Survivor patterns</h4><ul class="cov-insight-list">';
+          for (const [pat, count] of patterns) {
+            const pct = (count / maxP * 100).toFixed(0);
+            html += `<li>
+              <span>${esc(pat)}</span>
+              <span style="display:flex;gap:6px;align-items:center">
+                <span class="bar-wrap"><span class="bar-fill" style="width:${pct}%;background:var(--red)"></span></span>
+                <span style="font-variant-numeric:tabular-nums;min-width:2em;text-align:right">${count}</span>
+              </span>
+            </li>`;
+          }
+          html += '</ul></div>';
+        }
+
+        // Module kill rates
+        if (moduleStats.length > 0) {
+          html += '<div class="cov-insight"><h4>Survivors by module</h4><ul class="cov-insight-list">';
+          const maxM = moduleStats[0].missed;
+          for (const ms of moduleStats.slice(0, 6)) {
+            const pct = (ms.missed / maxM * 100).toFixed(0);
+            html += `<li>
+              <span>${esc(ms.mod)}</span>
+              <span style="display:flex;gap:6px;align-items:center">
+                <span class="bar-wrap"><span class="bar-fill" style="width:${pct}%;background:var(--red)"></span></span>
+                <span style="font-variant-numeric:tabular-nums;min-width:2em;text-align:right">${ms.missed}</span>
+              </span>
+            </li>`;
+          }
+          html += '</ul></div>';
+        }
+
+        // Coverage cross-reference
+        if (crossRef.length > 0) {
+          html += '<div class="cov-insight"><h4>High coverage, low kill rate</h4><ul class="cov-insight-list">';
+          for (const cr of crossRef.slice(0, 5)) {
+            html += `<li>
+              <span>${esc(cr.mod)}</span>
+              <span><span class="tag tag-cold">${cr.coverage.toFixed(0)}% cov</span> <span class="tag tag-ct">${cr.missed} missed</span></span>
+            </li>`;
+          }
+          html += '</ul></div>';
+        }
+
+        html += '</div>';
+
+        // --- Group survivors by function (existing table) ---
         const groups = new Map();
         for (const m of survivors) {
           const key = `${m.file}::${m.function || ''}`;
