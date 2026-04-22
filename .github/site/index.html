@@ -817,6 +817,20 @@
 
     <div class="sections">
 
+      <section class="section" id="analysis-section" style="display:none">
+        <div class="section__header">
+          <h2 class="section__title">Analysis<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Cross-references coverage, mutation testing, and benchmark data to surface actionable insights.</p>
+            <dl>
+            <dt>Untested hot paths</dt><dd>Functions with high hit counts but surviving mutants — code that runs a lot but isn't verified.</dd>
+            <dt>CT + mutant overlap</dt><dd>Secret-data paths (TODO(ct)) with surviving mutants — a side-channel fix here would be untested.</dd>
+            <dt>Benchmark blind spots</dt><dd>Hot functions without benchmarks, or benchmarked functions that aren't hot.</dd>
+            <dt>Module health</dt><dd>Combined score from coverage, kill rate, and hot path density.</dd>
+            </dl></span></span></h2>
+        </div>
+        <div id="analysis-content"></div>
+      </section>
+
       <section class="section" id="coverage-section">
         <div class="section__header">
           <h2 class="section__title">Coverage<span class="help-icon">?<span class="tooltip">
@@ -860,20 +874,6 @@
         <div id="mutants-content">
           <p class="empty">No mutation testing data yet.</p>
         </div>
-      </section>
-
-      <section class="section" id="analysis-section" style="display:none">
-        <div class="section__header">
-          <h2 class="section__title">Analysis<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Cross-references coverage, mutation testing, and benchmark data to surface actionable insights.</p>
-            <dl>
-            <dt>Untested hot paths</dt><dd>Functions with high hit counts but surviving mutants — code that runs a lot but isn't verified.</dd>
-            <dt>CT + mutant overlap</dt><dd>Secret-data paths (TODO(ct)) with surviving mutants — a side-channel fix here would be untested.</dd>
-            <dt>Benchmark blind spots</dt><dd>Hot functions without benchmarks, or benchmarked functions that aren't hot.</dd>
-            <dt>Module health</dt><dd>Combined score from coverage, kill rate, and hot path density.</dd>
-            </dl></span></span></h2>
-        </div>
-        <div id="analysis-content"></div>
       </section>
 
     </div>
