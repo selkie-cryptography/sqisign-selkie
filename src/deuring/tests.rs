@@ -65,8 +65,8 @@ fn action_matrix_linear_combination() {
 fn torsion_basis_points_on_e0() {
     use crate::curves::montgomery::{Curve, ProjectiveXOnlyPoint};
 
-    let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &Curve::E0);
-    let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &Curve::E0);
+    let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_P_X, &Curve::E0);
+    let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_Q_X, &Curve::E0);
 
     assert!(!bool::from(p.is_identity()), "P₀ should not be identity");
     assert!(!bool::from(q.is_identity()), "Q₀ should not be identity");
@@ -200,8 +200,8 @@ fn c_ref_basis_cross_check() {
     let c_ref_qx_re = convert(&broadwell_values[2]);
     let c_ref_qx_im = convert(&broadwell_values[3]);
 
-    let our_px = torsion_basis::e0_px();
-    let our_qx = torsion_basis::e0_qx();
+    let our_px = torsion_basis::E0_P_X;
+    let our_qx = torsion_basis::E0_Q_X;
 
     assert_eq!(
         c_ref_px_re,
@@ -299,7 +299,8 @@ fn c_ref_all_bases_cross_check() {
     //                          PmQ(x_re,x_im,z_re,z_im)}
     const BLOCKS_PER_CURVE: usize = 20;
 
-    for t in 0..7 {
+    for curve in torsion_basis::ExtremalCurve::ALL {
+        let t = curve.as_index();
         let base = t * BLOCKS_PER_CURVE;
 
         let c_ref_px_re = convert(&blocks[base + 8]);
@@ -307,8 +308,7 @@ fn c_ref_all_bases_cross_check() {
         let c_ref_qx_re = convert(&blocks[base + 12]);
         let c_ref_qx_im = convert(&blocks[base + 13]);
 
-        let (our_px, our_qx, _) =
-            torsion_basis::basis_for_curve(t).unwrap_or_else(|| panic!("no basis for curve {t}"));
+        let (our_px, our_qx, ..) = curve.basis();
 
         assert_eq!(
             c_ref_px_re,
@@ -411,8 +411,8 @@ fn action_matrix_consistent_with_basis() {
         scalar::Scalar,
     };
 
-    let p0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &Curve::E0);
-    let q0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &Curve::E0);
+    let p0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_P_X, &Curve::E0);
+    let q0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_Q_X, &Curve::E0);
     let basis = TorsionBasis::from((p0, q0));
 
     let m_i = &ACTION_MATRICES[0][0];
@@ -421,7 +421,7 @@ fn action_matrix_consistent_with_basis() {
     let b = Scalar::from_limbs(*m_i.entry(1, 0).as_limbs());
     let result = basis.eval_decomposition(&a, &b);
 
-    let neg_px = -torsion_basis::e0_px();
+    let neg_px = -torsion_basis::E0_P_X;
     let i_of_p = ProjectiveXOnlyPoint::from_affine_x(neg_px, &Curve::E0);
 
     assert_eq!(
@@ -458,8 +458,8 @@ fn action_matrix_scalar_three() {
 #[test]
 fn ladder_vs_biladder_agree() {
     let curve = Curve::E0;
-    let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &curve);
-    let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &curve);
+    let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_P_X, &curve);
+    let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_Q_X, &curve);
     let pmq = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve);
 
     let three = Scalar::from_u64(3);
@@ -484,8 +484,8 @@ fn ladder_vs_biladder_agree() {
 #[test]
 fn scalar_mul_kernel_splits() {
     let curve = Curve::E0;
-    let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_px(), &curve);
-    let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::e0_qx(), &curve);
+    let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_P_X, &curve);
+    let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_Q_X, &curve);
     let pmq = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve);
 
     // [3]P, [3](P-Q), [3]Q via direct Montgomery scalar mul.
@@ -527,9 +527,9 @@ fn scalar_mul_kernel_splits() {
 fn all_torsion_bases_on_curve() {
     use crate::curves::montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint};
 
-    for t in 0..7 {
-        let (px, qx, a) =
-            torsion_basis::basis_for_curve(t).unwrap_or_else(|| panic!("no basis for curve {t}"));
+    for curve_idx in torsion_basis::ExtremalCurve::ALL {
+        let t = curve_idx.as_index();
+        let (px, qx, _pmq_x, a) = curve_idx.basis();
         let curve = Curve::from(Coefficient::from(a));
         let p = ProjectiveXOnlyPoint::from_affine_x(px, &curve);
         let q = ProjectiveXOnlyPoint::from_affine_x(qx, &curve);
@@ -553,6 +553,77 @@ fn all_torsion_bases_on_curve() {
         assert!(
             test.Z == crate::fields::fp2::Fp2::ZERO,
             "curve {t}: [2^f]P ≠ O"
+        );
+    }
+}
+
+/// Verify precomputed P − Q matches curve 0's existing
+/// `BASIS_E0_PMQ_X` and that on alternate curves the stored `pmq_x`
+/// is the x-coordinate of `P − Q` (or `P + Q` — the x-only basis
+/// admits a sign swap that the biladder tolerates) for SOME y-sign
+/// choice of `P` and `Q`.
+#[test]
+fn alternate_curves_pmq_consistent() {
+    use crate::{
+        curves::montgomery::{Coefficient, Curve, JacobianPoint, ProjectiveXOnlyPoint},
+        fields::fp2::Fp2,
+    };
+
+    // Curve 0: check consistency with the existing standalone
+    // constant in `params.rs`.
+    let (_, _, pmq0, _) = torsion_basis::ExtremalCurve::E0.basis();
+    assert_eq!(
+        pmq0,
+        crate::params::BASIS_E0_PMQ_X,
+        "ExtremalCurve::E0.basis().pmq_x must match BASIS_E0_PMQ_X"
+    );
+
+    // Curves 1..6: pmq_x must be the x-coordinate of (±P ± Q) for
+    // some y-sign choice. We check all four sign combinations and
+    // accept a match on any of them — x_add_sub returns
+    // (x(P+Q), x(P−Q)) for a given pair, and negating either P or
+    // Q flips which is which.
+    let f = TorsionExponent::FULL.value();
+    for curve_idx in &torsion_basis::ExtremalCurve::ALL[1..] {
+        let t = curve_idx.as_index();
+        let (px, qx, pmq_x, a) = curve_idx.basis();
+        let curve = Curve::from(Coefficient::from(a));
+
+        // Sanity: pmq_x is on the curve.
+        let pmq_proj = ProjectiveXOnlyPoint::from_affine_x(pmq_x, &curve);
+        assert!(
+            curve.recover_y(&pmq_proj.to_affine_x()).is_some(),
+            "curve {t}: P−Q not on curve"
+        );
+
+        // Sanity: [2^f]pmq_x = O.
+        let mut test = pmq_proj;
+        for _ in 0..f {
+            test = test.double();
+        }
+        assert!(test.Z == Fp2::ZERO, "curve {t}: [2^f](P−Q) ≠ O");
+
+        // P − Q identity: lift P and Q to Jacobian form with one
+        // y-sign choice each, then use x_add_sub to get
+        // (x(P+Q), x(P−Q)) with the sign distinguished. If the
+        // Sage verification script's sign-swap case applies on
+        // this curve, x(P+Q) will match pmq_x instead — accept
+        // either.
+        let p_y = curve
+            .recover_y(&ProjectiveXOnlyPoint::from_affine_x(px, &curve).to_affine_x())
+            .unwrap_or_else(|| panic!("curve {t}: P not on curve"));
+        let q_y = curve
+            .recover_y(&ProjectiveXOnlyPoint::from_affine_x(qx, &curve).to_affine_x())
+            .unwrap_or_else(|| panic!("curve {t}: Q not on curve"));
+        let p_jac = JacobianPoint::new(px, p_y, Fp2::ONE, &curve);
+        let q_jac = JacobianPoint::new(qx, q_y, Fp2::ONE, &curve);
+        let (x_add, x_sub) = p_jac.x_add_sub(&q_jac);
+        let x_add_aff = *x_add.to_affine_x().as_fp2();
+        let x_sub_aff = *x_sub.to_affine_x().as_fp2();
+        assert!(
+            pmq_x == x_sub_aff || pmq_x == x_add_aff,
+            "curve {t}: pmq_x matches neither x(P−Q) nor x(P+Q) for the \
+             chosen y-signs (stored pmq_x is inconsistent with (P, Q))"
         );
     }
 }

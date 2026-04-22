@@ -7,352 +7,684 @@
 //! Generated from the SQIsign reference implementation's
 //! `endomorphism_action.c` for `lvl1`.
 
-#![allow(unused)]
-
 use super::endomorphism::ActionMatrix;
-use crate::quaternions::bigint::BigInt;
 
 pub mod torsion_basis {
     //! Torsion basis x-coordinates for all 7 extremal order curves.
     //!
     //! Each curve E_t has a canonical 2^f-torsion basis (P_t, Q_t)
-    //! with f = 248. Stored as 32-byte little-endian plain integers
-    //! (NOT Montgomery form). Use `Fp::from_bytes` to convert.
+    //! with f = 248. Stored as radix-51 Montgomery-form limbs, so the
+    //! constants are usable in `const` contexts and agree byte-for-byte
+    //! with the `BASIS_E0_*` items in [`crate::params`].
     //!
-    //! Extracted from the C ref's `endomorphism_action.c` (pinned
-    //! commit 91e9e464) and independently verified by Sage (see
-    //! `scripts/precomp/verify_torsion_bases.sage`).
+    //! Extracted from the C reference's `endomorphism_action.c`
+    //! (pinned commit 91e9e464) and independently verified by Sage
+    //! (see `scripts/precomp/verify_torsion_bases.sage`). The plain
+    //! integer form lives in `scripts/precomp/torsion_bases.json`;
+    //! `scripts/precomp/gen_torsion_consts.py` converts each
+    //! coordinate `v` to `(v · R) mod p` with R = 2^255 and splits it
+    //! into 5 × 51-bit limbs.
+    //!
+    //! The `PmQ` coordinate for every curve uses the SAME projective
+    //! representative as the C reference's
+    //! `CURVES_WITH_ENDOMORPHISMS[t].basis_even.PmQ`. Deriving it
+    //! instead via `projective_difference(P, Q)` produces a different
+    //! representative that flips the Okeya-Sakurai y-sign and breaks
+    //! the downstream biladder.
 
+    use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+
+    use super::{ACTION_MATRICES, ActionMatrix};
     use crate::fields::{fp::Fp, fp2::Fp2};
 
-    /// Torsion basis and curve data for curve `t`.
+    /// Index of one of the seven extremal-order curves.
     ///
-    /// Returns `(px, qx, a)` where `px` and `qx` are the
-    /// x-coordinates of P_t and Q_t, and `a` is the Montgomery
-    /// coefficient A (with A_im = 0 for all curves except E₀
-    /// which has A = 0).
-    pub fn basis_for_curve(t: usize) -> Option<(Fp2, Fp2, Fp2)> {
-        match t {
-            0 => Some((e0_px(), e0_qx(), Fp2::ZERO)),
-            1 => Some((e1_px(), e1_qx(), e1_a())),
-            2 => Some((e2_px(), e2_qx(), e2_a())),
-            3 => Some((e3_px(), e3_qx(), e3_a())),
-            4 => Some((e4_px(), e4_qx(), e4_a())),
-            5 => Some((e5_px(), e5_qx(), e5_a())),
-            6 => Some((e6_px(), e6_qx(), e6_a())),
-            _ => None,
+    /// Values beyond `0..7` are unrepresentable, so callers cannot
+    /// pass a curve number that doesn't have precomputed data. Use
+    /// [`TryFrom<usize>`] to construct at the boundary with an
+    /// unbounded index (e.g. the result of `Iterator::position`).
+    ///
+    /// Discriminants match the `EXTREMAL_ORDERS` / `ACTION_MATRICES`
+    /// array indexing; [`ExtremalCurve::as_index`] exposes the
+    /// `usize` form for those lookups.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum ExtremalCurve {
+        /// E₀: y² = x³ + x (the base curve, A = 0).
+        E0 = 0,
+        /// The first alternate extremal-order curve.
+        E1 = 1,
+        /// The second alternate extremal-order curve.
+        E2 = 2,
+        /// The third alternate extremal-order curve.
+        E3 = 3,
+        /// The fourth alternate extremal-order curve.
+        E4 = 4,
+        /// The fifth alternate extremal-order curve.
+        E5 = 5,
+        /// The sixth alternate extremal-order curve.
+        E6 = 6,
+    }
+
+    impl ExtremalCurve {
+        /// Every extremal curve in canonical order, for iteration.
+        pub const ALL: [Self; 7] = [
+            Self::E0,
+            Self::E1,
+            Self::E2,
+            Self::E3,
+            Self::E4,
+            Self::E5,
+            Self::E6,
+        ];
+
+        /// Position in the `EXTREMAL_ORDERS` / `ACTION_MATRICES`
+        /// arrays.
+        pub const fn as_index(self) -> usize {
+            self as usize
+        }
+
+        /// Torsion basis and Montgomery coefficient.
+        ///
+        /// Returns `(px, qx, pmq_x, a)` where `px`, `qx`, and `pmq_x`
+        /// are the x-coordinates of `P_t`, `Q_t`, and `P_t − Q_t`, and
+        /// `a` is the Montgomery coefficient A (with `A_im = 0` for
+        /// all curves, and `a = 0` for [`Self::E0`]).
+        ///
+        /// # Constant-time
+        ///
+        /// Constant-time on `self`. During signing, `self` is derived
+        /// from the secret right order of the response ideal
+        /// (Algorithm 4.2, line 7 `I_sig_response → right_order`), so
+        /// this method must not branch on it. Implemented as a
+        /// linear-scan `conditional_select` over all seven
+        /// candidates: every invocation touches every row and the
+        /// discriminant is used only through `Choice`-valued
+        /// comparisons.
+        pub fn basis(self) -> (Fp2, Fp2, Fp2, Fp2) {
+            const BASES: [(Fp2, Fp2, Fp2, Fp2); 7] = [
+                (E0_P_X, E0_Q_X, E0_PMQ_X, Fp2::ZERO),
+                (E1_P_X, E1_Q_X, E1_PMQ_X, E1_A),
+                (E2_P_X, E2_Q_X, E2_PMQ_X, E2_A),
+                (E3_P_X, E3_Q_X, E3_PMQ_X, E3_A),
+                (E4_P_X, E4_Q_X, E4_PMQ_X, E4_A),
+                (E5_P_X, E5_Q_X, E5_PMQ_X, E5_A),
+                (E6_P_X, E6_Q_X, E6_PMQ_X, E6_A),
+            ];
+            let idx = self as u8;
+            let (mut px, mut qx, mut pmq, mut a) = BASES[0];
+            // Skip i=0 since it seeds the accumulator.
+            for (i, (p, q, pm, aa)) in BASES.iter().enumerate().skip(1) {
+                let matches: Choice = (i as u8).ct_eq(&idx);
+                px = Fp2::conditional_select(&px, p, matches);
+                qx = Fp2::conditional_select(&qx, q, matches);
+                pmq = Fp2::conditional_select(&pmq, pm, matches);
+                a = Fp2::conditional_select(&a, aa, matches);
+            }
+            (px, qx, pmq, a)
+        }
+
+        /// The three generator action matrices for this curve:
+        /// `ACTION_MATRICES[self.as_index()][3..6]`.
+        ///
+        /// # Constant-time
+        ///
+        /// Constant-time on `self`. Same CT contract as
+        /// [`Self::basis`]: linear-scan `conditional_select` over all
+        /// seven curves, so the index is never used to dereference
+        /// secret-dependent memory.
+        pub fn gen_matrices(self) -> [ActionMatrix; 3] {
+            let idx = self as u8;
+            let seed = &ACTION_MATRICES[0];
+            let mut out = [seed[3], seed[4], seed[5]];
+            for (i, row) in ACTION_MATRICES.iter().enumerate().skip(1) {
+                let matches: Choice = (i as u8).ct_eq(&idx);
+                out[0] = ActionMatrix::conditional_select(&out[0], &row[3], matches);
+                out[1] = ActionMatrix::conditional_select(&out[1], &row[4], matches);
+                out[2] = ActionMatrix::conditional_select(&out[2], &row[5], matches);
+            }
+            out
+        }
+    }
+
+    /// Keep the enum in lockstep with `EXTREMAL_ORDERS`. Fires at
+    /// monomorphization if either side grows or shrinks without the
+    /// other.
+    const _: () = assert!(
+        crate::quaternions::precomputed::NUM_EXTREMAL_ORDERS == ExtremalCurve::ALL.len(),
+        "ExtremalCurve variants must match NUM_EXTREMAL_ORDERS",
+    );
+
+    /// Reported by [`ExtremalCurve::try_from`] when the candidate
+    /// index is outside `0..7`. Carries the bad value so diagnostics
+    /// don't lose it.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    pub struct InvalidCurveIndex(pub usize);
+
+    impl core::fmt::Display for InvalidCurveIndex {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "invalid extremal-curve index: {} (must be 0..7)", self.0)
+        }
+    }
+
+    impl core::error::Error for InvalidCurveIndex {}
+
+    impl TryFrom<usize> for ExtremalCurve {
+        type Error = InvalidCurveIndex;
+
+        fn try_from(t: usize) -> Result<Self, Self::Error> {
+            match t {
+                0 => Ok(Self::E0),
+                1 => Ok(Self::E1),
+                2 => Ok(Self::E2),
+                3 => Ok(Self::E3),
+                4 => Ok(Self::E4),
+                5 => Ok(Self::E5),
+                6 => Ok(Self::E6),
+                _ => Err(InvalidCurveIndex(t)),
+            }
         }
     }
 
     // ---- Curve 0 (E₀: y² = x³ + x, A = 0) ----
 
-    /// P₀ x-coordinate.
-    pub fn e0_px() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x78, 0x00, 0xB4, 0xAE, 0x5E, 0xD9, 0x19, 0x21, 0x8B, 0xA7, 0xBF, 0x59, 0x1A, 0x99,
-                0xBE, 0x44, 0xC4, 0x16, 0x62, 0xA6, 0xC3, 0x04, 0xCC, 0x83, 0x24, 0xB1, 0x82, 0xCA,
-                0x7F, 0x87, 0x9B, 0x01,
-            ]),
-            b: Fp::from_bytes(&[
-                0x75, 0xD2, 0xF9, 0xC3, 0x3D, 0x13, 0x04, 0x8E, 0x74, 0x92, 0x42, 0x51, 0xAE, 0xDD,
-                0xCF, 0xB2, 0x2F, 0xE9, 0x67, 0x98, 0xAA, 0x0A, 0x15, 0x52, 0x42, 0xE0, 0xEA, 0x49,
-                0xDB, 0x2A, 0x44, 0x04,
-            ]),
-        }
-    }
+    /// P_0 x-coordinate.
+    pub(crate) const E0_P_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x5BCAB12000C08,
+            0x452654B56D052,
+            0x26F81B5190A0A,
+            0x36CFD66A361EB,
+            0x012726610D11B,
+        ]),
+        Fp::from_limbs([
+            0x6B96065C83EFC,
+            0x29DA1D4A82CD9,
+            0x190797AB98BDF,
+            0x6841AA6EEEE05,
+            0x01377C5431166,
+        ]),
+    );
 
-    /// Q₀ x-coordinate.
-    pub fn e0_qx() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x1F, 0xEB, 0x93, 0x55, 0x2A, 0x25, 0x16, 0x7C, 0xF3, 0xE1, 0x4B, 0xA5, 0xF7, 0x78,
-                0x86, 0x87, 0x1D, 0x04, 0x0D, 0x05, 0x17, 0x27, 0xDF, 0x9F, 0x71, 0x0B, 0x5C, 0x7D,
-                0x47, 0xFD, 0x5F, 0x04,
-            ]),
-            b: Fp::from_bytes(&[
-                0xEE, 0xAA, 0xCD, 0xA0, 0xB7, 0x28, 0xE2, 0xFD, 0xAE, 0xA5, 0x8E, 0x6F, 0x4B, 0x05,
-                0xFF, 0x39, 0x9A, 0xB3, 0x76, 0x36, 0xFB, 0xA8, 0x65, 0x44, 0xDC, 0x73, 0x18, 0xDF,
-                0xE9, 0xD4, 0x87, 0x04,
-            ]),
-        }
-    }
+    /// Q_0 x-coordinate.
+    pub(crate) const E0_Q_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x21DD55B97832F,
+            0x210F2D30B26AD,
+            0x0680BCFCF6396,
+            0x27B318EC126A7,
+            0x04FFBA5956012,
+        ]),
+        Fp::from_limbs([
+            0x74590149117E3,
+            0x4982EDEFCC606,
+            0x2AE3DB0CC6884,
+            0x7D0384872F5EC,
+            0x04FBB0FCB5A52,
+        ]),
+    );
+
+    /// P_0 − Q_0 x-coordinate (for consistent Okeya-Sakurai lift).
+    pub(crate) const E0_PMQ_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x0F6001DAFB71A,
+            0x75CB70989457F,
+            0x5F2AB120F726C,
+            0x7D12027E55817,
+            0x006482FE24949,
+        ]),
+        Fp::from_limbs([
+            0x63A39AF1D2179,
+            0x1C2884B0237F3,
+            0x675979F836736,
+            0x11DE56EF443D1,
+            0x0462333FA18B7,
+        ]),
+    );
 
     // ---- Curve 1 ----
 
     /// P_1 x-coordinate.
-    pub fn e1_px() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0xD0, 0xBE, 0x12, 0x78, 0x9D, 0x0B, 0xEE, 0x6B, 0x82, 0xF2, 0x7C, 0x6B, 0x24, 0xAF,
-                0x04, 0x49, 0xE4, 0x19, 0xDB, 0x20, 0xC4, 0xDA, 0x50, 0x2A, 0xC5, 0x73, 0xA6, 0x9C,
-                0xD0, 0x5A, 0x25, 0x03,
-            ]),
-            b: Fp::from_bytes(&[
-                0x4D, 0x14, 0xC8, 0x24, 0x7F, 0x45, 0x6A, 0x13, 0xCB, 0x35, 0xBA, 0x9D, 0xA8, 0x61,
-                0xC6, 0x9C, 0xE4, 0x8D, 0xAB, 0x60, 0x1E, 0x1B, 0x7B, 0xF3, 0xFE, 0xB0, 0xC8, 0x09,
-                0x67, 0x9A, 0x96, 0x03,
-            ]),
-        }
-    }
+    pub(crate) const E1_P_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x5F6259B797B43,
+            0x157F63B3AF2F9,
+            0x7A3F4EA01DFA8,
+            0x1DBB73E23680A,
+            0x018914DC770B9,
+        ]),
+        Fp::from_limbs([
+            0x08CB6E0CED492,
+            0x05F20AC237154,
+            0x7D25B71E8F3DD,
+            0x4BF5FC15B1E6E,
+            0x01DC3D80FA781,
+        ]),
+    );
 
     /// Q_1 x-coordinate.
-    pub fn e1_qx() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x0F, 0x06, 0xD1, 0xD0, 0x0C, 0x66, 0xC1, 0x38, 0x1E, 0x29, 0xF9, 0xCF, 0x4A, 0x64,
-                0xCE, 0x87, 0xB5, 0xA7, 0x5F, 0x7B, 0x14, 0x5A, 0x4B, 0xA3, 0x44, 0xFF, 0xF5, 0x51,
-                0x9C, 0x8C, 0x91, 0x02,
-            ]),
-            b: Fp::from_bytes(&[
-                0x64, 0xE6, 0x03, 0x7E, 0x91, 0x7F, 0x3E, 0xF1, 0x59, 0xC1, 0x75, 0x28, 0xA2, 0x93,
-                0x8D, 0x9A, 0xB2, 0xF1, 0x34, 0x0D, 0xAD, 0x42, 0xCC, 0x04, 0x5D, 0x97, 0x50, 0x08,
-                0xD7, 0x93, 0x21, 0x01,
-            ]),
-        }
-    }
+    pub(crate) const E1_Q_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x567AE7B4D67F3,
+            0x5CCB6E9FA4F37,
+            0x176489CB8F4EA,
+            0x6A1C3C481062B,
+            0x02C142D4FEFFE,
+        ]),
+        Fp::from_limbs([
+            0x4C1BFCD30A39F,
+            0x21B126AB96A61,
+            0x060ADD76BD4A7,
+            0x4A6A3D02240A9,
+            0x01F52F1A6E758,
+        ]),
+    );
+
+    /// P_1 − Q_1 x-coordinate (for consistent Okeya-Sakurai lift).
+    pub(crate) const E1_PMQ_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x023FAD1A2013B,
+            0x5E4194AF99678,
+            0x34468FAB3BF1B,
+            0x76E4E3F5B18C0,
+            0x0432503DA9000,
+        ]),
+        Fp::from_limbs([
+            0x34C912D2B3900,
+            0x014D40850DCBE,
+            0x672A3EAB48FFE,
+            0x2B790AFFECF8C,
+            0x002BA92928EAB,
+        ]),
+    );
 
     /// Montgomery coefficient A for curve 1.
-    pub fn e1_a() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0xF8, 0x67, 0x64, 0x85, 0xAF, 0xAE, 0x2D, 0xD3, 0x4B, 0xD9, 0x8C, 0xB0, 0xE9, 0x53,
-                0xAB, 0xC1, 0xA7, 0x56, 0xE2, 0x3D, 0xDA, 0x2F, 0x6B, 0xC0, 0xB2, 0xD2, 0x93, 0x16,
-                0x56, 0xA8, 0x6F, 0x00,
-            ]),
-            b: Fp::ZERO,
-        }
-    }
+    pub(crate) const E1_A: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x177F3BD3D98CF,
+            0x568291DBF7092,
+            0x755DCB3DE2190,
+            0x423388F314FE4,
+            0x002A6F0241FB7,
+        ]),
+        Fp::from_limbs([
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+        ]),
+    );
 
     // ---- Curve 2 ----
 
     /// P_2 x-coordinate.
-    pub fn e2_px() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0xC5, 0x23, 0x27, 0xBB, 0xA0, 0xFA, 0x22, 0xDC, 0x7E, 0x52, 0xAE, 0xD2, 0x7B, 0x7E,
-                0x20, 0x53, 0x77, 0xA5, 0x5C, 0x69, 0x1D, 0x91, 0x6C, 0xC7, 0x52, 0xFF, 0x73, 0xD4,
-                0x4D, 0x77, 0x6B, 0x01,
-            ]),
-            b: Fp::from_bytes(&[
-                0x25, 0xEC, 0x95, 0x2D, 0x87, 0x67, 0x9A, 0x41, 0xF5, 0x10, 0x4C, 0x12, 0xA7, 0xDA,
-                0xB8, 0x7D, 0x35, 0x61, 0x63, 0x2F, 0xDD, 0x9C, 0x8D, 0x1A, 0x60, 0xAA, 0xA7, 0xB7,
-                0xB2, 0xC6, 0xCB, 0x03,
-            ]),
-        }
-    }
+    pub(crate) const E2_P_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x11012B71D2D54,
+            0x76EFAA195F3A3,
+            0x6A89621403297,
+            0x0F05F07417877,
+            0x0058BAFBA5332,
+        ]),
+        Fp::from_limbs([
+            0x3F3EAF5646A2D,
+            0x6A0F369773854,
+            0x15A15657D2442,
+            0x667BA47D7DBF8,
+            0x002D784590C43,
+        ]),
+    );
 
     /// Q_2 x-coordinate.
-    pub fn e2_qx() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0xA5, 0x1A, 0x18, 0x75, 0x8B, 0xD7, 0x08, 0x1E, 0x8C, 0xA0, 0x8B, 0x14, 0x55, 0xBA,
-                0x19, 0x1D, 0x4B, 0xF1, 0x18, 0x71, 0xAA, 0x76, 0x68, 0x04, 0x6C, 0xC8, 0x0F, 0x79,
-                0x53, 0x40, 0xCB, 0x04,
-            ]),
-            b: Fp::from_bytes(&[
-                0x75, 0x44, 0xB7, 0x0D, 0x17, 0x89, 0x3D, 0x0F, 0x73, 0xBF, 0xE0, 0x2D, 0xB4, 0xC2,
-                0x25, 0xE3, 0x0A, 0x96, 0x3C, 0x05, 0xEF, 0x46, 0x56, 0x82, 0x44, 0x29, 0x67, 0x18,
-                0x2F, 0x3B, 0x68, 0x04,
-            ]),
-        }
-    }
+    pub(crate) const E2_Q_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x3F45882691098,
+            0x6A82534F3934F,
+            0x6C6EAD870B0EE,
+            0x5669ED2BBB8DA,
+            0x02B9A1F281940,
+        ]),
+        Fp::from_limbs([
+            0x41BE7C586D896,
+            0x22C68CB09CA5E,
+            0x03C045ADBE77B,
+            0x506845058C043,
+            0x02D2B7E8D71DB,
+        ]),
+    );
+
+    /// P_2 − Q_2 x-coordinate (for consistent Okeya-Sakurai lift).
+    pub(crate) const E2_PMQ_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x42B9C93C44402,
+            0x461426DB46E24,
+            0x6D7AAB066DC8C,
+            0x0BF26F540D0B8,
+            0x04F6E2764CC0C,
+        ]),
+        Fp::from_limbs([
+            0x072F03D7912CD,
+            0x43AA6E7AF9E21,
+            0x679AA18A05871,
+            0x14C0756AFFA95,
+            0x02ABCBD62F832,
+        ]),
+    );
 
     /// Montgomery coefficient A for curve 2.
-    pub fn e2_a() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x2C, 0x17, 0x90, 0xAE, 0x2B, 0xB0, 0x24, 0x7C, 0xC0, 0x09, 0x5E, 0x81, 0x2A, 0x15,
-                0xCA, 0x7D, 0xDE, 0xC1, 0x2C, 0x18, 0xC5, 0xF7, 0x15, 0xBF, 0x5E, 0x49, 0xCC, 0x1D,
-                0x85, 0xA8, 0x2F, 0x01,
-            ]),
-            b: Fp::ZERO,
-        }
-    }
+    pub(crate) const E2_A: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x4D12B0E68B79F,
+            0x337935267F3A8,
+            0x380BF65840877,
+            0x4BCC119304135,
+            0x035DA6E9613A8,
+        ]),
+        Fp::from_limbs([
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+        ]),
+    );
 
     // ---- Curve 3 ----
 
     /// P_3 x-coordinate.
-    pub fn e3_px() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x64, 0x5A, 0x70, 0x1E, 0x2C, 0x09, 0x07, 0x70, 0x7C, 0xD6, 0x1E, 0x9E, 0x7B, 0xB8,
-                0x14, 0x52, 0x53, 0x5D, 0x2E, 0xC8, 0x6F, 0x51, 0xE8, 0x89, 0xBC, 0x2A, 0xF4, 0x5F,
-                0x71, 0x61, 0xCC, 0x03,
-            ]),
-            b: Fp::from_bytes(&[
-                0x34, 0xD6, 0xDD, 0xD1, 0xF5, 0x29, 0xE8, 0x37, 0x06, 0x98, 0x2A, 0xAB, 0xC6, 0xAF,
-                0x1A, 0x55, 0x9C, 0x22, 0x11, 0x49, 0xA9, 0xB8, 0x35, 0x85, 0xFF, 0x53, 0xD3, 0x25,
-                0xD7, 0x84, 0xAC, 0x01,
-            ]),
-        }
-    }
+    pub(crate) const E3_P_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x5B79CA4D5D6E0,
+            0x39395E18E3349,
+            0x75887BA6EB031,
+            0x7D3B20412639B,
+            0x013CF1BCCB9DD,
+        ]),
+        Fp::from_limbs([
+            0x76561C962386E,
+            0x6F0884CE0B2E6,
+            0x20DD8220AACB5,
+            0x19375E2D543A7,
+            0x04DA1583C8553,
+        ]),
+    );
 
     /// Q_3 x-coordinate.
-    pub fn e3_qx() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x42, 0x1C, 0xCE, 0xEE, 0x34, 0x4D, 0x05, 0x3B, 0x29, 0xAE, 0x18, 0xDD, 0x27, 0xE6,
-                0x8B, 0x3A, 0x0F, 0x28, 0x4C, 0xC4, 0xD8, 0xD0, 0x4B, 0x10, 0xE3, 0xE5, 0xDB, 0x66,
-                0xB3, 0x66, 0x74, 0x02,
-            ]),
-            b: Fp::from_bytes(&[
-                0x27, 0x4D, 0xC8, 0xB2, 0x5E, 0x15, 0xCE, 0xB0, 0x95, 0x4D, 0x0C, 0x9D, 0xAB, 0x4A,
-                0x5C, 0x95, 0xCE, 0x44, 0x54, 0x72, 0x0C, 0xEA, 0x6C, 0xA4, 0x08, 0x3A, 0xC8, 0x54,
-                0xF0, 0xF0, 0x13, 0x04,
-            ]),
-        }
-    }
+    pub(crate) const E3_Q_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x4854B149C6D0C,
+            0x7904EFA1D89AA,
+            0x343394A9E5C0F,
+            0x68D9D640AD69D,
+            0x02D711F0AF96F,
+        ]),
+        Fp::from_limbs([
+            0x3BCAB7A6E1D94,
+            0x6C35A91DF0293,
+            0x1B51F6EF1B777,
+            0x06E9F0BB3D284,
+            0x0464E4D547390,
+        ]),
+    );
+
+    /// P_3 − Q_3 x-coordinate (for consistent Okeya-Sakurai lift).
+    pub(crate) const E3_PMQ_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x376C342849596,
+            0x657B69DCED4B6,
+            0x44B159AEB5ECA,
+            0x54B8ABF1BDBFE,
+            0x0202393A746E4,
+        ]),
+        Fp::from_limbs([
+            0x260478AD25E9B,
+            0x21652ECC55014,
+            0x728048F1594DA,
+            0x06B5EB728D6D3,
+            0x03F305DB59A7F,
+        ]),
+    );
 
     /// Montgomery coefficient A for curve 3.
-    pub fn e3_a() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x59, 0xF4, 0x23, 0x6A, 0x8E, 0x97, 0xA6, 0xB2, 0xC4, 0xA7, 0x0C, 0x6C, 0xDB, 0x7B,
-                0xA5, 0xFB, 0x8B, 0xAF, 0xE2, 0x65, 0x47, 0x5B, 0x73, 0x58, 0xA6, 0x9A, 0x88, 0xA7,
-                0xDA, 0x96, 0x53, 0x01,
-            ]),
-            b: Fp::ZERO,
-        }
-    }
+    pub(crate) const E3_A: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x0C17103986F53,
+            0x6268EE5A8A215,
+            0x11304CB0EFE57,
+            0x3846C2AF6C518,
+            0x02F57C43F40F7,
+        ]),
+        Fp::from_limbs([
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+        ]),
+    );
 
     // ---- Curve 4 ----
 
     /// P_4 x-coordinate.
-    pub fn e4_px() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x2C, 0xDA, 0x94, 0x5D, 0x78, 0x17, 0x3F, 0x20, 0xF6, 0x07, 0x49, 0x24, 0xA4, 0x08,
-                0x48, 0x44, 0x34, 0x81, 0x80, 0x8F, 0xE3, 0xAF, 0x26, 0x15, 0xA4, 0x3B, 0x33, 0x59,
-                0x0C, 0xF4, 0xA4, 0x02,
-            ]),
-            b: Fp::from_bytes(&[
-                0x11, 0x1D, 0x71, 0x47, 0x98, 0xC9, 0xBB, 0x4B, 0x18, 0x82, 0xFF, 0xD4, 0x24, 0x6F,
-                0x8D, 0x47, 0xDF, 0x73, 0xB2, 0xD5, 0xC0, 0xCC, 0xA9, 0xBA, 0xF1, 0xB3, 0xAC, 0x66,
-                0xD9, 0x2A, 0x63, 0x03,
-            ]),
-        }
-    }
+    pub(crate) const E4_P_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x58C095BAF6ADA,
+            0x0741CE646CD96,
+            0x5007B4E8336A8,
+            0x5010EBBFE93F9,
+            0x01B2013C1EB92,
+        ]),
+        Fp::from_limbs([
+            0x75C0724E94E91,
+            0x77664D380F258,
+            0x0FB261C9EF941,
+            0x749554A3CD77C,
+            0x01B77C23DE11F,
+        ]),
+    );
 
     /// Q_4 x-coordinate.
-    pub fn e4_qx() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0xD1, 0xDC, 0x14, 0x28, 0xF3, 0x16, 0xC8, 0x2F, 0xB3, 0x95, 0xC1, 0x78, 0xA9, 0x53,
-                0x4B, 0xDE, 0xAC, 0x22, 0x60, 0x8D, 0xFB, 0x68, 0xAA, 0xC5, 0xE3, 0x0C, 0x25, 0x44,
-                0x45, 0x5D, 0x79, 0x04,
-            ]),
-            b: Fp::from_bytes(&[
-                0x9B, 0x08, 0xE1, 0xAB, 0x9A, 0xFC, 0x88, 0x36, 0x96, 0x1E, 0x3A, 0x09, 0x69, 0xA4,
-                0x3D, 0x45, 0x5E, 0x9E, 0xE5, 0x6D, 0x68, 0x9A, 0xAE, 0x28, 0x24, 0x37, 0xAD, 0xB8,
-                0x12, 0x9E, 0xED, 0x02,
-            ]),
-        }
-    }
+    pub(crate) const E4_Q_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x71850CEE2E1CA,
+            0x1826B78A3CC19,
+            0x00DDEBF5154AA,
+            0x696AEEBA62D78,
+            0x008953BA03B47,
+        ]),
+        Fp::from_limbs([
+            0x2DC44634DA928,
+            0x4EA539513E1B6,
+            0x5728C1BB241C3,
+            0x3686F2152057E,
+            0x02F6351277B8B,
+        ]),
+    );
+
+    /// P_4 − Q_4 x-coordinate (for consistent Okeya-Sakurai lift).
+    pub(crate) const E4_PMQ_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x4C38023BA1341,
+            0x0EE167E7A402B,
+            0x7CBAE09CD7AEE,
+            0x442BF312E4537,
+            0x00658D9F7AB76,
+        ]),
+        Fp::from_limbs([
+            0x370F1DB4D5016,
+            0x4E773FEECB28A,
+            0x0427C305FFBE2,
+            0x687AB9F2E04CB,
+            0x01FEAA39F031C,
+        ]),
+    );
 
     /// Montgomery coefficient A for curve 4.
-    pub fn e4_a() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0xAD, 0xAF, 0xE7, 0xBA, 0xBC, 0x5C, 0xF2, 0x20, 0xFE, 0x67, 0x81, 0xBA, 0xDA, 0xA5,
-                0x91, 0x8E, 0x08, 0xD7, 0xD6, 0xFB, 0x98, 0xBE, 0xCE, 0x1D, 0x37, 0x31, 0x4D, 0x98,
-                0xEE, 0x5F, 0x49, 0x00,
-            ]),
-            b: Fp::ZERO,
-        }
-    }
+    pub(crate) const E4_A: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x14612B0C4C481,
+            0x7219E19939CA1,
+            0x2BC69D2A0A8BD,
+            0x5F4B0BCBAD964,
+            0x025664A8D484E,
+        ]),
+        Fp::from_limbs([
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+        ]),
+    );
 
     // ---- Curve 5 ----
 
     /// P_5 x-coordinate.
-    pub fn e5_px() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x53, 0xB2, 0xE0, 0x7E, 0x9B, 0xBD, 0x54, 0x39, 0x3F, 0x25, 0x7D, 0x96, 0x3A, 0x33,
-                0x28, 0x3A, 0xF6, 0x6C, 0xB2, 0x42, 0x0C, 0x06, 0xDE, 0xB9, 0x06, 0xCD, 0xC7, 0x22,
-                0x47, 0xDA, 0x91, 0x03,
-            ]),
-            b: Fp::from_bytes(&[
-                0xD8, 0xB5, 0x25, 0x1C, 0x9E, 0xF1, 0xF0, 0x38, 0xA2, 0x86, 0xD0, 0x58, 0xFC, 0xF8,
-                0x86, 0xAB, 0xC0, 0xCB, 0xA4, 0x11, 0x45, 0xBC, 0x52, 0xB0, 0x02, 0x6C, 0xD6, 0xB9,
-                0x46, 0x1B, 0x91, 0x00,
-            ]),
-        }
-    }
+    pub(crate) const E5_P_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x6292649AB6EC5,
+            0x514C3AA63EAA8,
+            0x42B95B0DCE14A,
+            0x05617E6B3D022,
+            0x0262A0B6AD948,
+        ]),
+        Fp::from_limbs([
+            0x0296936F8959C,
+            0x7829B486D8303,
+            0x51E4D11693064,
+            0x3559DBC9D0DAE,
+            0x0282BA45C8A46,
+        ]),
+    );
 
     /// Q_5 x-coordinate.
-    pub fn e5_qx() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x06, 0x31, 0xE9, 0x91, 0x62, 0x17, 0xAB, 0x4D, 0x09, 0x64, 0xB3, 0xD0, 0x67, 0xD4,
-                0x80, 0x6F, 0x41, 0x33, 0xD7, 0x8C, 0x26, 0x41, 0x2E, 0xB5, 0x1B, 0xBC, 0x69, 0xF5,
-                0xD5, 0x9D, 0x98, 0x03,
-            ]),
-            b: Fp::from_bytes(&[
-                0xED, 0xA2, 0xB8, 0x8D, 0x4E, 0x35, 0xE6, 0x83, 0x11, 0x55, 0x57, 0x2B, 0x27, 0x61,
-                0xED, 0xC2, 0xD9, 0x8B, 0x2E, 0x5A, 0x00, 0xB8, 0xEA, 0xC4, 0x71, 0x3B, 0x29, 0x53,
-                0x85, 0xF8, 0x74, 0x02,
-            ]),
-        }
-    }
+    pub(crate) const E5_Q_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x0BD0E9751B3DF,
+            0x29BD7A6842BBD,
+            0x61480930054F6,
+            0x7C90F1CDB870A,
+            0x010FC8988A92C,
+        ]),
+        Fp::from_limbs([
+            0x6EE415F437E26,
+            0x2244AA9D1A613,
+            0x437F0B45EF3A9,
+            0x749D8893337B5,
+            0x00E5A6EEB752B,
+        ]),
+    );
+
+    /// P_5 − Q_5 x-coordinate (for consistent Okeya-Sakurai lift).
+    pub(crate) const E5_PMQ_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x085579E1B8722,
+            0x632525E90080B,
+            0x35539378E8D10,
+            0x47389416F49D3,
+            0x011C1E7BBB047,
+        ]),
+        Fp::from_limbs([
+            0x367F0F2E5527C,
+            0x763BFB94F5016,
+            0x70DF1A057BFDC,
+            0x42460F20B8757,
+            0x04A07F8D23DD8,
+        ]),
+    );
 
     /// Montgomery coefficient A for curve 5.
-    pub fn e5_a() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0xFA, 0xC4, 0xF0, 0x0C, 0xF0, 0x78, 0x6B, 0x94, 0x27, 0xF3, 0x09, 0xFF, 0x30, 0x10,
-                0x10, 0xA6, 0x47, 0x44, 0x9D, 0xD0, 0x65, 0x12, 0x9D, 0xFF, 0xE2, 0xB3, 0x01, 0xCF,
-                0x9E, 0x83, 0x82, 0x00,
-            ]),
-            b: Fp::ZERO,
-        }
-    }
+    pub(crate) const E5_A: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x27E67B1AD4C35,
+            0x4C9B9707EA7BE,
+            0x54E830F39A013,
+            0x02661741EB0D4,
+            0x040D297B19C53,
+        ]),
+        Fp::from_limbs([
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+        ]),
+    );
 
     // ---- Curve 6 ----
 
     /// P_6 x-coordinate.
-    pub fn e6_px() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x26, 0xA7, 0x9F, 0x42, 0x7A, 0xBC, 0xD9, 0x00, 0xFD, 0x9D, 0x98, 0x3B, 0x7E, 0x3D,
-                0x16, 0x0D, 0x5D, 0x1D, 0x5A, 0xC8, 0x82, 0xD3, 0xFA, 0xB2, 0x0D, 0x54, 0x3E, 0x66,
-                0xB8, 0x95, 0x63, 0x02,
-            ]),
-            b: Fp::from_bytes(&[
-                0x30, 0xAB, 0x68, 0x8D, 0x27, 0x42, 0x2C, 0xA6, 0x3A, 0x1C, 0x16, 0xAD, 0x00, 0xD0,
-                0xD2, 0x0F, 0x14, 0xD3, 0x77, 0xB9, 0xA9, 0x99, 0x8A, 0x5F, 0x98, 0x5D, 0x7B, 0xCD,
-                0x17, 0xDC, 0xB3, 0x02,
-            ]),
-        }
-    }
+    pub(crate) const E6_P_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x472A0432A50A5,
+            0x2584EC65CCF85,
+            0x5A5586BA27EFF,
+            0x248F2F0F9BD37,
+            0x042892709FD53,
+        ]),
+        Fp::from_limbs([
+            0x03727BDAAB80D,
+            0x229E05A5546F4,
+            0x4BAD4D3212000,
+            0x79E6087AEE2DF,
+            0x042F9BFAF2BC8,
+        ]),
+    );
 
     /// Q_6 x-coordinate.
-    pub fn e6_qx() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0x20, 0xAC, 0x83, 0xC0, 0x88, 0x1C, 0x9C, 0x08, 0xE3, 0x68, 0x0D, 0x7B, 0xC1, 0x74,
-                0xB5, 0xD8, 0x19, 0x1F, 0x42, 0xBC, 0x86, 0xD9, 0x08, 0x53, 0x55, 0xE5, 0x60, 0xC9,
-                0x8F, 0x80, 0x8F, 0x00,
-            ]),
-            b: Fp::from_bytes(&[
-                0xCB, 0xEB, 0x9B, 0xCC, 0x6B, 0x39, 0x9D, 0xFE, 0xF6, 0x4D, 0x6E, 0x02, 0xDB, 0x2F,
-                0x9F, 0x7C, 0x93, 0x89, 0x42, 0x38, 0x8B, 0xED, 0x14, 0x1F, 0xFD, 0x9E, 0x1E, 0xC7,
-                0x96, 0x95, 0xDD, 0x01,
-            ]),
-        }
-    }
+    pub(crate) const E6_Q_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x140E00D2AD002,
+            0x3235E1C701B8D,
+            0x272D7237BC84D,
+            0x44426D7AD2303,
+            0x0459A7FA89B08,
+        ]),
+        Fp::from_limbs([
+            0x4246142CAC789,
+            0x1A160F97CC85D,
+            0x43707CB72DFF1,
+            0x30E5AA57A2936,
+            0x02C228AD830FE,
+        ]),
+    );
+
+    /// P_6 − Q_6 x-coordinate (for consistent Okeya-Sakurai lift).
+    pub(crate) const E6_PMQ_X: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x519B1A003883D,
+            0x356E25ED579A9,
+            0x6B2A143D80555,
+            0x1039D06C01EAD,
+            0x00A3C331E0448,
+        ]),
+        Fp::from_limbs([
+            0x45DDC052CDEF3,
+            0x20A40813439EF,
+            0x52630BAF0E697,
+            0x4B49649819137,
+            0x014D0E0CFB056,
+        ]),
+    );
 
     /// Montgomery coefficient A for curve 6.
-    pub fn e6_a() -> Fp2 {
-        Fp2 {
-            a: Fp::from_bytes(&[
-                0xBD, 0x17, 0x91, 0xE1, 0xE5, 0x53, 0xE0, 0x9F, 0x43, 0x0B, 0x51, 0xB5, 0x93, 0x13,
-                0xC6, 0x37, 0x44, 0x0D, 0x09, 0x7D, 0xB1, 0xAF, 0x17, 0xCF, 0xCE, 0xFF, 0x9F, 0x92,
-                0xDD, 0xCB, 0xA2, 0x00,
-            ]),
-            b: Fp::ZERO,
-        }
-    }
+    pub(crate) const E6_A: Fp2 = Fp2::new(
+        Fp::from_limbs([
+            0x1FD635B4F2C83,
+            0x3DDD0240B9934,
+            0x53881AFE8D4A1,
+            0x723F462627973,
+            0x0147962843332,
+        ]),
+        Fp::from_limbs([
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+            0x0000000000000,
+        ]),
+    );
 }
 
 /// Endomorphism action matrices for each curve.
