@@ -451,8 +451,91 @@
     .mutants-table .mutant-loc {
       font-family: 'Inter', monospace;
       font-size: 12px;
-      color: var(--fg-dim);
       white-space: nowrap;
+    }
+
+    .mutants-table .mutant-loc a {
+      color: var(--fg-muted);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .mutants-table .mutant-loc a:hover {
+      color: var(--fg);
+      border-color: var(--fg-dim);
+    }
+
+    .mutant-detail-list {
+      list-style: none;
+      padding: 4px 8px 8px 24px;
+      font-family: 'Inter', monospace;
+      font-size: 12px;
+      color: var(--fg-muted);
+    }
+
+    .mutant-detail-list li {
+      padding: 2px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .mutant-detail-list li:last-child {
+      border-bottom: none;
+    }
+
+    /* Help tooltip */
+    .help-icon {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      line-height: 16px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--fg-dim);
+      border: 1px solid var(--fg-dim);
+      border-radius: 50%;
+      cursor: help;
+      position: relative;
+      vertical-align: middle;
+      margin-left: 6px;
+    }
+
+    .help-icon:hover { color: var(--fg-muted); border-color: var(--fg-muted); }
+
+    .help-icon .tooltip {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      width: 280px;
+      padding: 12px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.5;
+      color: var(--fg-muted);
+      text-align: left;
+      text-transform: none;
+      letter-spacing: 0;
+      white-space: normal;
+      z-index: 10;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    .help-icon:hover .tooltip { display: block; }
+
+    .tooltip dt {
+      color: var(--fg);
+      font-weight: 600;
+      margin-top: 6px;
+    }
+
+    .tooltip dt:first-child { margin-top: 0; }
+
+    .tooltip dd {
+      margin: 0 0 2px 0;
     }
 
     /* Status banner */
@@ -835,7 +918,13 @@
         : 'var(--fg-dim)';
 
       let html = '<div class="mutants-summary">';
-      html += `<div class="mutants-stat"><span class="value" style="color:${killColor}">${killPct}%</span><span class="label">kill rate</span></div>`;
+      html += `<div class="mutants-stat"><span class="value" style="color:${killColor}">${killPct}%</span><span class="label">kill rate<span class="help-icon">?<span class="tooltip"><dl>
+        <dt>Kill rate</dt><dd>Percentage of mutants detected by the test suite. Higher is better.</dd>
+        <dt>Caught</dt><dd>Mutants that caused a test failure — the test suite detected the change.</dd>
+        <dt>Missed (survivors)</dt><dd>Mutants that passed all tests — potential gaps in test coverage.</dd>
+        <dt>Timeout</dt><dd>Mutants where tests took too long. Treated as caught.</dd>
+        <dt>Unviable</dt><dd>Mutations that failed to compile. Not counted in the kill rate.</dd>
+        </dl></span></span></span></div>`;
       html += `<div class="mutants-stat"><span class="value" style="color:var(--green)">${esc(String(s.caught || 0))}</span><span class="label">caught</span></div>`;
       html += `<div class="mutants-stat"><span class="value" style="color:var(--red)">${esc(String(s.missed || 0))}</span><span class="label">missed</span></div>`;
       if (s.timeout) html += `<div class="mutants-stat"><span class="value" style="color:var(--yellow)">${esc(String(s.timeout))}</span><span class="label">timeout</span></div>`;
@@ -844,17 +933,40 @@
 
       if (survivors.length > 0) {
         const sha = data.sha;
-        html += `<table class="mutants-table">
-          <thead><tr><th>Survivor</th><th>Location</th></tr></thead><tbody>`;
+
+        // Group survivors by function.
+        const groups = new Map();
         for (const m of survivors) {
+          const key = `${m.file}::${m.function || ''}`;
+          if (!groups.has(key)) {
+            groups.set(key, { file: m.file, function: m.function, line: m.line, mutants: [] });
+          }
           const desc = m.name.includes(':') ? m.name.split(': ').slice(1).join(': ') : m.name;
+          groups.get(key).mutants.push(desc);
+        }
+
+        // Sort by count descending.
+        const sorted = [...groups.values()].sort((a, b) => b.mutants.length - a.mutants.length);
+
+        html += `<table class="mutants-table">
+          <thead><tr>
+            <th>Function<span class="help-icon">?<span class="tooltip">Mutations that passed all tests, grouped by function. Each function lists what was changed. Click the location to view the source at that commit.</span></span></th>
+            <th>Survivors</th>
+            <th>Location</th>
+          </tr></thead><tbody>`;
+
+        for (const g of sorted) {
           const ghLink = sha
-            ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(m.file)}#L${m.line}`
+            ? `https://github.com/${REPO}/blob/${esc(sha)}/${esc(g.file)}#L${g.line}`
             : '#';
-          html += `<tr>
-            <td class="mutant-name">${esc(desc)}</td>
-            <td class="mutant-loc"><a href="${ghLink}">${esc(m.function || m.file)}:${m.line}</a></td>
+          const fnName = g.function || g.file;
+          const details = g.mutants.map(d => `<li>${esc(d)}</li>`).join('');
+          html += `<tr class="expandable" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">
+            <td class="mutant-name"><span class="chevron">&#9654;</span> ${esc(fnName)}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${g.mutants.length}</td>
+            <td class="mutant-loc"><a href="${ghLink}" onclick="event.stopPropagation()">${esc(g.file.replace(/^src\//, ''))}:${g.line}</a></td>
           </tr>`;
+          html += `<tr style="display:none"><td colspan="3"><ul class="mutant-detail-list">${details}</ul></td></tr>`;
         }
         html += '</tbody></table>';
       }
