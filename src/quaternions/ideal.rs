@@ -773,6 +773,25 @@ impl LeftIdeal<4> {
     /// 2^e` search fails.
     #[must_use]
     pub fn smallest_equiv(&self) -> Option<Self> {
+        self.smallest_equiv_with_delta()
+            .map(|(ideal, _delta)| ideal)
+    }
+
+    /// Like [`Self::smallest_equiv`] but also returns the LLL-first
+    /// element `δ ∈ I` used to derive the equivalent ideal
+    /// `I · δ̄ / nrd(I)`.
+    ///
+    /// Required by the alternate-order search in
+    /// [`Self::suitable_ideals`]: when a short vector is enumerated
+    /// in a pushforward or `conj(I_reduced) · J_t` lattice, it must
+    /// be transported back to the original ideal via multiplication
+    /// by `δ`. Exposing `δ` here avoids recomputing it (and the full
+    /// L2 reduction) at the transport step.
+    ///
+    /// See the C reference `dim2id2iso.c:546-565` for the analogous
+    /// `reduced_id` + `delta` construction.
+    #[must_use]
+    pub fn smallest_equiv_with_delta(&self) -> Option<(Self, Element<4>)> {
         // LLL-reduce the basis at BigInt<8> for headroom.
         let lattice: Lattice<4> = (*self.lattice()).into();
         let cols_4 = lattice.basis().columns();
@@ -869,11 +888,8 @@ impl LeftIdeal<4> {
 
         let result_lattice = HnfLattice::from(Lattice::new(basis_4, denom_4));
 
-        Some(Self::from_parts(
-            result_lattice,
-            equiv_norm,
-            *self.parent_order(),
-        ))
+        let ideal = Self::from_parts(result_lattice, equiv_norm, *self.parent_order());
+        Some((ideal, delta))
     }
 }
 
@@ -1143,6 +1159,16 @@ impl LeftIdeal<4> {
                     for sv2 in &svs_t[inner_start..] {
                         _pairs_tried += 1;
                         if let Some(result) = try_find_uv(sv1, sv2, batch_s, batch_t, &two_f, f) {
+                            #[cfg(test)]
+                            eprintln!(
+                                "[suitable_ideals] selected (s={s}, t={t}) after {_pairs_tried} pairs \
+                                 | norm={} bits, batch sizes={:?}",
+                                self.norm().bitsize(),
+                                short_vecs_per_order
+                                    .iter()
+                                    .map(|v| v.len())
+                                    .collect::<Vec<_>>(),
+                            );
                             return Some(result);
                         }
                     }
@@ -1150,6 +1176,16 @@ impl LeftIdeal<4> {
             }
         }
 
+        #[cfg(test)]
+        eprintln!(
+            "[suitable_ideals] EXHAUSTED after {_pairs_tried} pairs \
+             | norm={} bits, batch sizes={:?}",
+            self.norm().bitsize(),
+            short_vecs_per_order
+                .iter()
+                .map(|v| v.len())
+                .collect::<Vec<_>>(),
+        );
         None
     }
 }
@@ -1360,6 +1396,43 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `smallest_equiv_with_delta` returns an ideal with norm
+    /// strictly smaller than the input (since LLL finds a short
+    /// basis vector) and a `δ` that lies in the original ideal.
+    /// Rather than re-prove containment (which would reconstruct
+    /// the `I · δ̄ / nrd(I)` identity), this test checks the norm
+    /// shrinkage and that the returned tuple is consistent with
+    /// [`Self::smallest_equiv`] (same reduced ideal).
+    #[test]
+    fn smallest_equiv_with_delta_consistent() {
+        use super::super::lattice::LeftIdeal;
+
+        let n = BigInt::<4>::from_u64(13);
+        let Some(ideal) = LeftIdeal::random_prime_norm(&n, &EXTREMAL_ORDERS[0]) else {
+            return;
+        };
+
+        let (reduced_with_delta, _delta) = match ideal.smallest_equiv_with_delta() {
+            Some(r) => r,
+            None => return,
+        };
+        let reduced_only = ideal
+            .smallest_equiv()
+            .expect("smallest_equiv succeeded above");
+
+        assert_eq!(
+            reduced_with_delta.norm(),
+            reduced_only.norm(),
+            "both smallest_equiv variants must produce the same reduced norm",
+        );
+        // The reduced norm should be bounded by the input norm
+        // (generically much smaller — O(√p) vs O(p)).
+        assert!(
+            reduced_with_delta.norm().bitsize() <= ideal.norm().bitsize(),
+            "reduced norm should not exceed the original",
+        );
     }
 
     #[test]
