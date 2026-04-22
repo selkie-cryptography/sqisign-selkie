@@ -579,6 +579,27 @@ behaves correctly.  When the narrow is meant to prove ``this
 value fits,'' make it a \texttt{Result} with a distinguishable
 error rather than a filter that loops until it happens to fit.
 
+\paragraph{Related: narrowing wide ideals to
+  \texttt{LeftIdeal<4>}.}  The signing response phase constructs
+the ideal \(I_{\mathrm{com,rsp}}\) with norm ${\sim}2^{258}$ at
+storage width \texttt{BigInt<30>}.  Passing it to
+\textsc{IdealToIsogeny} requires a \texttt{LeftIdeal<4>}, but the
+HNF basis diagonal just barely exceeds $2^{256}$ so direct
+narrowing fails.  An earlier version fell back to
+\texttt{reduce\_to\_prime\_norm::<44>}, which took ${\sim}40$~s
+per call and usually failed.  We replaced the fallback with a
+generalized smallest-equiv reduction
+(\texttt{LeftIdeal<N>::smallest\_equiv\_narrow<W>}) that LLLs the
+lattice at working width~$W$, takes the shortest basis vector~$\delta$
+at full width, and returns \(I \cdot \bar\delta / \mathrm{nrd}(I)\)
+narrowed to \texttt{LeftIdeal<4>}.  The resulting equivalent has
+norm~${\sim}\sqrt{p} \approx 2^{126}$, fits in \texttt{BigInt<4>}
+cleanly, and takes ${\sim}1$~ms per call.  Keeping~$\delta$ at the
+working width~$W$ rather than narrowing it up front was essential:
+short vectors of the input lattice can have coordinates
+up to the input-entry size (${\sim}2^{258}$), so narrow-to-4 on~$\delta$
+would have rejected every valid input.
+
 \subsection{Invalid test kernels for $(2,2)$-isogeny chains}
 \label{sec:bug-theta-tests}
 

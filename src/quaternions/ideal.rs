@@ -71,14 +71,14 @@ impl ExtremalOrder<8> {
     ///   2. This matches the C ref's `quat_alg_make_primitive`. Hand-deriving
     ///   the divisibility condition from coordinate parity is fragile and
     ///   order- dependent.
-    /// - **Arithmetic width**: primality testing and Cornacchia on up to ~514-bit
-    ///   `m_prime` candidates in `BigInt<8>` (4·M for M ≤ 2^512) overflow the
-    ///   512-bit storage during modular exponentiation. Uses widened variants
-    ///   (`_w::<17>`, 1088 bits ≥ 2·514 = 1028) for correctness across every
-    ///   caller, including the aux-path `random_norm` which passes
-    ///   M ≈ 2^377. Using a narrower width (e.g. `_w::<9>`) silently truncates
-    ///   Miller-Rabin exponentiations and makes `represent_integer` loop
-    ///   indefinitely without ever finding a witness.
+    /// - **Arithmetic width**: primality testing and Cornacchia on up to
+    ///   ~514-bit `m_prime` candidates in `BigInt<8>` (4·M for M ≤ 2^512)
+    ///   overflow the 512-bit storage during modular exponentiation. Uses
+    ///   widened variants (`_w::<17>`, 1088 bits ≥ 2·514 = 1028) for
+    ///   correctness across every caller, including the aux-path `random_norm`
+    ///   which passes M ≈ 2^377. Using a narrower width (e.g. `_w::<9>`)
+    ///   silently truncates Miller-Rabin exponentiations and makes
+    ///   `represent_integer` loop indefinitely without ever finding a witness.
     /// - **Search bound**: computed from the spec's formula `ceil(sqrt(4M /
     ///   (p·sqrt(q))))`, not hardcoded.
     ///
@@ -858,7 +858,190 @@ impl LeftIdeal<4> {
             *self.parent_order(),
         ))
     }
+}
 
+impl<const N: usize> LeftIdeal<N> {
+    /// Returns the equivalent ideal of smallest norm as a
+    /// [`LeftIdeal<4>`].
+    ///
+    /// LLL-reduces the basis, takes the first (shortest) basis
+    /// vector δ, and returns the equivalent ideal `I · δ̄ / nrd(I)`
+    /// of norm `nrd(δ) / nrd(I)`. The result's norm is typically
+    /// much smaller than the input (≈ √p for generic inputs).
+    ///
+    /// Generalizes [`LeftIdeal<4>::smallest_equiv`] with storage
+    /// width `N` and internal LLL working width `W` as const
+    /// generics. Used by the signing response path to reduce a
+    /// wide [`LeftIdeal<30>`] (norm ≈ `2^258`) to a form that fits
+    /// in [`BigInt<4>`] before [`to_isogeny`].
+    ///
+    /// Returns [`None`] when any of these fit checks fails:
+    /// - `nrd(δ)` is not exactly divisible by `nrd(I)`.
+    /// - The equivalent norm exceeds [`BigInt<4>`].
+    /// - The HNF entries of the reduced basis exceed [`BigInt<4>`].
+    /// - The reduced denominator exceeds [`BigInt<4>`].
+    ///
+    /// `W` must satisfy `W ≥ 2·N` to hold squared Gram entries
+    /// during LLL; this is enforced at compile time.
+    ///
+    /// # Divergences
+    ///
+    /// The spec does not describe this as a named algorithm. The C
+    /// reference performs the reduction inside `find_uv`
+    /// (`dim2id2iso.c:526-546`), calling it "replacing ideal by the
+    /// equivalent ideal of smallest norm".
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time. `TODO(ct)`: called on secret-derived ideals
+    /// during signing (response-phase `i_com_rsp`) — L2 reduction
+    /// has data-dependent loop counts.
+    ///
+    /// [`to_isogeny`]: crate::deuring::LeftIdeal::to_isogeny
+    /// [`LeftIdeal<4>::smallest_equiv`]: LeftIdeal::smallest_equiv
+    #[must_use]
+    pub fn smallest_equiv_narrow<const W: usize>(&self) -> Option<LeftIdeal<4>> {
+        const {
+            assert!(
+                W >= 2 * N,
+                "smallest_equiv_narrow: W must be >= 2*N for LLL headroom"
+            )
+        };
+        // Widen basis + denom to BigInt<W> for LLL.
+        let lattice: Lattice<N> = (*self.lattice()).into();
+        let cols_n = lattice.basis().columns();
+        let cols_w: [Vector<W>; 4] = core::array::from_fn(|j| {
+            Vector::new(
+                cols_n[j][0].widen::<W>(),
+                cols_n[j][1].widen::<W>(),
+                cols_n[j][2].widen::<W>(),
+                cols_n[j][3].widen::<W>(),
+            )
+        });
+        let denom_w: BigInt<W> = lattice.denom().widen();
+
+        let nrd_basis = NrdBasis::new(cols_w).l2_reduce();
+
+        // δ = first basis vector (shortest after LLL). Coordinates
+        // are at BigInt<W> — delta entries for a width-N ideal
+        // with norm ~2^{64·N − k} can be roughly as large as the
+        // input entries, so narrowing to BigInt<4> up front
+        // rejects valid cases. Keep delta at BigInt<W>.
+        let delta_w = Element::<W>::new(
+            Coordinate::from_bigint(nrd_basis.cols()[0][0]),
+            Coordinate::from_bigint(nrd_basis.cols()[0][1]),
+            Coordinate::from_bigint(nrd_basis.cols()[0][2]),
+            Coordinate::from_bigint(nrd_basis.cols()[0][3]),
+            Denominator::from_bigint_unchecked(denom_w),
+        );
+
+        // nrd(δ) at BigInt<W> using direct multiplication
+        // (`mul_direct` + norm).
+        let delta_nrd_num = {
+            let a = delta_w.a.as_bigint();
+            let b = delta_w.b.as_bigint();
+            let c = delta_w.c.as_bigint();
+            let d = delta_w.d.as_bigint();
+            let p_w: BigInt<W> = {
+                let p8 = P_WIDE;
+                p8.widen::<W>()
+            };
+            a.ct_mul(a)
+                .ct_add(&b.ct_mul(b))
+                .ct_add(&p_w.ct_mul(&c.ct_mul(c).ct_add(&d.ct_mul(d))))
+        };
+        let delta_nrd_den = denom_w.ct_mul(&denom_w);
+        let (new_norm_w, rem) = delta_nrd_num.div_rem(&delta_nrd_den);
+        if !bool::from(rem.is_zero()) {
+            return None;
+        }
+        let self_norm_w: BigInt<W> = self.norm().widen::<W>();
+        let (equiv_norm_w, rem2) = new_norm_w.div_rem(&self_norm_w);
+        if !bool::from(rem2.is_zero()) {
+            return None;
+        }
+        let equiv_norm: BigInt<4> = equiv_norm_w.narrow_to()?;
+
+        // Conjugate δ: negate i, j, k coords; a stays.
+        let delta_conj_w = Element::<W>::new(
+            Coordinate::from_bigint(*delta_w.a.as_bigint()),
+            Coordinate::from_bigint(delta_w.b.as_bigint().wrapping_neg()),
+            Coordinate::from_bigint(delta_w.c.as_bigint().wrapping_neg()),
+            Coordinate::from_bigint(delta_w.d.as_bigint().wrapping_neg()),
+            Denominator::from_bigint_unchecked(*delta_w.denom.as_bigint()),
+        );
+        let mut new_cols = [Vector::<W>::ZERO; 4];
+        #[allow(clippy::needless_range_loop)]
+        for j in 0..4 {
+            let bj = lattice.basis_elem(j);
+            let bj_w = Element::<W>::new(
+                Coordinate::from_bigint(bj.a.as_bigint().widen::<W>()),
+                Coordinate::from_bigint(bj.b.as_bigint().widen::<W>()),
+                Coordinate::from_bigint(bj.c.as_bigint().widen::<W>()),
+                Coordinate::from_bigint(bj.d.as_bigint().widen::<W>()),
+                Denominator::from_bigint_unchecked(bj.denom.as_bigint().widen::<W>()),
+            );
+            let product = bj_w.mul_direct(&delta_conj_w);
+            new_cols[j] = Vector::new(
+                *product.a.as_bigint(),
+                *product.b.as_bigint(),
+                *product.c.as_bigint(),
+                *product.d.as_bigint(),
+            );
+        }
+        // Raw product denom = lattice_denom * delta_denom.
+        // Dividing by nrd(I) multiplies denom by nrd(I).
+        let product_denom: BigInt<W> = denom_w.ct_mul(&denom_w).ct_mul(&self_norm_w);
+
+        // HNF at width W, simplify by GCD, then narrow to 4.
+        let hnf_w = Matrix::<W>::from_hnf_columns(&new_cols);
+        let mut g = product_denom.abs();
+        for row in 0..4 {
+            for col in 0..4 {
+                if !bool::from(hnf_w[row][col].is_zero()) {
+                    g = g.gcd(&hnf_w[row][col].abs());
+                }
+            }
+        }
+        let mut basis_4 = Matrix::<4>::ZERO;
+        for row in 0..4 {
+            for col in 0..4 {
+                let (q, _) = hnf_w[row][col].div_rem(&g);
+                basis_4[row][col] = q.narrow_to::<4>()?;
+            }
+        }
+        let (denom_simplified, _) = product_denom.div_rem(&g);
+        let denom_4: BigInt<4> = denom_simplified.narrow_to()?;
+
+        let result_lattice = HnfLattice::from(Lattice::new(basis_4, denom_4));
+
+        // Parent order must also narrow (all N>4 orders are widened
+        // copies of the base `Order<4>`).
+        let parent_order_4 = {
+            let pbasis = self.parent_order().basis();
+            let pdenom = self.parent_order().denom();
+            let mut narrowed = Matrix::<4>::ZERO;
+            for row in 0..4 {
+                for col in 0..4 {
+                    narrowed[row][col] = pbasis[row][col].narrow_to::<4>()?;
+                }
+            }
+            let narrowed_denom = pdenom.narrow_to::<4>()?;
+            crate::quaternions::lattice::Order::<4>::from_lattice_unchecked(Lattice::new(
+                narrowed,
+                narrowed_denom,
+            ))
+        };
+
+        Some(LeftIdeal::<4>::from_parts(
+            result_lattice,
+            equiv_norm,
+            parent_order_4,
+        ))
+    }
+}
+
+impl LeftIdeal<4> {
     /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
     pub(crate) fn suitable_ideals(&self) -> Option<SuitableIdealResult> {
         let f = TorsionExponent::FULL;
