@@ -294,10 +294,14 @@
       padding: 0;
     }
 
-    /* Coverage heat map: intensity scales with hit count */
+    /* Coverage heat map: more hits = more green */
     .line-grid tr.miss .ln,
     .line-grid tr.miss .ct { color: var(--red); }
     .line-grid tr.miss { background: rgba(248, 81, 73, 0.08); }
+
+    .line-grid tr.hit-fragile .ln,
+    .line-grid tr.hit-fragile .ct { color: var(--yellow); }
+    .line-grid tr.hit-fragile { background: rgba(210, 153, 34, 0.06); }
 
     .line-grid tr.hit-cold .ln,
     .line-grid tr.hit-cold .ct { color: var(--green); }
@@ -305,20 +309,15 @@
 
     .line-grid tr.hit-warm .ln,
     .line-grid tr.hit-warm .ct { color: var(--green); }
-    .line-grid tr.hit-warm { background: rgba(63, 185, 80, 0.08); }
+    .line-grid tr.hit-warm { background: rgba(63, 185, 80, 0.10); }
 
     .line-grid tr.hit-hot .ln,
     .line-grid tr.hit-hot .ct { color: var(--green); }
-    .line-grid tr.hit-hot { background: rgba(63, 185, 80, 0.14); }
+    .line-grid tr.hit-hot { background: rgba(63, 185, 80, 0.18); }
 
     .line-grid tr.hit-blazing .ln,
-    .line-grid tr.hit-blazing .ct { color: #f0b030; }
-    .line-grid tr.hit-blazing { background: rgba(240, 176, 48, 0.10); }
-
-    /* Cold coverage warning */
-    .line-grid tr.hit-fragile .ln,
-    .line-grid tr.hit-fragile .ct { color: var(--yellow); }
-    .line-grid tr.hit-fragile { background: rgba(210, 153, 34, 0.06); }
+    .line-grid tr.hit-blazing .ct { color: var(--green); }
+    .line-grid tr.hit-blazing { background: rgba(63, 185, 80, 0.28); }
 
     /* GitHub-style Rust syntax highlighting (dark) */
     .syn-kw { color: #ff7b72; }
