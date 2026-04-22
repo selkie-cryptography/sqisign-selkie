@@ -8,6 +8,8 @@
 //!
 //! [§3.2.1.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.2.1.1
 
+use subtle::{Choice, ConditionallySelectable};
+
 use crate::{
     curves::{TorsionBasis, TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
     quaternions::bigint::BigInt,
@@ -174,6 +176,23 @@ impl ActionMatrix {
                     self.entries[1][0]
                         .mul_mod2k(&rhs.entries[0][1], f)
                         .add_mod2k(&self.entries[1][1].mul_mod2k(&rhs.entries[1][1], f), f),
+                ],
+            ],
+        }
+    }
+}
+
+impl ConditionallySelectable for ActionMatrix {
+    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+        Self {
+            entries: [
+                [
+                    Scalar::conditional_select(&a.entries[0][0], &b.entries[0][0], choice),
+                    Scalar::conditional_select(&a.entries[0][1], &b.entries[0][1], choice),
+                ],
+                [
+                    Scalar::conditional_select(&a.entries[1][0], &b.entries[1][0], choice),
+                    Scalar::conditional_select(&a.entries[1][1], &b.entries[1][1], choice),
                 ],
             ],
         }

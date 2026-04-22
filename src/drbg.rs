@@ -40,6 +40,30 @@ pub(crate) const SEEDLEN: usize = KEYLEN + BLOCKLEN;
 pub(crate) struct Aes256CtrDrbg {
     key: [u8; KEYLEN],
     v: [u8; BLOCKLEN],
+    /// Total bytes delivered to callers via `fill` since
+    /// instantiation. Test-only probe for diffing byte consumption
+    /// against the SQIsign C reference.
+    ///
+    /// Counts user-facing output, NOT internal AES block generation
+    /// (which is always rounded up to a multiple of `BLOCKLEN = 16`
+    /// per NIST SP 800-90A §10.2.1.5.2). Matches the C reference's
+    /// `drbg_bytes_consumed` counter only when that counter is also
+    /// instrumented at the user-facing output boundary; if the C
+    /// side counts AES blocks instead, diffs will not be right on
+    /// any odd-length `fill`.
+    #[cfg(test)]
+    consumed: u64,
+}
+
+impl Aes256CtrDrbg {
+    /// Returns the total number of output bytes delivered to callers
+    /// via `fill` since instantiation.
+    ///
+    /// See [`Self::consumed`] for the counter's precise semantics.
+    #[cfg(test)]
+    pub(crate) fn bytes_consumed(&self) -> u64 {
+        self.consumed
+    }
 }
 
 impl Aes256CtrDrbg {
@@ -52,6 +76,8 @@ impl Aes256CtrDrbg {
         let mut d = Self {
             key: [0u8; KEYLEN],
             v: [0u8; BLOCKLEN],
+            #[cfg(test)]
+            consumed: 0,
         };
         d.update(Some(seed));
         d
@@ -89,6 +115,10 @@ impl Aes256CtrDrbg {
             i += take;
         }
         self.update(None);
+        #[cfg(test)]
+        {
+            self.consumed += out.len() as u64;
+        }
     }
 
     /// Big-endian increment of the 16-byte V counter.
@@ -147,11 +177,10 @@ mod tests {
     #[test]
     fn matches_cref_seed_zero_first_128_bytes() {
         const SEED: [u8; SEEDLEN] = [
-            0x06, 0x15, 0x50, 0x23, 0x4D, 0x15, 0x8C, 0x5E, 0xC9, 0x55,
-            0x95, 0xFE, 0x04, 0xEF, 0x7A, 0x25, 0x76, 0x7F, 0x2E, 0x24,
-            0xCC, 0x2B, 0xC4, 0x79, 0xD0, 0x9D, 0x86, 0xDC, 0x9A, 0xBC,
-            0xFD, 0xE7, 0x05, 0x6A, 0x8C, 0x26, 0x6F, 0x9E, 0xF9, 0x7E,
-            0xD0, 0x85, 0x41, 0xDB, 0xD2, 0xE1, 0xFF, 0xA1,
+            0x06, 0x15, 0x50, 0x23, 0x4D, 0x15, 0x8C, 0x5E, 0xC9, 0x55, 0x95, 0xFE, 0x04, 0xEF,
+            0x7A, 0x25, 0x76, 0x7F, 0x2E, 0x24, 0xCC, 0x2B, 0xC4, 0x79, 0xD0, 0x9D, 0x86, 0xDC,
+            0x9A, 0xBC, 0xFD, 0xE7, 0x05, 0x6A, 0x8C, 0x26, 0x6F, 0x9E, 0xF9, 0x7E, 0xD0, 0x85,
+            0x41, 0xDB, 0xD2, 0xE1, 0xFF, 0xA1,
         ];
         const EXPECTED_HEX: &str = "\
             7c9935a0b07694aa0c6d10e4db6b1add\

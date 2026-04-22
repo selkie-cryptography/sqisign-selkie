@@ -328,35 +328,35 @@ fn fixed_degree_isogeny(
     let p_bits = 251u32; // ⌈log₂(p)⌉ for NIST-I
 
     // Look up the precomputed curve and torsion basis for this order.
+    // `EXTREMAL_ORDERS.len() == ExtremalCurve::ALL.len()` is enforced
+    // at compile time in `precomputed.rs`, so the `try_from` below
+    // cannot fail for any `t` returned by `.position()`.
     let t = EXTREMAL_ORDERS.iter().position(|o| o.q() == order.q())?;
+    let curve_idx = precomputed::torsion_basis::ExtremalCurve::try_from(t)
+        .expect("EXTREMAL_ORDERS length matches ExtremalCurve::ALL by compile-time assert");
 
-    let (px, qx, a_coeff) = precomputed::torsion_basis::basis_for_curve(t)?;
+    let (px, qx, pmq_x, a_coeff) = curve_idx.basis();
     #[cfg(test)]
     eprintln!("[FDI] t={t}, e_fdi will be computed next");
-    let curve_t = if t == 0 {
+    let curve_t = if curve_idx == precomputed::torsion_basis::ExtremalCurve::E0 {
         Curve::E0
     } else {
         Curve::from(crate::curves::montgomery::Coefficient::from(a_coeff))
     };
     let p_t = ProjectiveXOnlyPoint::from_affine_x(px, &curve_t);
     let q_t = ProjectiveXOnlyPoint::from_affine_x(qx, &curve_t);
-    // Use precomputed PmQ where available. The biladder's three-point
-    // ladder requires a PmQ whose projective representative is
-    // consistent with the precomputed action matrices. Computing PmQ
-    // via `projective_difference` gives a different representative
-    // that causes the Okeya-Sakurai lift to recover the wrong y-sign.
-    let basis_t = if t == 0 {
-        let pmq_t = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve_t);
-        TorsionBasis::from_propagated(p_t, q_t, pmq_t)
-    } else {
-        // TODO: precompute PmQ for all 7 curves.
-        TorsionBasis::from((p_t, q_t))
-    };
-    let gen_matrices = [
-        ACTION_MATRICES[t][3],
-        ACTION_MATRICES[t][4],
-        ACTION_MATRICES[t][5],
-    ];
+    let pmq_t = ProjectiveXOnlyPoint::from_affine_x(pmq_x, &curve_t);
+    // The biladder's three-point ladder requires a PmQ whose
+    // projective representative is consistent with the precomputed
+    // action matrices. Computing PmQ via `projective_difference`
+    // picks a different representative that causes the
+    // Okeya-Sakurai lift to recover the wrong y-sign.
+    let basis_t = TorsionBasis::from_propagated(p_t, q_t, pmq_t);
+    // CT linear-scan over all seven candidate rows. `curve_idx` is
+    // derived from the secret signing-key ideal's right order
+    // (Algorithm 4.2, line 7 `I_sig_response → right_order`), so the
+    // lookup must not depend on the index through memory access.
+    let gen_matrices = curve_idx.gen_matrices();
 
     // Step 1: e_FDI = min(f − 2, ⌈log₂(p)⌉ − ⌈log₂(u)⌉ + QUAT_repres_bound_input)
     let e_fdi = core::cmp::min(

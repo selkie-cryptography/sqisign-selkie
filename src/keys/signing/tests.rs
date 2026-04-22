@@ -155,10 +155,7 @@ fn kat_sk_roundtrip_all() {
             .unwrap_or_else(|_| panic!("vector {i}: sk should parse"));
 
         let reserialized = sk.to_bytes();
-        assert_eq!(
-            reserialized, sk_bytes,
-            "vector {i}: sk round-trip mismatch"
-        );
+        assert_eq!(reserialized, sk_bytes, "vector {i}: sk round-trip mismatch");
     }
 }
 
@@ -214,6 +211,151 @@ fn sign_with_kat_key() {
         .expect("signature should verify against KAT pk");
 }
 
+/// Aggregate DRBG-byte consumption check for `generate_with_rng`
+/// on KAT seed 0, independent of the per-phase probe below.
+///
+/// Calls the public [`SigningKey::generate_with_rng`] and asserts
+/// the total byte count threaded through the DRBG matches an
+/// expected value measured against the C reference. Because it
+/// doesn't duplicate the keygen loop's structure, this test survives
+/// any internal restructuring of `generate_with_rng` and fails
+/// precisely when the aggregate byte budget drifts from the C ref.
+///
+/// Set `expected` to `None` to have the test print the observed
+/// count (useful the first time it runs after the C reference is
+/// instrumented); once a value is known, replace `None` with
+/// `Some(count)` to lock it in.
+///
+/// Run with:
+/// ```text
+/// cargo test --lib --release \
+///   keygen_drbg_total_bytes_seed_0 -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn keygen_drbg_total_bytes_seed_0() {
+    let (seed_hex, ..) = crate::keys::kat_data::KAT_VECTORS[0];
+    let seed: [u8; 48] = hex::decode(seed_hex)
+        .expect("valid seed hex")
+        .as_slice()
+        .try_into()
+        .expect("seed is 48 bytes");
+
+    let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
+    let before = drbg.bytes_consumed();
+    let _sk = match SigningKey::generate_with_rng(&mut drbg) {
+        Ok(sk) => sk,
+        Err(SignatureError::KeyGenFailed) => {
+            eprintln!("[TOTAL-BYTES] keygen probabilistically failed for seed 0; test skipped");
+            return;
+        }
+        Err(other) => panic!("unexpected keygen error: {other:?}"),
+    };
+    let observed = drbg.bytes_consumed() - before;
+    eprintln!("[TOTAL-BYTES] keygen consumed {observed} DRBG bytes for seed 0");
+
+    // Replace `None` with `Some(...)` once the C-reference
+    // `drbg_bytes_consumed` counter is instrumented at the same
+    // user-facing output boundary (see `drbg.rs::bytes_consumed`
+    // for the counter's semantics).
+    let expected: Option<u64> = None;
+    if let Some(e) = expected {
+        assert_eq!(
+            observed, e,
+            "DRBG byte-consumption for seed-0 keygen drifted from the C reference"
+        );
+    }
+}
+
+/// Per-phase DRBG-byte consumption probe for KAT seed 0.
+///
+/// Replicates the body of [`SigningKey::generate_with_rng`] inline
+/// so we can bracket `random_prime_norm_wide`, `reduce_to_prime_norm`,
+/// and `to_isogeny` with [`Aes256CtrDrbg::bytes_consumed`] calls and
+/// print a per-step byte count to stderr. Diff against the
+/// equivalent probe points in the patched SQIsign C reference
+/// (`drbg_bytes_consumed` counter exported from
+/// `randombytes_ctrdrbg.c`) to pinpoint which step first diverges
+/// from the reference's consumption pattern.
+///
+/// Run with:
+/// ```text
+/// cargo test --lib --release \
+///   keygen_drbg_byte_probe_seed_0 -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn keygen_drbg_byte_probe_seed_0() {
+    use crate::{
+        params::D_MIX,
+        quaternions::{bigint::BigInt, lattice::LeftIdeal, precomputed::EXTREMAL_ORDERS},
+    };
+
+    let (seed_hex, ..) = crate::keys::kat_data::KAT_VECTORS[0];
+    let seed: [u8; 48] = hex::decode(seed_hex)
+        .expect("valid seed hex")
+        .as_slice()
+        .try_into()
+        .expect("seed is 48 bytes");
+
+    let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
+    let d_mix_wide: BigInt<30> = D_MIX.widen();
+
+    // Match the retry loop in `SigningKey::generate_with_rng` and
+    // report which early-return fires on each iteration.
+    for iter in 0..8 {
+        let t0 = drbg.bytes_consumed();
+        let ideal =
+            LeftIdeal::<30>::random_prime_norm_wide(&d_mix_wide, &EXTREMAL_ORDERS[0], &mut drbg);
+        let t1 = drbg.bytes_consumed();
+        eprintln!(
+            "[PROBE] iter={iter} random_prime_norm_wide: {} bytes (Some={})",
+            t1 - t0,
+            ideal.is_some()
+        );
+        let Some(mut ideal) = ideal else { continue };
+
+        let ok = ideal.reduce_to_prime_norm::<30, _>(&mut drbg);
+        let t2 = drbg.bytes_consumed();
+        eprintln!(
+            "[PROBE] iter={iter} reduce_to_prime_norm: {} bytes (ok={ok})",
+            t2 - t1
+        );
+        if !ok {
+            continue;
+        }
+
+        let Some(ideal_narrow) = ideal.narrow() else {
+            eprintln!("[PROBE] iter={iter} narrow: None — continue");
+            continue;
+        };
+
+        let t_before_iso = drbg.bytes_consumed();
+        let iso = ideal_narrow.to_isogeny();
+        let t_after_iso = drbg.bytes_consumed();
+        eprintln!(
+            "[PROBE] iter={iter} to_isogeny: {} bytes (Some={})",
+            t_after_iso - t_before_iso,
+            iso.is_some()
+        );
+        if iso.is_none() {
+            continue;
+        }
+
+        let gen = ideal_narrow.generator();
+        eprintln!("[PROBE] iter={iter} generator: Some={}", gen.is_some());
+        if gen.is_none() {
+            continue;
+        }
+        eprintln!(
+            "[PROBE] iter={iter} SUCCESS: total {} bytes so far",
+            drbg.bytes_consumed()
+        );
+        return;
+    }
+    eprintln!("[PROBE] exhausted 8 attempts");
+}
+
 /// Reproduce the SQIsign C reference's byte consumption for a KAT
 /// seed by threading a single AES-CTR-DRBG through both keygen and
 /// signing, matching `randombytes_init(seed); crypto_sign_keypair;
@@ -241,8 +383,7 @@ fn sign_with_kat_key() {
 #[test]
 #[ignore]
 fn kat_cref_cross_check_vector_0() {
-    let (seed_hex, _pk_hex, _sk_hex, msg_hex, sm_hex) =
-        crate::keys::kat_data::KAT_VECTORS[0];
+    let (seed_hex, _pk_hex, _sk_hex, msg_hex, sm_hex) = crate::keys::kat_data::KAT_VECTORS[0];
     let seed: [u8; 48] = hex::decode(seed_hex)
         .expect("valid seed hex")
         .as_slice()
@@ -251,11 +392,17 @@ fn kat_cref_cross_check_vector_0() {
     let msg = hex::decode(msg_hex).expect("valid msg hex");
 
     let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
+    let before_keygen = drbg.bytes_consumed();
     let sk = match SigningKey::generate_with_rng(&mut drbg) {
         Ok(sk) => sk,
         Err(SignatureError::KeyGenFailed) => return, // probabilistic skip
         Err(other) => panic!("unexpected keygen error: {other:?}"),
     };
+    let after_keygen = drbg.bytes_consumed();
+    eprintln!(
+        "[CROSSCHECK] keygen consumed {} DRBG bytes (seed 0)",
+        after_keygen - before_keygen
+    );
 
     let sig = match sk.sign_with_rng(&msg, &mut drbg) {
         Ok(s) => s,
@@ -270,6 +417,11 @@ fn kat_cref_cross_check_vector_0() {
         }
         Err(other) => panic!("unexpected sign error: {other:?}"),
     };
+    let after_sign = drbg.bytes_consumed();
+    eprintln!(
+        "[CROSSCHECK] sign consumed {} DRBG bytes (seed 0)",
+        after_sign - after_keygen
+    );
 
     // Full byte-for-byte match: `sm` in the rsp file is `sig || msg`,
     // so the signature prefix must equal the first CRYPTO_BYTES of
