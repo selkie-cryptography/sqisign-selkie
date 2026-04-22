@@ -14,10 +14,12 @@
 //! [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
 //! [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
 
+use core::ops::Deref;
+
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
-    lattice::{ExtremalOrder, HnfLattice, Lattice, NrdBasis},
+    lattice::{ExtremalOrder, HnfLattice, Lattice, LeftIdeal, NrdBasis},
     linear::{Matrix, Vector},
     precomputed::{EXTREMAL_ORDERS, P_WIDE},
 };
@@ -243,34 +245,117 @@ impl ExtremalOrder<8> {
                 }
 
                 // Check: largest d with γ/d ∈ O is 2.
-                // γ's denom in {1,i,j,k} is common_d. Construct
-                // Element and normalize — normalization divides
-                // coords and denom by their GCD. If the GCD is
-                // 2·common_d, then d = 2.
+                //
+                // # Bug history (2026-04-15)
+                //
+                // The original code used `normalize()` (GCD of quaternion
+                // coords and denom) to find d. This is WRONG: normalize
+                // divides the {1,i,j,k} coordinates by their GCD, but the
+                // spec's "content" is the GCD of the ORDER-BASIS
+                // coefficients. For O₀ with common_d=2, gamma has coords
+                // (2x, 2y, 2z, -2t)/2. normalize() finds GCD(2x,...,2)=2,
+                // divides to get (x,y,z,-t)/1, giving nrd = 4M. But the
+                // spec requires nrd(gamma/d) = M, where d=2 is the content
+                // of gamma's ORDER-BASIS decomposition.
+                //
+                // The C ref's `quat_alg_make_primitive` decomposes gamma
+                // on the order basis and divides by the GCD of those
+                // coefficients. We replicate this via `order.decompose()`.
+                //
+                // This bug caused `represent_integer` to return elements
+                // with nrd = 4*M (4x the expected norm). The action matrix
+                // det(M) then equaled 4*M mod 2^f instead of M mod 2^f.
+                // The (2,2)-chain kernel had degree 4x too large, making
+                // it non-isotropic for the product Weil pairing, so the
+                // chain never produced a product surface (splitting:
+                // zeros=0). The bug was invisible for diagonal endomorphisms
+                // like [3] because the kernel was constructed differently
+                // (direct scalar mul, not action matrix). Tracking it down
+                // required:
+                //   - Verifying the action matrix (correct: det matches nrd)
+                //   - Verifying the biladder (correct: group elements match)
+                //   - Verifying the chain for [3] (correct: splits)
+                //   - Discovering nrd(theta) = 4*m via Python norm computation
+                //   - Tracing back to normalize() vs make_primitive
                 let narrow = |v: &BigInt<8>| -> BigInt<4> {
                     v.narrow_to::<4>()
                         .expect("γ coord fits in BigInt<4>: bounded by √M")
                 };
-                let mut gamma = Element::<4>::new(
+                let gamma = Element::<4>::new(
                     Coordinate::from_bigint(narrow(&gamma_coords[0])),
                     Coordinate::from_bigint(narrow(&gamma_coords[1])),
                     Coordinate::from_bigint(narrow(&gamma_coords[2])),
                     Coordinate::from_bigint(narrow(&gamma_coords[3])),
                     Denominator::from_bigint_unchecked(narrow(&common_d)),
                 );
-                // Save pre-normalize denom to detect the scaling.
-                let pre_denom = *gamma.denom.as_bigint();
-                gamma.normalize();
-                let post_denom = *gamma.denom.as_bigint();
 
-                // d = pre_denom / post_denom. Check d = 2.
-                let (d, rem) = pre_denom.div_rem(&post_denom);
-                if !bool::from(rem.is_zero()) || d != BigInt::TWO {
+                // Decompose gamma on the order basis to find the content
+                // (GCD of the order-basis coefficients), matching the C
+                // ref's `quat_alg_make_primitive`.
+                // Use the narrow (BigInt<4>) order for decomposition.
+                // The extremal order at width 8 wraps the same lattice;
+                // we narrow it to width 4 for the decompose call.
+                // Find the matching narrow order by q value.
+                let Some(narrow_order) = EXTREMAL_ORDERS.iter().find(|o| o.q() == self.q()) else {
+                    continue;
+                };
+                let order_lattice: &Lattice<4> = narrow_order.order();
+                let Some(basis_coeffs) = order_lattice.decompose(&gamma) else {
+                    // gamma not in the order — skip.
+                    continue;
+                };
+
+                // Content = GCD of all 4 basis coefficients.
+                let mut content = basis_coeffs[0].abs();
+                for coeff in &basis_coeffs[1..] {
+                    content = content.gcd(&coeff.abs());
+                }
+
+                // d = content. Check d = 2.
+                if content != BigInt::TWO {
                     continue;
                 }
                 _parity_ok += 1;
 
-                return Some(gamma);
+                // Return gamma / content by halving the order-basis
+                // coefficients and reconstructing the quaternion element.
+                //
+                // Dividing the {1,i,j,k} coords by 2 is NOT equivalent
+                // to halving the order-basis coefficients (unless the
+                // basis is diagonal). We must reconstruct from the halved
+                // coefficients: gamma/2 = Σ (c_k/2) · basis_col_k / denom.
+                let half = |c: &BigInt<4>| -> BigInt<4> {
+                    let (q, _) = c.div_rem(&BigInt::TWO);
+                    q
+                };
+                let half_coeffs: [BigInt<4>; 4] = [
+                    half(&basis_coeffs[0]),
+                    half(&basis_coeffs[1]),
+                    half(&basis_coeffs[2]),
+                    half(&basis_coeffs[3]),
+                ];
+
+                // Reconstruct: gamma/2 = Σ (c_k/2) · basis_col_k / denom
+                let basis = order_lattice.basis();
+                let denom = *order_lattice.denom();
+                let mut result_coords = [BigInt::<4>::ZERO; 4];
+                for j in 0..4 {
+                    for k in 0..4 {
+                        result_coords[j] =
+                            result_coords[j].ct_add(&half_coeffs[k].ct_mul(&basis[j][k]));
+                    }
+                }
+
+                // The result has denom = order_lattice.denom().
+                let result = Element::<4>::new(
+                    Coordinate::from_bigint(result_coords[0]),
+                    Coordinate::from_bigint(result_coords[1]),
+                    Coordinate::from_bigint(result_coords[2]),
+                    Coordinate::from_bigint(result_coords[3]),
+                    Denominator::from_bigint_unchecked(denom),
+                );
+
+                return Some(result);
             }
         }
 
@@ -291,13 +376,24 @@ impl ExtremalOrder<8> {
 /// extremal order it came from and its degree d = nrd(β) / nrd(J_t · I).
 /// Grouping these prevents accidentally pairing one factor's degree
 /// with another factor's element.
-pub struct IdealFactor {
+pub(crate) struct IdealFactor {
     /// The extremal order that produced this factor.
-    pub order: &'static ExtremalOrder<4>,
-    /// The element β (a short vector in J_t · I).
-    pub beta: Element<4>,
-    /// Degree d = nrd(β) / nrd(J_t · I).
-    pub degree: IsogenyDegree,
+    pub(crate) order: &'static ExtremalOrder<4>,
+    /// The short vector β.
+    pub(crate) beta: ShortVector,
+    /// Degree `d = nrd(β) / nrd(parent_ideal)`.
+    pub(crate) degree: IsogenyDegree,
+    /// The ideal β was enumerated from: for `t = 0` this is the
+    /// caller-supplied ideal `I` (possibly replaced by its smallest
+    /// equivalent), for `t > 0` it will be `J_t · I`.
+    ///
+    /// Carrying the parent ideal here keeps the invariant
+    /// `nrd(β) = degree · nrd(parent_ideal)` local to the factor,
+    /// so downstream scaling formulas needing `nrd(J_t · I)` read
+    /// it through [`LeftIdeal::norm`] on this field rather than
+    /// reaching for the caller-supplied ideal whose norm no longer
+    /// matches β after the reduction step.
+    pub(crate) parent_ideal: LeftIdeal<4>,
 }
 
 /// Result of [Alg. 3.16][Alg. 3.16] (SuitableIdeals).
@@ -308,30 +404,63 @@ pub struct IdealFactor {
 /// and [`factor2`](Self::factor2).
 ///
 /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
-pub struct SuitableIdealResult {
+pub(crate) struct SuitableIdealResult {
     /// Odd positive integer u.
     // TODO: Replace with a positive-integer newtype.
-    pub u: BigInt<4>,
+    pub(crate) u: BigInt<4>,
     /// Positive integer v.
     // TODO: Replace with a positive-integer newtype.
-    pub v: BigInt<4>,
+    pub(crate) v: BigInt<4>,
     /// Exponent e ≤ f.
-    pub e: TorsionExponent,
+    pub(crate) e: TorsionExponent,
     /// First factor (β₁, d₁, order index s).
-    pub factor1: IdealFactor,
+    pub(crate) factor1: IdealFactor,
     /// Second factor (β₂, d₂, order index t).
-    pub factor2: IdealFactor,
+    pub(crate) factor2: IdealFactor,
 }
 
-/// An element from the short-vector enumeration, paired with its
-/// degree (reduced norm divided by the ideal norm).
-struct ShortVector {
-    /// Quaternion element β (linear combination of reduced basis).
+/// A candidate from the short-vector enumeration, retaining its
+/// degree both as a membership invariant and as the sort key.
+///
+/// A single enumeration batch uses a fixed parent ideal, so
+/// `nrd(parent_ideal)` is constant across every candidate and
+/// sorting by `degree = nrd(β) / nrd(parent_ideal)` gives the same
+/// ordering as sorting by `nrd(β)` itself. Promoted to an
+/// [`IdealFactor`] once a viable pair is selected in
+/// [`try_find_uv`].
+struct ShortVectorCandidate {
+    /// Quaternion element β, a linear combination of the reduced basis.
     elem: Element<4>,
-    /// Degree: nrd(β) / nrd(I), as a positive odd integer.
+    /// Degree: `nrd(β) / nrd(parent_ideal)`, a positive odd integer.
     degree: IsogenyDegree,
-    /// Approximate norm for sorting (f64 precision, 53-bit mantissa).
-    norm_approx: f64,
+}
+
+/// A quaternion element that is a short vector in some ideal lattice.
+///
+/// Wraps an [`Element<4>`] with a stronger contract than a bare
+/// algebra element: a `ShortVector` was produced by the
+/// short-vector enumeration inside [`LeftIdeal::suitable_ideals`]
+/// and lives in a specific [`LeftIdeal<4>`] (tracked by the
+/// consumer via [`IdealFactor::parent_ideal`]) with norm on the
+/// order of `√nrd(parent_ideal)`.
+///
+/// Construction is private to this module — there is no public
+/// constructor — so a `ShortVector` in hand is a proof-by-type
+/// that the enumeration has already validated the underlying
+/// element.
+///
+/// The inner [`Element<4>`] is reachable through [`Deref`], so any
+/// site that wants `&Element<4>` (for example `action_matrix` in
+/// the deuring module) works by deref coercion.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ShortVector(Element<4>);
+
+impl Deref for ShortVector {
+    type Target = Element<4>;
+
+    fn deref(&self) -> &Element<4> {
+        &self.0
+    }
 }
 
 impl NrdBasis<8> {
@@ -345,7 +474,7 @@ impl NrdBasis<8> {
         &self,
         ideal_norm: &BigInt<8>,
         lattice_denom: &BigInt<8>,
-    ) -> Vec<ShortVector> {
+    ) -> Vec<ShortVectorCandidate> {
         let m = crate::params::FINDUV_BOX_SIZE;
         let denom_sq = lattice_denom.ct_mul(lattice_denom);
         let divisor = ideal_norm.ct_mul(&denom_sq);
@@ -403,7 +532,7 @@ impl NrdBasis<8> {
                             continue;
                         };
 
-                        vectors.push(ShortVector {
+                        vectors.push(ShortVectorCandidate {
                             elem: Element::<4>::new(
                                 Coordinate::from_bigint(a),
                                 Coordinate::from_bigint(b),
@@ -412,32 +541,44 @@ impl NrdBasis<8> {
                                 Denominator::from_bigint_unchecked(den_4),
                             ),
                             degree,
-                            norm_approx: nrd_scaled.to_f64(),
                         });
                     }
                 }
             }
         }
 
-        // Stable sort: preserves insertion order for equal-norm vectors,
-        // ensuring deterministic pair selection in the search phase.
-        // Determinism matters for signing — non-deterministic pair choice
-        // could leak information about which short vectors matched.
-        vectors.sort_by(|a, b| {
-            a.norm_approx
-                .partial_cmp(&b.norm_approx)
-                .unwrap_or(core::cmp::Ordering::Equal)
-        });
+        // Stable sort by `degree`: `nrd(parent_ideal)` is constant
+        // across this batch, so ordering by degree matches ordering
+        // by `nrd(β)` exactly — no `f64` precision concerns. A
+        // stable sort preserves insertion order for equal-degree
+        // candidates, giving deterministic pair selection in
+        // [`try_find_uv`]; determinism matters for signing because a
+        // non-deterministic pair choice could leak information about
+        // which short vectors matched.
+        vectors.sort_by_key(|c| c.degree);
         vectors
     }
 }
 
-/// Try to find coprime odd degrees and matching u, v from a pair
-/// of short vectors. Returns `None` if the pair doesn't satisfy
-/// the SuitableIdeals conditions.
+/// Try to find coprime odd degrees and matching `u`, `v` from a
+/// pair of short-vector candidates.
+///
+/// `parent_ideal` is the ideal the candidates were enumerated from
+/// (the caller-supplied ideal `I` or its smallest equivalent);
+/// both β₁ and β₂ carry it through to the resulting
+/// [`IdealFactor`]s so that downstream scaling formulas can read
+/// `nrd(parent_ideal)` without re-deriving it and without
+/// accidentally reaching for the original `I` when β lives in the
+/// reduced equivalent.
+///
+/// Returns `None` when the pair fails any of the SuitableIdeals
+/// conditions: non-coprime degrees, no solution to
+/// `u·d₁ + v·d₂ = 2^f` with `u, v > 0`, or an exponent that would
+/// push `e` out of range.
 fn try_find_uv(
-    sv1: &ShortVector,
-    sv2: &ShortVector,
+    sv1: &ShortVectorCandidate,
+    sv2: &ShortVectorCandidate,
+    parent_ideal: &LeftIdeal<4>,
     two_f: &BigInt<8>,
     f: TorsionExponent,
     order: &'static ExtremalOrder<4>,
@@ -453,42 +594,112 @@ fn try_find_uv(
         return None;
     }
 
-    // u = 2^f · d₁⁻¹ mod d₂.
+    // Enumerate every positive-integer solution `(u, v)` to
+    // `u·d₁ + v·d₂ = 2^f` along the line
+    // `(u, v) = (u_0 + k·d₂, v_0 − k·d₁)` for `k = 0, 1, 2, …` until
+    // `v ≤ 0`. The initial solution has `u_0 = 2^f · d₁⁻¹ mod d₂`,
+    // so `u_0 ∈ [0, d₂)` and `v_0 = (2^f − u_0·d₁)/d₂`. For each
+    // valid solution, factor out the 2-adic part of `gcd(u, v)` to
+    // obtain `(u', v', e)` with `u'·d₁ + v'·d₂ = 2^e`.
+    //
+    // Prior versions checked only the `k = 0` pair and returned
+    // `None` whenever the resulting `e` constraint failed.
+    // Matching the C reference's `find_uv_from_lists`
+    // (`dim2id2iso.c:382-460`), which walks the whole line with a
+    // `v += d₁` increment, improves acceptance by roughly an order
+    // of magnitude for short-vector pairs with `d₁·d₂ ≪ 2^f`.
     let d1_inv = d1_w.invert_mod(&d2_w)?;
-    let u = two_f.ct_mul(&d1_inv).ct_mod(&d2_w);
+    let u0 = two_f.ct_mul(&d1_inv).ct_mod(&d2_w);
+    let mut u = u0;
+    let mut v = {
+        let ud1 = u.ct_mul(&d1_w);
+        if ud1 >= *two_f {
+            return None;
+        }
+        let (v, rem) = two_f.ct_sub(&ud1).div_rem(&d2_w);
+        if !bool::from(rem.is_zero()) || bool::from(v.is_negative()) {
+            return None;
+        }
+        v
+    };
 
-    // v = (2^f − u · d₁) / d₂.
-    let ud1 = u.ct_mul(&d1_w);
-    if ud1 >= *two_f {
-        return None;
+    loop {
+        if !bool::from(u.is_zero()) && !bool::from(v.is_zero()) {
+            // Factor out the 2-adic part of `gcd(u, v)`, matching the
+            // C reference (`dim2id2iso.c:833`). The spec writes
+            // `v_2(u)` in Algorithm 3.16 line 14, but that is only
+            // equivalent to `v_2(gcd(u, v))` when `v_2(u) ≤ v_2(v)`.
+            let e_val = u.gcd(&v).trailing_zeros();
+            // Require `sui.e = f − e_val ≤ f − 2` — i.e., `e_val ≥ 2`.
+            //
+            // [`LeftIdeal::to_isogeny`]'s outer (2,2)-chain feeds
+            // [`surfaces::Kernel::isogeny`] a kernel of order
+            // `2^(sui.e + 2)` — two torsion bits above the
+            // `2^sui.e`-subgroup that is the chain's real kernel.
+            // Those 2 bits are mandatory (the chain's penultimate
+            // and ultimate steps consume 4- and 2-torsion residue
+            // via the `hadamard_bool` mechanism of Algorithm 8.41)
+            // and come from the `2^f`-torsion image basis
+            // `(phi_u(P_0), theta·phi_v(P_0))` via `scale = f −
+            // sui.e − 2` doublings. The padding only works when
+            // `sui.e ≤ f − 2`.
+            //
+            // The C reference's alternate `extra_torsion = false`
+            // chain path (`theta_isogenies.c:1088`) accepts a
+            // kernel of order exactly `2^sui.e` by running a
+            // shorter 8-torsion chain followed by dedicated
+            // 4-isogeny and 2-isogeny tail steps, so it handles
+            // `sui.e ∈ {f-1, f}` directly. We don't implement
+            // that variant, so we reject those cases here.
+            //
+            // Pairs with `e_val < 2` get skipped; the outer v-loop
+            // enumerates more `(u, v)` solutions for the same
+            // `(β₁, β₂)`, so the acceptance cost is small (≈ 20%
+            // of pairs on NIST-I in practice).
+            if e_val < 2 {
+                u = u.ct_add(&d2_w);
+                if v <= d1_w {
+                    return None;
+                }
+                v = v.ct_sub(&d1_w);
+                continue;
+            }
+            if let Ok(e) = TorsionExponent::try_from(f.value() - e_val) {
+                if let (Some(u_narrow), Some(v_narrow)) =
+                    (u.shr(e_val).narrow(), v.shr(e_val).narrow())
+                {
+                    return Some(SuitableIdealResult {
+                        u: u_narrow,
+                        v: v_narrow,
+                        e,
+                        factor1: IdealFactor {
+                            order,
+                            beta: ShortVector(sv1.elem),
+                            degree: *d1,
+                            parent_ideal: *parent_ideal,
+                        },
+                        factor2: IdealFactor {
+                            order,
+                            beta: ShortVector(sv2.elem),
+                            degree: *d2,
+                            parent_ideal: *parent_ideal,
+                        },
+                    });
+                }
+            }
+        }
+
+        // Advance to the next solution on the line: `u += d₂`,
+        // `v −= d₁`. Stop when `v` would go non-positive.
+        u = u.ct_add(&d2_w);
+        if v <= d1_w {
+            return None;
+        }
+        v = v.ct_sub(&d1_w);
     }
-    let (v, rem) = two_f.ct_sub(&ud1).div_rem(&d2_w);
-    if !bool::from(rem.is_zero()) || bool::from(v.is_zero()) || bool::from(v.is_negative()) {
-        return None;
-    }
-
-    // Factor out the 2-adic part of u.
-    let e_val = u.trailing_zeros();
-    let e = TorsionExponent::try_from(f.value() - e_val).ok()?;
-
-    Some(SuitableIdealResult {
-        u: u.shr(e_val).narrow()?,
-        v: v.shr(e_val).narrow()?,
-        e,
-        factor1: IdealFactor {
-            order,
-            beta: sv1.elem,
-            degree: *d1,
-        },
-        factor2: IdealFactor {
-            order,
-            beta: sv2.elem,
-            degree: *d2,
-        },
-    })
 }
 
-impl super::lattice::LeftIdeal<4> {
+impl LeftIdeal<4> {
     /// Decompose this ideal for id2iso via [Alg. 3.16][Alg. 3.16]
     /// (SuitableIdeals).
     ///
@@ -638,36 +849,45 @@ impl super::lattice::LeftIdeal<4> {
     }
 
     /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
-    pub fn suitable_ideals(&self) -> Option<SuitableIdealResult> {
+    pub(crate) fn suitable_ideals(&self) -> Option<SuitableIdealResult> {
         let f = TorsionExponent::FULL;
         let two_f = BigInt::<8>::ONE.shl(f.value());
 
-        // Phase 0: Replace the ideal with its smallest equivalent.
+        // Phase 1: L2-reduce the caller-supplied ideal's basis and
+        // enumerate short vectors.
         //
-        // The C reference (dim2id2iso.c, find_uv lines 526-546)
-        // does this before enumerating short vectors: LLL-reduce,
-        // take the first basis vector δ (shortest), construct
-        // I · δ̄ / nrd(I). The result has norm ~√p instead of the
-        // original (potentially much larger) norm. This makes the
-        // short-vector degrees small enough for the u·d₁ + v·d₂ =
-        // 2^e search to succeed.
-        let ideal = match self.smallest_equiv() {
-            Some(eq) => eq,
-            None => *self,
-        };
-
-        // Phase 1: L2-reduce and enumerate short vectors.
+        // The C reference (`dim2id2iso.c:535-542`) L2-reduces
+        // `lideal`'s basis in place — `ideal[0].lattice.basis =
+        // reduced[0]` — and then enumerates short vectors on that
+        // reduced basis (line 609,
+        // `enumerate_hypercube(small_vecs[0], ..., gram[0],
+        // adjusted_norm[0])`). The norm `ideal[0].norm = lideal.norm`
+        // is left untouched, so each β = reduced[0] · x has
+        // `nrd(β_rational) = degree · nrd(lideal)`, tying the
+        // `1/(nrd(I) · d₁)` scaling in `to_isogeny` directly to
+        // `self.norm()`.
         //
-        // For t = 0, the connecting ideal J_0 = O_0 and J_0 · I = I,
-        // so we operate directly on the ideal's own lattice.
+        // `reduced_id = lideal · δ̄/nrd(lideal)` (the "smallest
+        // equivalent") is only used downstream to derive connecting
+        // ideals for the j > 0 alternate-order searches, which we
+        // don't yet implement. Using `smallest_equiv` as the search
+        // lattice — as an earlier version of this code did — breaks
+        // the nrd(β) ↔ nrd(I) identity that `to_isogeny`'s scaling
+        // depends on: it gives β's with `nrd(β_rat) = degree ·
+        // nrd(parent)`, where `nrd(parent) = nrd(δ)/nrd(I)`, so the
+        // resulting (2^e,2^e)-isogeny lands on the codomain of
+        // `parent_ideal`, not of `lideal`.
         //
         // TODO: Add connecting ideals for t = 1..6 to search across
-        // all seven extremal orders (§3.1.7.2).
-        let lattice: Lattice<4> = (*ideal.lattice()).into();
+        // all seven extremal orders (§3.1.7.2). For non-principal
+        // ideals whose first minimum is too large in the j=0
+        // lattice, the j>0 search finds short vectors in
+        // `J_t · lideal`.
+        let lattice: Lattice<4> = (*self.lattice()).into();
         let cols_4 = lattice.basis().columns();
         let cols_8: [Vector<8>; 4] = core::array::from_fn(|j| cols_4[j].into());
         let denom_8: BigInt<8> = (*lattice.denom()).into();
-        let norm_8: BigInt<8> = (*ideal.norm()).into();
+        let norm_8: BigInt<8> = (*self.norm()).into();
 
         let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
         let short_vecs = nrd_basis.enumerate_short_vectors(&norm_8, &denom_8);
@@ -682,7 +902,7 @@ impl super::lattice::LeftIdeal<4> {
         for (i, sv1) in short_vecs.iter().enumerate() {
             for sv2 in &short_vecs[i..] {
                 _pairs_tried += 1;
-                if let Some(result) = try_find_uv(sv1, sv2, &two_f, f, order) {
+                if let Some(result) = try_find_uv(sv1, sv2, self, &two_f, f, order) {
                     return Some(result);
                 }
             }
@@ -764,10 +984,8 @@ mod tests {
         }
     }
 
-    /// Slow test (~35s): tries all seven orders with NIST-I p.
-    /// Run with: `cargo test represent_integer_any -- --ignored`
+    /// Tries all seven extremal orders with NIST-I p.
     #[test]
-    #[ignore]
     fn represent_integer_any_order_verifies_norm() {
         let p: BigInt<8> = P_WIDE;
         let m = p.ct_add(&BigInt::TWO);

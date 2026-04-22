@@ -401,11 +401,13 @@ impl VerifyingKey {
             (PmQ_chl, PmQ_aux),
         )
         .ok_or(SignatureError::VerificationFailed)?;
-        let (codomain, _) = kernel.isogeny(
-            TorsionExponent::try_from(e_rsp_prime)
-                .map_err(|_| SignatureError::VerificationFailed)?,
-            &[],
-        );
+        let (codomain, _) = kernel
+            .isogeny(
+                TorsionExponent::try_from(e_rsp_prime)
+                    .map_err(|_| SignatureError::VerificationFailed)?,
+                &[],
+            )
+            .ok_or(SignatureError::VerificationFailed)?;
 
         // --- Lines 29–30: recompute challenge ---
         let j_com = codomain.E1.j_invariant();

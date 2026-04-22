@@ -403,9 +403,7 @@ fn theta_change_of_basis(
             .filter(|d| **d == &Fp2::ZERO)
             .count();
         if zero_count > 0 {
-            eprintln!(
-                "GLUING: {zero_count}/4 delta(s) are ZERO (degenerate ActionByTranslation)"
-            );
+            eprintln!("GLUING: {zero_count}/4 delta(s) are ZERO (degenerate ActionByTranslation)");
         }
     }
 
@@ -688,13 +686,44 @@ impl SplittingKernel {
     /// Compute the splitting and push points through.
     ///
     /// Returns the codomain product E₃ × E₄ and the images of `pts`
-    /// converted back to Montgomery coordinates.
+    /// converted back to Montgomery coordinates, or [`None`] if the
+    /// chain's final theta null does not admit a product splitting
+    /// (i.e., [`count_splitting_indices`] is not exactly 1).
     ///
     /// Implements `SplittingIsomorphism` + `ThetaToProduct` +
     /// `ThetaProductPointToMontgomery` ([§8.5.7]).
     ///
+    /// # Divergences
+    ///
+    /// The spec's Algorithm 8.42 says to "find the unique index
+    /// such that `U_{i,j}(0) = 0`" without stating that exactly
+    /// one must vanish. In practice the splitting-index count is
+    /// a load-bearing invariant: a malformed input (e.g., an
+    /// upstream chain that was fed a kernel short on torsion)
+    /// produces a terminal theta null where either 0 or 10 of the
+    /// ten `U_{i,j}(0)` coordinates vanish, and the splitting
+    /// machinery then silently picks a wrong branch and emits
+    /// bad curves. Treating `count != 1` as an explicit error
+    /// is the difference between "signing key is wrong but
+    /// keygen looks successful" and "keygen retries with a fresh
+    /// random ideal." The SQIsign v2 spec review flags this as
+    /// a recommended spec clarification (§\textsc{SplittingIsomorphism}
+    /// must handle malformed input).
+    ///
     /// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.7
-    pub(crate) fn isogeny(&self, pts: &[JacobianPoint]) -> (EllipticProduct, Vec<ProductPoint>) {
+    pub(crate) fn isogeny(
+        &self,
+        pts: &[JacobianPoint],
+    ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
+        // Exactly one of the 10 `U_{i,j}(0)` coordinates must
+        // vanish for the chain's terminal theta null to
+        // correspond to a product of elliptic curves. Anything
+        // else is a malformed chain output (see Divergences
+        // above).
+        if count_splitting_indices(&self.domain.null) != 1 {
+            return None;
+        }
+
         // 1. SplittingIsomorphism: find the matrix M (Algorithm 8.42).
         let M = splitting_isomorphism(&self.domain.null);
 
@@ -714,7 +743,7 @@ impl SplittingKernel {
             })
             .collect();
 
-        (product, images)
+        Some((product, images))
     }
 }
 
@@ -1066,9 +1095,15 @@ fn chi(i: usize, j: usize) -> i8 {
     }
 }
 
-/// Count how many zero U_{i,j}(0) indices exist (for debugging).
-#[cfg(test)]
-pub(crate) fn get_index_splitting_count(null: &ThetaNullPoint) -> u32 {
+/// Counts how many of the 10 `U_{i,j}(0)` coordinates vanish at this
+/// theta null point.
+///
+/// For a chain that ends at a product of elliptic curves, exactly one
+/// `U_{i,j}(0)` is zero (it identifies which product decomposition
+/// applies). Any other count — particularly 0 — signals that the
+/// codomain is not a product and the splitting machinery will produce
+/// bad output if applied.
+pub(crate) fn count_splitting_indices(null: &ThetaNullPoint) -> u32 {
     let coords = [&null.a, &null.b, &null.c, &null.d];
     let mut count = 0u32;
     for &(i, j, _idx) in &SPLITTING_INDICES {
@@ -1089,6 +1124,14 @@ pub(crate) fn get_index_splitting_count(null: &ThetaNullPoint) -> u32 {
         }
     }
     count
+}
+
+/// Test alias for [`count_splitting_indices`], kept so diagnostic
+/// callers in `surfaces::mod` continue to compile with the original
+/// name.
+#[cfg(test)]
+pub(crate) fn get_index_splitting_count(null: &ThetaNullPoint) -> u32 {
+    count_splitting_indices(null)
 }
 
 /// Find the splitting index such that U_{i,j}(0) = 0

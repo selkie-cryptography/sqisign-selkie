@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <title>sqisign-selkie CI</title>
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32-dark.png" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16-dark.png" media="(prefers-color-scheme: dark)">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0d0f;
+      --bg-raised: #111315;
+      --fg: #ddd;
+      --fg-muted: #888;
+      --fg-dim: #555;
+      --border: rgba(255, 255, 255, 0.06);
+      --bar-bg: rgba(255, 255, 255, 0.04);
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f4f3f0;
+        --bg-raised: #eae9e5;
+        --fg: #1a1a1a;
+        --fg-muted: #6a6a6a;
+        --fg-dim: #aaa;
+        --border: rgba(0, 0, 0, 0.08);
+        --bar-bg: rgba(0, 0, 0, 0.04);
+        --green: #1a7f37;
+        --yellow: #9a6700;
+        --red: #cf222e;
+      }
+    }
+
+    *, *::after, *::before { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 18px;
+      line-height: 1.5;
+      color: var(--fg);
+      background-color: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    a {
+      text-decoration: none;
+      color: var(--fg);
+      transition: color 0.2s;
+    }
+
+    a:hover { color: var(--fg-muted); }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    .header {
+      padding: 40px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header__inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header__left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo {
+      height: 32px;
+      width: auto;
+    }
+
+    .logo--dark { display: block; }
+    .logo--light { display: none; }
+
+    @media (prefers-color-scheme: light) {
+      .logo--dark { display: none; }
+      .logo--light { display: block; }
+    }
+
+    .header__title {
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+    }
+
+    .header__subtitle {
+      font-size: 14px;
+      color: var(--fg-muted);
+    }
+
+    .header__org {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+    }
+
+    .header__org:hover { color: var(--fg); }
+
+    .sections { padding: 48px 0; }
+    .section { margin-bottom: 48px; }
+    .section:last-child { margin-bottom: 0; }
+
+    .section__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 20px;
+    }
+
+    .section__title {
+      position: relative;
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      line-height: 1.3;
+      padding-left: 8px;
+    }
+
+    .section__title::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 50%;
+      z-index: -1;
+      transform: translateY(-50%);
+      display: block;
+      width: 80px;
+      height: 32px;
+      border-radius: 4px 0 0 4px;
+      background: linear-gradient(90deg, var(--border) 0%, transparent 100%);
+    }
+
+    .meta {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--fg-dim);
+    }
+
+    .meta a { color: var(--fg-dim); }
+    .meta a:hover { color: var(--fg-muted); }
+
+    /* Coverage table */
+    .cov-summary {
+      font-size: 36px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      margin-bottom: 16px;
+      padding-left: 8px;
+    }
+
+    .cov-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .cov-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .cov-table > tbody > tr > td {
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+
+    .cov-table > thead > tr > th:nth-child(2),
+    .cov-table > thead > tr > th:nth-child(3),
+    .cov-table > tbody > tr > td:nth-child(2),
+    .cov-table > tbody > tr > td:nth-child(3) {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .cov-table .module-name,
+    .cov-table .file-name {
+      font-family: 'Inter', monospace;
+      font-size: 13px;
+    }
+
+    .cov-table .expandable {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .cov-table .expandable:hover {
+      background: var(--bar-bg);
+    }
+
+    .cov-table .chevron {
+      display: inline-block;
+      width: 1em;
+      font-size: 10px;
+      color: var(--fg-dim);
+      transition: transform 0.2s;
+    }
+
+    .cov-table .chevron.open {
+      transform: rotate(90deg);
+    }
+
+    .cov-table .file-row td {
+      padding-left: 24px;
+      font-size: 13px;
+    }
+
+    .cov-table .file-row td:first-child {
+      padding-left: 32px;
+    }
+
+    .line-grid-cell {
+      padding: 0 !important;
+    }
+
+    .line-grid {
+      font-family: 'JetBrains Mono', 'Menlo', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      max-height: 500px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .line-grid table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    .line-grid td {
+      vertical-align: top;
+      text-align: left;
+      padding: 0 4px;
+    }
+
+    .line-grid .ln {
+      color: var(--fg-dim);
+      text-align: right;
+      user-select: none;
+      white-space: nowrap;
+      border-right: 1px solid var(--border);
+      padding: 0 6px;
+      width: 1px;
+    }
+
+    .line-grid .ct {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      border-right: 1px solid var(--border);
+      padding: 0 6px;
+      width: 1px;
+    }
+
+    .line-grid .src {
+      white-space: pre;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .line-grid .src code {
+      background: none;
+      padding: 0;
+    }
+
+    .line-grid tr.hit .ln,
+    .line-grid tr.hit .ct { color: var(--green); }
+    .line-grid tr.hit { background: rgba(63, 185, 80, 0.06); }
+
+    .line-grid tr.miss .ln,
+    .line-grid tr.miss .ct { color: var(--red); }
+    .line-grid tr.miss { background: rgba(248, 81, 73, 0.08); }
+
+    /* GitHub-style Rust syntax highlighting (dark) */
+    .syn-kw { color: #ff7b72; }
+    .syn-type { color: #79c0ff; }
+    .syn-fn { color: #d2a8ff; }
+    .syn-macro { color: #79c0ff; }
+    .syn-str { color: #a5d6ff; }
+    .syn-num { color: #79c0ff; }
+    .syn-comment { color: #8b949e; font-style: italic; }
+    .syn-attr { color: #d2a8ff; }
+    .syn-lifetime { color: #ffa657; }
+    .syn-self { color: #ff7b72; }
+    .syn-const { color: #79c0ff; }
+    .syn-op { color: #ff7b72; }
+    .syn-punct { color: var(--fg-dim); }
+
+    @media (prefers-color-scheme: light) {
+      .syn-kw { color: #cf222e; }
+      .syn-type { color: #0550ae; }
+      .syn-fn { color: #8250df; }
+      .syn-macro { color: #0550ae; }
+      .syn-str { color: #0a3069; }
+      .syn-num { color: #0550ae; }
+      .syn-comment { color: #6e7781; font-style: italic; }
+      .syn-attr { color: #8250df; }
+      .syn-lifetime { color: #953800; }
+      .syn-self { color: #cf222e; }
+      .syn-const { color: #0550ae; }
+      .syn-op { color: #cf222e; }
+      .syn-punct { color: var(--fg-dim); }
+    }
+
+    .cov-bar-cell { width: 40%; }
+
+    .cov-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--bar-bg);
+      overflow: hidden;
+    }
+
+    .cov-bar__fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    /* Benchmark table */
+    .bench-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .bench-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .bench-table th:nth-child(n+2) { text-align: right; }
+
+    .bench-table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+
+    .bench-table td:nth-child(n+2) {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bench-table .bench-name {
+      font-family: 'Inter', monospace;
+      font-size: 13px;
+    }
+
+    .bench-group {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 12px 8px 4px;
+    }
+
+    /* Mutants */
+    .mutants-summary {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 16px;
+      padding-left: 8px;
+    }
+
+    .mutants-stat {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .mutants-stat .value {
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: -1px;
+    }
+
+    .mutants-stat .label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+    }
+
+    .mutants-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .mutants-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .mutants-table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .mutants-table .mutant-name {
+      font-family: 'Inter', monospace;
+      font-size: 12px;
+      color: var(--red);
+    }
+
+    .mutants-table .mutant-loc {
+      font-family: 'Inter', monospace;
+      font-size: 12px;
+      color: var(--fg-dim);
+      white-space: nowrap;
+    }
+
+    /* Status banner */
+    .status-banner {
+      padding: 8px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+      color: var(--yellow);
+      background: rgba(210, 153, 34, 0.08);
+      border-bottom: 1px solid rgba(210, 153, 34, 0.2);
+      animation: pulse 2s ease-in-out infinite;
+      display: none;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Commit nav */
+    .commit-nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .commit-nav label {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+    }
+
+    .commit-nav select {
+      font-family: 'Inter', monospace;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg-raised);
+      color: var(--fg);
+      cursor: pointer;
+    }
+
+    .commit-nav .commit-time {
+      font-size: 12px;
+      color: var(--fg-dim);
+    }
+
+    .empty {
+      padding: 32px 8px;
+      font-size: 14px;
+      color: var(--fg-dim);
+    }
+
+    .footer {
+      padding: 48px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .footer__inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: var(--fg-muted);
+    }
+
+    .footer a { font-weight: 500; color: var(--fg); }
+    .footer a:hover { color: var(--fg-muted); }
+
+    @media only screen and (max-width: 640px) {
+      body { font-size: 16px; }
+      .header { padding: 24px 0; }
+      .sections { padding: 32px 0; }
+      .section { margin-bottom: 36px; }
+      .cov-summary { font-size: 28px; }
+      .cov-bar-cell { display: none; }
+      .footer__inner { flex-direction: column; gap: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="header">
+    <div class="container">
+      <div class="header__inner">
+        <div class="header__left">
+          <a href="https://github.com/selkie-cryptography/sqisign-selkie">
+            <img src="/selkie-solid-white-on-transparent.svg" alt="Selkie" class="logo logo--dark">
+            <img src="/selkie-solid-black-on-transparent.svg" alt="Selkie" class="logo logo--light">
+          </a>
+          <div>
+            <div class="header__title">sqisign-selkie</div>
+            <div class="header__subtitle">CI artifacts</div>
+          </div>
+        </div>
+        <a class="header__org" href="https://github.com/selkie-cryptography/sqisign-selkie">GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="status-banner" id="status-banner"></div>
+
+  <div class="container">
+    <div class="commit-nav">
+      <label for="commit-select">Commit</label>
+      <select id="commit-select" onchange="onCommitChange(this.value)">
+        <option value="">loading...</option>
+      </select>
+      <span class="commit-time" id="commit-time"></span>
+    </div>
+
+    <div class="sections">
+
+      <section class="section" id="coverage-section">
+        <div class="section__header">
+          <h2 class="section__title">Coverage</h2>
+          <span class="meta" id="coverage-meta"></span>
+        </div>
+        <div id="coverage-content">
+          <p class="empty">No coverage data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="bench-section">
+        <div class="section__header">
+          <h2 class="section__title">Benchmarks</h2>
+          <span class="meta" id="bench-meta"></span>
+        </div>
+        <div id="bench-content">
+          <p class="empty">No benchmark data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="mutants-section">
+        <div class="section__header">
+          <h2 class="section__title">Mutation Testing</h2>
+          <span class="meta" id="mutants-meta"></span>
+        </div>
+        <div id="mutants-content">
+          <p class="empty">No mutation testing data yet.</p>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__inner">
+        <span><a href="https://selkiecryptography.com">Selkie Cryptography</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const REPO = 'selkie-cryptography/sqisign-selkie';
+    const POLL_INTERVAL = 15000;
+
+    // State.
+    let covIndex = [];      // [{sha, percent, updated_at}, ...]
+    let benchIndex = [];    // [{sha, updated_at}, ...]
+    let mutantsIndex = [];  // [{sha, updated_at}, ...]
+    let selectedSha = null; // Currently viewed commit.
+    let covData = null;     // Current coverage data for drill-down.
+
+    // Track what's currently rendered to avoid clobbering state
+    // (expanded modules, scroll position) on no-op poll cycles.
+    let renderedCov = null;   // SHA of rendered coverage data
+    let renderedBench = null; // SHA of rendered bench data
+    let renderedMut = null;   // SHA of rendered mutants data
+    let renderedForSha = null; // The selectedSha we last rendered for
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = String(s);
+      return d.innerHTML;
+    }
+
+    function covColor(pct) {
+      if (pct >= 80) return 'var(--green)';
+      if (pct >= 50) return 'var(--yellow)';
+      return 'var(--red)';
+    }
+
+    function timeAgo(iso) {
+      const ms = Date.now() - new Date(iso).getTime();
+      const mins = Math.floor(ms / 60000);
+      if (mins < 60) return `${mins}m ago`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `${hours}h ago`;
+      return `${Math.floor(hours / 24)}d ago`;
+    }
+
+    function commitLink(sha) {
+      return `<a href="https://github.com/${REPO}/commit/${esc(sha)}">${esc(sha.slice(0, 7))}</a>`;
+    }
+
+    async function fetchJson(url) {
+      const r = await fetch(url, { cache: 'no-cache' });
+      if (!r.ok) return null;
+      return r.json();
+    }
+
+    function renderCoverageData(data) {
+      covData = data;
+      const total = data.total || {};
+      const totalPct = total.percent != null ? total.percent.toFixed(1) : '—';
+      const modules = data.modules || [];
+
+      let html = `<div class="cov-summary" style="color:${covColor(total.percent)}">${totalPct}%</div>`;
+
+      if (modules.length > 0) {
+        html += `<table class="cov-table">
+          <thead><tr>
+            <th>Module</th>
+            <th>Lines</th>
+            <th>%</th>
+            <th class="cov-bar-cell"></th>
+          </tr></thead><tbody>`;
+
+        for (let mi = 0; mi < modules.length; mi++) {
+          const m = modules[mi];
+          const pct = m.percent.toFixed(1);
+          const color = covColor(m.percent);
+          const modId = `mod-${mi}`;
+          html += `<tr class="expandable" onclick="toggleModule(${mi})">
+            <td class="module-name"><span class="chevron" id="chev-${modId}">&#9654;</span> ${esc(m.name)}</td>
+            <td>${esc(m.covered)}/${esc(m.total)}</td>
+            <td style="color:${color}">${pct}%</td>
+            <td class="cov-bar-cell">
+              <div class="cov-bar">
+                <div class="cov-bar__fill" style="width:${m.percent}%;background:${color}"></div>
+              </div>
+            </td>
+          </tr>`;
+
+          // File rows (hidden by default).
+          const files = m.files || [];
+          for (let fi = 0; fi < files.length; fi++) {
+            const f = files[fi];
+            const fpct = f.percent.toFixed(1);
+            const fcolor = covColor(f.percent);
+            const fileId = `file-${mi}-${fi}`;
+            // File name: strip module prefix for display.
+            const fname = f.name.includes('/') ? f.name.split('/').slice(1).join('/') : f.name;
+            html += `<tr class="file-row expandable" id="frow-${fileId}" style="display:none" onclick="toggleFile(${mi},${fi},event)">
+              <td class="file-name"><span class="chevron" id="chev-${fileId}">&#9654;</span> ${esc(fname)}</td>
+              <td>${esc(f.covered)}/${esc(f.total)}</td>
+              <td style="color:${fcolor}">${fpct}%</td>
+              <td class="cov-bar-cell">
+                <div class="cov-bar">
+                  <div class="cov-bar__fill" style="width:${f.percent}%;background:${fcolor}"></div>
+                </div>
+              </td>
+            </tr>`;
+            // Line coverage container (hidden).
+            html += `<tr id="lines-${fileId}" style="display:none">
+              <td colspan="4" class="line-grid-cell"></td>
+            </tr>`;
+          }
+        }
+        html += '</tbody></table>';
+      }
+
+      return html;
+    }
+
+    function toggleModule(mi) {
+      const modId = `mod-${mi}`;
+      const chev = document.getElementById(`chev-${modId}`);
+      const isOpen = chev.classList.toggle('open');
+      const files = covData.modules[mi].files || [];
+      for (let fi = 0; fi < files.length; fi++) {
+        const row = document.getElementById(`frow-file-${mi}-${fi}`);
+        const linesRow = document.getElementById(`lines-file-${mi}-${fi}`);
+        if (row) row.style.display = isOpen ? '' : 'none';
+        if (linesRow && !isOpen) linesRow.style.display = 'none';
+        // Close file chevrons when collapsing module.
+        if (!isOpen) {
+          const fc = document.getElementById(`chev-file-${mi}-${fi}`);
+          if (fc) fc.classList.remove('open');
+        }
+      }
+    }
+
+    // GitHub-style Rust syntax highlighter.
+    function synRust(text) {
+      let s = esc(text);
+
+      // Order matters: comments must go first to prevent inner matches.
+
+      // Line comments (// ...)
+      s = s.replace(/(\/\/.*)$/, '<span class="syn-comment">$1</span>');
+
+      // Attributes (#[...] and #![...])
+      s = s.replace(/(#!?\[.*?\])/g, '<span class="syn-attr">$1</span>');
+
+      // Strings ("..." and b"...")
+      s = s.replace(/(b?&quot;(?:[^&]|&(?!quot;))*?&quot;)/g, '<span class="syn-str">$1</span>');
+
+      // Char literals
+      s = s.replace(/(&#39;[^&#]*(?:&#39;)?)/g, '<span class="syn-str">$1</span>');
+
+      // Lifetimes ('a, 'static, etc.)
+      s = s.replace(/(&#39;[a-z_]\w*)/g, '<span class="syn-lifetime">$1</span>');
+
+      // Macros (name!)
+      s = s.replace(/\b([a-z_]\w*!)/g, '<span class="syn-macro">$1</span>');
+
+      // Numeric literals
+      s = s.replace(/\b(0x[0-9a-fA-F_]+|0b[01_]+|0o[0-7_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:e[+-]?\d+)?)\b/g, '<span class="syn-num">$1</span>');
+
+      // Type names (capitalized identifiers)
+      s = s.replace(/\b([A-Z][A-Za-z0-9_]*)\b/g, '<span class="syn-type">$1</span>');
+
+      // self, Self
+      s = s.replace(/\b(self|Self)\b/g, '<span class="syn-self">$1</span>');
+
+      // Keywords
+      s = s.replace(/\b(fn|let|mut|const|pub|use|mod|struct|enum|impl|trait|type|where|for|in|if|else|match|return|super|crate|as|ref|move|async|await|unsafe|extern|dyn|static|true|false|loop|while|break|continue)\b/g, '<span class="syn-kw">$1</span>');
+
+      // Function definitions (fn name)
+      s = s.replace(/(<span class="syn-kw">fn<\/span>) (\w+)/g, '$1 <span class="syn-fn">$2</span>');
+
+      // Operators
+      s = s.replace(/(&amp;&amp;|&amp;|\|\||[=!<>]=|\.\.=?|-&gt;|=&gt;)/g, '<span class="syn-op">$1</span>');
+
+      return s;
+    }
+
+    function toggleFile(mi, fi, ev) {
+      ev.stopPropagation();
+      const fileId = `file-${mi}-${fi}`;
+      const chev = document.getElementById(`chev-${fileId}`);
+      const linesRow = document.getElementById(`lines-${fileId}`);
+      const isOpen = chev.classList.toggle('open');
+
+      if (isOpen) {
+        const f = covData.modules[mi].files[fi];
+        const lines = f.lines || [];
+        const sha = covData.sha;
+        const ghBase = `https://github.com/${REPO}/blob/${sha}/src/${esc(f.name)}`;
+
+        let grid = '<div class="line-grid"><table>';
+        for (const entry of lines) {
+          const ln = entry[0];
+          const ct = entry[1];
+          const src = entry.length > 2 ? entry[2] : '';
+          // ct == -1 means non-instrumented (comment, blank, declaration).
+          const cls = ct < 0 ? '' : ct > 0 ? 'hit' : 'miss';
+          const ctLabel = ct < 0 ? '' : ct > 0 ? esc(String(ct)) + '\u00d7' : '\u2014';
+          grid += `<tr class="${cls}">`;
+          grid += `<td class="ln"><a href="${ghBase}#L${ln}" style="color:inherit">${ln}</a></td>`;
+          grid += `<td class="ct">${ctLabel}</td>`;
+          grid += `<td class="src"><code>${synRust(src)}</code></td>`;
+          grid += `</tr>`;
+        }
+        grid += '</table></div>';
+        linesRow.querySelector('td').innerHTML = grid;
+        linesRow.style.display = '';
+      } else {
+        linesRow.style.display = 'none';
+      }
+    }
+
+    function renderMutantsData(data) {
+      const s = data.summary || {};
+      const survivors = data.survivors || [];
+      const tested = (s.caught || 0) + (s.missed || 0) + (s.timeout || 0);
+      const killPct = tested > 0 ? ((s.caught / tested) * 100).toFixed(1) : '—';
+      const killColor = tested > 0
+        ? (s.caught / tested >= 0.8 ? 'var(--green)' : s.caught / tested >= 0.5 ? 'var(--yellow)' : 'var(--red)')
+        : 'var(--fg-dim)';
+
+      let html = '<div class="mutants-summary">';
+      html += `<div class="mutants-stat"><span class="value" style="color:${killColor}">${killPct}%</span><span class="label">kill rate</span></div>`;
+      html += `<div class="mutants-stat"><span class="value" style="color:var(--green)">${esc(String(s.caught || 0))}</span><span class="label">caught</span></div>`;
+      html += `<div class="mutants-stat"><span class="value" style="color:var(--red)">${esc(String(s.missed || 0))}</span><span class="label">missed</span></div>`;
+      if (s.timeout) html += `<div class="mutants-stat"><span class="value" style="color:var(--yellow)">${esc(String(s.timeout))}</span><span class="label">timeout</span></div>`;
+      html += `<div class="mutants-stat"><span class="value">${esc(String(s.unviable || 0))}</span><span class="label">unviable</span></div>`;
+      html += '</div>';
+
+      if (survivors.length > 0) {
+        const sha = data.sha;
+        html += `<table class="mutants-table">
+          <thead><tr><th>Survivor</th><th>Location</th></tr></thead><tbody>`;
+        for (const m of survivors) {
+          const desc = m.name.includes(':') ? m.name.split(': ').slice(1).join(': ') : m.name;
+          const ghLink = sha
+            ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(m.file)}#L${m.line}`
+            : '#';
+          html += `<tr>
+            <td class="mutant-name">${esc(desc)}</td>
+            <td class="mutant-loc"><a href="${ghLink}">${esc(m.function || m.file)}:${m.line}</a></td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+      }
+
+      return html;
+    }
+
+    function renderBenchmarkData(data) {
+      const groups = data.groups || [];
+      if (groups.length === 0) return '';
+
+      let html = `<table class="bench-table">
+        <thead><tr>
+          <th>Benchmark</th>
+          <th>Time</th>
+          <th>Throughput</th>
+        </tr></thead><tbody>`;
+
+      for (const g of groups) {
+        html += `<tr><td class="bench-group" colspan="3">${esc(g.name)}</td></tr>`;
+        for (const b of g.benchmarks) {
+          const time = b.time_ns < 1000
+            ? `${b.time_ns.toFixed(0)} ns`
+            : b.time_ns < 1_000_000
+            ? `${(b.time_ns / 1000).toFixed(1)} &micro;s`
+            : `${(b.time_ns / 1_000_000).toFixed(2)} ms`;
+          const tp = b.throughput || '—';
+          html += `<tr>
+            <td class="bench-name">${esc(b.name)}</td>
+            <td>${time}</td>
+            <td>${esc(tp)}</td>
+          </tr>`;
+        }
+      }
+
+      html += '</tbody></table>';
+      return html;
+    }
+
+    // --- Status banner ---
+
+    async function updateStatus() {
+      const banner = document.getElementById('status-banner');
+      const [covStatus, benchStatus, mutStatus] = await Promise.all([
+        fetchJson('/coverage/status.json'),
+        fetchJson('/bench/status.json'),
+        fetchJson('/mutants/status.json'),
+      ]);
+      const parts = [];
+      if (covStatus && covStatus.state === 'running') parts.push('coverage');
+      if (benchStatus && benchStatus.state === 'running') parts.push('benchmarks');
+      if (mutStatus && mutStatus.state === 'running') parts.push('mutation testing');
+      if (parts.length > 0) {
+        banner.textContent = `Building ${parts.join(' and ')}...`;
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    // --- Commit nav ---
+
+    function buildCommitList() {
+      // Merge coverage and bench indices into a unified commit list.
+      // A commit appears if it has coverage, benchmarks, or both.
+      const map = new Map();
+      for (const e of covIndex) {
+        map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: true, hasBench: false, hasMutants: false, percent: e.percent });
+      }
+      for (const e of benchIndex) {
+        const existing = map.get(e.sha);
+        if (existing) {
+          existing.hasBench = true;
+        } else {
+          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: true, hasMutants: false });
+        }
+      }
+      for (const e of mutantsIndex) {
+        const existing = map.get(e.sha);
+        if (existing) {
+          existing.hasMutants = true;
+        } else {
+          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: false, hasMutants: true });
+        }
+      }
+      // Sort by updated_at descending.
+      return [...map.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    }
+
+    function renderCommitSelect(commits) {
+      const select = document.getElementById('commit-select');
+      select.innerHTML = '';
+      if (commits.length === 0) {
+        select.innerHTML = '<option value="">no data</option>';
+        return;
+      }
+      for (const c of commits) {
+        const opt = document.createElement('option');
+        opt.value = c.sha;
+        let label = c.sha.slice(0, 7);
+        if (c.percent != null) label += ` (${c.percent.toFixed(1)}%)`;
+        const tags = [];
+        if (c.hasCov) tags.push('cov');
+        if (c.hasBench) tags.push('bench');
+        if (c.hasMutants) tags.push('mutants');
+        label += ` [${tags.join('+')}]`;
+        opt.textContent = label;
+        select.appendChild(opt);
+      }
+      // Select current or default to first.
+      if (selectedSha && commits.some(c => c.sha === selectedSha)) {
+        select.value = selectedSha;
+      } else {
+        select.value = commits[0].sha;
+        selectedSha = commits[0].sha;
+      }
+      updateCommitTime(commits);
+    }
+
+    function updateCommitTime(commits) {
+      const timeEl = document.getElementById('commit-time');
+      const c = commits.find(c => c.sha === selectedSha);
+      if (c && c.updated_at) {
+        timeEl.innerHTML = timeAgo(c.updated_at) + ' &middot; ' + commitLink(c.sha);
+      } else {
+        timeEl.textContent = '';
+      }
+    }
+
+    async function onCommitChange(sha) {
+      selectedSha = sha;
+      const commits = buildCommitList();
+      updateCommitTime(commits);
+      await loadCommitData(sha, true);
+    }
+
+    async function loadCommitData(sha, force) {
+      const covEl = document.getElementById('coverage-content');
+      const covMeta = document.getElementById('coverage-meta');
+      const benchEl = document.getElementById('bench-content');
+      const benchMeta = document.getElementById('bench-meta');
+      const mutEl = document.getElementById('mutants-content');
+      const mutMeta = document.getElementById('mutants-meta');
+
+      // Try per-commit files, fall back to latest.
+      const [cov, bench, mut] = await Promise.all([
+        fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
+        fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
+        fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
+      ]);
+
+      // Only re-render a section if the commit changed or the data
+      // SHA changed (new upload arrived). This preserves UI state
+      // like expanded modules and scroll positions.
+      const shaChanged = force || sha !== renderedForSha;
+      renderedForSha = sha;
+
+      const covSha = cov && cov.sha;
+      if (cov && (shaChanged || covSha !== renderedCov)) {
+        covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines`;
+        covEl.innerHTML = renderCoverageData(cov);
+        renderedCov = covSha;
+      } else if (!cov && renderedCov !== null) {
+        covMeta.textContent = '';
+        covEl.innerHTML = '<p class="empty">No coverage data for this commit.</p>';
+        renderedCov = null;
+      }
+
+      const benchSha = bench && bench.sha;
+      if (bench && (shaChanged || benchSha !== renderedBench)) {
+        benchMeta.textContent = '';
+        benchEl.innerHTML = renderBenchmarkData(bench);
+        renderedBench = benchSha;
+      } else if (!bench && renderedBench !== null) {
+        benchMeta.textContent = '';
+        benchEl.innerHTML = '<p class="empty">No benchmark data for this commit.</p>';
+        renderedBench = null;
+      }
+
+      const mutSha = mut && mut.sha;
+      if (mut && (shaChanged || mutSha !== renderedMut)) {
+        const s = mut.summary || {};
+        const tested = (s.caught || 0) + (s.missed || 0) + (s.timeout || 0);
+        mutMeta.innerHTML = `${esc(String(tested))} tested`;
+        mutEl.innerHTML = renderMutantsData(mut);
+        renderedMut = mutSha;
+      } else if (!mut && renderedMut !== null) {
+        mutMeta.textContent = '';
+        mutEl.innerHTML = '<p class="empty">No mutation testing data for this commit.</p>';
+        renderedMut = null;
+      }
+    }
+
+    // --- Polling ---
+
+    async function poll() {
+      // Fetch indices and status.
+      const [ci, bi, mi] = await Promise.all([
+        fetchJson('/coverage/index.json'),
+        fetchJson('/bench/index.json'),
+        fetchJson('/mutants/index.json'),
+      ]);
+      covIndex = ci || [];
+      benchIndex = bi || [];
+      mutantsIndex = mi || [];
+
+      const commits = buildCommitList();
+      renderCommitSelect(commits);
+
+      await updateStatus();
+
+      // Load data for the selected commit (or latest).
+      if (selectedSha) {
+        await loadCommitData(selectedSha);
+      }
+    }
+
+    // Initial render, then poll.
+    poll();
+    setInterval(poll, POLL_INTERVAL);
+  </script>
+
+</body>
+</html>

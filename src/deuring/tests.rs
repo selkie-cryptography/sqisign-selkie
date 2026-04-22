@@ -4,7 +4,10 @@
 use precomputed::{ACTION_MATRICES, torsion_basis};
 
 use super::*;
-use crate::quaternions::algebra::{Coordinate, Denominator};
+use crate::{
+    curves::montgomery::JacobianPoint,
+    quaternions::algebra::{Coordinate, Denominator},
+};
 
 /// Pinned commit of the SQIsign C reference implementation.
 /// Used by cross-check tests that fetch precomputed data.
@@ -252,19 +255,35 @@ fn c_ref_all_bases_cross_check() {
         blocks.push([limbs[0], limbs[1], limbs[2], limbs[3]]);
     }
 
-    assert_eq!(blocks.len(), 140, "expected 140 Broadwell blocks for 7 curves");
+    assert_eq!(
+        blocks.len(),
+        140,
+        "expected 140 Broadwell blocks for 7 curves"
+    );
 
     // The C ref's Broadwell backend stores Fp elements in Montgomery
     // form with R = 2^256. Convert to plain integers.
     let p = BigInt::<8>::from_sign_and_limbs(
         0,
-        [0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x04FFFFFFFFFFFFFF, 0, 0, 0, 0],
+        [
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0xFFFFFFFFFFFFFFFF,
+            0x04FFFFFFFFFFFFFF,
+            0,
+            0,
+            0,
+            0,
+        ],
     );
     let r_bw = BigInt::<8>::ONE.shl(256);
     let r_bw_inv = BigInt::<8>::pow_mod(&r_bw, &p.ct_sub(&BigInt::<8>::TWO), &p);
 
     let convert = |limbs: &[u64; 4]| -> [u8; 32] {
-        let mont = BigInt::<8>::from_sign_and_limbs(0, [limbs[0], limbs[1], limbs[2], limbs[3], 0, 0, 0, 0]);
+        let mont = BigInt::<8>::from_sign_and_limbs(
+            0,
+            [limbs[0], limbs[1], limbs[2], limbs[3], 0, 0, 0, 0],
+        );
         let plain = mont.ct_mul(&r_bw_inv).ct_mod(&p);
         let mut bytes = [0u8; 32];
         for i in 0..4 {
@@ -288,8 +307,8 @@ fn c_ref_all_bases_cross_check() {
         let c_ref_qx_re = convert(&blocks[base + 12]);
         let c_ref_qx_im = convert(&blocks[base + 13]);
 
-        let (our_px, our_qx, _) = torsion_basis::basis_for_curve(t)
-            .unwrap_or_else(|| panic!("no basis for curve {t}"));
+        let (our_px, our_qx, _) =
+            torsion_basis::basis_for_curve(t).unwrap_or_else(|| panic!("no basis for curve {t}"));
 
         assert_eq!(
             c_ref_px_re,
@@ -343,8 +362,10 @@ fn action_matrix_nontrivial_element() {
     //     c₀ + c₃/2 = 3 → c₀ = 3 - 11 = -8
     //     c₁ + c₂/2 = 5 → c₁ = 5 - 7 = -2
     if let Some(c) = &coords {
-        eprintln!("decompose(3+5i+7j+11k) = [{}, {}, {}, {}]",
-            c[0], c[1], c[2], c[3]);
+        eprintln!(
+            "decompose(3+5i+7j+11k) = [{}, {}, {}, {}]",
+            c[0], c[1], c[2], c[3]
+        );
     } else {
         // θ might not be in O₀ — try a different element.
         // Use θ = 1 + i + (i+j)/2 + (1+k)/2 = (3/2) + (3/2)i + (1/2)j + (1/2)k
@@ -366,15 +387,19 @@ fn action_matrix_nontrivial_element() {
         .expect("action_matrix should succeed for gen3");
     let m_precomp = &ACTION_MATRICES[0][4]; // gen3
 
-    eprintln!("gen3 computed[0][0] == precomp[0][0]: {}",
-        m_computed.entry(0, 0) == m_precomp.entry(0, 0));
-    eprintln!("gen3 computed[1][0] == precomp[1][0]: {}",
-        m_computed.entry(1, 0) == m_precomp.entry(1, 0));
+    eprintln!(
+        "gen3 computed[0][0] == precomp[0][0]: {}",
+        m_computed.entry(0, 0) == m_precomp.entry(0, 0)
+    );
+    eprintln!(
+        "gen3 computed[1][0] == precomp[1][0]: {}",
+        m_computed.entry(1, 0) == m_precomp.entry(1, 0)
+    );
     assert_eq!(
-        m_computed.entry(0, 0), m_precomp.entry(0, 0),
+        m_computed.entry(0, 0),
+        m_precomp.entry(0, 0),
         "gen3 action matrix mismatch at (0,0)"
     );
-
 }
 
 /// Verify that M_i applied to the basis produces i(P₀).
@@ -405,7 +430,6 @@ fn action_matrix_consistent_with_basis() {
     );
 }
 
-
 /// Action matrix for θ=3 (scalar element) should produce [3]P.
 ///
 /// This tests whether action_matrix(3·1) produces the identity
@@ -430,7 +454,6 @@ fn action_matrix_scalar_three() {
     assert_eq!(*m.entry(1, 0), Scalar::ZERO, "m10 should be 0");
 }
 
-
 /// Compare Montgomery ladder vs biladder for [3]*P.
 #[test]
 fn ladder_vs_biladder_agree() {
@@ -451,7 +474,6 @@ fn ladder_vs_biladder_agree() {
         "[3]P via ladder ≠ eval_decomposition(3, 0)"
     );
 }
-
 
 /// Scalar-multiplication kernel on E₀ × E₀: (P, [3]P), (P-Q, [3](P-Q)).
 ///
@@ -495,7 +517,9 @@ fn scalar_mul_kernel_splits() {
     let kernel = surfaces::Kernel::from_jacobian(product, k1, k2);
 
     let te = TorsionExponent::try_from(e).unwrap();
-    let (_codomain, _images) = kernel.isogeny_extra_torsion(te, &[]);
+    let (_codomain, _images) = kernel
+        .isogeny_extra_torsion(te, &[])
+        .expect("test kernel must split as product");
 }
 
 /// Verify all 7 torsion bases: points on curve, correct order.
@@ -504,8 +528,8 @@ fn all_torsion_bases_on_curve() {
     use crate::curves::montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint};
 
     for t in 0..7 {
-        let (px, qx, a) = torsion_basis::basis_for_curve(t)
-            .unwrap_or_else(|| panic!("no basis for curve {t}"));
+        let (px, qx, a) =
+            torsion_basis::basis_for_curve(t).unwrap_or_else(|| panic!("no basis for curve {t}"));
         let curve = Curve::from(Coefficient::from(a));
         let p = ProjectiveXOnlyPoint::from_affine_x(px, &curve);
         let q = ProjectiveXOnlyPoint::from_affine_x(qx, &curve);
@@ -530,5 +554,85 @@ fn all_torsion_bases_on_curve() {
             test.Z == crate::fields::fp2::Fp2::ZERO,
             "curve {t}: [2^f]P ≠ O"
         );
+    }
+}
+
+/// Action-matrix composition matches direct decomposition of the
+/// quaternion product.
+///
+/// The outer `to_isogeny` builds
+/// `M_{β₂ · conj(β₁)} = M_{β₂} · M_{conj(β₁)} = M_{β₂} · adj(M_{β₁})`
+/// on the fly rather than first constructing the wide quaternion
+/// `β₂ · conj(β₁)` and decomposing it on O₀. This test checks the
+/// two routes agree mod 2^f for several small, hand-chosen pairs
+/// that fit without widening.
+#[test]
+fn action_matrix_composition_equals_direct() {
+    let order = &EXTREMAL_ORDERS[0];
+    let gen_matrices = [
+        ACTION_MATRICES[0][3],
+        ACTION_MATRICES[0][4],
+        ACTION_MATRICES[0][5],
+    ];
+    let f = TorsionExponent::FULL;
+    let fv = f.value();
+
+    // β pairs: each a primitive element of O₀ = {1, i, (i+j)/2, (1+k)/2}.
+    // Stored in the {1, i, j, k} basis with an explicit denominator.
+    //
+    // In the {1, i, j, k} basis, c₀·1 + c₁·i + c₂·(i+j)/2 + c₃·(1+k)/2
+    // equals ((2c₀+c₃) + (2c₁+c₂) i + c₂ j + c₃ k) / 2, so an
+    // O₀-primitive element has coords (2c₀+c₃, 2c₁+c₂, c₂, c₃) with
+    // denom 2. We list a few combinations.
+    type QuatTuple = (i64, i64, i64, i64, i64);
+    let cases: &[(QuatTuple, QuatTuple)] = &[
+        // β₁ = 1, β₂ = i  → coords/denom as quaternions in {1,i,j,k}/denom.
+        ((1, 0, 0, 0, 1), (0, 1, 0, 0, 1)),
+        // β₁ = i, β₂ = (i+j)/2
+        ((0, 1, 0, 0, 1), (0, 1, 1, 0, 2)),
+        // β₁ = (1+k)/2, β₂ = (i+j)/2
+        ((1, 0, 0, 1, 2), (0, 1, 1, 0, 2)),
+        // β₁ = 1 + (i+j)/2 = (2+i+j)/2, β₂ = 1 + (1+k)/2 = (3+k)/2
+        ((2, 1, 1, 0, 2), (3, 0, 0, 1, 2)),
+    ];
+
+    for (n, ((a1, b1, c1, d1, dn1), (a2, b2, c2, d2, dn2))) in cases.iter().enumerate() {
+        let beta1 = Element::<4>::new(
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*a1)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*b1)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*c1)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*d1)),
+            Denominator::from_bigint_unchecked(BigInt::<4>::from_i64(*dn1)),
+        );
+        let beta2 = Element::<4>::new(
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*a2)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*b2)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*c2)),
+            Coordinate::from_bigint(BigInt::<4>::from_i64(*d2)),
+            Denominator::from_bigint_unchecked(BigInt::<4>::from_i64(*dn2)),
+        );
+
+        let m_beta1 = action_matrix(&beta1, order.order(), &gen_matrices, f)
+            .unwrap_or_else(|| panic!("case {n}: action_matrix(β₁) failed"));
+        let m_beta2 = action_matrix(&beta2, order.order(), &gen_matrices, f)
+            .unwrap_or_else(|| panic!("case {n}: action_matrix(β₂) failed"));
+
+        // Route A: matrix composition, M_{β₂} · adj(M_{β₁}).
+        let m_composed = m_beta2.mat_mul_mod(&m_beta1.adjugate_mod(fv), fv);
+
+        // Route B: direct action_matrix on the quaternion product.
+        let theta = beta2.mul(&beta1.conjugate());
+        let m_direct = action_matrix(&theta, order.order(), &gen_matrices, f)
+            .unwrap_or_else(|| panic!("case {n}: action_matrix(θ) failed"));
+
+        for row in 0..2 {
+            for col in 0..2 {
+                assert_eq!(
+                    m_composed.entry(row, col),
+                    m_direct.entry(row, col),
+                    "case {n}: composition ≠ direct at [{row}][{col}]",
+                );
+            }
+        }
     }
 }
