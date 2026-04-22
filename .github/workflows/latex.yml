@@ -1,0 +1,64 @@
+name: LaTeX
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'latex/**'
+      - '.github/workflows/latex.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'latex/**'
+      - '.github/workflows/latex.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paper:
+    name: Build LaTeX documents
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: true
+
+      - name: Build paper
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: latex
+          root_file: sqisign-selkie.tex
+
+      - name: Build spec review
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: latex
+          root_file: sqisign-v2-spec-review.tex
+
+      - name: Upload PDFs
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: latex-pdfs
+          path: |
+            latex/sqisign-selkie.pdf
+            latex/sqisign-v2-spec-review.pdf
+
+      - name: Annotate commit with artifact link
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARTIFACT_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload.outputs.artifact-id }}"
+          gh api repos/${{ github.repository }}/statuses/${{ github.sha }} \
+            -f state=success \
+            -f target_url="$ARTIFACT_URL" \
+            -f description="Download built PDFs" \
+            -f context="latex-pdfs"

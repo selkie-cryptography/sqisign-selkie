@@ -1,0 +1,60 @@
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+
+      - name: Collect coverage (nextest + doctests)
+        run: |
+          cargo +nightly llvm-cov --no-report nextest
+          cargo +nightly llvm-cov --no-report --doc
+
+      - name: Generate coverage report
+        run: |
+          echo '## Code Coverage' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cargo +nightly llvm-cov report --doctests --fail-under-lines 50 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate coverage JSON for CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p coverage-out
+          cargo +nightly llvm-cov report --doctests --lcov --output-path coverage-out/coverage.lcov
+          rustc -O .github/scripts/lcov-to-json.rs -o /tmp/lcov-to-json
+          /tmp/lcov-to-json coverage-out/coverage.lcov "${{ github.sha }}" \
+            > coverage-out/coverage.json
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload coverage to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: bash .github/scripts/ci-upload.sh coverage coverage-out/coverage.json "${{ github.sha }}"
