@@ -110,29 +110,8 @@ jobs:
 
       - name: Count panic sites
         run: |
-          cargo build --release
-          LIB=$(find target/release -maxdepth 1 -name 'libsqisign_selkie.rlib' | head -1)
-          if [ -z "$LIB" ]; then
-            LIB=$(find target/release/deps -name 'libsqisign_selkie-*.rlib' | head -1)
-          fi
-          BOUNDS=$(nm -C "$LIB" 2>/dev/null | grep -c 'panic_bounds_check' || echo 0)
-          ASSERTS=$(nm -C "$LIB" 2>/dev/null | grep -c 'assert_failed' || echo 0)
-          EXPECTS=$(nm -C "$LIB" 2>/dev/null | grep -c 'expect_failed' || echo 0)
-          UNWRAPS=$(nm -C "$LIB" 2>/dev/null | grep -c 'unwrap_failed' || echo 0)
-          PANIC_FMT=$(nm -C "$LIB" 2>/dev/null | grep -c 'panic_fmt' || echo 0)
-          TOTAL=$((BOUNDS + ASSERTS + EXPECTS + UNWRAPS + PANIC_FMT))
-          cat > panic.json <<JSONEOF
-          {
-            "sha": "${{ github.sha }}",
-            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "total": $TOTAL,
-            "bounds_check": $BOUNDS,
-            "assert": $ASSERTS,
-            "expect": $EXPECTS,
-            "unwrap": $UNWRAPS,
-            "panic_fmt": $PANIC_FMT
-          }
-          JSONEOF
+          rustc -O .github/scripts/panic-count.rs -o /tmp/panic-count
+          /tmp/panic-count "${{ github.sha }}" > panic.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
