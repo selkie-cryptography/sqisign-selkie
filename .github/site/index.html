@@ -1585,29 +1585,48 @@
       return html;
     }
 
+    let benchUnit = 'µs'; // default unit
+    const BENCH_UNITS = {
+      'ns':  { divisor: 1,             label: 'ns',  decimals: 0 },
+      'µs':  { divisor: 1_000,         label: '\u00b5s', decimals: 2 },
+      'ms':  { divisor: 1_000_000,     label: 'ms',  decimals: 3 },
+      's':   { divisor: 1_000_000_000, label: 's',   decimals: 4 },
+    };
+
+    let lastBenchData = null;
+
+    function cycleBenchUnit() {
+      const keys = Object.keys(BENCH_UNITS);
+      benchUnit = keys[(keys.indexOf(benchUnit) + 1) % keys.length];
+      if (lastBenchData) {
+        document.getElementById('bench-content').innerHTML = renderBenchmarkData(lastBenchData);
+      }
+    }
+
+    function formatTime(ns) {
+      const u = BENCH_UNITS[benchUnit];
+      return `${(ns / u.divisor).toFixed(u.decimals)} ${u.label}`;
+    }
+
     function renderBenchmarkData(data) {
+      lastBenchData = data;
       const groups = data.groups || [];
       if (groups.length === 0) return '';
 
       let html = `<table class="bench-table">
         <thead><tr>
           <th>Benchmark</th>
-          <th>Time</th>
+          <th style="cursor:pointer;user-select:none" onclick="cycleBenchUnit()">Time (${esc(benchUnit)}) \u21c5</th>
           <th>Throughput</th>
         </tr></thead><tbody>`;
 
       for (const g of groups) {
         html += `<tr><td class="bench-group" colspan="3">${esc(g.name)}</td></tr>`;
         for (const b of g.benchmarks) {
-          const time = b.time_ns < 1000
-            ? `${b.time_ns.toFixed(0)} ns`
-            : b.time_ns < 1_000_000
-            ? `${(b.time_ns / 1000).toFixed(1)} &micro;s`
-            : `${(b.time_ns / 1_000_000).toFixed(2)} ms`;
           const tp = b.throughput || '—';
           html += `<tr>
             <td class="bench-name">${esc(b.name)}</td>
-            <td>${time}</td>
+            <td>${formatTime(b.time_ns)}</td>
             <td>${esc(tp)}</td>
           </tr>`;
         }
