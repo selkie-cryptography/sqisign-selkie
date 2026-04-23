@@ -1285,10 +1285,24 @@ impl<const N: usize> LeftIdeal<N> {
         let i_denom_sq = i_denom_w.ct_mul(&i_denom_w);
         let i_denom_4 = i_denom_sq.ct_mul(&i_denom_sq);
 
-        let num = o_denom_4.ct_mul(&det_i);
-        let den = i_denom_4.ct_mul(&det_o);
+        // Signed `num` and `den` may swap sign based on lattice
+        // basis orientation. `[O:I]` is an absolute-value quantity,
+        // so take absolute values before the divisibility check.
+        let num = o_denom_4.ct_mul(&det_i).abs();
+        let den = i_denom_4.ct_mul(&det_o).abs();
 
-        let (index_signed, rem) = num.div_rem(&den);
+        if bool::from(den.is_zero()) {
+            #[cfg(test)]
+            eprintln!(
+                "[refresh_norm] denominator zero: i_denom bits={}, det_o bits={}, o_denom bits={}, det_i bits={}",
+                i_denom_w.bitsize(),
+                det_o.bitsize(),
+                o_denom_w.bitsize(),
+                det_i.bitsize(),
+            );
+            return None;
+        }
+        let (index, rem) = num.div_rem(&den);
         if !bool::from(rem.is_zero()) {
             #[cfg(test)]
             eprintln!(
@@ -1299,7 +1313,15 @@ impl<const N: usize> LeftIdeal<N> {
             );
             return None;
         }
-        let index = index_signed.abs();
+
+        // A degenerate (zero-covolume) lattice is not a valid ideal.
+        // Reject explicitly so callers don't inherit `self.norm = 0`
+        // and panic on downstream `div_rem` by the stored norm.
+        if bool::from(index.is_zero()) {
+            #[cfg(test)]
+            eprintln!("[refresh_norm] degenerate lattice: [O:I] = 0");
+            return None;
+        }
 
         let n_sqrt = index.sqrt_floor();
         // Verify perfect square: n_sqrt² == index.
