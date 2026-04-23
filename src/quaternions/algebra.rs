@@ -779,30 +779,29 @@ impl Element<4> {
             wr = wr.wrapping_neg();
         }
 
-        // Narrow to BigInt<4>. If the normalized values don't fit,
-        // this is a bug — after GCD reduction they should be small
-        // enough for the NIST-I parameter set.
+        // Narrow to `BigInt<4>`. If the normalized values don't fit,
+        // the product genuinely exceeds `Element<4>`'s budget and
+        // the caller picked the wrong width. Panicking here is
+        // strictly better than silently truncating: narrow-path
+        // callers (e.g. `LeftIdeal<4>::random_norm`) that expect
+        // the product to fit must ensure their inputs are bounded
+        // (`|coord| < 2^127`-ish for a `p ≈ 2^250` quaternion
+        // algebra); wide-input callers should use
+        // `Element<N>::mul_direct` at a width with headroom.
+        //
+        // Previously this was a `debug_assert!` + release-truncate,
+        // which let silent numerical corruption escape into
+        // downstream ideals and action matrices (see Task #28 for
+        // one concrete instance).
         let narrow = |v: BigInt<8>| -> BigInt<4> {
             let ct: subtle::CtOption<BigInt<4>> = v.into();
-            // In debug builds, panic on overflow; in release, truncate.
-            debug_assert!(
+            assert!(
                 bool::from(ct.is_some()),
-                "quaternion coordinate overflow after normalization"
+                "Element<4>::mul: quaternion coordinate overflow after GCD \
+                 normalization (product exceeds BigInt<4>'s 256-bit budget; \
+                 caller should use Element<N>::mul_direct at a wider N)"
             );
-            if bool::from(ct.is_some()) {
-                ct.unwrap()
-            } else {
-                // Fallback: truncate (shouldn't happen in practice).
-                BigInt::from_sign_and_limbs(
-                    if bool::from(v.is_negative()) { 1 } else { 0 },
-                    [
-                        v.as_limbs()[0],
-                        v.as_limbs()[1],
-                        v.as_limbs()[2],
-                        v.as_limbs()[3],
-                    ],
-                )
-            }
+            ct.unwrap()
         };
 
         Self {

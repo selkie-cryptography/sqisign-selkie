@@ -1192,8 +1192,20 @@ impl LeftIdeal<4> {
             let parent_ideal_t = if t == 0 {
                 *self
             } else {
-                let j_t = connecting_ideal(t);
-                j_t.pushforward(self, EXTREMAL_ORDERS[t].order())
+                // Compute pushforward at `BigInt<8>` to avoid
+                // `Lattice<4>::product`'s mul_direct overflow when
+                // the intersection ideal has coords ~2^252. The
+                // resulting lattice should fit back in `BigInt<4>`
+                // for narrow-path callers (N ≤ 2^127); if not,
+                // skip this curve index this iteration.
+                let j_t_8 = connecting_ideal(t).widen::<8>();
+                let self_8 = self.widen::<8>();
+                let order_t_8 = EXTREMAL_ORDERS[t].widen::<8>();
+                let push_8 = j_t_8.pushforward(&self_8, order_t_8.order());
+                match push_8.narrow() {
+                    Some(p) => p,
+                    None => continue,
+                }
             };
 
             let lattice_t: Lattice<4> = (*parent_ideal_t.lattice()).into();
