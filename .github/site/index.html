@@ -737,6 +737,81 @@
       color: var(--fg-muted);
     }
 
+    /* Audit badges */
+    .audit-grid {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .audit-badge {
+      flex: 1;
+      min-width: 140px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      text-align: center;
+    }
+
+    .audit-badge .badge-status {
+      font-size: 20px;
+      font-weight: 900;
+      margin-bottom: 4px;
+    }
+
+    .audit-badge .badge-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+    }
+
+    .audit-badge .badge-detail {
+      font-size: 11px;
+      color: var(--fg-muted);
+      margin-top: 4px;
+    }
+
+    .audit-bloat {
+      margin-top: 16px;
+    }
+
+    .audit-bloat table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .audit-bloat th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .audit-bloat th:nth-child(2) { text-align: right; }
+
+    .audit-bloat td {
+      padding: 4px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .audit-bloat td:nth-child(2) {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .audit-bloat .fn-name {
+      font-family: 'Inter', monospace;
+      font-size: 12px;
+    }
+
     /* Risks section */
     .analysis-grid {
       display: flex;
@@ -950,6 +1025,7 @@
       <a href="#mutants-section">Mutants</a>
       <a href="#dudect-section">Constant-Time</a>
       <a href="#kat-section">Test Vectors</a>
+      <a href="#audits-section">Audits</a>
     </nav>
 
     <div class="sections">
@@ -1041,6 +1117,24 @@
         </div>
         <div id="kat-content">
           <p class="empty">No test vector data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="audits-section">
+        <div class="section__header">
+          <h2 class="section__title">Audits<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Automated code health checks run on every push.</p>
+            <dl>
+            <dt>cargo deny</dt><dd>Dependency advisories and license compliance.</dd>
+            <dt>Unsafe</dt><dd>Count of <code>unsafe</code> blocks in source. Should trend toward zero.</dd>
+            <dt>Binary size</dt><dd>Release binary text/data/bss segments and top functions by size.</dd>
+            <dt>Doc coverage</dt><dd>Rustdoc warning count. Zero = full doc coverage.</dd>
+            <dt>MSRV</dt><dd>Minimum Supported Rust Version compliance (1.81.0).</dd>
+            </dl></span></span></h2>
+          <span class="meta" id="audits-meta"></span>
+        </div>
+        <div id="audits-content">
+          <p class="empty">No audit data yet.</p>
         </div>
       </section>
 
@@ -1650,6 +1744,77 @@
       return `${(ns / u.divisor).toFixed(u.decimals)} ${u.label}`;
     }
 
+    function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData) {
+      let html = '<div class="audit-grid">';
+
+      // cargo deny
+      if (deny) {
+        const color = deny.status === 'pass' ? 'var(--green)' : 'var(--red)';
+        const icon = deny.status === 'pass' ? '\u2714' : '\u2718';
+        html += `<div class="audit-badge">
+          <div class="badge-status" style="color:${color}">${icon}</div>
+          <div class="badge-label">cargo deny</div>
+          <div class="badge-detail">${deny.warnings || 0} warnings, ${deny.errors || 0} errors</div>
+        </div>`;
+      }
+
+      // Unsafe
+      if (unsafeData) {
+        const color = unsafeData.total === 0 ? 'var(--green)' : unsafeData.total <= 5 ? 'var(--yellow)' : 'var(--red)';
+        html += `<div class="audit-badge">
+          <div class="badge-status" style="color:${color}">${unsafeData.total}</div>
+          <div class="badge-label">unsafe</div>
+          <div class="badge-detail">${(unsafeData.modules || []).filter(m => m.count > 0).map(m => esc(m.name) + ':' + m.count).join(', ') || 'none'}</div>
+        </div>`;
+      }
+
+      // Binary size
+      if (sizeData && sizeData.binary) {
+        const kb = (sizeData.binary.total_bytes / 1024).toFixed(0);
+        html += `<div class="audit-badge">
+          <div class="badge-status">${esc(kb)} KB</div>
+          <div class="badge-label">binary size</div>
+          <div class="badge-detail">text: ${sizeData.binary.text}, data: ${sizeData.binary.data}, bss: ${sizeData.binary.bss}</div>
+        </div>`;
+      }
+
+      // Doc coverage
+      if (docsData) {
+        const color = docsData.warnings === 0 ? 'var(--green)' : 'var(--yellow)';
+        const icon = docsData.warnings === 0 ? '\u2714' : docsData.warnings;
+        html += `<div class="audit-badge">
+          <div class="badge-status" style="color:${color}">${icon}</div>
+          <div class="badge-label">docs</div>
+          <div class="badge-detail">${docsData.warnings === 0 ? 'fully documented' : docsData.warnings + ' warnings'}</div>
+        </div>`;
+      }
+
+      // MSRV
+      if (msrvData) {
+        const color = msrvData.status === 'pass' ? 'var(--green)' : 'var(--red)';
+        const icon = msrvData.status === 'pass' ? '\u2714' : '\u2718';
+        html += `<div class="audit-badge">
+          <div class="badge-status" style="color:${color}">${icon}</div>
+          <div class="badge-label">MSRV ${esc(msrvData.msrv || '')}</div>
+          <div class="badge-detail">${msrvData.status === 'pass' ? 'compiles' : msrvData.errors + ' errors'}</div>
+        </div>`;
+      }
+
+      html += '</div>';
+
+      // Bloat table (top functions by binary size).
+      if (sizeData && sizeData.top_functions && sizeData.top_functions.length > 0) {
+        html += '<div class="audit-bloat"><table><thead><tr><th>Function</th><th>Size</th></tr></thead><tbody>';
+        for (const f of sizeData.top_functions) {
+          const kb = (f.size / 1024).toFixed(1);
+          html += `<tr><td class="fn-name">${esc(f.name)}</td><td>${esc(kb)} KB</td></tr>`;
+        }
+        html += '</tbody></table></div>';
+      }
+
+      return html;
+    }
+
     function renderBenchmarkData(data) {
       lastBenchData = data;
       const groups = data.groups || [];
@@ -1990,12 +2155,17 @@
       const dudectMeta = document.getElementById('dudect-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench, mut, dudect, tacetData] = await Promise.all([
+      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
         fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
         fetchJson(`/dudect/${sha}.json`).then(d => d || fetchJson('/dudect/latest.json')),
         fetchJson(`/tacet/${sha}.json`).then(d => d || fetchJson('/tacet/latest.json')),
+        fetchJson(`/deny/${sha}.json`).then(d => d || fetchJson('/deny/latest.json')),
+        fetchJson(`/unsafe/${sha}.json`).then(d => d || fetchJson('/unsafe/latest.json')),
+        fetchJson(`/size/${sha}.json`).then(d => d || fetchJson('/size/latest.json')),
+        fetchJson(`/docs/${sha}.json`).then(d => d || fetchJson('/docs/latest.json')),
+        fetchJson(`/msrv/${sha}.json`).then(d => d || fetchJson('/msrv/latest.json')),
       ]);
 
       // Only re-render a section if the commit changed or the data
@@ -2063,6 +2233,14 @@
 
       // Cross-analysis — needs at least coverage + one other source.
       renderRisks(cov, mut, bench);
+
+      // Audits.
+      const auditsEl = document.getElementById('audits-content');
+      if (deny || unsafeData || sizeData || docsData || msrvData) {
+        auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData);
+      } else {
+        auditsEl.innerHTML = '<p class="empty">No audit data yet.</p>';
+      }
     }
 
     // --- Polling ---

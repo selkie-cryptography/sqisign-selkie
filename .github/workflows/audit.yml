@@ -1,0 +1,229 @@
+name: Audits
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: cargo-deny
+
+      - name: Run cargo deny
+        run: |
+          cargo deny check advisories bans 2>&1 | tee deny-output.txt || true
+          # Generate JSON.
+          PASS=$(grep -c '^advisories ok\|^bans ok' deny-output.txt || echo 0)
+          WARNS=$(grep -ci 'warning' deny-output.txt || echo 0)
+          ERRS=$(grep -ci 'error' deny-output.txt || echo 0)
+          EXIT=$([[ $ERRS -eq 0 ]] && echo pass || echo fail)
+          cat > deny.json <<JSONEOF
+          {
+            "sha": "${{ github.sha }}",
+            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "status": "$EXIT",
+            "warnings": $WARNS,
+            "errors": $ERRS,
+            "output": $(python3 -c "import json,sys; print(json.dumps(open('deny-output.txt').read()[:4000]))")
+          }
+          JSONEOF
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload deny deny.json "${{ github.sha }}"
+
+  unsafe-audit:
+    name: Unsafe audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Count unsafe
+        run: |
+          # Simple grep-based count. Counts `unsafe` keyword occurrences
+          # in src/ excluding test modules and comments.
+          TOTAL=$(grep -rn 'unsafe' src/ --include='*.rs' | grep -v '//.*unsafe' | grep -v '#\[cfg(test)\]' | grep -v 'mod tests' | wc -l | tr -d ' ')
+          # Per-module breakdown.
+          MODULES=$(find src/ -maxdepth 1 -type d | tail -n +2 | sort)
+          echo "{" > unsafe.json
+          echo "  \"sha\": \"${{ github.sha }}\"," >> unsafe.json
+          echo "  \"updated_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"," >> unsafe.json
+          echo "  \"total\": $TOTAL," >> unsafe.json
+          echo "  \"modules\": [" >> unsafe.json
+          FIRST=true
+          for mod in $MODULES; do
+            NAME=$(basename "$mod")
+            COUNT=$(grep -rn 'unsafe' "$mod" --include='*.rs' | grep -v '//.*unsafe' | grep -v 'mod tests' | wc -l | tr -d ' ')
+            if [ "$FIRST" = true ]; then FIRST=false; else echo "," >> unsafe.json; fi
+            printf '    {"name": "%s", "count": %s}' "$NAME" "$COUNT" >> unsafe.json
+          done
+          # Also count root files.
+          ROOT_COUNT=$(grep -n 'unsafe' src/*.rs 2>/dev/null | grep -v '//.*unsafe' | wc -l | tr -d ' ')
+          echo "," >> unsafe.json
+          printf '    {"name": "root", "count": %s}' "$ROOT_COUNT" >> unsafe.json
+          echo "" >> unsafe.json
+          echo "  ]" >> unsafe.json
+          echo "}" >> unsafe.json
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload unsafe unsafe.json "${{ github.sha }}"
+
+  binary-size:
+    name: Binary & stack size
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: cargo-bloat
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Collect sizes
+        run: |
+          BIN=./target/release/libsqisign_selkie.rlib
+          # Use the .so or find the actual binary.
+          LIB=$(find target/release -name '*.rlib' -o -name '*.so' -o -name '*.a' | head -1)
+          TEXT=$(size "$LIB" 2>/dev/null | tail -1 | awk '{print $1}' || echo 0)
+          DATA=$(size "$LIB" 2>/dev/null | tail -1 | awk '{print $2}' || echo 0)
+          BSS=$(size "$LIB" 2>/dev/null | tail -1 | awk '{print $3}' || echo 0)
+          TOTAL_SIZE=$(stat -c%s "$LIB" 2>/dev/null || stat -f%z "$LIB" 2>/dev/null || echo 0)
+
+          # Top functions by size via cargo bloat.
+          cargo bloat --release -n 20 --message-format=json 2>/dev/null > bloat-raw.json || echo '{"functions":[]}' > bloat-raw.json
+
+          # Build JSON.
+          cat > size.json <<JSONEOF
+          {
+            "sha": "${{ github.sha }}",
+            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "binary": {
+              "file": "$(basename "$LIB")",
+              "total_bytes": $TOTAL_SIZE,
+              "text": $TEXT,
+              "data": $DATA,
+              "bss": $BSS
+            },
+            "top_functions": $(python3 -c "
+          import json
+          try:
+              data = json.load(open('bloat-raw.json'))
+              fns = data.get('functions', [])[:20]
+              print(json.dumps([{'name': f.get('name','?'), 'size': f.get('size',0)} for f in fns]))
+          except:
+              print('[]')
+          ")
+          }
+          JSONEOF
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload size size.json "${{ github.sha }}"
+
+  doc-coverage:
+    name: Doc coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Check docs
+        run: |
+          WARNINGS=$(cargo doc --no-deps 2>&1 | grep -ci 'warning' || echo 0)
+          STATUS=$([[ $WARNINGS -eq 0 ]] && echo pass || echo warn)
+          cat > docs.json <<JSONEOF
+          {
+            "sha": "${{ github.sha }}",
+            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "status": "$STATUS",
+            "warnings": $WARNINGS
+          }
+          JSONEOF
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload docs docs.json "${{ github.sha }}"
+
+  msrv:
+    name: MSRV compliance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.81.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Check MSRV
+        run: |
+          if cargo check 2>&1 | tee msrv-output.txt; then
+            STATUS=pass
+          else
+            STATUS=fail
+          fi
+          ERRS=$(grep -ci 'error' msrv-output.txt || echo 0)
+          cat > msrv.json <<JSONEOF
+          {
+            "sha": "${{ github.sha }}",
+            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "msrv": "1.81.0",
+            "status": "$STATUS",
+            "errors": $ERRS
+          }
+          JSONEOF
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload msrv msrv.json "${{ github.sha }}"
