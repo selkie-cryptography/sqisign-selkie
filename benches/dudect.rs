@@ -35,7 +35,7 @@ fn fp_mul(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, (a, b)) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, (a, b)) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let _ = std::hint::black_box(a * b);
         });
@@ -59,7 +59,7 @@ fn fp_add(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, (a, b)) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, (a, b)) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let _ = std::hint::black_box(a + b);
         });
@@ -84,7 +84,7 @@ fn fp_sub(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, (a, b)) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, (a, b)) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let _ = std::hint::black_box(a - b);
         });
@@ -106,7 +106,7 @@ fn fp_square(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, a) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, a) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let _ = std::hint::black_box(a * a);
         });
@@ -136,7 +136,7 @@ fn fp2_mul(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, (a, b)) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, (a, b)) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let _ = std::hint::black_box(a * b);
         });
@@ -162,7 +162,7 @@ fn fp_ct_select(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, (a, b, choice)) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, (a, b, choice)) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let _ = std::hint::black_box(subtle::ConditionallySelectable::conditional_select(
                 &a, &b, choice,
@@ -188,7 +188,7 @@ fn fp_ct_eq(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, (a, b)) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, (a, b)) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             use subtle::ConstantTimeEq;
             let _ = std::hint::black_box(a.ct_eq(&b));
@@ -217,7 +217,7 @@ fn scalar_mul(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, s) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, s) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let _ = std::hint::black_box(p.scalar_mul(&s));
         });
@@ -243,7 +243,7 @@ fn point_double(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, pt) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, pt) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let _ = std::hint::black_box(pt.double());
         });
@@ -277,7 +277,7 @@ fn keygen(runner: &mut CtRunner, rng: &mut BenchRng) {
         inputs.push(seed);
     }
 
-    for (class, seed) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, seed) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let _ = std::hint::black_box(SigningKey::generate_derand(&seed));
         });
@@ -310,7 +310,7 @@ fn sign(runner: &mut CtRunner, rng: &mut BenchRng) {
         }
     }
 
-    for (class, msg) in classes.into_iter().zip(inputs.into_iter()) {
+    for (class, msg) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             let mut rng = rand_core::OsRng;
             let _ = std::hint::black_box(sk.sign(&msg, &mut rng));
