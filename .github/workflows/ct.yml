@@ -1,0 +1,61 @@
+name: Constant-time testing
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * 1"   # weekly, Monday 07:00 UTC (after mutants)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ct:
+    name: DudeCT + Tacet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: ct
+
+      # Build both benches.
+      - name: Build CT benches
+        run: |
+          cargo build --release --bench dudect --bench tacet --features expose-internals
+
+      # DudeCT: runs continuously, timeout caps it.
+      - name: Run DudeCT
+        run: |
+          timeout 120 ./target/release/deps/dudect-* 2>&1 | tee dudect-output.txt || true
+
+      # Tacet: runs to completion per function per model.
+      - name: Run Tacet
+        run: |
+          timeout 300 ./target/release/deps/tacet-* 2>&1 | tee tacet-output.txt || true
+
+      # Convert both to JSON.
+      - name: Generate JSON
+        run: |
+          rustc -O .github/scripts/dudect-to-json.rs -o /tmp/dudect-to-json
+          rustc -O .github/scripts/tacet-to-json.rs -o /tmp/tacet-to-json
+          /tmp/dudect-to-json dudect-output.txt "${{ github.sha }}" > dudect.json
+          /tmp/tacet-to-json tacet-output.txt "${{ github.sha }}" > tacet.json
+
+      # Upload both to the CI site under separate paths.
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Upload to CI site
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload
+          /tmp/ci-upload dudect dudect.json "${{ github.sha }}"
+          /tmp/ci-upload tacet tacet.json "${{ github.sha }}"

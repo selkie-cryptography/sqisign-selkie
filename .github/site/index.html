@@ -959,6 +959,7 @@
     let renderedBench = null; // SHA of rendered bench data
     let renderedMut = null;   // SHA of rendered mutants data
     let renderedDudect = null; // SHA of rendered dudect data
+    let renderedTacet = null;  // SHA of rendered tacet data
     let renderedForSha = null; // The selectedSha we last rendered for
 
     function esc(s) {
@@ -1417,46 +1418,88 @@
       return html;
     }
 
-    function renderDudectData(data) {
-      const results = data.results || [];
-      if (results.length === 0) return '<p class="empty">No results.</p>';
+    function renderCtData(dudect, tacetData) {
+      const dResults = dudect ? (dudect.results || []) : [];
+      const tResults = tacetData ? (tacetData.results || []) : [];
 
-      const passCount = results.filter(r => r.status === 'pass').length;
-      const failCount = results.filter(r => r.status === 'fail').length;
-      const allPass = failCount === 0;
-      const summaryColor = allPass ? 'var(--green)' : 'var(--red)';
+      if (dResults.length === 0 && tResults.length === 0) {
+        return '<p class="empty">No results.</p>';
+      }
+
+      // Merge: build a per-function row with dudect + tacet columns.
+      const funcs = new Map();
+      for (const r of dResults) {
+        funcs.set(r.name, { name: r.name, dudect: r, tacet: {} });
+      }
+      for (const r of tResults) {
+        const existing = funcs.get(r.name);
+        if (existing) {
+          existing.tacet[r.model] = r;
+        } else {
+          funcs.set(r.name, { name: r.name, dudect: null, tacet: { [r.model]: r } });
+        }
+      }
+
+      // Count overall pass/fail.
+      const allDudectPass = dResults.every(r => r.status === 'pass');
+      const allTacetPass = tResults.every(r => r.status === 'pass' || r.status === 'skip');
+      const anyFail = dResults.some(r => r.status === 'fail') || tResults.some(r => r.status === 'fail');
+      const summaryColor = anyFail ? 'var(--red)' : 'var(--green)';
+      const summaryText = anyFail
+        ? (dResults.filter(r => r.status === 'fail').length + tResults.filter(r => r.status === 'fail').length) + ' FAIL'
+        : 'PASS';
 
       let html = `<div class="mutants-summary">
-        <div class="mutants-stat"><span class="value" style="color:${summaryColor}">${allPass ? 'PASS' : failCount + ' FAIL'}</span><span class="label">${esc(String(results.length))} functions tested</span></div>
-        <div class="mutants-stat"><span class="value" style="color:var(--green)">${passCount}</span><span class="label">pass</span></div>
-        ${failCount > 0 ? `<div class="mutants-stat"><span class="value" style="color:var(--red)">${failCount}</span><span class="label">fail</span></div>` : ''}
+        <div class="mutants-stat"><span class="value" style="color:${summaryColor}">${summaryText}</span><span class="label">${funcs.size} functions tested</span></div>
       </div>`;
+
+      // Tacet model columns.
+      const tacetModels = ['shared_hw', 'pq_sentinel', 'adjacent'];
+      const modelLabels = { shared_hw: 'Shared HW', pq_sentinel: 'PQ', adjacent: 'Adjacent' };
 
       html += `<table class="dudect-table">
         <thead><tr>
           <th>Function</th>
-          <th>|t|</th>
-          <th>Samples</th>
-          <th>Status</th>
-        </tr></thead><tbody>`;
+          <th>DudeCT |t|</th>`;
+      for (const m of tacetModels) {
+        html += `<th>${modelLabels[m] || m}</th>`;
+      }
+      html += `</tr></thead><tbody>`;
 
       // Sort: failures first, then by |t| descending.
-      const sorted = [...results].sort((a, b) => {
-        if (a.status !== b.status) return a.status === 'fail' ? -1 : 1;
-        return Math.abs(b.max_t) - Math.abs(a.max_t);
+      const sorted = [...funcs.values()].sort((a, b) => {
+        const aFail = (a.dudect && a.dudect.status === 'fail') || Object.values(a.tacet).some(t => t.status === 'fail');
+        const bFail = (b.dudect && b.dudect.status === 'fail') || Object.values(b.tacet).some(t => t.status === 'fail');
+        if (aFail !== bFail) return aFail ? -1 : 1;
+        const aT = a.dudect ? Math.abs(a.dudect.max_t) : 0;
+        const bT = b.dudect ? Math.abs(b.dudect.max_t) : 0;
+        return bT - aT;
       });
 
-      for (const r of sorted) {
-        const absT = Math.abs(r.max_t);
-        const tClass = r.status === 'fail' ? 'dudect-fail' : absT < 1.0 ? 'dudect-pass' : '';
-        const statusIcon = r.status === 'pass' ? '\u2714' : '\u2718';
-        const statusClass = r.status === 'pass' ? 'dudect-pass' : 'dudect-fail';
-        html += `<tr>
-          <td class="fn-name">${esc(r.name)}</td>
-          <td class="${tClass}">${absT.toFixed(3)}</td>
-          <td>${r.samples_m ? r.samples_m.toFixed(1) + 'M' : '\u2014'}</td>
-          <td class="${statusClass}">${statusIcon}</td>
-        </tr>`;
+      for (const fn of sorted) {
+        const d = fn.dudect;
+        const absT = d ? Math.abs(d.max_t) : null;
+        const tClass = d ? (d.status === 'fail' ? 'dudect-fail' : absT < 1.0 ? 'dudect-pass' : '') : '';
+
+        html += `<tr><td class="fn-name">${esc(fn.name)}</td>`;
+        html += `<td class="${tClass}">${absT != null ? absT.toFixed(3) : '\u2014'}</td>`;
+
+        for (const m of tacetModels) {
+          const t = fn.tacet[m];
+          if (!t) {
+            html += '<td>\u2014</td>';
+          } else if (t.status === 'pass') {
+            const lp = t.leak_prob != null ? (t.leak_prob * 100).toFixed(1) + '%' : '';
+            html += `<td class="dudect-pass">\u2714 ${lp}</td>`;
+          } else if (t.status === 'fail') {
+            const lp = t.leak_prob != null ? (t.leak_prob * 100).toFixed(1) + '%' : '';
+            html += `<td class="dudect-fail">\u2718 ${lp}</td>`;
+          } else {
+            html += `<td>\u2014</td>`;
+          }
+        }
+
+        html += '</tr>';
       }
 
       html += '</tbody></table>';
@@ -1683,17 +1726,18 @@
 
     async function updateStatus() {
       const banner = document.getElementById('status-banner');
-      const [covStatus, benchStatus, mutStatus, dudectStatus] = await Promise.all([
+      const [covStatus, benchStatus, mutStatus, dudectStatus, tacetStatus] = await Promise.all([
         fetchJson('/coverage/status.json'),
         fetchJson('/bench/status.json'),
         fetchJson('/mutants/status.json'),
         fetchJson('/dudect/status.json'),
+        fetchJson('/tacet/status.json'),
       ]);
       const parts = [];
       if (covStatus && covStatus.state === 'running') parts.push('coverage');
       if (benchStatus && benchStatus.state === 'running') parts.push('benchmarks');
       if (mutStatus && mutStatus.state === 'running') parts.push('mutation testing');
-      if (dudectStatus && dudectStatus.state === 'running') parts.push('constant-time testing');
+      if (dudectStatus && dudectStatus.state === 'running' || tacetStatus && tacetStatus.state === 'running') parts.push('constant-time testing');
       if (parts.length > 0) {
         banner.textContent = `Building ${parts.join(' and ')}...`;
         banner.style.display = 'block';
@@ -1789,11 +1833,12 @@
       const dudectMeta = document.getElementById('dudect-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench, mut, dudect] = await Promise.all([
+      const [cov, bench, mut, dudect, tacetData] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
         fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
         fetchJson(`/dudect/${sha}.json`).then(d => d || fetchJson('/dudect/latest.json')),
+        fetchJson(`/tacet/${sha}.json`).then(d => d || fetchJson('/tacet/latest.json')),
       ]);
 
       // Only re-render a section if the commit changed or the data
@@ -1838,18 +1883,25 @@
       }
 
       const dudectSha = dudect && dudect.sha;
-      if (dudect && (shaChanged || dudectSha !== renderedDudect)) {
-        const r = dudect.results || [];
-        const fails = r.filter(x => x.status === 'fail').length;
+      const tacetSha = tacetData && tacetData.sha;
+      const ctChanged = shaChanged || dudectSha !== renderedDudect || tacetSha !== renderedTacet;
+      if ((dudect || tacetData) && ctChanged) {
+        const dResults = dudect ? (dudect.results || []) : [];
+        const tResults = tacetData ? (tacetData.results || []) : [];
+        const fails = dResults.filter(x => x.status === 'fail').length
+          + tResults.filter(x => x.status === 'fail').length;
+        const total = new Set([...dResults.map(r => r.name), ...tResults.map(r => r.name)]).size;
         dudectMeta.innerHTML = fails > 0
-          ? `<span style="color:var(--red)">${fails} fail</span> / ${r.length} tested`
-          : `${r.length} pass`;
-        dudectEl.innerHTML = renderDudectData(dudect);
+          ? `<span style="color:var(--red)">${fails} fail</span> / ${total} tested`
+          : `${total} pass`;
+        dudectEl.innerHTML = renderCtData(dudect, tacetData);
         renderedDudect = dudectSha;
-      } else if (!dudect && renderedDudect !== null) {
+        renderedTacet = tacetSha;
+      } else if (!dudect && !tacetData && (renderedDudect !== null || renderedTacet !== null)) {
         dudectMeta.textContent = '';
         dudectEl.innerHTML = '<p class="empty">No constant-time testing data for this commit.</p>';
         renderedDudect = null;
+        renderedTacet = null;
       }
 
       // Cross-analysis — needs at least coverage + one other source.
