@@ -1520,23 +1520,17 @@ mod tests {
         }
     }
 
-    /// Directly test `random_norm(N)` produces a lattice that actually
-    /// contains only elements of nrd divisible by N.
+    /// `random_norm(N)` produces a valid O_0-ideal for composite N:
+    /// every basis element has nrd divisible by N.
     ///
-    /// **Currently FAILS** — same pre-existing bug as
-    /// `random_prime_norm_lattice_actually_has_norm`.
-    ///
-    /// **Still FAILS**: the fix to `LeftIdeal::new` resolves the
-    /// prime-norm case but `random_norm` (composite N) has a
-    /// separate pre-existing bug — the α returned by
-    /// `γ · β` has nrd NOT divisible by N (diagnosis 2026-04-22
-    /// for N=143 showed `nrd(α) mod 143 = 45`). Suggests
-    /// `represent_integer(m·N)` is returning γ with nrd ≠ m·N for
-    /// composite N, or the γ·β product loses nrd divisibility.
-    /// Re-ignored until the underlying algorithmic bug is fixed.
-    /// Tracked in a follow-up of Task #27.
+    /// Fixed (Task #28) by computing γ·β at `Element<8>` in
+    /// `random_norm` — `Element<4>::mul` silently truncates when
+    /// product coords reach ~2^388 (γ has coords ~2^129 from
+    /// `represent_integer`) — then reducing each numerator coord
+    /// mod `N · denom` to fit the result back in `BigInt<4>`. The
+    /// reduction preserves the ideal `O·α + O·N` since the
+    /// difference lives in `N · Z<1,i,j,k> ⊂ N · O_0 = O · N`.
     #[test]
-    #[ignore]
     fn random_norm_lattice_actually_has_norm() {
         use super::super::lattice::LeftIdeal;
 
