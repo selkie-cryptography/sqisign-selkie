@@ -1025,6 +1025,7 @@
       <a href="#mutants-section">Mutants</a>
       <a href="#dudect-section">Constant-Time</a>
       <a href="#kat-section">Test Vectors</a>
+      <a href="#iai-section">Instructions</a>
       <a href="#audits-section">Audits</a>
       <a href="#fuzz-section">Fuzzing</a>
     </nav>
@@ -1118,6 +1119,22 @@
         </div>
         <div id="kat-content">
           <p class="empty">No test vector data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="iai-section">
+        <div class="section__header">
+          <h2 class="section__title">Instructions<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Deterministic instruction-count benchmarks via <a href="https://github.com/iai-callgrind/iai-callgrind" style="color:var(--fg)">iai-callgrind</a> (Valgrind). Immune to CI runner noise.</p>
+            <dl>
+            <dt>Instructions</dt><dd>Total executed instructions. Deterministic — identical across runs and machines.</dd>
+            <dt>L1/L2 misses</dt><dd>Simulated cache misses. High L1 misses on secret data may indicate a cache side-channel.</dd>
+            <dt>Branch misses</dt><dd>Mispredicted branches. Data-dependent branches on secrets leak via branch prediction.</dd>
+            </dl></span></span></h2>
+          <span class="meta" id="iai-meta"></span>
+        </div>
+        <div id="iai-content">
+          <p class="empty">No instruction count data yet.</p>
         </div>
       </section>
 
@@ -1762,6 +1779,34 @@
       return `${(ns / u.divisor).toFixed(u.decimals)} ${u.label}`;
     }
 
+    function renderIaiData(data) {
+      const results = data.results || [];
+      if (results.length === 0) return '<p class="empty">No results.</p>';
+
+      let html = `<table class="dudect-table">
+        <thead><tr>
+          <th>Function</th>
+          <th>Instructions</th>
+          <th>L1 misses</th>
+          <th>L2 misses</th>
+          <th>Branch misses</th>
+        </tr></thead><tbody>`;
+
+      for (const r of results) {
+        const fmt = (v) => v != null ? esc(String(v)) : '\u2014';
+        html += `<tr>
+          <td class="fn-name">${esc(r.name)}</td>
+          <td>${fmt(r.instructions)}</td>
+          <td>${fmt(r.l1_misses)}</td>
+          <td>${fmt(r.l2_misses)}</td>
+          <td>${fmt(r.branch_misses)}</td>
+        </tr>`;
+      }
+
+      html += '</tbody></table>';
+      return html;
+    }
+
     function renderFuzzData(data) {
       const targets = data.targets || [];
       const anyFail = targets.some(t => t.status === 'fail');
@@ -2222,7 +2267,7 @@
       const dudectMeta = document.getElementById('dudect-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData] = await Promise.all([
+      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, iaiData] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
         fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
@@ -2234,6 +2279,7 @@
         fetchJson(`/docs/${sha}.json`).then(d => d || fetchJson('/docs/latest.json')),
         fetchJson(`/panic/${sha}.json`).then(d => d || fetchJson('/panic/latest.json')),
         fetchJson(`/fuzz/${sha}.json`).then(d => d || fetchJson('/fuzz/latest.json')),
+        fetchJson(`/iai/${sha}.json`).then(d => d || fetchJson('/iai/latest.json')),
         fetchJson(`/msrv/${sha}.json`).then(d => d || fetchJson('/msrv/latest.json')),
       ]);
 
@@ -2309,6 +2355,14 @@
         auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData);
       } else {
         auditsEl.innerHTML = '<p class="empty">No audit data yet.</p>';
+      }
+
+      // Instruction count.
+      const iaiEl = document.getElementById('iai-content');
+      if (iaiData) {
+        iaiEl.innerHTML = renderIaiData(iaiData);
+      } else {
+        iaiEl.innerHTML = '<p class="empty">No instruction count data yet.</p>';
       }
 
       // Fuzzing.
