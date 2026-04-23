@@ -1026,6 +1026,7 @@
       <a href="#dudect-section">Constant-Time</a>
       <a href="#kat-section">Test Vectors</a>
       <a href="#audits-section">Audits</a>
+      <a href="#fuzz-section">Fuzzing</a>
     </nav>
 
     <div class="sections">
@@ -1135,6 +1136,23 @@
         </div>
         <div id="audits-content">
           <p class="empty">No audit data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="fuzz-section">
+        <div class="section__header">
+          <h2 class="section__title">Fuzzing<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Coverage-guided fuzzing with <a href="https://github.com/rust-fuzz/cargo-fuzz" style="color:var(--fg)">cargo-fuzz</a> (libFuzzer). Each target receives random bytes and must not panic or crash.</p>
+            <dl>
+            <dt>Targets</dt><dd>signature_parse, verifying_key_parse, signing_key_parse, verify</dd>
+            <dt>Runs</dt><dd>Total fuzzer executions across all targets.</dd>
+            <dt>Crashes</dt><dd>Inputs that caused a panic or crash. Should be zero.</dd>
+            <dt>Corpus</dt><dd>Accumulated interesting inputs that increase coverage.</dd>
+            </dl></span></span></h2>
+          <span class="meta" id="fuzz-meta"></span>
+        </div>
+        <div id="fuzz-content">
+          <p class="empty">No fuzzing data yet.</p>
         </div>
       </section>
 
@@ -1744,6 +1762,38 @@
       return `${(ns / u.divisor).toFixed(u.decimals)} ${u.label}`;
     }
 
+    function renderFuzzData(data) {
+      const targets = data.targets || [];
+      const anyFail = targets.some(t => t.status === 'fail');
+      const color = anyFail ? 'var(--red)' : 'var(--green)';
+
+      let html = '<div class="audit-grid">';
+      html += `<div class="audit-badge">
+        <div class="badge-status" style="color:${color}">${anyFail ? data.total_crashes + ' CRASH' : 'CLEAN'}</div>
+        <div class="badge-label">${esc(String(data.total_runs || 0))} runs</div>
+        <div class="badge-detail">${targets.length} targets, ${data.total_corpus || 0} corpus</div>
+      </div>`;
+      html += '</div>';
+
+      if (targets.length > 0) {
+        html += '<table class="dudect-table"><thead><tr><th>Target</th><th>Runs</th><th>Corpus</th><th>Crashes</th><th>Status</th></tr></thead><tbody>';
+        for (const t of targets) {
+          const icon = t.status === 'pass' ? '\u2714' : '\u2718';
+          const cls = t.status === 'pass' ? 'dudect-pass' : 'dudect-fail';
+          html += `<tr>
+            <td class="fn-name">${esc(t.target)}</td>
+            <td>${esc(String(t.runs || 0))}</td>
+            <td>${esc(String(t.corpus_size || 0))}</td>
+            <td class="${t.crashes > 0 ? 'dudect-fail' : ''}">${t.crashes || 0}</td>
+            <td class="${cls}">${icon}</td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+      }
+
+      return html;
+    }
+
     function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData) {
       let html = '<div class="audit-grid">';
 
@@ -2172,7 +2222,7 @@
       const dudectMeta = document.getElementById('dudect-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData] = await Promise.all([
+      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
         fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
@@ -2183,6 +2233,7 @@
         fetchJson(`/size/${sha}.json`).then(d => d || fetchJson('/size/latest.json')),
         fetchJson(`/docs/${sha}.json`).then(d => d || fetchJson('/docs/latest.json')),
         fetchJson(`/panic/${sha}.json`).then(d => d || fetchJson('/panic/latest.json')),
+        fetchJson(`/fuzz/${sha}.json`).then(d => d || fetchJson('/fuzz/latest.json')),
         fetchJson(`/msrv/${sha}.json`).then(d => d || fetchJson('/msrv/latest.json')),
       ]);
 
@@ -2258,6 +2309,14 @@
         auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData);
       } else {
         auditsEl.innerHTML = '<p class="empty">No audit data yet.</p>';
+      }
+
+      // Fuzzing.
+      const fuzzEl = document.getElementById('fuzz-content');
+      if (fuzzData) {
+        fuzzEl.innerHTML = renderFuzzData(fuzzData);
+      } else {
+        fuzzEl.innerHTML = '<p class="empty">No fuzzing data yet.</p>';
       }
     }
 

@@ -1,0 +1,41 @@
+[package]
+name = "sqisign-selkie-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.sqisign-selkie]
+path = ".."
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_signature_parse"
+path = "fuzz_targets/signature_parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_verifying_key_parse"
+path = "fuzz_targets/verifying_key_parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_signing_key_parse"
+path = "fuzz_targets/signing_key_parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_verify"
+path = "fuzz_targets/verify.rs"
+test = false
+doc = false
