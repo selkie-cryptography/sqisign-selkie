@@ -200,5 +200,11 @@ fn main() {
         report("point_double", mname, &outcome);
     }
 
+    // TODO: Add keygen, sign, verify once they're fast enough for
+    // tacet's adaptive sampling (~seconds per invocation currently).
+    // keygen: Left = all-zero seed, Right = random seed
+    // sign: Left = all-zero message, Right = random message
+    // verify: Left = valid sig, Right = corrupted sig
+
     println!("\ntacet analysis complete");
 }

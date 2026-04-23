@@ -10,19 +10,27 @@
 //!     target/debug/deps/ctgrind-* --test-threads=1
 
 use core::ffi::c_void;
+
 use crabgrind::memcheck::{self, MemState};
-use sqisign_selkie::fields::fp::Fp;
-use sqisign_selkie::fields::fp2::Fp2;
+use sqisign_selkie::fields::{fp::Fp, fp2::Fp2};
 
 /// Mark a byte slice as "secret" (undefined) for Valgrind.
 /// When not running under Valgrind, this is a no-op.
 fn mark_secret(data: &[u8]) {
-    let _ = memcheck::mark_memory(data.as_ptr() as *const c_void, data.len(), MemState::Undefined);
+    let _ = memcheck::mark_memory(
+        data.as_ptr() as *const c_void,
+        data.len(),
+        MemState::Undefined,
+    );
 }
 
 /// Mark a byte slice as "public" (defined) for Valgrind.
 fn mark_public(data: &[u8]) {
-    let _ = memcheck::mark_memory(data.as_ptr() as *const c_void, data.len(), MemState::Defined);
+    let _ = memcheck::mark_memory(
+        data.as_ptr() as *const c_void,
+        data.len(),
+        MemState::Defined,
+    );
 }
 
 #[test]
@@ -84,10 +92,7 @@ fn fp2_mul_secret_independent() {
         Fp::from_bytes(bytes[..32].try_into().unwrap()),
         Fp::from_bytes(bytes[32..].try_into().unwrap()),
     );
-    let b = Fp2::new(
-        Fp::from_bytes(&[0x11; 32]),
-        Fp::from_bytes(&[0x22; 32]),
-    );
+    let b = Fp2::new(Fp::from_bytes(&[0x11; 32]), Fp::from_bytes(&[0x22; 32]));
     let result = a * b;
 
     // Consume result without inspecting it.
@@ -115,3 +120,14 @@ fn fp_ct_select_secret_independent() {
     choice_byte = 0;
     mark_public(std::slice::from_ref(&choice_byte));
 }
+
+// TODO: Add keygen, sign, verify under Valgrind memcheck once they're
+// fast enough. Currently each takes seconds, and Valgrind adds ~20x
+// overhead making these impractical (~minutes per test).
+//
+// keygen: mark seed as secret, run generate_derand, check no
+//         branch or memory access depends on seed
+// sign:   mark sk fields as secret, run sign, check no branch or
+//         memory access depends on secret key material
+// verify: mark sig as secret, run verify, check no branch or memory
+//         access depends on the signature (prevents oracle attacks)

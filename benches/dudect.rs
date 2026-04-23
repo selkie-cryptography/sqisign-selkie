@@ -318,6 +318,47 @@ fn sign(runner: &mut CtRunner, rng: &mut BenchRng) {
     }
 }
 
+// Verify: Left = valid sig, Right = corrupted sig.
+// Verify should be constant-time to prevent oracle attacks.
+fn verify(runner: &mut CtRunner, rng: &mut BenchRng) {
+    use sqisign_selkie::{Signature, VerifyingKey, SIGNATURE_BYTES};
+
+    let pk_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].1;
+    let sm_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].4;
+    let pk_bytes = hex::decode(pk_hex).unwrap();
+    let sm_bytes = hex::decode(sm_hex).unwrap();
+    let sig_bytes: [u8; SIGNATURE_BYTES] = sm_bytes[..SIGNATURE_BYTES].try_into().unwrap();
+    let msg = sm_bytes[SIGNATURE_BYTES..].to_vec();
+    let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).unwrap();
+
+    let mut inputs = Vec::new();
+    let mut classes = Vec::new();
+
+    for _ in 0..10_000 {
+        if rng.random::<bool>() {
+            // Left: valid signature
+            inputs.push(sig_bytes);
+            classes.push(Class::Left);
+        } else {
+            // Right: corrupted signature (flip a byte)
+            let mut bad = sig_bytes;
+            bad[0] ^= 0xff;
+            inputs.push(bad);
+            classes.push(Class::Right);
+        }
+    }
+
+    for (class, sig_b) in classes.into_iter().zip(inputs) {
+        runner.run_one(class, || {
+            if let Ok(sig) = Signature::from_bytes(&sig_b) {
+                let _ = std::hint::black_box(
+                    std::panic::catch_unwind(|| vk.verify(&msg, &sig))
+                );
+            }
+        });
+    }
+}
+
 ctbench_main!(
     fp_mul,
     fp_add,
@@ -328,6 +369,7 @@ ctbench_main!(
     fp_ct_eq,
     scalar_mul,
     point_double,
+    verify,
     keygen,
     sign
 );
