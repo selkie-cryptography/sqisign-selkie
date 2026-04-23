@@ -30,6 +30,7 @@ zeroize = { version = "1", default-features = false, features = ["zeroize_derive
 [dev-dependencies]
 divan = "0.1"
 dudect-bencher = "0.7"
+tacet = "0.4"
 mutants = "0.0.4"  # #[mutants::skip] attribute for cargo-mutants
 serde = { version = "1", features = ["derive"] }
 hex = "0.4"
@@ -73,5 +74,10 @@ required-features = ["expose-internals"]
 
 [[bench]]
 name = "dudect"
+harness = false
+required-features = ["expose-internals"]
+
+[[bench]]
+name = "tacet"
 harness = false
 required-features = ["expose-internals"]

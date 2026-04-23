@@ -771,23 +771,19 @@ impl SigningKey {
                 None => continue,
             };
             // The response ideal has norm ~2^257 which may exceed
-            // BigInt<4>. Try narrowing directly; if it fails, call
-            // smallest_equiv at BigInt<4> (after the narrow
-            // succeeds for the reduced equivalent).
-            let i_com_rsp = match i_com_rsp_w.narrow() {
+            // BigInt<4>. Always reduce via `smallest_equiv_narrow`
+            // to ensure the norm is small enough that downstream
+            // operations (e.g. `i_com_rsp.norm() · i_aux.norm()`
+            // in the intersection below) don't silently truncate
+            // at BigInt<4>. A bare `narrow()` path keeps norms up
+            // to 2^256, and multiplying by aux_norm ~2^126 gives
+            // ~2^382 which wraps mod 2^256 and corrupts the
+            // intersection ideal's stored norm. The smallest-
+            // equiv reduction brings the norm down to ~√p ≈ 2^126,
+            // so the product fits in BigInt<4>.
+            let i_com_rsp = match i_com_rsp_w.smallest_equiv_narrow::<60>() {
                 Some(i) => i,
-                None => {
-                    // Norm > 2^256 HNF entries. Reduce to a
-                    // smaller equivalent ideal via LLL
-                    // (`smallest_equiv_narrow`). For
-                    // `i_com_rsp_w` with norm ≈ 2^258, the
-                    // resulting equivalent has norm ≈ √p ≈ 2^126
-                    // and narrows cleanly to `BigInt<4>`.
-                    match i_com_rsp_w.smallest_equiv_narrow::<60>() {
-                        Some(i) => i,
-                        None => continue,
-                    }
-                }
+                None => continue,
             };
 
             // Lines 21–33: compute response isogeny
