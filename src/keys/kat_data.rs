@@ -2,8 +2,8 @@
 ///
 /// Each entry: (seed, pk, sk, msg, sm).
 /// Pinned to the C ref commit used throughout this crate.
-#[cfg(test)]
-pub(crate) const KAT_VECTORS: &[(&str, &str, &str, &str, &str)] = &[
+#[cfg(any(test, feature = "expose-internals"))]
+pub const KAT_VECTORS: &[(&str, &str, &str, &str, &str)] = &[
     (
         "061550234D158C5EC95595FE04EF7A25767F2E24CC2BC479D09D86DC9ABCFDE7056A8C266F9EF97ED08541DBD2E1FFA1",
         "07CCD21425136F6E865E497D2D4D208F0054AD81372066E817480787AAF7B2029550C89E892D618CE3230F23510BFBE68FCCDDAEA51DB1436B462ADFAF008A010B",

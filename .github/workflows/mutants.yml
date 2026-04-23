@@ -63,10 +63,12 @@ jobs:
       - name: Generate and merge mutants JSON for CI site
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
         run: |
-          bash .github/scripts/mutants-to-json.sh \
+          rustc -O .github/scripts/mutants-to-json.rs -o /tmp/mutants-to-json
+          /tmp/mutants-to-json \
             mutants.out/outcomes.json "${{ github.sha }}" \
             > mutants-incremental.json
-          bash .github/scripts/merge-mutants.sh \
+          rustc -O .github/scripts/merge-mutants.rs -o /tmp/merge-mutants
+          /tmp/merge-mutants \
             mutants-incremental.json "${{ github.sha }}" \
             > mutants.json
 
@@ -76,7 +78,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('mutants.out/outcomes.json') != ''
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: bash .github/scripts/ci-upload.sh mutants mutants.json "${{ github.sha }}"
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload mutants mutants.json "${{ github.sha }}"
 
   # --- Full: sharded across 16 workers, weekly + manual ---
   full:
@@ -144,7 +146,8 @@ jobs:
       - name: Generate site JSON
         if: env.SKIP_UPLOAD != 'true'
         run: |
-          bash .github/scripts/mutants-to-json.sh \
+          rustc -O .github/scripts/mutants-to-json.rs -o /tmp/mutants-to-json
+          /tmp/mutants-to-json \
             merged-outcomes.json "${{ github.sha }}" \
             > mutants.json
 
@@ -154,4 +157,4 @@ jobs:
         if: env.SKIP_UPLOAD != 'true'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: bash .github/scripts/ci-upload.sh mutants mutants.json "${{ github.sha }}"
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload mutants mutants.json "${{ github.sha }}"

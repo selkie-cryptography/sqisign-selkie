@@ -7,8 +7,9 @@
 //! [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
 //! [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
 
-#[cfg(test)]
-mod kat_data;
+/// Known-answer test vectors from the C reference implementation.
+#[cfg(any(test, feature = "expose-internals"))]
+pub mod kat_data;
 mod signing;
 #[cfg(test)]
 mod tests;
