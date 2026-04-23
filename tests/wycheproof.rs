@@ -11,7 +11,7 @@
 //! KAT file as provenance. We intend to upstream these to C2SP/wycheproof
 //! once independently-generated valid vectors are available via Sage.
 //!
-//! Uses only the public API — no `bench-internals` feature required.
+//! Uses only the public API — no `expose-internals` feature required.
 //! Other SQIsign implementations can reuse `tests/vectors/*.json` by
 //! writing their own test runner against the same schema.
 

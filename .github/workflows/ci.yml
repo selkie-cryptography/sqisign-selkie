@@ -151,6 +151,30 @@ jobs:
           tool: cargo-deny
       - run: cargo deny check advisories bans
 
+  kat-report:
+    name: KAT report
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Generate KAT report
+        run: |
+          rustc -O .github/scripts/kat-report.rs -o /tmp/kat-report
+          /tmp/kat-report "${{ github.sha }}" > kat.json
+        continue-on-error: true
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Upload to CI site
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload kat kat.json "${{ github.sha }}"
+
   sage-precompute-check:
     name: Sage precompute cross-check
     runs-on: ubuntu-24.04
