@@ -912,35 +912,36 @@ impl SigningKey {
 
                 // Line 24: E_aux, P_aux, Q_aux ← IdealToIsogeny(I_{com,rsp} ∩ I_aux)
                 //
-                // The intersection of two O₀-ideals with coprime norms N₁, N₂
-                // is an O₀-ideal of norm N₁·N₂. `i_com_rsp.norm()` is the
-                // narrowed prime norm after reduction.
+                // For two left ideals of a maximal order with coprime
+                // reduced norms, the non-commutative CRT gives
+                // `I_1 ∩ I_2 = I_1 · I_2`. `I_com_rsp`'s norm is a
+                // small prime ≤ 2^126 (post `smallest_equiv_narrow`)
+                // and `I_aux`'s norm is the odd `2^e_rsp_prime -
+                // q_rsp` (~2^126), coprime by construction, so the
+                // ideal product computes the intersection directly.
+                // `Lattice<4>::product` via `mul_direct` keeps the
+                // 16 pairwise-product coordinates ≤ 2^252, within
+                // `BigInt<4>`'s 256-bit budget.
                 //
-                // Use `intersection_via_kernel` instead of the dual-sum-dual
-                // `intersection`: the latter cubes entry sizes through 3×3
-                // subdeterminants of the adjugate, and at `BigInt<4>` the
-                // ~126-bit basis entries would overflow after a single
-                // adjugate pass (~378 bits > 256). `intersection_via_kernel`
-                // keeps entry growth linear and returns `None` explicitly on
-                // narrow-to failure.
-                let i_com_rsp_lat: Lattice<4> = (*i_com_rsp.lattice()).into();
-                let i_aux_lat: Lattice<4> = (*i_aux.lattice()).into();
-                let inter_lattice = match i_com_rsp_lat.intersection_via_kernel::<20>(&i_aux_lat) {
-                    Some(h) => h,
-                    None => {
-                        #[cfg(test)]
-                        eprintln!("[sign {_iter}] DROP: i_com_rsp ∩ i_aux via_kernel None");
-                        continue;
-                    }
-                };
-                // Use `i_com_rsp.norm() · i_aux.norm()` as a provisional
-                // norm; `refresh_norm` below replaces it with the true
-                // covolume-derived `n(I)` (they differ if the two norms
-                // share any factor).
+                // Both alternatives silently lost information at
+                // `N=4`:
+                // - `intersection` (dual → sum → dual) cubes entry sizes through 3×3
+                //   subdeterminants of the adjugate (~378 bits at N=4). Widening to `N=8` or
+                //   `N=16` didn't help — `dual` applied twice with an `HNF(sum)` in between
+                //   still overflows at any fixed intermediate width.
+                // - `intersection_via_kernel` frequently returned `None` because the
+                //   intersection covolume `n(I)² ≈ 2^504` does not narrow back to `BigInt<4>`'s
+                //   256-bit entries.
+                let inter_lattice = i_com_rsp.lattice().product(i_aux.lattice());
                 let inter_norm = i_com_rsp.norm().ct_mul(i_aux.norm());
                 let mut i_inter =
                     LeftIdeal::from_parts(inter_lattice, inter_norm, *EXTREMAL_ORDERS[0].order());
-                if i_inter.refresh_norm::<20>().is_none() {
+                // Recompute `self.norm` from the actual product
+                // lattice covolume — if the norms aren't coprime
+                // (unexpected but not impossible on edge-case
+                // sampling), `n(I_1 · I_2) < n_1 · n_2` and the
+                // provisional `inter_norm` is wrong.
+                if i_inter.refresh_norm::<12>().is_none() {
                     #[cfg(test)]
                     eprintln!("[sign {_iter}] DROP: i_inter.refresh_norm None");
                     continue;
