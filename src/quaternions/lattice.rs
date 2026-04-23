@@ -200,6 +200,10 @@ impl<const N: usize> Lattice<N> {
     /// `W >= 4 * (bits(d) + bits(B)) / 64` but smaller values
     /// may work in practice.
     ///
+    /// Returns `None` when the resulting HNF basis or denominator
+    /// does not narrow into `BigInt<N>`. Callers should either
+    /// widen `W` and retry, or continue.
+    ///
     /// # Divergences
     ///
     /// The spec and C reference use `dual → sum → dual`
@@ -207,7 +211,7 @@ impl<const N: usize> Lattice<N> {
     /// method to avoid the cubic entry-size blow-up that makes
     /// the dual approach incompatible with fixed-width arithmetic.
     #[allow(clippy::needless_range_loop)]
-    pub fn intersection_via_kernel<const W: usize>(&self, other: &Self) -> HnfLattice<N> {
+    pub fn intersection_via_kernel<const W: usize>(&self, other: &Self) -> Option<HnfLattice<N>> {
         const { assert!(W >= N, "intersection_via_kernel: W must be >= N") };
 
         let d1: BigInt<W> = self.denom.widen();
@@ -350,36 +354,15 @@ impl<const N: usize> Lattice<N> {
         let mut basis_n = Matrix::<N>::ZERO;
         for row in 0..4 {
             for col in 0..4 {
-                basis_n[row][col] = match inter_basis_w[row][col].narrow_to::<N>() {
-                    Some(v) => v,
-                    None => {
-                        // Fall back: the intersection HNF entries
-                        // exceed BigInt<N>. Caller should retry with
-                        // a wider N or widen the intersection.
-                        // For now, return a zero lattice so the
-                        // caller's validity checks catch it.
-                        return HnfLattice {
-                            basis: Matrix::<N>::ZERO,
-                            denom: BigInt::<N>::ZERO,
-                        };
-                    }
-                };
+                basis_n[row][col] = inter_basis_w[row][col].narrow_to::<N>()?;
             }
         }
-        let denom_n: BigInt<N> = match denom_w.narrow_to() {
-            Some(d) => d,
-            None => {
-                return HnfLattice {
-                    basis: Matrix::<N>::ZERO,
-                    denom: BigInt::<N>::ZERO,
-                };
-            }
-        };
+        let denom_n: BigInt<N> = denom_w.narrow_to()?;
 
-        HnfLattice {
+        Some(HnfLattice {
             basis: basis_n,
             denom: denom_n,
-        }
+        })
     }
 
     // Lattice product: `self · other`.
@@ -701,12 +684,27 @@ impl<const N: usize> Lattice<N> {
             }
         }
         if all_zero {
+            #[cfg(test)]
+            eprintln!(
+                "[sample_from_ball] ball too small: rad bits={}, diag bits=[{}, {}, {}, {}]",
+                rad.bitsize(),
+                gram[0][0].bitsize(),
+                gram[1][1].bitsize(),
+                gram[2][2].bitsize(),
+                gram[3][3].bitsize(),
+            );
             return None; // ball too small
         }
 
         // Step 3: Rejection sampling.
         // Byte buffer for random sampling — sized for BigInt<W>.
         let byte_cap = W * 8;
+        #[cfg(test)]
+        let mut _n_pos = 0u64;
+        #[cfg(test)]
+        let mut _n_fit = 0u64;
+        #[cfg(test)]
+        let mut _best_nrd_over_rad_bits: i64 = 0;
         // Without LLL-based box tightening (TODO above), our
         // per-axis bound `sqrt(rad / G[i][i])` is loose enough
         // that typical acceptance rates sit around 10^-4; 10,000
@@ -760,9 +758,23 @@ impl<const N: usize> Lattice<N> {
             if bool::from(nrd.is_negative()) {
                 continue; // negative — shouldn't happen for a PD form
             }
+            #[cfg(test)]
+            {
+                _n_pos += 1;
+                let nrd_bits = nrd.bitsize() as i64;
+                let rad_bits = rad.bitsize() as i64;
+                let delta = nrd_bits - rad_bits;
+                if _best_nrd_over_rad_bits == 0 || delta < _best_nrd_over_rad_bits {
+                    _best_nrd_over_rad_bits = delta;
+                }
+            }
             let diff = nrd.ct_sub(&rad);
             if !bool::from(diff.is_negative()) && !bool::from(diff.is_zero()) {
                 continue; // nrd > rad
+            }
+            #[cfg(test)]
+            {
+                _n_fit += 1;
             }
 
             // Step 4: Convert to quaternion element.
@@ -788,6 +800,22 @@ impl<const N: usize> Lattice<N> {
                 Denominator::from_bigint_unchecked(self.denom),
             ));
         }
+        #[cfg(test)]
+        eprintln!(
+            "[sample_from_ball] exhausted 200k attempts: rad bits={}, diag bits=[{}, {}, {}, {}], bounds bits=[{}, {}, {}, {}], n_pos={}, n_fit={}, best nrd-rad bits={}",
+            rad.bitsize(),
+            gram[0][0].bitsize(),
+            gram[1][1].bitsize(),
+            gram[2][2].bitsize(),
+            gram[3][3].bitsize(),
+            bounds[0].bitsize(),
+            bounds[1].bitsize(),
+            bounds[2].bitsize(),
+            bounds[3].bitsize(),
+            _n_pos,
+            _n_fit,
+            _best_nrd_over_rad_bits,
+        );
         None // sampling failed after max attempts
     }
 }
@@ -1203,6 +1231,90 @@ impl<const N: usize> LeftIdeal<N> {
     #[inline]
     pub const fn parent_order(&self) -> &Order<N> {
         &self.parent_order
+    }
+
+    /// Recomputes `self.norm` from the lattice covolume ratio.
+    ///
+    /// For a left ideal `I` of a maximal order `O`, the reduced norm
+    /// satisfies `n(I)² = [O : I]` as `Z`-module index. The index
+    /// is derived from the basis determinants:
+    ///
+    /// ```text
+    /// [O : I] = (O.denom)^4 · det(I.basis) / ((I.denom)^4 · det(O.basis))
+    /// ```
+    ///
+    /// The C reference applies this in `quat_lideal_norm` after
+    /// every ideal-construction operation. Our fixed-width
+    /// constructors (`LeftIdeal::new`, `from_generator_mod_hnf`)
+    /// instead store the caller-supplied target `N` verbatim —
+    /// which is correct only when `α` and `N` satisfy
+    /// `gcd(nrd(α)/N, N) = 1`. When they do not, `self.norm` drifts
+    /// from the true covolume-derived norm and downstream
+    /// operations (notably `smallest_equiv_narrow`) reject valid
+    /// δ. Calling `refresh_norm` after construction restores
+    /// agreement with the lattice.
+    ///
+    /// `W` is the working width for the determinants; pick it so
+    /// that `W · 64 ≥ 4 · bits(max basis entry) + 5`. Returns
+    /// `None` if the computed index is not a perfect square (a
+    /// bug in construction), or if the index or its square root
+    /// fails to narrow back to `BigInt<N>`.
+    pub fn refresh_norm<const W: usize>(&mut self) -> Option<()> {
+        const { assert!(W >= N, "refresh_norm: W must be >= N") };
+
+        let widen_mat = |m: &Matrix<N>| -> Matrix<W> {
+            let mut out = Matrix::<W>::ZERO;
+            for r in 0..4 {
+                for c in 0..4 {
+                    out[r][c] = m[r][c].widen::<W>();
+                }
+            }
+            out
+        };
+
+        let i_basis_w = widen_mat(self.lattice.basis());
+        let i_denom_w: BigInt<W> = self.lattice.denom().widen();
+        let o_basis_w = widen_mat(self.parent_order.basis());
+        let o_denom_w: BigInt<W> = self.parent_order.denom().widen();
+
+        let det_i = i_basis_w.det();
+        let det_o = o_basis_w.det();
+
+        let o_denom_sq = o_denom_w.ct_mul(&o_denom_w);
+        let o_denom_4 = o_denom_sq.ct_mul(&o_denom_sq);
+        let i_denom_sq = i_denom_w.ct_mul(&i_denom_w);
+        let i_denom_4 = i_denom_sq.ct_mul(&i_denom_sq);
+
+        let num = o_denom_4.ct_mul(&det_i);
+        let den = i_denom_4.ct_mul(&det_o);
+
+        let (index_signed, rem) = num.div_rem(&den);
+        if !bool::from(rem.is_zero()) {
+            #[cfg(test)]
+            eprintln!(
+                "[refresh_norm] num/den has remainder: num bits={}, den bits={}, rem bits={}",
+                num.bitsize(),
+                den.bitsize(),
+                rem.bitsize(),
+            );
+            return None;
+        }
+        let index = index_signed.abs();
+
+        let n_sqrt = index.sqrt_floor();
+        // Verify perfect square: n_sqrt² == index.
+        if n_sqrt.ct_mul(&n_sqrt) != index {
+            #[cfg(test)]
+            eprintln!(
+                "[refresh_norm] index is not a perfect square: index bits={}, sqrt_floor bits={}",
+                index.bitsize(),
+                n_sqrt.bitsize(),
+            );
+            return None;
+        }
+
+        self.norm = n_sqrt.narrow_to::<N>()?;
+        Some(())
     }
 
     /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.

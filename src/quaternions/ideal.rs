@@ -1065,14 +1065,37 @@ impl<const N: usize> LeftIdeal<N> {
         let delta_nrd_den = denom_w.ct_mul(&denom_w);
         let (new_norm_w, rem) = delta_nrd_num.div_rem(&delta_nrd_den);
         if !bool::from(rem.is_zero()) {
+            #[cfg(test)]
+            eprintln!(
+                "[smallest_equiv_narrow] nrd(δ) not divisible by denom²: nrd_num bits={}, nrd_den bits={}, rem bits={}",
+                delta_nrd_num.bitsize(),
+                delta_nrd_den.bitsize(),
+                rem.bitsize(),
+            );
             return None;
         }
         let self_norm_w: BigInt<W> = self.norm().widen::<W>();
         let (equiv_norm_w, rem2) = new_norm_w.div_rem(&self_norm_w);
         if !bool::from(rem2.is_zero()) {
+            #[cfg(test)]
+            eprintln!(
+                "[smallest_equiv_narrow] new_norm not divisible by self.norm: new_norm bits={}, self_norm bits={}",
+                new_norm_w.bitsize(),
+                self_norm_w.bitsize(),
+            );
             return None;
         }
-        let equiv_norm: BigInt<4> = equiv_norm_w.narrow_to()?;
+        let equiv_norm: BigInt<4> = match equiv_norm_w.narrow_to() {
+            Some(v) => v,
+            None => {
+                #[cfg(test)]
+                eprintln!(
+                    "[smallest_equiv_narrow] equiv_norm narrow to 4 failed: {} bits",
+                    equiv_norm_w.bitsize(),
+                );
+                return None;
+            }
+        };
 
         // Conjugate δ: negate i, j, k coords; a stays.
         let delta_conj_w = Element::<W>::new(
@@ -1119,11 +1142,35 @@ impl<const N: usize> LeftIdeal<N> {
         for row in 0..4 {
             for col in 0..4 {
                 let (q, _) = hnf_w[row][col].div_rem(&g);
-                basis_4[row][col] = q.narrow_to::<4>()?;
+                basis_4[row][col] = match q.narrow_to::<4>() {
+                    Some(v) => v,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!(
+                            "[smallest_equiv_narrow] basis[{row}][{col}] narrow to 4 failed: q {} bits, hnf {} bits, g {} bits",
+                            q.bitsize(),
+                            hnf_w[row][col].bitsize(),
+                            g.bitsize(),
+                        );
+                        return None;
+                    }
+                };
             }
         }
         let (denom_simplified, _) = product_denom.div_rem(&g);
-        let denom_4: BigInt<4> = denom_simplified.narrow_to()?;
+        let denom_4: BigInt<4> = match denom_simplified.narrow_to() {
+            Some(v) => v,
+            None => {
+                #[cfg(test)]
+                eprintln!(
+                    "[smallest_equiv_narrow] denom narrow to 4 failed: {} bits, product_denom {} bits, g {} bits",
+                    denom_simplified.bitsize(),
+                    product_denom.bitsize(),
+                    g.bitsize(),
+                );
+                return None;
+            }
+        };
 
         let result_lattice = HnfLattice::from(Lattice::new(basis_4, denom_4));
 

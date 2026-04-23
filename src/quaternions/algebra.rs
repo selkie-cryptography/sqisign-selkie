@@ -559,6 +559,52 @@ impl<const N: usize> Element<N> {
         (elem, n)
     }
 
+    /// Divides α by the GCD of its `O₀`-basis coordinates, returning
+    /// the primitive representative and the extracted integer factor.
+    ///
+    /// A quaternion element of a maximal order `O` is *primitive* when
+    /// no integer `k > 1` satisfies `α ∈ k · O`. Equivalently, the
+    /// GCD of its coordinates in the `O`-basis is 1.
+    ///
+    /// The C reference primitivizes the response-phase quaternion
+    /// fully before constructing `I_com,rsp`; with only 2-adic
+    /// backtracking normalization (as [`compute_backtracking`]
+    /// provides), an odd integer factor `g` remains in `α` and the
+    /// declared ideal norm `n(I) = N(I_com) · q_rsp` overstates the
+    /// actual covolume-derived norm by `g²`. Calling
+    /// `make_primitive_odd` after `compute_backtracking` removes
+    /// the odd content and restores the consistency.
+    ///
+    /// The returned scalar `g` is odd (any power of 2 was already
+    /// removed by `compute_backtracking`).
+    ///
+    /// [`compute_backtracking`]: Self::compute_backtracking
+    pub fn make_primitive_odd(&self) -> (Self, BigInt<N>) {
+        let mut elem = self.normalized();
+        let a = &elem.a.0;
+        let b = &elem.b.0;
+        let c = &elem.c.0;
+        let d = &elem.d.0;
+
+        // `O₀`-basis coordinates of α (see `compute_backtracking`).
+        let c0 = a.ct_sub(d);
+        let c1 = b.ct_sub(c);
+        let c2 = *c;
+        let c3 = *d;
+
+        let g = c0.abs().gcd(&c1.abs()).gcd(&c2.abs()).gcd(&c3.abs());
+        let one = BigInt::<N>::ONE;
+        if bool::from(g.is_zero()) || g == one {
+            return (elem, one);
+        }
+
+        let new_denom = elem.denom.0.ct_mul(&g);
+        elem.denom = Denominator::new(new_denom).expect("denom > 0");
+        elem.normalize();
+
+        (elem, g)
+    }
+
     /// Narrow all coordinates and denominator to `BigInt<M>`, returning
     /// `None` if any of them overflow.
     ///
