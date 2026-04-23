@@ -1839,7 +1839,7 @@
       return html;
     }
 
-    function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData) {
+    function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData) {
       let html = '<div class="audit-grid">';
 
       // Panic-freedom
@@ -1909,6 +1909,19 @@
           <div class="badge-status" style="color:${color}">${icon}</div>
           <div class="badge-label">MSRV ${esc(msrvData.msrv || '')}</div>
           <div class="badge-detail">${msrvData.status === 'pass' ? 'compiles' : msrvData.errors + ' errors'}</div>
+        </div>`;
+      }
+
+      // Allocations
+      if (allocData) {
+        const ops = allocData.operations || [];
+        const totalAllocs = ops.reduce((s, o) => s + (o.allocs || 0), 0);
+        const color = allocData.status === 'pass' ? 'var(--green)' : 'var(--red)';
+        const detail = ops.map(o => `${esc(o.name)}:${o.allocs}`).join(', ');
+        html += `<div class="audit-badge">
+          <div class="badge-status" style="color:${color}">${totalAllocs}</div>
+          <div class="badge-label">heap allocs</div>
+          <div class="badge-detail">${detail || 'none'}</div>
         </div>`;
       }
 
@@ -2267,7 +2280,7 @@
       const dudectMeta = document.getElementById('dudect-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, iaiData] = await Promise.all([
+      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, iaiData, allocData] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
         fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
@@ -2280,6 +2293,7 @@
         fetchJson(`/panic/${sha}.json`).then(d => d || fetchJson('/panic/latest.json')),
         fetchJson(`/fuzz/${sha}.json`).then(d => d || fetchJson('/fuzz/latest.json')),
         fetchJson(`/iai/${sha}.json`).then(d => d || fetchJson('/iai/latest.json')),
+        fetchJson(`/alloc/${sha}.json`).then(d => d || fetchJson('/alloc/latest.json')),
         fetchJson(`/msrv/${sha}.json`).then(d => d || fetchJson('/msrv/latest.json')),
       ]);
 
@@ -2351,8 +2365,8 @@
 
       // Audits.
       const auditsEl = document.getElementById('audits-content');
-      if (deny || unsafeData || sizeData || docsData || msrvData || panicData) {
-        auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData);
+      if (deny || unsafeData || sizeData || docsData || msrvData || panicData || allocData) {
+        auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData);
       } else {
         auditsEl.innerHTML = '<p class="empty">No audit data yet.</p>';
       }
