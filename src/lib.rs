@@ -14,42 +14,42 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![warn(rust_2018_idioms, unused_lifetimes, unused_qualifications)]
 
-// --- Internal modules (pub(crate) by default, pub with bench-internals) ---
+// --- Internal modules (pub(crate) by default, pub with expose-internals) ---
 
 // NIST-I parameter set constants
-#[cfg(not(feature = "bench-internals"))]
+#[cfg(not(feature = "expose-internals"))]
 pub(crate) mod params;
-#[cfg(feature = "bench-internals")]
+#[cfg(feature = "expose-internals")]
 pub mod params;
 
 // Finite field arithmetic (F_p and F_{p^2})
-#[cfg(not(feature = "bench-internals"))]
+#[cfg(not(feature = "expose-internals"))]
 pub(crate) mod fields;
-#[cfg(feature = "bench-internals")]
+#[cfg(feature = "expose-internals")]
 pub mod fields;
 
 // Elliptic curves, points, and isogenies between them
-#[cfg(not(feature = "bench-internals"))]
+#[cfg(not(feature = "expose-internals"))]
 pub(crate) mod curves;
-#[cfg(feature = "bench-internals")]
+#[cfg(feature = "expose-internals")]
 pub mod curves;
 
 // Abelian surfaces and (2,2)-isogenies using theta coordinates
-#[cfg(not(feature = "bench-internals"))]
+#[cfg(not(feature = "expose-internals"))]
 pub(crate) mod surfaces;
-#[cfg(feature = "bench-internals")]
+#[cfg(feature = "expose-internals")]
 pub mod surfaces;
 
 // Quaternion algebra and big integer arithmetic
-#[cfg(not(feature = "bench-internals"))]
+#[cfg(not(feature = "expose-internals"))]
 pub(crate) mod quaternions;
-#[cfg(feature = "bench-internals")]
+#[cfg(feature = "expose-internals")]
 pub mod quaternions;
 
 // Deuring correspondence: ideal ↔ isogeny bridge
-#[cfg(not(feature = "bench-internals"))]
+#[cfg(not(feature = "expose-internals"))]
 pub(crate) mod deuring;
-#[cfg(feature = "bench-internals")]
+#[cfg(feature = "expose-internals")]
 pub mod deuring;
 
 // --- Always-private modules ---
@@ -61,7 +61,10 @@ pub(crate) mod hash;
 pub(crate) mod drbg;
 
 // Key types and signatures
+#[cfg(not(feature = "expose-internals"))]
 pub(crate) mod keys;
+#[cfg(feature = "expose-internals")]
+pub mod keys;
 
 // --- Public API ---
 

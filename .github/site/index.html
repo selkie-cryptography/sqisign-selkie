@@ -634,6 +634,45 @@
       margin: 0 0 2px 0;
     }
 
+    /* DudeCT table */
+    .dudect-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .dudect-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .dudect-table th:nth-child(n+2) { text-align: right; }
+
+    .dudect-table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+
+    .dudect-table td:nth-child(n+2) {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .dudect-table .fn-name {
+      font-family: 'Inter', monospace;
+      font-size: 13px;
+    }
+
+    .dudect-pass { color: var(--green); }
+    .dudect-fail { color: var(--red); font-weight: 700; }
+
     /* Analysis section */
     .analysis-grid {
       display: flex;
@@ -860,7 +899,7 @@
 
       <section class="section" id="mutants-section">
         <div class="section__header">
-          <h2 class="section__title">Mutation Testing<span class="help-icon">?<span class="tooltip">
+          <h2 class="section__title">Mutants<span class="help-icon">?<span class="tooltip">
             <p style="margin-bottom:8px">Mutation testing introduces small changes (mutants) to the source and checks if the test suite catches them. Survivors indicate code where tests execute the lines but don't verify correctness.</p>
             <dl>
             <dt>Kill rate</dt><dd>Percentage of mutants detected. Higher is better.</dd>
@@ -873,6 +912,22 @@
         </div>
         <div id="mutants-content">
           <p class="empty">No mutation testing data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="dudect-section">
+        <div class="section__header">
+          <h2 class="section__title">Constant-Time<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Statistical constant-time testing using <a href="https://eprint.iacr.org/2016/1123.pdf" style="color:var(--fg)">DudeCT</a>. Runs each function with two input classes and measures whether execution time depends on the input.</p>
+            <dl>
+            <dt>|t| &lt; 4.5</dt><dd>Pass — no statistically significant timing difference detected.</dd>
+            <dt>|t| &ge; 4.5</dt><dd>Fail — timing leakage detected. The function is not constant-time.</dd>
+            <dt>Samples</dt><dd>Number of measurements taken. More samples = higher confidence.</dd>
+            </dl></span></span></h2>
+          <span class="meta" id="dudect-meta"></span>
+        </div>
+        <div id="dudect-content">
+          <p class="empty">No constant-time testing data yet.</p>
         </div>
       </section>
 
@@ -903,6 +958,7 @@
     let renderedCov = null;   // SHA of rendered coverage data
     let renderedBench = null; // SHA of rendered bench data
     let renderedMut = null;   // SHA of rendered mutants data
+    let renderedDudect = null; // SHA of rendered dudect data
     let renderedForSha = null; // The selectedSha we last rendered for
 
     function esc(s) {
@@ -1361,6 +1417,52 @@
       return html;
     }
 
+    function renderDudectData(data) {
+      const results = data.results || [];
+      if (results.length === 0) return '<p class="empty">No results.</p>';
+
+      const passCount = results.filter(r => r.status === 'pass').length;
+      const failCount = results.filter(r => r.status === 'fail').length;
+      const allPass = failCount === 0;
+      const summaryColor = allPass ? 'var(--green)' : 'var(--red)';
+
+      let html = `<div class="mutants-summary">
+        <div class="mutants-stat"><span class="value" style="color:${summaryColor}">${allPass ? 'PASS' : failCount + ' FAIL'}</span><span class="label">${esc(String(results.length))} functions tested</span></div>
+        <div class="mutants-stat"><span class="value" style="color:var(--green)">${passCount}</span><span class="label">pass</span></div>
+        ${failCount > 0 ? `<div class="mutants-stat"><span class="value" style="color:var(--red)">${failCount}</span><span class="label">fail</span></div>` : ''}
+      </div>`;
+
+      html += `<table class="dudect-table">
+        <thead><tr>
+          <th>Function</th>
+          <th>|t|</th>
+          <th>Samples</th>
+          <th>Status</th>
+        </tr></thead><tbody>`;
+
+      // Sort: failures first, then by |t| descending.
+      const sorted = [...results].sort((a, b) => {
+        if (a.status !== b.status) return a.status === 'fail' ? -1 : 1;
+        return Math.abs(b.max_t) - Math.abs(a.max_t);
+      });
+
+      for (const r of sorted) {
+        const absT = Math.abs(r.max_t);
+        const tClass = r.status === 'fail' ? 'dudect-fail' : absT < 1.0 ? 'dudect-pass' : '';
+        const statusIcon = r.status === 'pass' ? '\u2714' : '\u2718';
+        const statusClass = r.status === 'pass' ? 'dudect-pass' : 'dudect-fail';
+        html += `<tr>
+          <td class="fn-name">${esc(r.name)}</td>
+          <td class="${tClass}">${absT.toFixed(3)}</td>
+          <td>${r.samples_m ? r.samples_m.toFixed(1) + 'M' : '\u2014'}</td>
+          <td class="${statusClass}">${statusIcon}</td>
+        </tr>`;
+      }
+
+      html += '</tbody></table>';
+      return html;
+    }
+
     function renderBenchmarkData(data) {
       const groups = data.groups || [];
       if (groups.length === 0) return '';
@@ -1581,15 +1683,17 @@
 
     async function updateStatus() {
       const banner = document.getElementById('status-banner');
-      const [covStatus, benchStatus, mutStatus] = await Promise.all([
+      const [covStatus, benchStatus, mutStatus, dudectStatus] = await Promise.all([
         fetchJson('/coverage/status.json'),
         fetchJson('/bench/status.json'),
         fetchJson('/mutants/status.json'),
+        fetchJson('/dudect/status.json'),
       ]);
       const parts = [];
       if (covStatus && covStatus.state === 'running') parts.push('coverage');
       if (benchStatus && benchStatus.state === 'running') parts.push('benchmarks');
       if (mutStatus && mutStatus.state === 'running') parts.push('mutation testing');
+      if (dudectStatus && dudectStatus.state === 'running') parts.push('constant-time testing');
       if (parts.length > 0) {
         banner.textContent = `Building ${parts.join(' and ')}...`;
         banner.style.display = 'block';
@@ -1681,12 +1785,15 @@
       const benchMeta = document.getElementById('bench-meta');
       const mutEl = document.getElementById('mutants-content');
       const mutMeta = document.getElementById('mutants-meta');
+      const dudectEl = document.getElementById('dudect-content');
+      const dudectMeta = document.getElementById('dudect-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench, mut] = await Promise.all([
+      const [cov, bench, mut, dudect] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
         fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
+        fetchJson(`/dudect/${sha}.json`).then(d => d || fetchJson('/dudect/latest.json')),
       ]);
 
       // Only re-render a section if the commit changed or the data
@@ -1728,6 +1835,21 @@
         mutMeta.textContent = '';
         mutEl.innerHTML = '<p class="empty">No mutation testing data for this commit.</p>';
         renderedMut = null;
+      }
+
+      const dudectSha = dudect && dudect.sha;
+      if (dudect && (shaChanged || dudectSha !== renderedDudect)) {
+        const r = dudect.results || [];
+        const fails = r.filter(x => x.status === 'fail').length;
+        dudectMeta.innerHTML = fails > 0
+          ? `<span style="color:var(--red)">${fails} fail</span> / ${r.length} tested`
+          : `${r.length} pass`;
+        dudectEl.innerHTML = renderDudectData(dudect);
+        renderedDudect = dudectSha;
+      } else if (!dudect && renderedDudect !== null) {
+        dudectMeta.textContent = '';
+        dudectEl.innerHTML = '<p class="empty">No constant-time testing data for this commit.</p>';
+        renderedDudect = null;
       }
 
       // Cross-analysis — needs at least coverage + one other source.
