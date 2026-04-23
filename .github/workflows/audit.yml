@@ -97,6 +97,51 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload unsafe unsafe.json "${{ github.sha }}"
 
+  panic-freedom:
+    name: Panic-freedom
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Count panic sites
+        run: |
+          cargo build --release
+          LIB=$(find target/release -maxdepth 1 -name 'libsqisign_selkie.rlib' | head -1)
+          if [ -z "$LIB" ]; then
+            LIB=$(find target/release/deps -name 'libsqisign_selkie-*.rlib' | head -1)
+          fi
+          BOUNDS=$(nm -C "$LIB" 2>/dev/null | grep -c 'panic_bounds_check' || echo 0)
+          ASSERTS=$(nm -C "$LIB" 2>/dev/null | grep -c 'assert_failed' || echo 0)
+          EXPECTS=$(nm -C "$LIB" 2>/dev/null | grep -c 'expect_failed' || echo 0)
+          UNWRAPS=$(nm -C "$LIB" 2>/dev/null | grep -c 'unwrap_failed' || echo 0)
+          PANIC_FMT=$(nm -C "$LIB" 2>/dev/null | grep -c 'panic_fmt' || echo 0)
+          TOTAL=$((BOUNDS + ASSERTS + EXPECTS + UNWRAPS + PANIC_FMT))
+          cat > panic.json <<JSONEOF
+          {
+            "sha": "${{ github.sha }}",
+            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "total": $TOTAL,
+            "bounds_check": $BOUNDS,
+            "assert": $ASSERTS,
+            "expect": $EXPECTS,
+            "unwrap": $UNWRAPS,
+            "panic_fmt": $PANIC_FMT
+          }
+          JSONEOF
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload panic panic.json "${{ github.sha }}"
+
   binary-size:
     name: Binary & stack size
     runs-on: ubuntu-24.04
