@@ -1,0 +1,48 @@
+name: Instruction count
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  iai:
+    name: iai-callgrind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: iai
+
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: iai-callgrind-runner
+
+      - name: Run iai-callgrind
+        run: |
+          cargo bench --bench iai --features expose-internals 2>&1 | tee iai-output.txt
+
+      - name: Generate JSON
+        run: |
+          rustc -O .github/scripts/iai-to-json.rs -o /tmp/iai-to-json
+          /tmp/iai-to-json iai-output.txt "${{ github.sha }}" > iai.json
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Upload to CI site
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload iai iai.json "${{ github.sha }}"
