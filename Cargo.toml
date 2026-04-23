@@ -31,6 +31,7 @@ zeroize = { version = "1", default-features = false, features = ["zeroize_derive
 divan = "0.1"
 dudect-bencher = "0.7"
 iai-callgrind = "0.16"
+dhat = "0.3"
 tacet = "0.4"
 mutants = "0.0.4"  # #[mutants::skip] attribute for cargo-mutants
 serde = { version = "1", features = ["derive"] }
