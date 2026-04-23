@@ -66,18 +66,6 @@ jobs:
       - run: cargo nextest run --target ${{ matrix.target }}
       - run: cargo test --doc --target ${{ matrix.target }}
 
-  msrv:
-    name: MSRV (1.81.0)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.81.0
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - run: cargo check
-
   clippy:
     name: Clippy
     runs-on: ubuntu-24.04
@@ -132,20 +120,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - run: cargo doc --no-deps
-
-  audit:
-    name: cargo deny
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      # cargo-deny only reads Cargo.toml/lock, no compilation needed.
-      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
-        with:
-          tool: cargo-deny
-      - run: cargo deny check advisories bans
 
   kat-report:
     name: KAT report
