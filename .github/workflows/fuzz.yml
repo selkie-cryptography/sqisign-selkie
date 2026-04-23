@@ -1,0 +1,122 @@
+name: Fuzzing
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"   # weekly, Monday 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_signature_parse
+          - fuzz_verifying_key_parse
+          - fuzz_signing_key_parse
+          - fuzz_verify
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: fuzz-${{ matrix.target }}
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Run fuzzer (5 min)
+        run: |
+          cd fuzz
+          timeout 300 cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=300 2>&1 | tee fuzz-output.txt || true
+
+      - name: Collect results
+        run: |
+          TARGET="${{ matrix.target }}"
+          RUNS=$(grep -oP 'stat::number_of_executed_units:\s*\K\d+' fuzz/fuzz-output.txt || echo 0)
+          CRASHES=$(ls fuzz/artifacts/$TARGET/ 2>/dev/null | wc -l | tr -d ' ')
+          CORPUS=$(ls fuzz/corpus/$TARGET/ 2>/dev/null | wc -l | tr -d ' ')
+          STATUS=$([[ $CRASHES -eq 0 ]] && echo pass || echo fail)
+          cat > fuzz-result.json <<EOF
+          {"target": "$TARGET", "status": "$STATUS", "runs": $RUNS, "crashes": $CRASHES, "corpus_size": $CORPUS}
+          EOF
+
+      - name: Upload crash artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/
+            fuzz-result.json
+
+  report:
+    name: Upload fuzz report
+    needs: fuzz
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fuzz-*
+          path: results
+
+      - name: Merge results
+        run: |
+          # Combine per-target results into one JSON.
+          TARGETS=$(find results -name fuzz-result.json)
+          PASS=0; FAIL=0; TOTAL_RUNS=0; TOTAL_CORPUS=0; TOTAL_CRASHES=0
+          DETAILS="["
+          FIRST=true
+          for f in $TARGETS; do
+            if [ "$FIRST" = true ]; then FIRST=false; else DETAILS="$DETAILS,"; fi
+            DETAILS="$DETAILS$(cat "$f")"
+            S=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('status','?'))")
+            R=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('runs',0))")
+            C=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('crashes',0))")
+            CS=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('corpus_size',0))")
+            TOTAL_RUNS=$((TOTAL_RUNS + R))
+            TOTAL_CRASHES=$((TOTAL_CRASHES + C))
+            TOTAL_CORPUS=$((TOTAL_CORPUS + CS))
+            if [ "$S" = "fail" ]; then FAIL=$((FAIL+1)); else PASS=$((PASS+1)); fi
+          done
+          DETAILS="$DETAILS]"
+          STATUS=$([[ $FAIL -eq 0 ]] && echo pass || echo fail)
+          cat > fuzz.json <<EOF
+          {
+            "sha": "${{ github.sha }}",
+            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "status": "$STATUS",
+            "pass": $PASS,
+            "fail": $FAIL,
+            "total_runs": $TOTAL_RUNS,
+            "total_crashes": $TOTAL_CRASHES,
+            "total_corpus": $TOTAL_CORPUS,
+            "targets": $DETAILS
+          }
+          EOF
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Upload to CI site
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload fuzz fuzz.json "${{ github.sha }}"
