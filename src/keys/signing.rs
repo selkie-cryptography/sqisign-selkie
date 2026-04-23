@@ -564,18 +564,28 @@ impl SigningKey {
                 rng,
             ) {
                 Some(i) => i,
-                None => continue,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: random_prime_norm_wide None");
+                    continue;
+                }
             };
 
             // Lines 5–6: RandomEquivalentPrimeIdeal.
             if !i_com.reduce_to_prime_norm::<30, _>(rng) {
+                #[cfg(test)]
+                eprintln!("[sign {_iter}] DROP: reduce_to_prime_norm false");
                 continue;
             }
 
             // Narrow to LeftIdeal<4> for to_isogeny.
             let i_com_narrow = match i_com.narrow() {
                 Some(i) => i,
-                None => continue,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: i_com.narrow None");
+                    continue;
+                }
             };
 
             // Line 7: E_com, P_com, Q_com ← IdealToIsogeny(I_com)
@@ -587,7 +597,11 @@ impl SigningKey {
                     eprintln!("[sign {_iter}] commitment OK ({:?})", _iter_start.elapsed());
                     r
                 }
-                None => continue,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: commitment i_com_narrow.to_isogeny None");
+                    continue;
+                }
             };
 
             // --- Challenge (line 10) ---
@@ -607,7 +621,11 @@ impl SigningKey {
             let i_chl_prime =
                 match TorsionBasis::kernel_to_ideal(&c1_big, &c2_big, TorsionExponent::FULL) {
                     Some(ideal) => ideal,
-                    None => continue,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!("[sign {_iter}] DROP: kernel_to_ideal None");
+                        continue;
+                    }
                 };
 
             const N_RESP: usize = 30;
@@ -657,7 +675,14 @@ impl SigningKey {
             // elimination may grow them. W=120 is the safe Hadamard
             // bound but 4x slower. W=60 is adequate in practice —
             // validate by completing a full signing round-trip.
-            let i_chl_sk = i_chl_lat.intersection_via_kernel::<80>(&i_sk_lat);
+            let i_chl_sk = match i_chl_lat.intersection_via_kernel::<150>(&i_sk_lat) {
+                Some(l) => l,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: intersection_via_kernel 1 None");
+                    continue;
+                }
+            };
             #[cfg(test)]
             eprintln!(
                 "[sign {_iter}] intersection 1: {:?} (cumul {:?})",
@@ -671,7 +696,14 @@ impl SigningKey {
 
             #[cfg(test)]
             let _t_int2 = std::time::Instant::now();
-            let intersection = i_chl_sk_lat.intersection_via_kernel::<80>(&i_com_conj_lat);
+            let intersection = match i_chl_sk_lat.intersection_via_kernel::<150>(&i_com_conj_lat) {
+                Some(l) => l,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: intersection_via_kernel 2 None");
+                    continue;
+                }
+            };
             #[cfg(test)]
             eprintln!(
                 "[sign {_iter}] intersection 2: {:?} (cumul {:?})",
@@ -680,11 +712,43 @@ impl SigningKey {
             );
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
 
+            #[cfg(test)]
+            {
+                let cols = intersection_lat.basis().columns();
+                eprintln!(
+                    "[sign {_iter}] intersection_lat: denom bits={}, col bits=[{},{},{},{}]/[{},{},{},{}]/[{},{},{},{}]/[{},{},{},{}]",
+                    intersection_lat.denom().bitsize(),
+                    cols[0][0].bitsize(),
+                    cols[0][1].bitsize(),
+                    cols[0][2].bitsize(),
+                    cols[0][3].bitsize(),
+                    cols[1][0].bitsize(),
+                    cols[1][1].bitsize(),
+                    cols[1][2].bitsize(),
+                    cols[1][3].bitsize(),
+                    cols[2][0].bitsize(),
+                    cols[2][1].bitsize(),
+                    cols[2][2].bitsize(),
+                    cols[2][3].bitsize(),
+                    cols[3][0].bitsize(),
+                    cols[3][1].bitsize(),
+                    cols[3][2].bitsize(),
+                    cols[3][3].bitsize(),
+                );
+            }
+
             // Radius: D_rsp · D²_mix · 2^{f+1}, computed at BigInt<22>.
             // D_rsp = 2^e_rsp.
             let d_mix_22 = D_MIX.widen::<N_RESP>();
             let d_mix_sq = d_mix_22.ct_mul(&d_mix_22);
             let radius = d_mix_sq.shl(e_rsp + f + 1);
+            #[cfg(test)]
+            eprintln!(
+                "[sign {_iter}] radius: bits={}, d_mix_sq bits={}, shift={}",
+                radius.bitsize(),
+                d_mix_sq.bitsize(),
+                e_rsp + f + 1,
+            );
 
             // The intersection lattice has entries up to ~1920 bits
             // (BigInt<30>). The gram computation squares these:
@@ -701,13 +765,26 @@ impl SigningKey {
                     );
                     a
                 }
-                None => continue,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: sample_from_ball None");
+                    continue;
+                }
             };
 
             // Line 15: α_rsp, n_bt ← ComputeBacktrackingAndNormalize(α_rsp).
             // Keep `alpha_rsp_w` at `Element<N_RESP>` for the wide
             // degree-computation and ideal construction below.
             let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
+
+            // The C reference primitivizes `α_rsp` fully here — not
+            // just the 2-adic content extracted above — so any odd
+            // integer factor `g` is divided out before constructing
+            // the response ideal. Without this step, the declared
+            // ideal norm (`N(I_com) · q_rsp`) overstates the true
+            // covolume-derived norm by `g²` and downstream
+            // `smallest_equiv_narrow` rejects every iteration.
+            let (alpha_rsp_w, _primitive_odd) = alpha_rsp_w.make_primitive_odd();
             let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
 
             // Lines 16–20: degree computations.
@@ -735,7 +812,11 @@ impl SigningKey {
             // spare. Narrow from the wide working width.
             let q_rsp: BigInt<4> = match d_rsp_shifted.narrow_to::<4>() {
                 Some(q) => q,
-                None => continue,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: q_rsp narrow_to::<4>() None");
+                    continue;
+                }
             };
             let e_rsp_prime = e_rsp - r_rsp_val - n_bt;
 
@@ -762,14 +843,30 @@ impl SigningKey {
             let q_rsp_wide: BigInt<N_RESP> = q_rsp.widen();
             let i_com_norm_w: BigInt<N_RESP> = i_com.norm().widen();
             let i_com_rsp_norm_w = i_com_norm_w.ct_mul(&q_rsp_wide);
-            let i_com_rsp_w = match LeftIdeal::<30>::from_generator_mod_hnf(
+            let mut i_com_rsp_w = match LeftIdeal::<30>::from_generator_mod_hnf(
                 &alpha_rsp_conj,
                 &i_com_rsp_norm_w,
                 o0_w.order(),
             ) {
                 Some(i) => i,
-                None => continue,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: from_generator_mod_hnf None");
+                    continue;
+                }
             };
+            // Match the C ref (`quat_lideal_norm`): derive the stored
+            // norm from the lattice covolume rather than trusting the
+            // passed-in `i_com_rsp_norm_w`. With only `α` primitive
+            // in the 2-adic sense, the true `n(I)` can differ from
+            // `N(I_com) · q_rsp` by odd content in `α`, and downstream
+            // `smallest_equiv_narrow` rejects valid δ when `self.norm`
+            // is inflated.
+            if i_com_rsp_w.refresh_norm::<120>().is_none() {
+                #[cfg(test)]
+                eprintln!("[sign {_iter}] DROP: refresh_norm None");
+                continue;
+            }
             // The response ideal has norm ~2^257 which may exceed
             // BigInt<4>. Always reduce via `smallest_equiv_narrow`
             // to ensure the norm is small enough that downstream
@@ -783,7 +880,11 @@ impl SigningKey {
             // so the product fits in BigInt<4>.
             let i_com_rsp = match i_com_rsp_w.smallest_equiv_narrow::<60>() {
                 Some(i) => i,
-                None => continue,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: smallest_equiv_narrow::<60> None");
+                    continue;
+                }
             };
 
             // Lines 21–33: compute response isogeny
@@ -802,7 +903,11 @@ impl SigningKey {
                 let aux_norm = BigInt::<4>::ONE.shl(e_rsp_prime).ct_sub(&q_rsp);
                 let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0]) {
                     Some(i) => i,
-                    None => continue,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!("[sign {_iter}] DROP: i_aux random_norm None");
+                        continue;
+                    }
                 };
 
                 // Line 24: E_aux, P_aux, Q_aux ← IdealToIsogeny(I_{com,rsp} ∩ I_aux)
@@ -810,10 +915,36 @@ impl SigningKey {
                 // The intersection of two O₀-ideals with coprime norms N₁, N₂
                 // is an O₀-ideal of norm N₁·N₂. `i_com_rsp.norm()` is the
                 // narrowed prime norm after reduction.
-                let inter_lattice = i_com_rsp.lattice().intersection(i_aux.lattice());
+                //
+                // Use `intersection_via_kernel` instead of the dual-sum-dual
+                // `intersection`: the latter cubes entry sizes through 3×3
+                // subdeterminants of the adjugate, and at `BigInt<4>` the
+                // ~126-bit basis entries would overflow after a single
+                // adjugate pass (~378 bits > 256). `intersection_via_kernel`
+                // keeps entry growth linear and returns `None` explicitly on
+                // narrow-to failure.
+                let i_com_rsp_lat: Lattice<4> = (*i_com_rsp.lattice()).into();
+                let i_aux_lat: Lattice<4> = (*i_aux.lattice()).into();
+                let inter_lattice = match i_com_rsp_lat.intersection_via_kernel::<20>(&i_aux_lat) {
+                    Some(h) => h,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!("[sign {_iter}] DROP: i_com_rsp ∩ i_aux via_kernel None");
+                        continue;
+                    }
+                };
+                // Use `i_com_rsp.norm() · i_aux.norm()` as a provisional
+                // norm; `refresh_norm` below replaces it with the true
+                // covolume-derived `n(I)` (they differ if the two norms
+                // share any factor).
                 let inter_norm = i_com_rsp.norm().ct_mul(i_aux.norm());
-                let i_inter =
+                let mut i_inter =
                     LeftIdeal::from_parts(inter_lattice, inter_norm, *EXTREMAL_ORDERS[0].order());
+                if i_inter.refresh_norm::<20>().is_none() {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: i_inter.refresh_norm None");
+                    continue;
+                }
                 #[cfg(test)]
                 eprintln!(
                     "[sign {_iter}] response to_isogeny... (cumul {:?})",
@@ -828,7 +959,11 @@ impl SigningKey {
                         );
                         r
                     }
-                    None => continue,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!("[sign {_iter}] DROP: i_inter.to_isogeny() None");
+                        continue;
+                    }
                 };
 
                 let split = match split_auxiliary_isogeny(
@@ -843,7 +978,11 @@ impl SigningKey {
                     r_rsp,
                 ) {
                     Some(r) => r,
-                    None => continue,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!("[sign {_iter}] DROP: split_auxiliary_isogeny None");
+                        continue;
+                    }
                 };
                 curve_aux = split.0;
                 p_aux = split.1;
@@ -855,7 +994,13 @@ impl SigningKey {
                 // Lines 28–31: direct path
                 let (ec, pc, qc) = match i_com_narrow.to_isogeny() {
                     Some(r) => r,
-                    None => continue,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!(
+                            "[sign {_iter}] DROP: direct-path i_com_narrow.to_isogeny() None"
+                        );
+                        continue;
+                    }
                 };
                 e_chl = ec;
                 p_chl = pc;
@@ -886,7 +1031,11 @@ impl SigningKey {
                 );
                 let alpha_narrow = match reduced_w.narrow_to::<4>() {
                     Some(a) => a,
-                    None => continue,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!("[sign {_iter}] DROP: reduced_w.narrow_to::<4>() None");
+                        continue;
+                    }
                 };
                 let (ec, pc, qc) = match deuring::compute_even_response(
                     &e_chl,
@@ -897,7 +1046,11 @@ impl SigningKey {
                     r_rsp,
                 ) {
                     Some(r) => r,
-                    None => continue,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!("[sign {_iter}] DROP: compute_even_response None");
+                        continue;
+                    }
                 };
                 e_chl = ec;
                 p_chl = pc;
@@ -908,7 +1061,11 @@ impl SigningKey {
             let (e_chl_final, p_chl_final, q_chl_final) =
                 match compute_challenge_isogeny(&basis_pk, &chl, &e_chl, &p_chl, &q_chl, n_bt_te) {
                     Some(r) => r,
-                    None => continue,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!("[sign {_iter}] DROP: compute_challenge_isogeny None");
+                        continue;
+                    }
                 };
 
             // Line 37: SetChangeOfBasisMatrix (Algorithm 4.8, inlined).
