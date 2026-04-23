@@ -1744,8 +1744,25 @@
       return `${(ns / u.divisor).toFixed(u.decimals)} ${u.label}`;
     }
 
-    function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData) {
+    function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData) {
       let html = '<div class="audit-grid">';
+
+      // Panic-freedom
+      if (panicData) {
+        const color = panicData.total === 0 ? 'var(--green)' : panicData.total <= 10 ? 'var(--yellow)' : 'var(--red)';
+        const breakdown = [
+          panicData.bounds_check > 0 ? `bounds:${panicData.bounds_check}` : '',
+          panicData.expect > 0 ? `expect:${panicData.expect}` : '',
+          panicData.assert > 0 ? `assert:${panicData.assert}` : '',
+          panicData.unwrap > 0 ? `unwrap:${panicData.unwrap}` : '',
+          panicData.panic_fmt > 0 ? `panic:${panicData.panic_fmt}` : '',
+        ].filter(Boolean).join(', ');
+        html += `<div class="audit-badge">
+          <div class="badge-status" style="color:${color}">${panicData.total}</div>
+          <div class="badge-label">panic sites</div>
+          <div class="badge-detail">${breakdown || 'none'}</div>
+        </div>`;
+      }
 
       // cargo deny
       if (deny) {
@@ -2155,7 +2172,7 @@
       const dudectMeta = document.getElementById('dudect-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData] = await Promise.all([
+      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
         fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
@@ -2165,6 +2182,7 @@
         fetchJson(`/unsafe/${sha}.json`).then(d => d || fetchJson('/unsafe/latest.json')),
         fetchJson(`/size/${sha}.json`).then(d => d || fetchJson('/size/latest.json')),
         fetchJson(`/docs/${sha}.json`).then(d => d || fetchJson('/docs/latest.json')),
+        fetchJson(`/panic/${sha}.json`).then(d => d || fetchJson('/panic/latest.json')),
         fetchJson(`/msrv/${sha}.json`).then(d => d || fetchJson('/msrv/latest.json')),
       ]);
 
@@ -2236,8 +2254,8 @@
 
       // Audits.
       const auditsEl = document.getElementById('audits-content');
-      if (deny || unsafeData || sizeData || docsData || msrvData) {
-        auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData);
+      if (deny || unsafeData || sizeData || docsData || msrvData || panicData) {
+        auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData);
       } else {
         auditsEl.innerHTML = '<p class="empty">No audit data yet.</p>';
       }
