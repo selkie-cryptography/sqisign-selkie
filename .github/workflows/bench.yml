@@ -35,8 +35,20 @@ jobs:
       - name: Run benchmarks
         run: |
           rustc -O .github/scripts/divan-to-json.rs -o /tmp/divan-to-json
-          cargo bench --features expose-internals -- --color never 2>&1 | \
-            /tmp/divan-to-json > bench-output.json
+          # Run each bench binary with a timeout so slow ones don't
+          # block fast ones. Collect all output then parse.
+          cargo build --release --benches --features expose-internals
+          : > bench-raw.txt
+          for bin in ./target/release/deps/*-????????????????; do
+            [ -x "$bin" ] || continue
+            # Skip non-bench binaries (test harnesses, build scripts).
+            case "$(basename "$bin")" in
+              dudect-*|tacet-*) continue ;; # CT benches, not perf
+            esac
+            echo "=== Running $(basename "$bin") ===" >&2
+            timeout 300 "$bin" --color never 2>&1 >> bench-raw.txt || true
+          done
+          /tmp/divan-to-json < bench-raw.txt > bench-output.json
 
       # On push to main: upload results to Fly CI site.
       - name: Generate site JSON
