@@ -85,6 +85,14 @@ name = "tacet"
 harness = false
 required-features = ["expose-internals"]
 
+[[test]]
+name = "ctgrind"
+required-features = ["expose-internals"]
+
+[[test]]
+name = "alloc_budget"
+required-features = ["expose-internals"]
+
 [[bench]]
 name = "iai"
 harness = false

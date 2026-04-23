@@ -635,7 +635,15 @@ impl<const N: usize> Lattice<N> {
     /// [Alg. 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
     /// [Alg. 4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.3
     pub fn sample_from_ball<const W: usize>(&self, radius: &BigInt<N>) -> Option<Element<N>> {
-        // Widen columns to BigInt<W> for intermediate products.
+        // Widen columns to BigInt<W>, then LLL-reduce via
+        // `NrdBasis::l2_reduce`. Without reduction, `gram[i][i]`
+        // reflects the raw HNF basis whose diagonals can be as
+        // large as the covolume `n(I)²`, far above the shortest-
+        // vector norm — making `sqrt(rad / gram[i][i])` round to
+        // zero for any reasonable radius (the C-ref
+        // `(2^e_rsp − 1) · lattice_content` bound hits this
+        // pathology immediately). After `l2_reduce`, the basis
+        // vectors have `nrd ≈ n(I)` and the box is usable.
         let cols_n = self.basis.columns();
         let cols_w: [Vector<W>; 4] = core::array::from_fn(|i| {
             Vector::new(
@@ -645,8 +653,9 @@ impl<const N: usize> Lattice<N> {
                 cols_n[i][3].widen::<W>(),
             )
         });
-        let nrd_basis = NrdBasis::new(cols_w);
-        let gram = nrd_basis.gram();
+        let nrd_basis = NrdBasis::new(cols_w).l2_reduce();
+        let gram = *nrd_basis.gram();
+        let cols_w: [Vector<W>; 4] = *nrd_basis.cols();
 
         // Adjust radius: rad = radius * denom² * 2
         // (Gram matrix corresponds to twice the reduced norm)
@@ -1327,11 +1336,20 @@ impl<const N: usize> LeftIdeal<N> {
         // Verify perfect square: n_sqrt² == index.
         if n_sqrt.ct_mul(&n_sqrt) != index {
             #[cfg(test)]
-            eprintln!(
-                "[refresh_norm] index is not a perfect square: index bits={}, sqrt_floor bits={}",
-                index.bitsize(),
-                n_sqrt.bitsize(),
-            );
+            {
+                let sqr = n_sqrt.ct_mul(&n_sqrt);
+                let diff = index.ct_sub(&sqr);
+                eprintln!(
+                    "[refresh_norm] index is not a perfect square: index bits={}, sqrt_floor bits={}, index-sqrt² bits={}, det_i bits={}, det_o bits={}, i_denom bits={}, o_denom bits={}",
+                    index.bitsize(),
+                    n_sqrt.bitsize(),
+                    diff.bitsize(),
+                    det_i.bitsize(),
+                    det_o.bitsize(),
+                    i_denom_w.bitsize(),
+                    o_denom_w.bitsize(),
+                );
+            }
             return None;
         }
 
@@ -1980,7 +1998,77 @@ impl LeftIdeal<4> {
                 Denominator::from_bigint_unchecked(denom_4),
             );
 
-            return Some(Self::new(&gamma_beta, n, order.order()));
+            // Re-check the ideal-norm coprimality post-reduction.
+            //
+            // `γβ` had `nrd = m · N · nrd(β)` with `gcd(m · nrd(β),
+            // N) = 1` by the earlier check, so `gcd(nrd(γβ)/N, N) =
+            // 1` held for the *un-reduced* product. Reducing each
+            // coordinate mod `N·denom` preserves `N | nrd(α)` but
+            // shifts `nrd(α)/N` by an arbitrary integer `M` —
+            // `new_nrd/N = old_nrd/N + M`. For composite `N`, `M`
+            // has ~`Σ 1/p_i` probability of landing `new_nrd/N`
+            // into a residue with a common factor with some `p_i |
+            // N`. When that happens the constructed lattice is a
+            // valid ideal of norm `N / gcd`, not `N`, and the
+            // stored norm `self.norm = N` is wrong. Verify the
+            // invariant holds before committing; otherwise
+            // resample.
+            let (nrd_num_4, nrd_den_4) = gamma_beta.norm();
+            let (nrd_val_4, rem_nrd) = nrd_num_4.div_rem(&nrd_den_4);
+            if !bool::from(rem_nrd.is_zero()) {
+                continue;
+            }
+            // `nrd(α) ≤ 4·(N·denom)² + p·... ≲ 2^{260}`, so `nrd/N ≤
+            // 2^{256}` — within `BigInt<8>`'s 512-bit budget.
+            let (nrd_over_n, rem_n) = nrd_val_4.div_rem(&n_wide);
+            if !bool::from(rem_n.is_zero()) {
+                // Should not occur — `mod-reduction` preserves `N |
+                // nrd`. Skip defensively.
+                continue;
+            }
+            let coprime_check: BigInt<8> = nrd_over_n.gcd(&n_wide);
+            if coprime_check != BigInt::<8>::ONE {
+                continue;
+            }
+
+            // Verify the constructed lattice really is an
+            // `O_0`-ideal of norm `N`: every basis column of the
+            // HNF must have `nrd` divisible by `N · denom²`. This
+            // is a stronger invariant than the coprimality check
+            // above — certain `α` pass `gcd(nrd(α)/N, N) = 1` yet
+            // produce an HNF whose (1,1)-block or similar row
+            // slots a lattice element outside `O_0·α + O_0·N`
+            // (probably due to width/denom handling in
+            // `LeftIdeal::<4>::new`'s `sum_mod<16>`). Until the
+            // underlying construction is fully bulletproof for
+            // every `α`, re-verify each sample and resample on
+            // failure.
+            let candidate = Self::new(&gamma_beta, n, order.order());
+            let cand_lat: Lattice<4> = (*candidate.lattice()).into();
+            let cand_denom = *cand_lat.denom();
+            let cand_denom_sq = cand_denom.ct_mul(&cand_denom);
+            let n_times_denom_sq = n.ct_mul(&cand_denom_sq);
+            let n_times_denom_sq_8: BigInt<8> = n_times_denom_sq.widen();
+            let p4 = crate::quaternions::precomputed::P;
+            let mut valid = true;
+            for j in 0..4 {
+                let col = cand_lat.basis().columns()[j];
+                let nrd_col_4 = col[0]
+                    .ct_mul(&col[0])
+                    .ct_add(&col[1].ct_mul(&col[1]))
+                    .ct_add(&p4.ct_mul(&col[2].ct_mul(&col[2]).ct_add(&col[3].ct_mul(&col[3]))));
+                let nrd_col_8: BigInt<8> = nrd_col_4.widen();
+                let (_, rem_col) = nrd_col_8.div_rem(&n_times_denom_sq_8);
+                if !bool::from(rem_col.is_zero()) {
+                    valid = false;
+                    break;
+                }
+            }
+            if !valid {
+                continue;
+            }
+
+            return Some(candidate);
         }
 
         None
