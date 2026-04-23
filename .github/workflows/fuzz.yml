@@ -46,7 +46,8 @@ jobs:
       - name: Collect results
         run: |
           TARGET="${{ matrix.target }}"
-          RUNS=$(grep -oP 'stat::number_of_executed_units:\s*\K\d+' fuzz/fuzz-output.txt || echo 0)
+          RUNS=$(grep -oP 'stat::number_of_executed_units:\s*\K\d+' fuzz/fuzz-output.txt || true)
+          RUNS=${RUNS:-0}
           CRASHES=$(ls fuzz/artifacts/$TARGET/ 2>/dev/null | wc -l | tr -d ' ')
           CORPUS=$(ls fuzz/corpus/$TARGET/ 2>/dev/null | wc -l | tr -d ' ')
           STATUS=$([[ $CRASHES -eq 0 ]] && echo pass || echo fail)

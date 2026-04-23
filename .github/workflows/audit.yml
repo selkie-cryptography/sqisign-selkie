@@ -50,30 +50,8 @@ jobs:
 
       - name: Count unsafe
         run: |
-          # Simple grep-based count. Counts `unsafe` keyword occurrences
-          # in src/ excluding test modules and comments.
-          TOTAL=$(grep -rn 'unsafe' src/ --include='*.rs' | grep -v '//.*unsafe' | grep -v '#\[cfg(test)\]' | grep -v 'mod tests' | wc -l | tr -d ' ')
-          # Per-module breakdown.
-          MODULES=$(find src/ -maxdepth 1 -type d | tail -n +2 | sort)
-          echo "{" > unsafe.json
-          echo "  \"sha\": \"${{ github.sha }}\"," >> unsafe.json
-          echo "  \"updated_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"," >> unsafe.json
-          echo "  \"total\": $TOTAL," >> unsafe.json
-          echo "  \"modules\": [" >> unsafe.json
-          FIRST=true
-          for mod in $MODULES; do
-            NAME=$(basename "$mod")
-            COUNT=$(grep -rn 'unsafe' "$mod" --include='*.rs' | grep -v '//.*unsafe' | grep -v 'mod tests' | wc -l | tr -d ' ')
-            if [ "$FIRST" = true ]; then FIRST=false; else echo "," >> unsafe.json; fi
-            printf '    {"name": "%s", "count": %s}' "$NAME" "$COUNT" >> unsafe.json
-          done
-          # Also count root files.
-          ROOT_COUNT=$(grep -n 'unsafe' src/*.rs 2>/dev/null | grep -v '//.*unsafe' | wc -l | tr -d ' ')
-          echo "," >> unsafe.json
-          printf '    {"name": "root", "count": %s}' "$ROOT_COUNT" >> unsafe.json
-          echo "" >> unsafe.json
-          echo "  ]" >> unsafe.json
-          echo "}" >> unsafe.json
+          rustc -O .github/scripts/unsafe-count.rs -o /tmp/unsafe-count
+          /tmp/unsafe-count "${{ github.sha }}" > unsafe.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -246,16 +224,8 @@ jobs:
 
       - name: Check docs
         run: |
-          WARNINGS=$(cargo doc --no-deps 2>&1 | grep -ci 'warning' || echo 0)
-          STATUS=$([[ $WARNINGS -eq 0 ]] && echo pass || echo warn)
-          cat > docs.json <<JSONEOF
-          {
-            "sha": "${{ github.sha }}",
-            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "status": "$STATUS",
-            "warnings": $WARNINGS
-          }
-          JSONEOF
+          rustc -O .github/scripts/docs-report.rs -o /tmp/docs-report
+          /tmp/docs-report "${{ github.sha }}" > docs.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -278,21 +248,8 @@ jobs:
 
       - name: Check MSRV
         run: |
-          if cargo check 2>&1 | tee msrv-output.txt; then
-            STATUS=pass
-          else
-            STATUS=fail
-          fi
-          ERRS=$(grep -ci 'error' msrv-output.txt || echo 0)
-          cat > msrv.json <<JSONEOF
-          {
-            "sha": "${{ github.sha }}",
-            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "msrv": "1.81.0",
-            "status": "$STATUS",
-            "errors": $ERRS
-          }
-          JSONEOF
+          rustc -O .github/scripts/msrv-report.rs -o /tmp/msrv-report
+          /tmp/msrv-report "${{ github.sha }}" "1.81.0" > msrv.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -340,17 +297,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y valgrind
       - name: Run ctgrind tests under Valgrind
         run: |
-          cargo test --test ctgrind --features expose-internals --no-run
-          BIN=$(find target/debug/deps -name 'ctgrind-*' -executable | head -1)
-          valgrind --tool=memcheck --error-exitcode=0 \
-            --xml=yes --xml-file=ctgrind-valgrind.xml \
-            "$BIN" --test-threads=1 2>&1 | tee ctgrind-output.txt || true
-          ERRORS=$(grep -c '<error>' ctgrind-valgrind.xml 2>/dev/null || echo 0)
-          TESTS=$(grep -c 'test .* ok\|test .* FAILED' ctgrind-output.txt || echo 0)
-          STATUS=$([[ "$ERRORS" -eq 0 ]] && echo pass || echo fail)
-          cat > ctgrind.json <<EOF
-          {"sha":"${{ github.sha }}","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","status":"$STATUS","errors":$ERRORS,"tests":$TESTS}
-          EOF
+          rustc -O .github/scripts/ctgrind-report.rs -o /tmp/ctgrind-report
+          /tmp/ctgrind-report "${{ github.sha }}" > ctgrind.json
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Upload
