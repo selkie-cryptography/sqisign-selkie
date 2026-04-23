@@ -673,7 +673,7 @@
     .dudect-pass { color: var(--green); }
     .dudect-fail { color: var(--red); font-weight: 700; }
 
-    /* Analysis section */
+    /* Risks section */
     .analysis-grid {
       display: flex;
       gap: 16px;
@@ -858,7 +858,7 @@
 
       <section class="section" id="analysis-section" style="display:none">
         <div class="section__header">
-          <h2 class="section__title">Analysis<span class="help-icon">?<span class="tooltip">
+          <h2 class="section__title">Risks<span class="help-icon">?<span class="tooltip">
             <p style="margin-bottom:8px">Cross-references coverage, mutation testing, and benchmark data to surface actionable insights.</p>
             <dl>
             <dt>Untested hot paths</dt><dd>Functions with high hit counts but surviving mutants — code that runs a lot but isn't verified.</dd>
@@ -1497,7 +1497,7 @@
 
     // --- Cross-analysis ---
 
-    function renderAnalysis(cov, mut, bench) {
+    function renderRisks(cov, mut, bench) {
       const section = document.getElementById('analysis-section');
       const el = document.getElementById('analysis-content');
 
@@ -1853,7 +1853,7 @@
       }
 
       // Cross-analysis — needs at least coverage + one other source.
-      renderAnalysis(cov, mut, bench);
+      renderRisks(cov, mut, bench);
     }
 
     // --- Polling ---
