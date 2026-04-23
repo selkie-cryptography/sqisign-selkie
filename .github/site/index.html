@@ -673,6 +673,70 @@
     .dudect-pass { color: var(--green); }
     .dudect-fail { color: var(--red); font-weight: 700; }
 
+    /* KAT section */
+    .kat-suites {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .kat-suite {
+      flex: 1;
+      min-width: 250px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+    }
+
+    .kat-suite h4 {
+      font-size: 13px;
+      font-weight: 900;
+      margin-bottom: 8px;
+    }
+
+    .kat-progress {
+      height: 8px;
+      border-radius: 4px;
+      background: var(--bar-bg);
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .kat-progress span {
+      display: block;
+      height: 100%;
+      border-radius: 4px;
+    }
+
+    .kat-stats {
+      display: flex;
+      gap: 16px;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .kat-failures {
+      margin-top: 12px;
+      font-size: 12px;
+    }
+
+    .kat-failures summary {
+      cursor: pointer;
+      color: var(--red);
+      font-weight: 600;
+    }
+
+    .kat-failures ul {
+      list-style: none;
+      padding: 4px 0 0 8px;
+      font-family: 'Inter', monospace;
+    }
+
+    .kat-failures li {
+      padding: 2px 0;
+      color: var(--fg-muted);
+    }
+
     /* Risks section */
     .analysis-grid {
       display: flex;
@@ -928,6 +992,21 @@
         </div>
         <div id="dudect-content">
           <p class="empty">No constant-time testing data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="kat-section">
+        <div class="section__header">
+          <h2 class="section__title">Test Vectors<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Compliance with known-answer test vectors and negative/robustness vectors.</p>
+            <dl>
+            <dt>KAT</dt><dd>100 vectors from the <a href="https://github.com/SQISign/the-sqisign/tree/91e9e464fe5400192d13e1f9240cbf180200a103" style="color:var(--fg)">C reference</a> (pinned commit). Tests sk parsing, pk matching, and C-ref signature verification. (<a href="https://github.com/selkie-cryptography/sqisign-selkie/blob/main/src/keys/kat_data.rs" style="color:var(--fg)">source</a>)</dd>
+            <dt>Wycheproof</dt><dd>Negative and robustness vectors in <a href="https://github.com/C2SP/wycheproof" style="color:var(--fg)">C2SP/wycheproof</a> JSON format. Verification rejects, sk parsing edge cases, and sign-then-verify contract. Not yet upstreamed. (<a href="https://github.com/selkie-cryptography/sqisign-selkie/tree/main/tests/vectors" style="color:var(--fg)">vectors</a>, <a href="https://github.com/selkie-cryptography/sqisign-selkie/blob/main/tests/wycheproof.rs" style="color:var(--fg)">runner</a>)</dd>
+            </dl></span></span></h2>
+          <span class="meta" id="kat-meta"></span>
+        </div>
+        <div id="kat-content">
+          <p class="empty">No test vector data yet.</p>
         </div>
       </section>
 
