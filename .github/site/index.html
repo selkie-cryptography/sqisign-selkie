@@ -1026,6 +1026,7 @@
       <a href="#dudect-section">Constant-Time</a>
       <a href="#kat-section">Test Vectors</a>
       <a href="#iai-section">Instructions</a>
+      <a href="#platform-section">Platforms</a>
       <a href="#audits-section">Audits</a>
       <a href="#fuzz-section">Fuzzing</a>
     </nav>
@@ -1119,6 +1120,18 @@
         </div>
         <div id="kat-content">
           <p class="empty">No test vector data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="platform-section">
+        <div class="section__header">
+          <h2 class="section__title">Platforms<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Test results across Rust Tier 1 targets. Tests run on native runners for 64-bit targets and cross-compile for 32-bit.</p>
+            </span></span></h2>
+          <span class="meta" id="platform-meta"></span>
+        </div>
+        <div id="platform-content">
+          <p class="empty">No platform data yet.</p>
         </div>
       </section>
 
@@ -1779,6 +1792,28 @@
       return `${(ns / u.divisor).toFixed(u.decimals)} ${u.label}`;
     }
 
+    function renderPlatformData(data) {
+      const platforms = data.platforms || [];
+      if (platforms.length === 0) return '<p class="empty">No results.</p>';
+
+      let html = '<div class="audit-grid">';
+      for (const p of platforms) {
+        const color = p.status === 'pass' ? 'var(--green)' : p.status === 'fail' ? 'var(--red)' : 'var(--fg-dim)';
+        const icon = p.status === 'pass' ? '\u2714' : p.status === 'fail' ? '\u2718' : '\u2014';
+        // Extract OS and arch from target triple.
+        const parts = p.target.split('-');
+        const arch = parts[0] || '';
+        const os = parts.length >= 3 ? parts[2] : '';
+        html += `<div class="audit-badge">
+          <div class="badge-status" style="color:${color}">${icon}</div>
+          <div class="badge-label">${esc(arch)}</div>
+          <div class="badge-detail">${esc(os)}</div>
+        </div>`;
+      }
+      html += '</div>';
+      return html;
+    }
+
     function renderIaiData(data) {
       const results = data.results || [];
       if (results.length === 0) return '<p class="empty">No results.</p>';
@@ -1839,7 +1874,7 @@
       return html;
     }
 
-    function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData) {
+    function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData) {
       let html = '<div class="audit-grid">';
 
       // Panic-freedom
@@ -1922,6 +1957,35 @@
           <div class="badge-status" style="color:${color}">${totalAllocs}</div>
           <div class="badge-label">heap allocs</div>
           <div class="badge-detail">${detail || 'none'}</div>
+        </div>`;
+      }
+
+      // Stack depth
+      if (stackData) {
+        const kb = (stackData.peak_stack_bytes / 1024).toFixed(1);
+        html += `<div class="audit-badge">
+          <div class="badge-status">${esc(kb)} KB</div>
+          <div class="badge-label">peak stack</div>
+        </div>`;
+      }
+
+      // Secret memory access (ctgrind)
+      if (ctgrindData) {
+        const color = ctgrindData.status === 'pass' ? 'var(--green)' : 'var(--red)';
+        const icon = ctgrindData.status === 'pass' ? '\u2714' : ctgrindData.errors;
+        html += `<div class="audit-badge">
+          <div class="badge-status" style="color:${color}">${icon}</div>
+          <div class="badge-label">memcheck</div>
+          <div class="badge-detail">${ctgrindData.tests || 0} tests, ${ctgrindData.errors || 0} errors</div>
+        </div>`;
+      }
+
+      // API surface
+      if (apiData) {
+        html += `<div class="audit-badge">
+          <div class="badge-status">${apiData.total || 0}</div>
+          <div class="badge-label">public API</div>
+          <div class="badge-detail">fn:${apiData.functions||0} struct:${apiData.structs||0} enum:${apiData.enums||0}</div>
         </div>`;
       }
 
@@ -2280,7 +2344,7 @@
       const dudectMeta = document.getElementById('dudect-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, iaiData, allocData] = await Promise.all([
+      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, iaiData, allocData, platformData, stackData, ctgrindData, apiData] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
         fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
@@ -2293,6 +2357,10 @@
         fetchJson(`/panic/${sha}.json`).then(d => d || fetchJson('/panic/latest.json')),
         fetchJson(`/fuzz/${sha}.json`).then(d => d || fetchJson('/fuzz/latest.json')),
         fetchJson(`/iai/${sha}.json`).then(d => d || fetchJson('/iai/latest.json')),
+        fetchJson(`/platform/${sha}.json`).then(d => d || fetchJson('/platform/latest.json')),
+        fetchJson(`/stack/${sha}.json`).then(d => d || fetchJson('/stack/latest.json')),
+        fetchJson(`/ctgrind/${sha}.json`).then(d => d || fetchJson('/ctgrind/latest.json')),
+        fetchJson(`/api/${sha}.json`).then(d => d || fetchJson('/api/latest.json')),
         fetchJson(`/alloc/${sha}.json`).then(d => d || fetchJson('/alloc/latest.json')),
         fetchJson(`/msrv/${sha}.json`).then(d => d || fetchJson('/msrv/latest.json')),
       ]);
@@ -2365,10 +2433,21 @@
 
       // Audits.
       const auditsEl = document.getElementById('audits-content');
-      if (deny || unsafeData || sizeData || docsData || msrvData || panicData || allocData) {
-        auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData);
+      if (deny || unsafeData || sizeData || docsData || msrvData || panicData || allocData || stackData || ctgrindData || apiData) {
+        auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData);
       } else {
         auditsEl.innerHTML = '<p class="empty">No audit data yet.</p>';
+      }
+
+      // Platforms.
+      const platformEl = document.getElementById('platform-content');
+      if (platformData) {
+        const p = platformData.platforms || [];
+        document.getElementById('platform-meta').innerHTML =
+          `${platformData.pass || 0}/${p.length} pass`;
+        platformEl.innerHTML = renderPlatformData(platformData);
+      } else {
+        platformEl.innerHTML = '<p class="empty">No platform data yet.</p>';
       }
 
       // Instruction count.

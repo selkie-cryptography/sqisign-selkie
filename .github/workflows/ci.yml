@@ -66,6 +66,28 @@ jobs:
       - run: cargo nextest run --target ${{ matrix.target }}
       - run: cargo test --doc --target ${{ matrix.target }}
 
+  platform-report:
+    name: Platform coverage
+    needs: test
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Generate platform report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rustc -O .github/scripts/platform-report.rs -o /tmp/platform-report
+          /tmp/platform-report "${{ github.run_id }}" "${{ github.sha }}" > platform.json
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Upload
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload platform platform.json "${{ github.sha }}"
+
   clippy:
     name: Clippy
     runs-on: ubuntu-24.04

@@ -28,22 +28,8 @@ jobs:
 
       - name: Run cargo deny
         run: |
-          cargo deny check advisories bans 2>&1 | tee deny-output.txt || true
-          # Generate JSON.
-          PASS=$(grep -c '^advisories ok\|^bans ok' deny-output.txt || echo 0)
-          WARNS=$(grep -ci 'warning' deny-output.txt || echo 0)
-          ERRS=$(grep -ci 'error' deny-output.txt || echo 0)
-          EXIT=$([[ $ERRS -eq 0 ]] && echo pass || echo fail)
-          cat > deny.json <<JSONEOF
-          {
-            "sha": "${{ github.sha }}",
-            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "status": "$EXIT",
-            "warnings": $WARNS,
-            "errors": $ERRS,
-            "output": $(python3 -c "import json,sys; print(json.dumps(open('deny-output.txt').read()[:4000]))")
-          }
-          JSONEOF
+          rustc -O .github/scripts/deny-report.rs -o /tmp/deny-report
+          /tmp/deny-report "${{ github.sha }}" > deny.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -120,6 +106,36 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload panic panic.json "${{ github.sha }}"
+
+  zeroize:
+    name: Zeroize verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Run zeroize test
+        run: |
+          cargo test --test zeroize --features expose-internals 2>&1 || true
+          # Wrap report with sha/timestamp.
+          if [ -f zeroize-report.json ]; then
+            BODY=$(cat zeroize-report.json)
+          else
+            BODY='{"total_bytes":0,"nonzero_after_drop":0,"status":"skip"}'
+          fi
+          echo "{\"sha\":\"${{ github.sha }}\",\"updated_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",$(echo "$BODY" | sed 's/^{//')}" > zeroize.json
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload zeroize zeroize.json "${{ github.sha }}"
 
   binary-size:
     name: Binary & stack size
@@ -285,3 +301,85 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload msrv msrv.json "${{ github.sha }}"
+
+  stack-depth:
+    name: Stack depth
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Measure stack depth
+        run: |
+          rustc -O .github/scripts/stack-depth.rs -o /tmp/stack-depth
+          /tmp/stack-depth "${{ github.sha }}" > stack.json
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload stack stack.json "${{ github.sha }}"
+
+  ctgrind:
+    name: Secret memory access
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Run ctgrind tests under Valgrind
+        run: |
+          cargo test --test ctgrind --features expose-internals --no-run
+          BIN=$(find target/debug/deps -name 'ctgrind-*' -executable | head -1)
+          valgrind --tool=memcheck --error-exitcode=0 \
+            --xml=yes --xml-file=ctgrind-valgrind.xml \
+            "$BIN" --test-threads=1 2>&1 | tee ctgrind-output.txt || true
+          ERRORS=$(grep -c '<error>' ctgrind-valgrind.xml 2>/dev/null || echo 0)
+          TESTS=$(grep -c 'test .* ok\|test .* FAILED' ctgrind-output.txt || echo 0)
+          STATUS=$([[ "$ERRORS" -eq 0 ]] && echo pass || echo fail)
+          cat > ctgrind.json <<EOF
+          {"sha":"${{ github.sha }}","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","status":"$STATUS","errors":$ERRORS,"tests":$TESTS}
+          EOF
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload ctgrind ctgrind.json "${{ github.sha }}"
+
+  api-surface:
+    name: API surface
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: cargo-public-api
+      - name: Capture API surface
+        run: |
+          rustc -O .github/scripts/api-surface.rs -o /tmp/api-surface
+          /tmp/api-surface "${{ github.sha }}" > api.json
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload api api.json "${{ github.sha }}"

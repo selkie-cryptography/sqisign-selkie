@@ -2,5 +2,5 @@
 # Ensure data directories exist on the persistent volume.
 # The volume mount replaces /data at runtime, so these can't
 # be created at build time.
-mkdir -p /data/coverage /data/bench /data/mutants /data/dudect /data/tacet /data/kat /data/deny /data/unsafe /data/size /data/docs /data/msrv /data/panic /data/fuzz /data/iai /data/alloc
+mkdir -p /data/coverage /data/bench /data/mutants /data/dudect /data/tacet /data/kat /data/deny /data/unsafe /data/size /data/docs /data/msrv /data/panic /data/fuzz /data/iai /data/alloc /data/zeroize /data/platform /data/stack /data/ctgrind /data/api
 exec nginx -g 'daemon off;'

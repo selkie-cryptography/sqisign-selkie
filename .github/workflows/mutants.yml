@@ -35,8 +35,14 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git diff "origin/${BASE_REF}".. > git.diff
-          else
+          elif [ -n "${BEFORE_SHA}" ] \
+               && [ "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
             git diff "${BEFORE_SHA}..HEAD" > git.diff
+          else
+            # Force-push or new branch: BEFORE_SHA is absent from history.
+            # Diff the pushed tip against its first parent instead.
+            git diff "HEAD~1..HEAD" > git.diff
           fi
 
       - uses: dtolnay/rust-toolchain@stable
