@@ -82,9 +82,6 @@ jobs:
     name: Clippy
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    permissions:
-      checks: write
-      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -93,13 +90,12 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: reviewdog/action-setup@38a8d76742a75eeb6c6ffc616bde64179fd09ebf
-      - name: Run clippy with reviewdog
-        env:
-          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run clippy
         run: |
-          cargo +nightly clippy --all-targets --all-features --message-format=short -- -W warnings 2>&1 |
-            reviewdog -f=clippy -reporter=github-check -fail-level=none
+          echo '## Clippy' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cargo +nightly clippy --all-targets --all-features --message-format=short -- -W warnings 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   fmt:
     name: Format
