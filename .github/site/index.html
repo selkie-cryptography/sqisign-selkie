@@ -1586,6 +1586,7 @@
     }
 
     let benchUnit = 'µs'; // default unit
+    let benchSortAsc = true; // sort by time ascending
     const BENCH_UNITS = {
       'ns':  { divisor: 1,             label: 'ns',  decimals: 0 },
       'µs':  { divisor: 1_000,         label: '\u00b5s', decimals: 2 },
@@ -1603,6 +1604,13 @@
       }
     }
 
+    function toggleBenchSort() {
+      benchSortAsc = !benchSortAsc;
+      if (lastBenchData) {
+        document.getElementById('bench-content').innerHTML = renderBenchmarkData(lastBenchData);
+      }
+    }
+
     function formatTime(ns) {
       const u = BENCH_UNITS[benchUnit];
       return `${(ns / u.divisor).toFixed(u.decimals)} ${u.label}`;
@@ -1613,23 +1621,36 @@
       const groups = data.groups || [];
       if (groups.length === 0) return '';
 
+      const sortArrow = benchSortAsc ? '\u25b2' : '\u25bc';
+
       let html = `<table class="bench-table">
         <thead><tr>
           <th>Benchmark</th>
-          <th style="cursor:pointer;user-select:none" onclick="cycleBenchUnit()">Time (${esc(benchUnit)}) \u21c5</th>
+          <th>Time <span style="cursor:pointer;user-select:none;border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:10px;margin-left:4px" onclick="cycleBenchUnit()">${esc(benchUnit)}</span> <span style="cursor:pointer;user-select:none;font-size:10px" onclick="toggleBenchSort()">${sortArrow}</span></th>
           <th>Throughput</th>
         </tr></thead><tbody>`;
 
-      for (const g of groups) {
-        html += `<tr><td class="bench-group" colspan="3">${esc(g.name)}</td></tr>`;
-        for (const b of g.benchmarks) {
-          const tp = b.throughput || '—';
-          html += `<tr>
-            <td class="bench-name">${esc(b.name)}</td>
-            <td>${formatTime(b.time_ns)}</td>
-            <td>${esc(tp)}</td>
-          </tr>`;
+      // Flatten all benchmarks for sorting, preserving group info.
+      const allBenches = groups.flatMap(g =>
+        g.benchmarks.map(b => ({ ...b, group: g.name }))
+      );
+      if (!benchSortAsc || benchSortAsc) {
+        // When sorted, show a flat list ordered by time.
+        allBenches.sort((a, b) => benchSortAsc ? a.time_ns - b.time_ns : b.time_ns - a.time_ns);
+      }
+
+      let lastGroup = null;
+      for (const b of allBenches) {
+        if (b.group !== lastGroup) {
+          html += `<tr><td class="bench-group" colspan="3">${esc(b.group)}</td></tr>`;
+          lastGroup = b.group;
         }
+        const tp = b.throughput || '—';
+        html += `<tr>
+          <td class="bench-name">${esc(b.name)}</td>
+          <td>${formatTime(b.time_ns)}</td>
+          <td>${esc(tp)}</td>
+        </tr>`;
       }
 
       html += '</tbody></table>';
