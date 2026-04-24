@@ -33,7 +33,7 @@ use crate::{
     quaternions::{
         algebra::{Coordinate, Denominator, Element},
         bigint::BigInt,
-        lattice::{Lattice, LeftIdeal},
+        lattice::{HnfLattice, Lattice, LeftIdeal},
         precomputed::EXTREMAL_ORDERS,
     },
     surfaces,
@@ -758,10 +758,29 @@ impl SigningKey {
             // ≈ 2^(e_rsp) · 2^f · N(I_sk) · N(I_com) ≈ 2^626 at
             // NIST-I — small enough that `q_rsp ≤ 2^126` fits.
             // `radius_crf = (2^e_rsp − 1) · lattice_content`
-            let n_com_r: BigInt<N_RESP> = i_com.norm().widen();
-            let n_sk_r: BigInt<N_RESP> = self.ideal.norm().widen();
-            let two_to_f_r: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(f);
-            let lattice_content_r: BigInt<N_RESP> = n_com_r.ct_mul(&two_to_f_r).ct_mul(&n_sk_r);
+            // Use the *actual* lattice covolume-derived norm as
+            // `lattice_content`. The formula `N(I_com) · 2^f ·
+            // N(I_sk)` matches the formal intersection norm only
+            // when the three pairwise intersections are exactly
+            // coprime and `intersection_via_kernel` produces
+            // exactly the mathematical intersection. In practice,
+            // `intersection_via_kernel` (or one of its inputs) can
+            // produce a sublattice off by a small denom factor —
+            // refreshing from the actual lattice covolume gives
+            // the value `nrd(α)` is divisible by, which is what
+            // the downstream divisibility check needs.
+            let o0_full = EXTREMAL_ORDERS[0].widen::<N_RESP>();
+            let mut intersection_ideal = LeftIdeal::<N_RESP>::from_parts(
+                HnfLattice::from(intersection_lat),
+                BigInt::<N_RESP>::ZERO,
+                *o0_full.order(),
+            );
+            if intersection_ideal.refresh_norm::<120>().is_none() {
+                #[cfg(test)]
+                eprintln!("[sign {_iter}] DROP: intersection_ideal.refresh_norm None");
+                continue;
+            }
+            let lattice_content_r: BigInt<N_RESP> = *intersection_ideal.norm();
             let two_to_e_rsp: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(e_rsp);
             let two_e_rsp_minus_one = two_to_e_rsp.ct_sub(&BigInt::<N_RESP>::ONE);
             let radius = two_e_rsp_minus_one.ct_mul(&lattice_content_r);
@@ -836,10 +855,16 @@ impl SigningKey {
             // `N(I_chl_secret) = N(I_chl) · N(I_sk) = 2^f · N(I_sk)`
             // since `I_chl` (norm `2^f`) and `I_sk` (odd prime norm)
             // are coprime.
-            let n_com_w: BigInt<N_RESP> = i_com.norm().widen();
-            let n_sk_w: BigInt<N_RESP> = self.ideal.norm().widen();
-            let two_to_f: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(f);
-            let lattice_content: BigInt<N_RESP> = n_com_w.ct_mul(&two_to_f).ct_mul(&n_sk_w);
+            // Use the actual lattice covolume-derived norm (computed
+            // earlier via `intersection_ideal.refresh_norm`). The
+            // formula `N(I_com)·2^f·N(I_sk)` matches the formal
+            // intersection norm only when the inputs are exactly
+            // coprime AND `intersection_via_kernel` produces the
+            // mathematically exact intersection. In practice the
+            // refresh-derived value is what `nrd(α)` is divisible
+            // by, so use it for the divisibility check too (not
+            // just for the radius).
+            let lattice_content: BigInt<N_RESP> = lattice_content_r;
 
             let d_rsp_wide = {
                 let (q1, r1) = nrd_num_w.div_rem(&nrd_den_w);
@@ -851,7 +876,17 @@ impl SigningKey {
                 let (q2, r2) = q1.div_rem(&lattice_content);
                 if !bool::from(r2.is_zero()) {
                     #[cfg(test)]
-                    eprintln!("[sign {_iter}] DROP: nrd not divisible by N(I_com)·N(I_chl_sec)");
+                    {
+                        let g = q1.gcd(&lattice_content);
+                        eprintln!(
+                            "[sign {_iter}] DROP: nrd not divisible by N(I_com)·N(I_chl_sec): \
+                             q1 bits={}, lattice_content bits={}, rem bits={}, gcd(q1, lc) bits={}",
+                            q1.bitsize(),
+                            lattice_content.bitsize(),
+                            r2.bitsize(),
+                            g.bitsize(),
+                        );
+                    }
                     continue;
                 }
                 q2
