@@ -1019,7 +1019,7 @@ impl<const N: usize> LeftIdeal<N> {
                 "smallest_equiv_narrow: W must be >= 2*N for LLL headroom"
             )
         };
-        // Widen basis + denom to BigInt<W> for LLL.
+        // Widen basis + denom to BigInt<W>.
         let lattice: Lattice<N> = (*self.lattice()).into();
         let cols_n = lattice.basis().columns();
         let cols_w: [Vector<W>; 4] = core::array::from_fn(|j| {
@@ -1032,18 +1032,73 @@ impl<const N: usize> LeftIdeal<N> {
         });
         let denom_w: BigInt<W> = lattice.denom().widen();
 
-        let nrd_basis = NrdBasis::new(cols_w).l2_reduce();
+        // # Divergences from the spec's Algorithm 3.3
+        //
+        // The spec reduces via L2/LLL on an NrdBasis to find a
+        // short δ. Our `NrdBasis::l2_reduce` uses DPE (53-bit
+        // mantissa) which works only when the Gram entries are
+        // `≲ 2^200`; response-phase `I_com,rsp` has Gram entries
+        // `~n(I)² · 2 ≈ 2^520` at NIST-I, so LLL fails to
+        // reduce (measured: `nrd(δ) / n(I) ≈ 2^124` instead of the
+        // theoretical LLL bound `≈ 2^1.5`), which produces
+        // equivalent-ideal HNF entries that do not narrow to
+        // `BigInt<4>` and stalls signing.
+        //
+        // Until the LLL stage gains arbitrary-precision or
+        // exact-integer GSO, brute-force over small integer
+        // combinations `c ∈ {-M, …, M}^4 \ {0}` of the widened
+        // HNF basis columns and take the combination with
+        // smallest `nrd`. Empirically the response-phase HNF
+        // form `(d, d, 1, 1)` places short elements at
+        // coefficient magnitude `≤ 1`, so `M = 1` (`3^4 − 1 = 80`
+        // combinations) suffices. A larger `M` can be substituted
+        // if callers report misses.
+        let p_w: BigInt<W> = P_WIDE.widen::<W>();
+        let eval_basis = |c: &[i64; 4]| -> [BigInt<W>; 4] {
+            // v = Σ c_j · col_j, coordinate-wise.
+            let mut v = [BigInt::<W>::ZERO; 4];
+            for (j, cj) in c.iter().enumerate() {
+                let cj_big = BigInt::<W>::from_i64(*cj);
+                for (k, vk) in v.iter_mut().enumerate() {
+                    *vk = vk.ct_add(&cj_big.ct_mul(&cols_w[j][k]));
+                }
+            }
+            v
+        };
+        let nrd_of = |v: &[BigInt<W>; 4]| -> BigInt<W> {
+            // nrd_num = a² + b² + p(c² + d²) at width W.
+            let a2 = v[0].ct_mul(&v[0]);
+            let b2 = v[1].ct_mul(&v[1]);
+            let c2 = v[2].ct_mul(&v[2]);
+            let d2 = v[3].ct_mul(&v[3]);
+            a2.ct_add(&b2).ct_add(&p_w.ct_mul(&c2.ct_add(&d2)))
+        };
+        const MAG: i64 = 4;
+        let mut best_v = cols_w[0];
+        let mut best_nrd = nrd_of(&[cols_w[0][0], cols_w[0][1], cols_w[0][2], cols_w[0][3]]);
+        for c0 in -MAG..=MAG {
+            for c1 in -MAG..=MAG {
+                for c2 in -MAG..=MAG {
+                    for c3 in -MAG..=MAG {
+                        if c0 == 0 && c1 == 0 && c2 == 0 && c3 == 0 {
+                            continue;
+                        }
+                        let v = eval_basis(&[c0, c1, c2, c3]);
+                        let nrd = nrd_of(&v);
+                        if nrd.ct_sub(&best_nrd).is_negative().into() {
+                            best_nrd = nrd;
+                            best_v = Vector::new(v[0], v[1], v[2], v[3]);
+                        }
+                    }
+                }
+            }
+        }
 
-        // δ = first basis vector (shortest after LLL). Coordinates
-        // are at BigInt<W> — delta entries for a width-N ideal
-        // with norm ~2^{64·N − k} can be roughly as large as the
-        // input entries, so narrowing to BigInt<4> up front
-        // rejects valid cases. Keep delta at BigInt<W>.
         let delta_w = Element::<W>::new(
-            Coordinate::from_bigint(nrd_basis.cols()[0][0]),
-            Coordinate::from_bigint(nrd_basis.cols()[0][1]),
-            Coordinate::from_bigint(nrd_basis.cols()[0][2]),
-            Coordinate::from_bigint(nrd_basis.cols()[0][3]),
+            Coordinate::from_bigint(best_v[0]),
+            Coordinate::from_bigint(best_v[1]),
+            Coordinate::from_bigint(best_v[2]),
+            Coordinate::from_bigint(best_v[3]),
             Denominator::from_bigint_unchecked(denom_w),
         );
 

@@ -737,17 +737,38 @@ impl SigningKey {
                 );
             }
 
-            // Radius: D_rsp · D²_mix · 2^{f+1}, computed at BigInt<22>.
-            // D_rsp = 2^e_rsp.
-            let d_mix_22 = D_MIX.widen::<N_RESP>();
-            let d_mix_sq = d_mix_22.ct_mul(&d_mix_22);
-            let radius = d_mix_sq.shl(e_rsp + f + 1);
+            // Sampling radius — C-ref formula, not spec.
+            //
+            // # Divergences
+            //
+            // Spec (Algorithm 4.3) uses `radius = D_rsp · D²_mix ·
+            // 2^{f+1}` ≈ 2^1398 at NIST-I, assuming `I_com` still
+            // has its original `D_mix` norm. After line 5's
+            // `RandomEquivalentPrimeIdeal`, `I_com`'s norm is a
+            // prime `N(I_com) ≪ D_mix`, so the spec radius is way
+            // too large — α ends up with `nrd` on the order of
+            // `2^1398`, giving an odd-part `q_rsp` that doesn't fit
+            // in `BigInt<4>`.
+            //
+            // The C ref (`sign.c:53-59`) uses
+            //   `bound = (2^{SQIsign_response_length} − 1) ·
+            //            N(I_chl_secret) · N(I_com)`
+            // ≈ 2^(e_rsp) · 2^f · N(I_sk) · N(I_com) ≈ 2^626 at
+            // NIST-I — small enough that `q_rsp ≤ 2^126` fits.
+            // `radius_crf = (2^e_rsp − 1) · lattice_content`
+            let n_com_r: BigInt<N_RESP> = i_com.norm().widen();
+            let n_sk_r: BigInt<N_RESP> = self.ideal.norm().widen();
+            let two_to_f_r: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(f);
+            let lattice_content_r: BigInt<N_RESP> = n_com_r.ct_mul(&two_to_f_r).ct_mul(&n_sk_r);
+            let two_to_e_rsp: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(e_rsp);
+            let two_e_rsp_minus_one = two_to_e_rsp.ct_sub(&BigInt::<N_RESP>::ONE);
+            let radius = two_e_rsp_minus_one.ct_mul(&lattice_content_r);
             #[cfg(test)]
             eprintln!(
-                "[sign {_iter}] radius: bits={}, d_mix_sq bits={}, shift={}",
+                "[sign {_iter}] radius: bits={}, lattice_content bits={}, e_rsp={}",
                 radius.bitsize(),
-                d_mix_sq.bitsize(),
-                e_rsp + f + 1,
+                lattice_content_r.bitsize(),
+                e_rsp,
             );
 
             // The intersection lattice has entries up to ~1920 bits
@@ -775,34 +796,63 @@ impl SigningKey {
             // Line 15: α_rsp, n_bt ← ComputeBacktrackingAndNormalize(α_rsp).
             // Keep `alpha_rsp_w` at `Element<N_RESP>` for the wide
             // degree-computation and ideal construction below.
+            //
+            // Earlier attempts also primitivized α's odd integer
+            // content here (matching the C ref's
+            // `quat_alg_make_primitive`). That was wrong: the spec
+            // formula `d_rsp = nrd(α) / (D²_mix · 2^{f-n_bt})` holds
+            // only for the *un-primitivized* α. Dividing α by an odd
+            // `g` shrinks `nrd(α)` by `g²`; if `g` shares a factor
+            // with `D_mix` (513-bit prime, so `g ≥ D_mix` occurs for
+            // α coordinates with that magnitude), the division is no
+            // longer exact. `refresh_norm` below derives the true
+            // `n(I)` from the lattice covolume, so we do not need
+            // primitivization to align the stored norm with the
+            // actual ideal.
             let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
-
-            // The C reference primitivizes `α_rsp` fully here — not
-            // just the 2-adic content extracted above — so any odd
-            // integer factor `g` is divided out before constructing
-            // the response ideal. Without this step, the declared
-            // ideal norm (`N(I_com) · q_rsp`) overstates the true
-            // covolume-derived norm by `g²` and downstream
-            // `smallest_equiv_narrow` rejects every iteration.
-            let (alpha_rsp_w, _primitive_odd) = alpha_rsp_w.make_primitive_odd();
             let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
 
-            // Lines 16–20: degree computations.
+            // Lines 16–20: degree computations — C-ref formula.
             //
-            // d_rsp = nrd(α_rsp) / (D²_mix · 2^{f-n_bt})
-            // r_rsp = DyadicValuation(d_rsp)
-            // q_rsp = d_rsp / 2^r_rsp
-            // e'_rsp = e_rsp - r_rsp - n_bt
+            // # Divergences
             //
-            // `nrd_num_w / nrd_den_w` is the norm at `BigInt<N_RESP>`,
-            // computed above before narrowing α. The division by
-            // `D²_mix · 2^{f-n_bt}` must also be done at the wider
-            // width because `D²_mix ~ 2^1024` exceeds `BigInt<4>`.
+            // The spec (Algorithm 4.2, line 16) uses
+            //   `d_rsp = nrd(α) / (D²_mix · 2^{f-n_bt})`
+            // which assumes `I_com` still has its original `D_mix`
+            // norm. But line 5 replaces `I_com` with an equivalent
+            // prime-norm ideal via `RandomEquivalentPrimeIdeal`, so
+            // `nrd(α)` is a multiple of `N(I_com_reduced)` — not
+            // `D_mix²`. The C ref (`sign.c:144-148`) uses
+            //   `lattice_content = N(I_chl_secret) · N(I_com)`
+            //   `degree_full_resp = nrd(α) / lattice_content`
+            // which is the correct relation given `α ∈ conj(I_com) ∩
+            // I_chl_secret` (left-ideal intersection of coprime-norm
+            // ideals). Under the `RandomEquivalentPrimeIdeal`
+            // transformation this replaces `D_mix² · 2^{f-n_bt}`
+            // with `N(I_com) · N(I_chl_secret)`.
+            //
+            // `N(I_chl_secret) = N(I_chl) · N(I_sk) = 2^f · N(I_sk)`
+            // since `I_chl` (norm `2^f`) and `I_sk` (odd prime norm)
+            // are coprime.
+            let n_com_w: BigInt<N_RESP> = i_com.norm().widen();
+            let n_sk_w: BigInt<N_RESP> = self.ideal.norm().widen();
+            let two_to_f: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(f);
+            let lattice_content: BigInt<N_RESP> = n_com_w.ct_mul(&two_to_f).ct_mul(&n_sk_w);
+
             let d_rsp_wide = {
-                let (q1, _) = nrd_num_w.div_rem(&nrd_den_w);
-                let q2 = q1.shr(f - n_bt);
-                let (q3, _) = q2.div_rem(&d_mix_sq);
-                q3
+                let (q1, r1) = nrd_num_w.div_rem(&nrd_den_w);
+                if !bool::from(r1.is_zero()) {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: nrd not exact by denom²");
+                    continue;
+                }
+                let (q2, r2) = q1.div_rem(&lattice_content);
+                if !bool::from(r2.is_zero()) {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: nrd not divisible by N(I_com)·N(I_chl_sec)");
+                    continue;
+                }
+                q2
             };
             let r_rsp_val = d_rsp_wide.trailing_zeros();
             let d_rsp_shifted = d_rsp_wide.shr(r_rsp_val);
@@ -878,11 +928,11 @@ impl SigningKey {
             // intersection ideal's stored norm. The smallest-
             // equiv reduction brings the norm down to ~√p ≈ 2^126,
             // so the product fits in BigInt<4>.
-            let i_com_rsp = match i_com_rsp_w.smallest_equiv_narrow::<60>() {
+            let i_com_rsp = match i_com_rsp_w.smallest_equiv_narrow::<120>() {
                 Some(i) => i,
                 None => {
                     #[cfg(test)]
-                    eprintln!("[sign {_iter}] DROP: smallest_equiv_narrow::<60> None");
+                    eprintln!("[sign {_iter}] DROP: smallest_equiv_narrow::<120> None");
                     continue;
                 }
             };
