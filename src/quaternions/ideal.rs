@@ -111,13 +111,15 @@ impl ExtremalOrder<8> {
         // ≈ 2^64 — far beyond any reasonable iteration budget.
         // The algorithm is probabilistic: by the prime number
         // theorem, `O(log M) ≈ 400` attempts suffice in expectation.
-        // Cap at `MAX_ITER = 100_000` to retain the spec's
+        // Cap at `MAX_ITER = 10_000` to retain the spec's
         // mathematical structure (z cycles through a non-trivial
-        // range) while bounding wall-clock time to ~10s in release
+        // range) while bounding wall-clock time to ~5s in release
         // builds. A caller seeing `None` after this many iterations
         // should retry with a different seed rather than wait for
-        // `2^64` evaluations.
-        const MAX_ITER: u32 = 100_000;
+        // `2^64` evaluations. By PNT, ~`log M ≈ 400` z values
+        // suffice in expectation, so 10K is comfortably above the
+        // expected count.
+        const MAX_ITER: u32 = 10_000;
         let bound: u32 = {
             let q_sqrt = (q_val as f64).sqrt();
             let ratio = four_m.to_f64() / (p.to_f64() * q_sqrt);
