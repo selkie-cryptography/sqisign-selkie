@@ -2,13 +2,14 @@
 //!
 //! Covers `BigInt<4>`, `Element<4>`, and `Vector<4>`.
 //!
-//! Run with: `cargo test --test proptest_quaternion --features expose-internals`
+//! Run with: `cargo test --test proptest_quaternion --features
+//! expose-internals`
 
 use proptest::prelude::*;
 use sqisign_selkie::quaternions::{
     algebra::Element,
     bigint::BigInt,
-    linear::Vector,
+    linear::{Matrix, Vector},
 };
 
 // ---------------------------------------------------------------------------
@@ -17,9 +18,8 @@ use sqisign_selkie::quaternions::{
 
 /// Generates a random `BigInt<4>` from a sign bit and four u64 limbs.
 fn arb_bigint4() -> impl Strategy<Value = BigInt<4>> {
-    (any::<bool>(), any::<[u64; 4]>()).prop_map(|(neg, limbs)| {
-        BigInt::from_sign_and_limbs(if neg { 1 } else { 0 }, limbs)
-    })
+    (any::<bool>(), any::<[u64; 4]>())
+        .prop_map(|(neg, limbs)| BigInt::from_sign_and_limbs(if neg { 1 } else { 0 }, limbs))
 }
 
 /// Generates a small `BigInt<4>` (fits in i64) for tests where overflow
@@ -32,15 +32,27 @@ fn arb_small_bigint4() -> impl Strategy<Value = BigInt<4>> {
 /// Uses i8-range values so that chained multiplications (3 deep) and
 /// norm computations stay well within BigInt<4>'s 256-bit budget.
 fn arb_element4() -> impl Strategy<Value = Element<4>> {
-    (any::<i8>(), any::<i8>(), any::<i8>(), any::<i8>()).prop_map(|(a, b, c, d)| {
-        Element::from_i64(a as i64, b as i64, c as i64, d as i64)
-    })
+    (any::<i8>(), any::<i8>(), any::<i8>(), any::<i8>())
+        .prop_map(|(a, b, c, d)| Element::from_i64(a as i64, b as i64, c as i64, d as i64))
 }
 
 /// Generates a random `Vector<4>` from four BigInt<4> values.
 fn arb_vector4() -> impl Strategy<Value = Vector<4>> {
-    (arb_small_bigint4(), arb_small_bigint4(), arb_small_bigint4(), arb_small_bigint4())
+    (
+        arb_small_bigint4(),
+        arb_small_bigint4(),
+        arb_small_bigint4(),
+        arb_small_bigint4(),
+    )
         .prop_map(|(a, b, c, d)| Vector::new(a, b, c, d))
+}
+
+/// Generates a random `Matrix<4>` from four row vectors.
+/// Uses i8-range entries so that determinant (~i8^4 * 4 terms ≈ 2^29)
+/// and adjugate (~i8^3 * 6 terms ≈ 2^24) stay within BigInt<4>.
+fn arb_matrix4() -> impl Strategy<Value = Matrix<4>> {
+    (arb_vector4(), arb_vector4(), arb_vector4(), arb_vector4())
+        .prop_map(|(r0, r1, r2, r3)| Matrix::from_rows(r0, r1, r2, r3))
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +139,55 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
+// BigInt<4> division and GCD properties
+// ---------------------------------------------------------------------------
+
+proptest! {
+    #[test]
+    fn bigint_div_rem_identity(a in arb_small_bigint4(), d in arb_small_bigint4()) {
+        // a = q * d + r, with 0 <= r < |d|.
+        prop_assume!(!bool::from(d.is_zero()));
+        let (q, r) = a.div_rem(&d);
+        prop_assert_eq!(q * d + r, a);
+    }
+
+    #[test]
+    fn bigint_div_rem_remainder_nonnegative(a in arb_small_bigint4(), d in arb_small_bigint4()) {
+        prop_assume!(!bool::from(d.is_zero()));
+        let (_, r) = a.div_rem(&d);
+        prop_assert!(!bool::from(r.is_negative()));
+    }
+
+    #[test]
+    fn bigint_gcd_commutative(a in arb_small_bigint4(), b in arb_small_bigint4()) {
+        prop_assert_eq!(a.gcd(&b), b.gcd(&a));
+    }
+
+    #[test]
+    fn bigint_gcd_divides_both(a in arb_small_bigint4(), b in arb_small_bigint4()) {
+        let g = a.gcd(&b);
+        if !bool::from(g.is_zero()) {
+            let (_, ra) = a.div_rem(&g);
+            let (_, rb) = b.div_rem(&g);
+            prop_assert!(bool::from(ra.is_zero()), "gcd does not divide a");
+            prop_assert!(bool::from(rb.is_zero()), "gcd does not divide b");
+        }
+    }
+
+    #[test]
+    fn bigint_gcd_with_zero(a in arb_small_bigint4()) {
+        // gcd(a, 0) = |a|.
+        prop_assert_eq!(a.gcd(&BigInt::ZERO), a.abs());
+    }
+
+    #[test]
+    fn bigint_gcd_idempotent(a in arb_small_bigint4()) {
+        // gcd(a, a) = |a|.
+        prop_assert_eq!(a.gcd(&a), a.abs());
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Element<4> (quaternion) properties
 // ---------------------------------------------------------------------------
 
@@ -198,5 +259,87 @@ proptest! {
     #[test]
     fn vector_double_neg(a in arb_vector4()) {
         prop_assert_eq!(-(-a), a);
+    }
+
+    #[test]
+    fn vector_dot_commutative(a in arb_vector4(), b in arb_vector4()) {
+        prop_assert_eq!(a.dot(&b), b.dot(&a));
+    }
+
+    #[test]
+    fn vector_dot_zero(a in arb_vector4()) {
+        prop_assert!(bool::from(a.dot(&Vector::ZERO).is_zero()));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Matrix<4> properties
+// ---------------------------------------------------------------------------
+
+/// Helper: builds a scalar matrix `s * I`.
+fn scalar_matrix(s: BigInt<4>) -> Matrix<4> {
+    Matrix::from_rows(
+        Vector::new(s, BigInt::ZERO, BigInt::ZERO, BigInt::ZERO),
+        Vector::new(BigInt::ZERO, s, BigInt::ZERO, BigInt::ZERO),
+        Vector::new(BigInt::ZERO, BigInt::ZERO, s, BigInt::ZERO),
+        Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ZERO, s),
+    )
+}
+
+proptest! {
+    #[test]
+    fn matrix_transpose_involution(a in arb_matrix4()) {
+        prop_assert_eq!(a.transpose().transpose(), a);
+    }
+
+    #[test]
+    fn matrix_mul_identity(a in arb_matrix4()) {
+        prop_assert_eq!(a.mat_mul(&Matrix::IDENTITY), a);
+        prop_assert_eq!(Matrix::IDENTITY.mat_mul(&a), a);
+    }
+
+    #[test]
+    fn matrix_mul_associative(a in arb_matrix4(), b in arb_matrix4(), c in arb_matrix4()) {
+        prop_assert_eq!(a.mat_mul(&b).mat_mul(&c), a.mat_mul(&b.mat_mul(&c)));
+    }
+
+    #[test]
+    fn matrix_eval_identity(v in arb_vector4()) {
+        prop_assert_eq!(Matrix::<4>::IDENTITY.eval(&v), v);
+    }
+
+    #[test]
+    fn matrix_eval_linearity(m in arb_matrix4(), u in arb_vector4(), v in arb_vector4()) {
+        // M(u + v) == M(u) + M(v)
+        prop_assert_eq!(m.eval(&(u + v)), m.eval(&u) + m.eval(&v));
+    }
+
+    #[test]
+    fn matrix_eval_composition(a in arb_matrix4(), b in arb_matrix4(), v in arb_vector4()) {
+        // (A * B)(v) == A(B(v))
+        prop_assert_eq!(a.mat_mul(&b).eval(&v), a.eval(&b.eval(&v)));
+    }
+
+    #[test]
+    fn matrix_det_of_transpose(a in arb_matrix4()) {
+        // det(A^T) == det(A)
+        prop_assert_eq!(a.transpose().det(), a.det());
+    }
+
+    #[test]
+    fn matrix_adjugate_identity(a in arb_matrix4()) {
+        // A * adj(A) == det(A) * I
+        let product = a.mat_mul(&a.adjugate());
+        let det_i = scalar_matrix(a.det());
+        prop_assert_eq!(product, det_i);
+    }
+
+    #[test]
+    fn matrix_transpose_of_product(a in arb_matrix4(), b in arb_matrix4()) {
+        // (A * B)^T == B^T * A^T
+        prop_assert_eq!(
+            a.mat_mul(&b).transpose(),
+            b.transpose().mat_mul(&a.transpose())
+        );
     }
 }

@@ -81,7 +81,7 @@ impl IsogenyDegree {
 
     /// Widens to [`BigInt<8>`](crate::quaternions::bigint::BigInt) for
     /// quaternion arithmetic.
-    pub(crate) fn to_bigint_wide(&self) -> BigInt<8> {
+    pub(crate) fn to_bigint_wide(self) -> BigInt<8> {
         BigInt::<8>::from_sign_and_limbs(
             0,
             [self.0[0], self.0[1], self.0[2], self.0[3], 0, 0, 0, 0],
@@ -100,7 +100,7 @@ impl IsogenyDegree {
     /// Converts to a [`BigInt<4>`](crate::quaternions::bigint::BigInt)
     /// for quaternion arithmetic.
     #[inline]
-    pub(crate) fn to_bigint(&self) -> BigInt<4> {
+    pub(crate) fn to_bigint(self) -> BigInt<4> {
         BigInt::<4>::from_limbs(self.0)
     }
 }

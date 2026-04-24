@@ -836,10 +836,8 @@ fn try_find_uv(
             const MAX_ODD_BITS: u32 = 135;
             let u_odd_bits = u.shr(e_val).bitsize();
             let v_odd_bits = v.shr(e_val).bitsize();
-            if u_odd_bits < MIN_ODD_BITS
-                || u_odd_bits > MAX_ODD_BITS
-                || v_odd_bits < MIN_ODD_BITS
-                || v_odd_bits > MAX_ODD_BITS
+            if !(MIN_ODD_BITS..=MAX_ODD_BITS).contains(&u_odd_bits)
+                || !(MIN_ODD_BITS..=MAX_ODD_BITS).contains(&v_odd_bits)
             {
                 u = u.ct_add(&d2_w);
                 if v <= d1_w {
@@ -1096,10 +1094,11 @@ impl<const N: usize> LeftIdeal<N> {
                 "smallest_equiv_narrow: W must be >= 2*N for LLL headroom"
             )
         };
-        // Widen basis + denom to BigInt<W>.
-        let lattice: Lattice<N> = (*self.lattice()).into();
-        let cols_n = lattice.basis().columns();
-        let cols_w: [Vector<W>; 4] = core::array::from_fn(|j| {
+        // Canonicalize the HNF first (reduces off-diagonals modulo
+        // diagonal pivots) and widen to working width `W`.
+        let canonical = self.lattice().canonicalize();
+        let cols_n = canonical.basis().columns();
+        let mut cols_w: [Vector<W>; 4] = core::array::from_fn(|j| {
             Vector::new(
                 cols_n[j][0].widen::<W>(),
                 cols_n[j][1].widen::<W>(),
@@ -1107,30 +1106,43 @@ impl<const N: usize> LeftIdeal<N> {
                 cols_n[j][3].widen::<W>(),
             )
         });
-        let denom_w: BigInt<W> = lattice.denom().widen();
+        let denom_w: BigInt<W> = canonical.denom().widen();
 
-        // # Divergences from the spec's Algorithm 3.3
+        // L2-reduce the basis on the **class gram** rather than the
+        // raw nrd gram. The class gram divides the raw form by
+        // `2·d²·N(I)` (the C reference's `quat_lideal_class_gram`),
+        // which keeps Gram entries bounded by Cauchy-Schwarz at
+        // `~p / d²` (i.e. ≲ 2^124 at NIST-I) **regardless of**
+        // `N(I)` — so DPE's 53-bit mantissa is sufficient even for
+        // response-phase intersection ideals at `~2^378`.
         //
-        // The spec reduces via L2/LLL on an NrdBasis to find a
-        // short δ. Our `NrdBasis::l2_reduce` uses DPE (53-bit
-        // mantissa) which works only when the Gram entries are
-        // `≲ 2^200`; response-phase `I_com,rsp` has Gram entries
-        // `~n(I)² · 2 ≈ 2^520` at NIST-I, so LLL fails to
-        // reduce (measured: `nrd(δ) / n(I) ≈ 2^124` instead of the
-        // theoretical LLL bound `≈ 2^1.5`), which produces
-        // equivalent-ideal HNF entries that do not narrow to
-        // `BigInt<4>` and stalls signing.
+        // Without this normalization, the raw gram entries scale
+        // as `n(I)² · p ≈ 2^1004` for the intersection ideal,
+        // overflowing DPE precision and leaving brute-force on
+        // the unreduced HNF as the only avenue — which cannot
+        // do better than `nrd(δ) ≈ 2·N(I)`, so the equivalent
+        // ideal preserves the input norm bit-size and signing
+        // stalls when the result must narrow to `BigInt<4>`.
         //
-        // Until the LLL stage gains arbitrary-precision or
-        // exact-integer GSO, brute-force over small integer
-        // combinations `c ∈ {-M, …, M}^4 \ {0}` of the widened
-        // HNF basis columns and take the combination with
-        // smallest `nrd`. Empirically the response-phase HNF
-        // form `(d, d, 1, 1)` places short elements at
-        // coefficient magnitude `≤ 1`, so `M = 1` (`3^4 − 1 = 80`
-        // combinations) suffices. A larger `M` can be substituted
-        // if callers report misses.
+        // Implements the L2 step of [Alg. 3.3] (RandomEquivalentQuaternion).
+        // [Alg. 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
         let p_w: BigInt<W> = P_WIDE.widen::<W>();
+        let nrd = NrdBasis::<W>::new(cols_w);
+        let denom_sq = denom_w.ct_mul(&denom_w);
+        let self_norm_w: BigInt<W> = self.norm().widen::<W>();
+        let class_divisor: BigInt<W> = denom_sq.ct_mul(&self_norm_w);
+        let two_w = BigInt::<W>::from_u64(2);
+        let mut class_gram = Matrix::<W>::ZERO;
+        for i in 0..4 {
+            for j in 0..4 {
+                let traced = nrd.gram()[i][j].ct_mul(&two_w);
+                let (q, _rem) = traced.div_rem(&class_divisor);
+                class_gram[i][j] = q;
+            }
+        }
+        let class_basis = NrdBasis::<W>::from_cols_and_gram(cols_w, class_gram).l2_reduce();
+        cols_w = *class_basis.cols();
+
         let eval_basis = |c: &[i64; 4]| -> [BigInt<W>; 4] {
             // v = Σ c_j · col_j, coordinate-wise.
             let mut v = [BigInt::<W>::ZERO; 4];
@@ -1188,7 +1200,7 @@ impl<const N: usize> LeftIdeal<N> {
                 }
             }
         }
-        candidates.sort_by(|a, b| a.1.cmp(&b.1));
+        candidates.sort_by_key(|c| c.1);
         candidates.truncate(TOP_K);
         #[cfg(test)]
         if let Some((_, min_nrd)) = candidates.first() {
@@ -1337,11 +1349,35 @@ impl<const N: usize> LeftIdeal<N> {
         for row in 0..4 {
             for col in 0..4 {
                 let (q, _) = hnf_w[row][col].div_rem(&g);
-                basis_4[row][col] = q.narrow_to::<4>()?;
+                match q.narrow_to::<4>() {
+                    Some(v) => basis_4[row][col] = v,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!(
+                            "[build_equiv_from_delta] basis[{row}][{col}] q.narrow_to<4> None: q bits={}, hnf_w bits={}, g bits={}",
+                            q.bitsize(),
+                            hnf_w[row][col].bitsize(),
+                            g.bitsize(),
+                        );
+                        return None;
+                    }
+                }
             }
         }
         let (denom_simplified, _) = product_denom.div_rem(&g);
-        let denom_4: BigInt<4> = denom_simplified.narrow_to()?;
+        let denom_4: BigInt<4> = match denom_simplified.narrow_to() {
+            Some(d) => d,
+            None => {
+                #[cfg(test)]
+                eprintln!(
+                    "[build_equiv_from_delta] denom narrow_to<4> None: denom bits={}, product_denom bits={}, g bits={}",
+                    denom_simplified.bitsize(),
+                    product_denom.bitsize(),
+                    g.bitsize(),
+                );
+                return None;
+            }
+        };
 
         let result_lattice = HnfLattice::from(Lattice::new(basis_4, denom_4));
 

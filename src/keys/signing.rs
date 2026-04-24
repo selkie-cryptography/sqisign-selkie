@@ -314,8 +314,7 @@ impl SigningKey {
         let norm_bytes: &[u8; 32] = bytes[pos..pos + FP_ENCODED_BYTES]
             .try_into()
             .map_err(|_| SignatureError::NonCanonical)?;
-        let norm = IsogenyDegree::from_bytes_le(norm_bytes)
-            .ok_or(SignatureError::NonCanonical)?;
+        let norm = IsogenyDegree::from_bytes_le(norm_bytes).ok_or(SignatureError::NonCanonical)?;
         pos += FP_ENCODED_BYTES;
 
         let mut gen_coords = [BigInt::<4>::ZERO; 4];

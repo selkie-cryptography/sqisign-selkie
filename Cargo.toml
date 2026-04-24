@@ -102,6 +102,10 @@ required-features = ["expose-internals"]
 name = "proptest_quaternion"
 required-features = ["expose-internals"]
 
+[[test]]
+name = "proptest_scalar"
+required-features = ["expose-internals"]
+
 [[bench]]
 name = "iai"
 harness = false
