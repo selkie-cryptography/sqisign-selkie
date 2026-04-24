@@ -1100,9 +1100,16 @@ impl<const N: usize> LeftIdeal<N> {
             let d2 = v[3].ct_mul(&v[3]);
             a2.ct_add(&b2).ct_add(&p_w.ct_mul(&c2.ct_add(&d2)))
         };
+        // Collect the top-K shortest δ candidates (by nrd). When the
+        // absolute shortest fails to produce an equivalent ideal
+        // that narrows to `BigInt<4>` — e.g., because one HNF entry
+        // happens to miss a few bits of common factor with
+        // `product_denom` — we fall through to the next-shortest.
+        // Empirically TOP_K = 16 covers the tail.
+        const TOP_K: usize = 16;
         const MAG: i64 = 4;
-        let mut best_v = cols_w[0];
-        let mut best_nrd = nrd_of(&[cols_w[0][0], cols_w[0][1], cols_w[0][2], cols_w[0][3]]);
+        let mut candidates: Vec<([BigInt<W>; 4], BigInt<W>)> =
+            Vec::with_capacity(((2 * MAG + 1) as usize).pow(4));
         for c0 in -MAG..=MAG {
             for c1 in -MAG..=MAG {
                 for c2 in -MAG..=MAG {
@@ -1112,20 +1119,57 @@ impl<const N: usize> LeftIdeal<N> {
                         }
                         let v = eval_basis(&[c0, c1, c2, c3]);
                         let nrd = nrd_of(&v);
-                        if nrd.ct_sub(&best_nrd).is_negative().into() {
-                            best_nrd = nrd;
-                            best_v = Vector::new(v[0], v[1], v[2], v[3]);
+                        if bool::from(nrd.is_zero()) {
+                            continue;
                         }
+                        candidates.push((v, nrd));
                     }
                 }
             }
         }
+        candidates.sort_by(|a, b| a.1.cmp(&b.1));
+        candidates.truncate(TOP_K);
+
+        // Try each candidate in ascending `nrd` order; return the
+        // first equivalent ideal that narrows to `BigInt<4>`.
+        for (best_v, _) in candidates {
+            if let Some(result) = self.build_equiv_from_delta::<W>(best_v, denom_w) {
+                return Some(result);
+            }
+        }
+        #[cfg(test)]
+        eprintln!(
+            "[smallest_equiv_narrow] no TOP_K={TOP_K} candidate yielded a narrow-able equivalent ideal"
+        );
+        None
+    }
+
+    /// Build the equivalent-ideal `LeftIdeal<4>` from a specific
+    /// short element `δ` of `self`'s lattice (given by its
+    /// coordinate numerators at width `W` and the shared lattice
+    /// denominator).
+    ///
+    /// Returns `None` if any of the downstream divisibility /
+    /// narrowing checks fail. Callers iterating over multiple
+    /// candidate `δ`'s use this to test each in turn.
+    fn build_equiv_from_delta<const W: usize>(
+        &self,
+        delta_coords: [BigInt<W>; 4],
+        denom_w: BigInt<W>,
+    ) -> Option<LeftIdeal<4>> {
+        const {
+            assert!(
+                W >= 2 * N,
+                "build_equiv_from_delta: W must be >= 2*N for LLL headroom"
+            )
+        };
+        let lattice: Lattice<N> = (*self.lattice()).into();
 
         let delta_w = Element::<W>::new(
-            Coordinate::from_bigint(best_v[0]),
-            Coordinate::from_bigint(best_v[1]),
-            Coordinate::from_bigint(best_v[2]),
-            Coordinate::from_bigint(best_v[3]),
+            Coordinate::from_bigint(delta_coords[0]),
+            Coordinate::from_bigint(delta_coords[1]),
+            Coordinate::from_bigint(delta_coords[2]),
+            Coordinate::from_bigint(delta_coords[3]),
             Denominator::from_bigint_unchecked(denom_w),
         );
 
@@ -1147,37 +1191,14 @@ impl<const N: usize> LeftIdeal<N> {
         let delta_nrd_den = denom_w.ct_mul(&denom_w);
         let (new_norm_w, rem) = delta_nrd_num.div_rem(&delta_nrd_den);
         if !bool::from(rem.is_zero()) {
-            #[cfg(test)]
-            eprintln!(
-                "[smallest_equiv_narrow] nrd(δ) not divisible by denom²: nrd_num bits={}, nrd_den bits={}, rem bits={}",
-                delta_nrd_num.bitsize(),
-                delta_nrd_den.bitsize(),
-                rem.bitsize(),
-            );
             return None;
         }
         let self_norm_w: BigInt<W> = self.norm().widen::<W>();
         let (equiv_norm_w, rem2) = new_norm_w.div_rem(&self_norm_w);
         if !bool::from(rem2.is_zero()) {
-            #[cfg(test)]
-            eprintln!(
-                "[smallest_equiv_narrow] new_norm not divisible by self.norm: new_norm bits={}, self_norm bits={}",
-                new_norm_w.bitsize(),
-                self_norm_w.bitsize(),
-            );
             return None;
         }
-        let equiv_norm: BigInt<4> = match equiv_norm_w.narrow_to() {
-            Some(v) => v,
-            None => {
-                #[cfg(test)]
-                eprintln!(
-                    "[smallest_equiv_narrow] equiv_norm narrow to 4 failed: {} bits",
-                    equiv_norm_w.bitsize(),
-                );
-                return None;
-            }
-        };
+        let equiv_norm: BigInt<4> = equiv_norm_w.narrow_to()?;
 
         // Conjugate δ: negate i, j, k coords; a stays.
         let delta_conj_w = Element::<W>::new(
@@ -1224,35 +1245,11 @@ impl<const N: usize> LeftIdeal<N> {
         for row in 0..4 {
             for col in 0..4 {
                 let (q, _) = hnf_w[row][col].div_rem(&g);
-                basis_4[row][col] = match q.narrow_to::<4>() {
-                    Some(v) => v,
-                    None => {
-                        #[cfg(test)]
-                        eprintln!(
-                            "[smallest_equiv_narrow] basis[{row}][{col}] narrow to 4 failed: q {} bits, hnf {} bits, g {} bits",
-                            q.bitsize(),
-                            hnf_w[row][col].bitsize(),
-                            g.bitsize(),
-                        );
-                        return None;
-                    }
-                };
+                basis_4[row][col] = q.narrow_to::<4>()?;
             }
         }
         let (denom_simplified, _) = product_denom.div_rem(&g);
-        let denom_4: BigInt<4> = match denom_simplified.narrow_to() {
-            Some(v) => v,
-            None => {
-                #[cfg(test)]
-                eprintln!(
-                    "[smallest_equiv_narrow] denom narrow to 4 failed: {} bits, product_denom {} bits, g {} bits",
-                    denom_simplified.bitsize(),
-                    product_denom.bitsize(),
-                    g.bitsize(),
-                );
-                return None;
-            }
-        };
+        let denom_4: BigInt<4> = denom_simplified.narrow_to()?;
 
         let result_lattice = HnfLattice::from(Lattice::new(basis_4, denom_4));
 
