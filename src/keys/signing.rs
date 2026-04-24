@@ -953,6 +953,12 @@ impl SigningKey {
                 // (norm ~2^126) produces a ~141-bit norm ideal,
                 // within FixedDegreeIsogeny's bound (< 2^246).
                 let aux_norm = BigInt::<4>::ONE.shl(e_rsp_prime).ct_sub(&q_rsp);
+                #[cfg(test)]
+                eprintln!(
+                    "[sign {_iter}] aux_norm step starting, aux_norm bits={} (cumul {:?})",
+                    aux_norm.bitsize(),
+                    _iter_start.elapsed()
+                );
                 let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0]) {
                     Some(i) => i,
                     None => {
@@ -961,6 +967,12 @@ impl SigningKey {
                         continue;
                     }
                 };
+                #[cfg(test)]
+                eprintln!(
+                    "[sign {_iter}] i_aux done, norm={} bits (cumul {:?})",
+                    i_aux.norm().bitsize(),
+                    _iter_start.elapsed()
+                );
 
                 // Line 24: E_aux, P_aux, Q_aux ← IdealToIsogeny(I_{com,rsp} ∩ I_aux)
                 //
@@ -986,6 +998,8 @@ impl SigningKey {
                 let i_aux_w: LeftIdeal<8> = i_aux.widen::<8>();
                 let i_com_rsp_lat_w: Lattice<8> = (*i_com_rsp_w.lattice()).into();
                 let i_aux_lat_w: Lattice<8> = (*i_aux_w.lattice()).into();
+                #[cfg(test)]
+                let _t_inter = std::time::Instant::now();
                 let inter_hnf_w8 =
                     match i_com_rsp_lat_w.intersection_via_kernel::<150>(&i_aux_lat_w) {
                         Some(h) => h,
@@ -995,6 +1009,12 @@ impl SigningKey {
                             continue;
                         }
                     };
+                #[cfg(test)]
+                eprintln!(
+                    "[sign {_iter}] i_inter intersection_via_kernel: {:?} (cumul {:?})",
+                    _t_inter.elapsed(),
+                    _iter_start.elapsed()
+                );
                 let inter_norm_w8: BigInt<8> = i_com_rsp
                     .norm()
                     .widen::<8>()
@@ -1002,16 +1022,27 @@ impl SigningKey {
                 let o0_w8 = EXTREMAL_ORDERS[0].widen::<8>();
                 let mut i_inter_w =
                     LeftIdeal::<8>::from_parts(inter_hnf_w8, inter_norm_w8, *o0_w8.order());
+                #[cfg(test)]
+                let _t_refresh = std::time::Instant::now();
                 if i_inter_w.refresh_norm::<40>().is_none() {
                     #[cfg(test)]
                     eprintln!("[sign {_iter}] DROP: i_inter.refresh_norm None");
                     continue;
                 }
+                #[cfg(test)]
+                eprintln!(
+                    "[sign {_iter}] i_inter refresh_norm OK: {:?}, norm={} bits (cumul {:?})",
+                    _t_refresh.elapsed(),
+                    i_inter_w.norm().bitsize(),
+                    _iter_start.elapsed()
+                );
                 if *i_inter_w.norm() == BigInt::<8>::ONE {
                     #[cfg(test)]
                     eprintln!("[sign {_iter}] DROP: i_inter collapsed to O_0");
                     continue;
                 }
+                #[cfg(test)]
+                let _t_smeq = std::time::Instant::now();
                 let i_inter = match i_inter_w.smallest_equiv_narrow::<32>() {
                     Some(i) => i,
                     None => {
@@ -1020,6 +1051,13 @@ impl SigningKey {
                         continue;
                     }
                 };
+                #[cfg(test)]
+                eprintln!(
+                    "[sign {_iter}] i_inter smallest_equiv_narrow OK: {:?}, norm={} bits (cumul {:?})",
+                    _t_smeq.elapsed(),
+                    i_inter.norm().bitsize(),
+                    _iter_start.elapsed()
+                );
                 #[cfg(test)]
                 eprintln!(
                     "[sign {_iter}] response to_isogeny... (cumul {:?})",

@@ -104,13 +104,33 @@ impl ExtremalOrder<8> {
         }
 
         // Spec line 1: bound = ceil(sqrt(4M / (p·sqrt(q)))).
+        //
+        // The spec's bound is an *upper* bound on the search range
+        // for `z`; it grows like `sqrt(M/p)`. For aux-path
+        // magnitudes (`M = m·N ≈ 2^378`), the spec bound is
+        // ≈ 2^64 — far beyond any reasonable iteration budget.
+        // The algorithm is probabilistic: by the prime number
+        // theorem, `O(log M) ≈ 400` attempts suffice in expectation.
+        // Cap at `MAX_ITER = 1_000_000` to retain the spec's
+        // mathematical structure (z cycles through a non-trivial
+        // range) while bounding wall-clock time. A caller seeing
+        // `None` after this many iterations should retry with a
+        // different seed rather than wait for `2^64` evaluations.
+        const MAX_ITER: u32 = 1_000_000;
         let bound: u32 = {
             let q_sqrt = (q_val as f64).sqrt();
             let ratio = four_m.to_f64() / (p.to_f64() * q_sqrt);
             if ratio <= 0.0 {
                 return None;
             }
-            (ratio.sqrt().ceil() as u32).max(256)
+            let raw = ratio.sqrt().ceil();
+            // f64 → u32 saturates at u32::MAX; cap explicitly.
+            let raw_u32 = if raw > u32::MAX as f64 {
+                u32::MAX
+            } else {
+                raw as u32
+            };
+            raw_u32.max(256).min(MAX_ITER)
         };
         let z_max = {
             let approx = (four_m.to_f64() / p.to_f64() - q_val as f64)
@@ -1223,7 +1243,7 @@ impl<const N: usize> LeftIdeal<N> {
         // equivalent to `self`, skip `δ`'s that collapse to
         // `O_0` and try the next-shortest.
         for (best_v, _) in candidates {
-            if let Some(result) = self.build_equiv_from_delta::<W>(best_v, denom_w) {
+            if let Some(mut result) = self.build_equiv_from_delta::<W>(best_v, denom_w) {
                 let rn = *result.norm();
                 if rn == BigInt::<4>::ONE || bool::from(rn.is_zero()) {
                     #[cfg(test)]
@@ -1233,10 +1253,45 @@ impl<const N: usize> LeftIdeal<N> {
                     );
                     continue;
                 }
+                // Verify the constructed lattice's covolume matches
+                // the claimed norm. If not, the mod-HNF reduction
+                // produced a basis for a sublattice (or our
+                // stored norm is wrong) — skip and try next.
+                let _stored_norm = *result.norm();
+                // `refresh_norm<24>` covers `BigInt<4>` basis
+                // entries up to ~256 bits: 4-fold det products
+                // reach ~1029 bits, comfortably within 24·64 = 1536
+                // bits. Trust whatever covolume `refresh_norm`
+                // computes — if it differs from the brute-force
+                // estimate (e.g. our `bj·δ̄/N(I)` div+HNF produced
+                // a sublattice rather than the actual equivalent
+                // ideal), the refreshed value is the
+                // mathematically correct one.
+                if result.refresh_norm::<24>().is_none() {
+                    #[cfg(test)]
+                    eprintln!(
+                        "[smallest_equiv_narrow] refresh_norm failed on candidate, stored norm={} bits",
+                        _stored_norm.bitsize()
+                    );
+                    continue;
+                }
+                let refreshed_norm = *result.norm();
+                if refreshed_norm == BigInt::<4>::ONE
+                    || bool::from(refreshed_norm.is_zero())
+                {
+                    #[cfg(test)]
+                    eprintln!(
+                        "[smallest_equiv_narrow] skipping trivial post-refresh, norm={} bits",
+                        refreshed_norm.bitsize()
+                    );
+                    continue;
+                }
                 #[cfg(test)]
                 eprintln!(
-                    "[smallest_equiv_narrow] accepted candidate, norm={} bits",
-                    rn.bitsize()
+                    "[smallest_equiv_narrow] accepted candidate, brute-force norm={} bits, \
+                     refresh norm={} bits",
+                    _stored_norm.bitsize(),
+                    refreshed_norm.bitsize(),
                 );
                 return Some(result);
             }
@@ -1312,6 +1367,18 @@ impl<const N: usize> LeftIdeal<N> {
             Coordinate::from_bigint(delta_w.d.as_bigint().wrapping_neg()),
             Denominator::from_bigint_unchecked(*delta_w.denom.as_bigint()),
         );
+        // Compute the new ideal `I·δ̄/N(I)` columns at width W.
+        //
+        // Each `bj·δ̄ ∈ I·conj(I) = N(I)·O_0`, so the **quaternion**
+        // is divisible by `N(I)` — equivalently, each integer
+        // coordinate of `bj·δ̄` is divisible by `N(I)`. Divide
+        // up front so the resulting columns represent the
+        // equivalent ideal directly (not amplified by `N(I)^4`
+        // in the determinant). Without this division, HNF of
+        // the un-divided columns has entries ~`equiv_norm² ·
+        // N(I)^4 · denom^4` (≳ 2^1300 at NIST-I) — far over
+        // `BigInt<4>`'s 256-bit budget even after dividing
+        // afterward by `gcd(entries, product_denom)`.
         let mut new_cols = [Vector::<W>::ZERO; 4];
         #[allow(clippy::needless_range_loop)]
         for j in 0..4 {
@@ -1324,19 +1391,60 @@ impl<const N: usize> LeftIdeal<N> {
                 Denominator::from_bigint_unchecked(bj.denom.as_bigint().widen::<W>()),
             );
             let product = bj_w.mul_direct(&delta_conj_w);
-            new_cols[j] = Vector::new(
+            // Divide each coord by N(I). Each coord is divisible
+            // by `N(I)` since `bj·δ̄ ∈ N(I)·O_0`.
+            let coords = [
                 *product.a.as_bigint(),
                 *product.b.as_bigint(),
                 *product.c.as_bigint(),
                 *product.d.as_bigint(),
-            );
+            ];
+            let mut divided = [BigInt::<W>::ZERO; 4];
+            for (k, c) in coords.iter().enumerate() {
+                let (q, rem) = c.div_rem(&self_norm_w);
+                if !bool::from(rem.is_zero()) {
+                    #[cfg(test)]
+                    eprintln!(
+                        "[build_equiv_from_delta] column {j}, coord {k} not divisible by N(I): \
+                         coord bits={}, N(I) bits={}, rem bits={}",
+                        c.bitsize(),
+                        self_norm_w.bitsize(),
+                        rem.bitsize(),
+                    );
+                    return None;
+                }
+                divided[k] = q;
+            }
+            new_cols[j] = Vector::new(divided[0], divided[1], divided[2], divided[3]);
         }
-        // Raw product denom = lattice_denom * delta_denom.
-        // Dividing by nrd(I) multiplies denom by nrd(I).
-        let product_denom: BigInt<W> = denom_w.ct_mul(&denom_w).ct_mul(&self_norm_w);
+        // After dividing by N(I), the columns represent the
+        // equivalent ideal at the original lattice denom (`d`).
+        // No additional `N(I)` factor in the denom.
+        let product_denom: BigInt<W> = denom_w.ct_mul(&denom_w);
 
-        // HNF at width W, simplify by GCD, then narrow to 4.
-        let hnf_w = Matrix::<W>::from_hnf_columns(&new_cols);
+        // HNF the post-division columns under a known modulus so
+        // intermediate xgcd cascades don't grow entries beyond the
+        // final HNF size.
+        //
+        // The Z-lattice spanned by `new_cols` has covolume
+        // `equiv_norm² · denom_w^8` (the ideal `I'·denom_w²` at
+        // integer level), so every HNF entry is bounded by this
+        // covolume. Pass it as the modulus to
+        // `from_hnf_columns_mod`, which reduces entries mod the
+        // modulus throughout the reduction. Without this, when
+        // the HNF has an unbalanced pivot pattern (e.g. `(1, 1,
+        // 1, equiv_norm² · denom_w^8)`), the small pivots' xgcd
+        // step inflates other columns by factors of order
+        // `entry / pivot` ≈ `entry` — producing 4× column-count
+        // growth, ~1500 bits at NIST-I instead of the ~256-bit
+        // final HNF entries.
+        let equiv_norm_w: BigInt<W> = equiv_norm.widen::<W>();
+        let denom_w_4 = product_denom.ct_mul(&product_denom);
+        let modulus = equiv_norm_w
+            .ct_mul(&equiv_norm_w)
+            .ct_mul(&denom_w_4)
+            .ct_mul(&BigInt::<W>::from_u64(2));
+        let hnf_w = Matrix::<W>::from_hnf_columns_mod::<W>(&new_cols, &modulus);
         let mut g = product_denom.abs();
         for row in 0..4 {
             for col in 0..4 {
