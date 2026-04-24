@@ -105,7 +105,7 @@ jobs:
 
       - name: Compare benchmarks (pull request)
         if: github.event_name == 'pull_request'
-        uses: benchmark-action/github-action-benchmark@d48d326b4ca9ba73ca0cd0d59f108f9e02a381c7
+        uses: benchmark-action/github-action-benchmark@a60cea5bc7b49e15c1f58f411161f99e0df48372
         with:
           name: sqisign-selkie benchmarks
           tool: customSmallerIsBetter
