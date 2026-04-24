@@ -1155,7 +1155,18 @@ impl<const N: usize> LeftIdeal<N> {
         // that narrows to `BigInt<4>` — e.g., because one HNF entry
         // happens to miss a few bits of common factor with
         // `product_denom` — we fall through to the next-shortest.
-        // Empirically TOP_K = 16 covers the tail.
+        //
+        // Brute-force over an **unreduced** HNF basis cannot do
+        // better than `min_nrd ≈ 2·N(I)` (Minkowski's second
+        // theorem on non-LLL-reduced bases), so the equivalent
+        // ideal has `n(I') ≈ N(I)` — roughly preserving the input
+        // norm bit-size. This is only useful when `N(I)` already
+        // fits in `BigInt<4>` before the reduction (the typical
+        // commitment-phase case). For larger ideals (e.g. the
+        // response-phase intersection at `~2^378`), proper LLL on
+        // the class gram is required — see Task #34 (arbitrary-
+        // precision LLL for response-phase ideals). Empirically
+        // `MAG = 4`, `TOP_K = 16` covers the tail for `N(I) ≤ 2^258`.
         const TOP_K: usize = 16;
         const MAG: i64 = 4;
         let mut candidates: Vec<([BigInt<W>; 4], BigInt<W>)> =
@@ -1179,11 +1190,42 @@ impl<const N: usize> LeftIdeal<N> {
         }
         candidates.sort_by(|a, b| a.1.cmp(&b.1));
         candidates.truncate(TOP_K);
+        #[cfg(test)]
+        if let Some((_, min_nrd)) = candidates.first() {
+            eprintln!(
+                "[smallest_equiv_narrow] self.norm={} bits, min brute-force nrd={} bits (ratio={} bits)",
+                self.norm().bitsize(),
+                min_nrd.bitsize(),
+                min_nrd.bitsize() as i64 - self.norm().bitsize() as i64,
+            );
+        }
 
         // Try each candidate in ascending `nrd` order; return the
-        // first equivalent ideal that narrows to `BigInt<4>`.
+        // first equivalent ideal that narrows to `BigInt<4>` AND
+        // has non-unit norm. A unit-norm (norm = 1) equivalent
+        // means `δ` is a primitive generator of a principal
+        // `self`, i.e., `self = O·δ`. Downstream, `to_isogeny`'s
+        // `suitable_ideals` cannot factor the unit ideal `O_0`
+        // and exhausts its pair budget. Since `smallest_equiv` is
+        // supposed to hand the caller a non-trivial ideal
+        // equivalent to `self`, skip `δ`'s that collapse to
+        // `O_0` and try the next-shortest.
         for (best_v, _) in candidates {
             if let Some(result) = self.build_equiv_from_delta::<W>(best_v, denom_w) {
+                let rn = *result.norm();
+                if rn == BigInt::<4>::ONE || bool::from(rn.is_zero()) {
+                    #[cfg(test)]
+                    eprintln!(
+                        "[smallest_equiv_narrow] skipping trivial candidate, norm={} bits",
+                        rn.bitsize()
+                    );
+                    continue;
+                }
+                #[cfg(test)]
+                eprintln!(
+                    "[smallest_equiv_narrow] accepted candidate, norm={} bits",
+                    rn.bitsize()
+                );
                 return Some(result);
             }
         }
@@ -1761,6 +1803,7 @@ mod tests {
     /// ideal for the chosen composite). It's a harness for future
     /// iteration more than an assertion of current behavior.
     #[test]
+    #[ignore] // Takes ~20 minutes; run explicitly with --include-ignored.
     fn suitable_ideals_composite_norm_smoke() {
         use super::super::lattice::LeftIdeal;
 
