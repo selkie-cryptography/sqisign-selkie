@@ -99,13 +99,8 @@ jobs:
       - name: Run zeroize test
         run: |
           cargo test --test zeroize --features expose-internals 2>&1 || true
-          # Wrap report with sha/timestamp.
-          if [ -f zeroize-report.json ]; then
-            BODY=$(cat zeroize-report.json)
-          else
-            BODY='{"total_bytes":0,"nonzero_after_drop":0,"status":"skip"}'
-          fi
-          echo "{\"sha\":\"${{ github.sha }}\",\"updated_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",$(echo "$BODY" | sed 's/^{//')}" > zeroize.json
+          rustc -O .github/scripts/zeroize-report.rs -o /tmp/zeroize-report
+          /tmp/zeroize-report "${{ github.sha }}" > zeroize.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -129,45 +124,11 @@ jobs:
         with:
           tool: cargo-bloat
 
-      - name: Build release
-        run: cargo build --release
-
-      - name: Collect sizes
+      - name: Build release and collect sizes
         run: |
-          BIN=./target/release/libsqisign_selkie.rlib
-          # Use the .so or find the actual binary.
-          LIB=$(find target/release -name '*.rlib' -o -name '*.so' -o -name '*.a' | head -1)
-          TEXT=$(size "$LIB" 2>/dev/null | tail -1 | awk '{print $1}' || echo 0)
-          DATA=$(size "$LIB" 2>/dev/null | tail -1 | awk '{print $2}' || echo 0)
-          BSS=$(size "$LIB" 2>/dev/null | tail -1 | awk '{print $3}' || echo 0)
-          TOTAL_SIZE=$(stat -c%s "$LIB" 2>/dev/null || stat -f%z "$LIB" 2>/dev/null || echo 0)
-
-          # Top functions by size via cargo bloat.
-          cargo bloat --release -n 20 --message-format=json 2>/dev/null > bloat-raw.json || echo '{"functions":[]}' > bloat-raw.json
-
-          # Build JSON.
-          cat > size.json <<JSONEOF
-          {
-            "sha": "${{ github.sha }}",
-            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "binary": {
-              "file": "$(basename "$LIB")",
-              "total_bytes": $TOTAL_SIZE,
-              "text": $TEXT,
-              "data": $DATA,
-              "bss": $BSS
-            },
-            "top_functions": $(python3 -c "
-          import json
-          try:
-              data = json.load(open('bloat-raw.json'))
-              fns = data.get('functions', [])[:20]
-              print(json.dumps([{'name': f.get('name','?'), 'size': f.get('size',0)} for f in fns]))
-          except:
-              print('[]')
-          ")
-          }
-          JSONEOF
+          cargo build --release
+          rustc -O .github/scripts/size-report.rs -o /tmp/size-report
+          /tmp/size-report "${{ github.sha }}" > size.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -195,13 +156,8 @@ jobs:
           else
             STATUS=fail
           fi
-          # The test writes alloc-report.json; wrap with sha/timestamp.
-          if [ -f alloc-report.json ]; then
-            BODY=$(cat alloc-report.json)
-          else
-            BODY='{"operations":[]}'
-          fi
-          echo "{\"sha\":\"${{ github.sha }}\",\"updated_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"$STATUS\",$(echo "$BODY" | sed 's/^{//')}" > alloc.json
+          rustc -O .github/scripts/alloc-report.rs -o /tmp/alloc-report
+          /tmp/alloc-report "${{ github.sha }}" "$STATUS" alloc-report.json > alloc.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -45,15 +45,8 @@ jobs:
 
       - name: Collect results
         run: |
-          TARGET="${{ matrix.target }}"
-          RUNS=$(grep -oP 'stat::number_of_executed_units:\s*\K\d+' fuzz/fuzz-output.txt || true)
-          RUNS=${RUNS:-0}
-          CRASHES=$(ls fuzz/artifacts/$TARGET/ 2>/dev/null | wc -l | tr -d ' ')
-          CORPUS=$(ls fuzz/corpus/$TARGET/ 2>/dev/null | wc -l | tr -d ' ')
-          STATUS=$([[ $CRASHES -eq 0 ]] && echo pass || echo fail)
-          cat > fuzz-result.json <<EOF
-          {"target": "$TARGET", "status": "$STATUS", "runs": $RUNS, "crashes": $CRASHES, "corpus_size": $CORPUS}
-          EOF
+          rustc -O .github/scripts/fuzz-report.rs -o /tmp/fuzz-report
+          /tmp/fuzz-report target "${{ matrix.target }}" "${{ github.sha }}" fuzz/fuzz-output.txt > fuzz-result.json
 
       - name: Upload crash artifacts
         if: always()
@@ -83,38 +76,8 @@ jobs:
 
       - name: Merge results
         run: |
-          # Combine per-target results into one JSON.
-          TARGETS=$(find results -name fuzz-result.json)
-          PASS=0; FAIL=0; TOTAL_RUNS=0; TOTAL_CORPUS=0; TOTAL_CRASHES=0
-          DETAILS="["
-          FIRST=true
-          for f in $TARGETS; do
-            if [ "$FIRST" = true ]; then FIRST=false; else DETAILS="$DETAILS,"; fi
-            DETAILS="$DETAILS$(cat "$f")"
-            S=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('status','?'))")
-            R=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('runs',0))")
-            C=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('crashes',0))")
-            CS=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('corpus_size',0))")
-            TOTAL_RUNS=$((TOTAL_RUNS + R))
-            TOTAL_CRASHES=$((TOTAL_CRASHES + C))
-            TOTAL_CORPUS=$((TOTAL_CORPUS + CS))
-            if [ "$S" = "fail" ]; then FAIL=$((FAIL+1)); else PASS=$((PASS+1)); fi
-          done
-          DETAILS="$DETAILS]"
-          STATUS=$([[ $FAIL -eq 0 ]] && echo pass || echo fail)
-          cat > fuzz.json <<EOF
-          {
-            "sha": "${{ github.sha }}",
-            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "status": "$STATUS",
-            "pass": $PASS,
-            "fail": $FAIL,
-            "total_runs": $TOTAL_RUNS,
-            "total_crashes": $TOTAL_CRASHES,
-            "total_corpus": $TOTAL_CORPUS,
-            "targets": $DETAILS
-          }
-          EOF
+          rustc -O .github/scripts/fuzz-report.rs -o /tmp/fuzz-report
+          /tmp/fuzz-report merge "${{ github.sha }}" results > fuzz.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - name: Upload to CI site
