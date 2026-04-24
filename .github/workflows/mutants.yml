@@ -147,7 +147,7 @@ jobs:
             echo "SKIP_UPLOAD=true" >> "$GITHUB_ENV"
             exit 0
           fi
-          jq -s '{outcomes: map(.outcomes) | add}' $FOUND > merged-outcomes.json
+          find shards -name outcomes.json -print0 | xargs -0 jq -s '{outcomes: map(.outcomes) | add}' > merged-outcomes.json
 
       - name: Generate site JSON
         if: env.SKIP_UPLOAD != 'true'
