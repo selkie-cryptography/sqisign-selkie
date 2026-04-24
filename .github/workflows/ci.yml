@@ -66,6 +66,23 @@ jobs:
       - run: cargo nextest run --target ${{ matrix.target }}
       - run: cargo test --doc --target ${{ matrix.target }}
 
+  proptest:
+    name: Property tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Run property tests
+        run: |
+          cargo test --features expose-internals \
+            --test proptest_field \
+            --test proptest_quaternion \
+            --test proptest_scalar
+
   platform-report:
     name: Platform coverage
     needs: test
