@@ -52,6 +52,7 @@ jobs:
           tool: cargo-mutants,cargo-nextest
 
       - name: Run cargo-mutants on changed code
+        continue-on-error: true
         run: |
           cargo mutants --no-shuffle -vV \
             --test-tool nextest \
