@@ -757,7 +757,21 @@ fn try_find_uv(
         }
     }
 
+    // Cap the line-walk. Without a cap, the `MIN_U_ODD_BITS`
+    // filter below can force the loop to step `(u, v)` forward
+    // by `(+d_2, -d_1)` for pathological `d_1, d_2` pairs where
+    // no step in the visible portion of the line has `u_odd ≥
+    // 2^{MIN_U_ODD_BITS}`. For `d_1 = 1` and `v_0 ≈ 2^f`, the
+    // natural termination condition `v ≤ d_1` requires
+    // `~2^{f}` steps — unbounded in practice. Give up after
+    // `MAX_WALK_STEPS` and let the caller try the next pair.
+    const MAX_WALK_STEPS: u32 = 10_000;
+    let mut steps = 0u32;
     loop {
+        steps += 1;
+        if steps > MAX_WALK_STEPS {
+            return None;
+        }
         if !bool::from(u.is_zero()) && !bool::from(v.is_zero()) {
             // Factor out the 2-adic part of `gcd(u, v)`, matching the
             // C reference (`dim2id2iso.c:833`). The spec writes
@@ -791,6 +805,42 @@ fn try_find_uv(
             // `(β₁, β₂)`, so the acceptance cost is small (≈ 20%
             // of pairs on NIST-I in practice).
             if e_val < 2 {
+                u = u.ct_add(&d2_w);
+                if v <= d1_w {
+                    return None;
+                }
+                v = v.ct_sub(&d1_w);
+                continue;
+            }
+            // Reject pairs whose odd parts `u_odd = u >> e_val`
+            // or `v_odd = v >> e_val` fall outside the
+            // `fixed_degree_isogeny`-safe window
+            // `[MIN_BITS, MAX_BITS] = [26, 135]`.
+            //
+            // Lower bound (26): below this, `e_fdi` caps at
+            // `f-2`, `represent_integer`'s bound collapses to
+            // 256, and its ~55-candidate `(z, t)` search
+            // nearly always fails (`represent_integer FAILED,
+            // e_fdi=246`).
+            //
+            // Upper bound (135): above this, `e_fdi = min(f-2,
+            // p_bits − bits + 20)` shrinks so `fixed_degree_
+            // isogeny` rejects the pair immediately via its
+            // `u_wide ≥ 2^{e_fdi}` guard (for `bits > 135`,
+            // `e_fdi < bits` always).
+            //
+            // The balance-jump above places us near `u ≈
+            // 2^{f/2}` where both odd parts typically fall in
+            // range; the walks below peel off trailing zeros.
+            const MIN_ODD_BITS: u32 = 26;
+            const MAX_ODD_BITS: u32 = 135;
+            let u_odd_bits = u.shr(e_val).bitsize();
+            let v_odd_bits = v.shr(e_val).bitsize();
+            if u_odd_bits < MIN_ODD_BITS
+                || u_odd_bits > MAX_ODD_BITS
+                || v_odd_bits < MIN_ODD_BITS
+                || v_odd_bits > MAX_ODD_BITS
+            {
                 u = u.ct_add(&d2_w);
                 if v <= d1_w {
                     return None;
