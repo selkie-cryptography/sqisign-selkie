@@ -321,7 +321,7 @@ fn sign(runner: &mut CtRunner, rng: &mut BenchRng) {
 // Verify: Left = valid sig, Right = corrupted sig.
 // Verify should be constant-time to prevent oracle attacks.
 fn verify(runner: &mut CtRunner, rng: &mut BenchRng) {
-    use sqisign_selkie::{Signature, VerifyingKey, SIGNATURE_BYTES};
+    use sqisign_selkie::{SIGNATURE_BYTES, Signature, VerifyingKey};
 
     let pk_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].1;
     let sm_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].4;
@@ -342,7 +342,7 @@ fn verify(runner: &mut CtRunner, rng: &mut BenchRng) {
         } else {
             // Right: corrupted signature (flip a byte)
             let mut bad = sig_bytes;
-            bad[0] ^= 0xff;
+            bad[0] ^= 0xFF;
             inputs.push(bad);
             classes.push(Class::Right);
         }
@@ -351,9 +351,7 @@ fn verify(runner: &mut CtRunner, rng: &mut BenchRng) {
     for (class, sig_b) in classes.into_iter().zip(inputs) {
         runner.run_one(class, || {
             if let Ok(sig) = Signature::from_bytes(&sig_b) {
-                let _ = std::hint::black_box(
-                    std::panic::catch_unwind(|| vk.verify(&msg, &sig))
-                );
+                let _ = std::hint::black_box(std::panic::catch_unwind(|| vk.verify(&msg, &sig)));
             }
         });
     }
