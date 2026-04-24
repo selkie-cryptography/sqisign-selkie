@@ -179,7 +179,9 @@ jobs:
         continue-on-error: true
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: hashFiles('kat.json') != ''
       - name: Upload to CI site
+        if: hashFiles('kat.json') != ''
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload kat kat.json "${{ github.sha }}"

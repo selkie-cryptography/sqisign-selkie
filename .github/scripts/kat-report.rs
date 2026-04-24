@@ -28,7 +28,8 @@ fn run_tests(args: &[&str]) -> Vec<TestResult> {
         .output()
         .expect("failed to run cargo test");
 
-    let stdout = String::from_utf8_lossy(&stdout_and_stderr(&output));
+    let combined = stdout_and_stderr(&output);
+    let stdout = String::from_utf8_lossy(&combined);
     let mut results = Vec::new();
 
     for line in stdout.lines() {

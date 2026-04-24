@@ -32,8 +32,10 @@ divan = "0.1"
 dudect-bencher = "0.7"
 iai-callgrind = "0.16"
 dhat = "0.3"
-crabgrind = "0.2"
 tacet = "0.4"
+
+[target.'cfg(unix)'.dev-dependencies]
+crabgrind = "0.2"
 proptest = "1"
 mutants = "0.0.4"  # #[mutants::skip] attribute for cargo-mutants
 serde = { version = "1", features = ["derive"] }
@@ -104,6 +106,10 @@ required-features = ["expose-internals"]
 
 [[test]]
 name = "proptest_scalar"
+required-features = ["expose-internals"]
+
+[[test]]
+name = "zeroize"
 required-features = ["expose-internals"]
 
 [[bench]]

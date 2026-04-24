@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Secret-dependent memory access tests using Valgrind memcheck.
 //!
 //! Marks secret inputs as "undefined" using Valgrind client requests,
