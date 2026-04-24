@@ -99,6 +99,15 @@
       .logo--light { display: block; }
     }
 
+    .logo.building {
+      animation: logo-breathe 2s ease-in-out infinite;
+    }
+
+    @keyframes logo-breathe {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
     .header__title {
       font-size: 18px;
       font-weight: 900;
@@ -2249,12 +2258,85 @@
       if (benchStatus && benchStatus.state === 'running') parts.push('benchmarks');
       if (mutStatus && mutStatus.state === 'running') parts.push('mutation testing');
       if (dudectStatus && dudectStatus.state === 'running' || tacetStatus && tacetStatus.state === 'running') parts.push('constant-time testing');
-      if (parts.length > 0) {
+      const isBuilding = parts.length > 0;
+
+      if (isBuilding) {
         banner.textContent = `Building ${parts.join(' and ')}...`;
         banner.style.display = 'block';
       } else {
         banner.style.display = 'none';
       }
+
+      // Animate the header logo and favicon when building.
+      document.querySelectorAll('.logo').forEach(el => {
+        el.classList.toggle('building', isBuilding);
+      });
+
+      // Swap favicon to an animated version via canvas.
+      updateFavicon(isBuilding);
+    }
+
+    // --- Favicon animation ---
+
+    let faviconInterval = null;
+    let faviconCanvas = null;
+    let faviconImg = null;
+
+    function updateFavicon(building) {
+      if (!building) {
+        // Restore static favicon.
+        if (faviconInterval) {
+          clearInterval(faviconInterval);
+          faviconInterval = null;
+        }
+        const link = document.querySelector('link[rel="icon"][sizes="32x32"]');
+        if (link) {
+          const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          link.href = isDark ? '/favicon-32x32-dark.png' : '/favicon-32x32.png';
+        }
+        return;
+      }
+
+      // Already animating.
+      if (faviconInterval) return;
+
+      // Load the logo image for canvas rendering.
+      if (!faviconImg) {
+        faviconImg = new Image();
+        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        faviconImg.src = isDark
+          ? '/selkie-solid-white-on-transparent.svg'
+          : '/selkie-solid-black-on-transparent.svg';
+      }
+      if (!faviconCanvas) {
+        faviconCanvas = document.createElement('canvas');
+        faviconCanvas.width = 32;
+        faviconCanvas.height = 32;
+      }
+
+      let phase = 0;
+      faviconInterval = setInterval(() => {
+        const ctx = faviconCanvas.getContext('2d');
+        ctx.clearRect(0, 0, 32, 32);
+
+        // Opacity breathe: 0.3 to 1.0
+        const opacity = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(phase));
+        ctx.globalAlpha = opacity;
+
+        // Draw the logo centered and scaled to fit.
+        const scale = Math.min(32 / faviconImg.naturalWidth, 32 / faviconImg.naturalHeight) * 0.9;
+        const w = faviconImg.naturalWidth * scale;
+        const h = faviconImg.naturalHeight * scale;
+        ctx.drawImage(faviconImg, (32 - w) / 2, (32 - h) / 2, w, h);
+
+        // Update the favicon link.
+        const link = document.querySelector('link[rel="icon"][sizes="32x32"]');
+        if (link) {
+          link.href = faviconCanvas.toDataURL('image/png');
+        }
+
+        phase += 0.15;
+      }, 50);
     }
 
     // --- Commit nav ---
