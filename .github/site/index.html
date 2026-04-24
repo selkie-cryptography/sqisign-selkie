@@ -1925,6 +1925,36 @@
       return html;
     }
 
+    function renderKatData(data) {
+      const suites = data.suites || [];
+      let html = '<div class="audit-grid">';
+      for (const s of suites) {
+        const hasFail = s.fail > 0;
+        const color = hasFail ? 'var(--red)' : 'var(--green)';
+        html += `<div class="audit-badge">
+          <div class="badge-status" style="color:${color}">${hasFail ? s.fail + ' FAIL' : s.pass + ' pass'}</div>
+          <div class="badge-label">${esc(s.name)}</div>
+          <div class="badge-detail">${s.total} total, ${s.skip} skipped</div>
+        </div>`;
+      }
+      html += '</div>';
+
+      for (const s of suites) {
+        const tests = s.tests || [];
+        if (tests.length === 0) continue;
+        html += `<h4 style="margin:16px 0 8px">${esc(s.name)} (${tests.length})</h4>`;
+        html += '<table class="dudect-table"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>';
+        for (const t of tests) {
+          const icon = t.status === 'pass' ? '\u2714' : t.status === 'skip' ? '\u2013' : '\u2718';
+          const cls = t.status === 'pass' ? 'dudect-pass' : t.status === 'fail' ? 'dudect-fail' : '';
+          html += `<tr><td class="fn-name">${esc(t.name)}</td><td class="${cls}">${icon}</td></tr>`;
+        }
+        html += '</tbody></table>';
+      }
+
+      return html;
+    }
+
     function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData) {
       let html = '<div class="audit-grid">';
 
@@ -2500,7 +2530,7 @@
       const dudectMeta = document.getElementById('dudect-meta');
 
       // Try per-commit files, fall back to latest.
-      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, iaiData, allocData, platformData, stackData, ctgrindData, apiData] = await Promise.all([
+      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, iaiData, allocData, platformData, stackData, ctgrindData, apiData, katData] = await Promise.all([
         fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
         fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
         fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
@@ -2510,15 +2540,16 @@
         fetchJson(`/unsafe/${sha}.json`).then(d => d || fetchJson('/unsafe/latest.json')),
         fetchJson(`/size/${sha}.json`).then(d => d || fetchJson('/size/latest.json')),
         fetchJson(`/docs/${sha}.json`).then(d => d || fetchJson('/docs/latest.json')),
+        fetchJson(`/msrv/${sha}.json`).then(d => d || fetchJson('/msrv/latest.json')),
         fetchJson(`/panic/${sha}.json`).then(d => d || fetchJson('/panic/latest.json')),
         fetchJson(`/fuzz/${sha}.json`).then(d => d || fetchJson('/fuzz/latest.json')),
         fetchJson(`/iai/${sha}.json`).then(d => d || fetchJson('/iai/latest.json')),
+        fetchJson(`/alloc/${sha}.json`).then(d => d || fetchJson('/alloc/latest.json')),
         fetchJson(`/platform/${sha}.json`).then(d => d || fetchJson('/platform/latest.json')),
         fetchJson(`/stack/${sha}.json`).then(d => d || fetchJson('/stack/latest.json')),
         fetchJson(`/ctgrind/${sha}.json`).then(d => d || fetchJson('/ctgrind/latest.json')),
         fetchJson(`/api/${sha}.json`).then(d => d || fetchJson('/api/latest.json')),
-        fetchJson(`/alloc/${sha}.json`).then(d => d || fetchJson('/alloc/latest.json')),
-        fetchJson(`/msrv/${sha}.json`).then(d => d || fetchJson('/msrv/latest.json')),
+        fetchJson(`/kat/${sha}.json`).then(d => d || fetchJson('/kat/latest.json')),
       ]);
 
       // Only re-render a section if the commit changed or the data
@@ -2612,6 +2643,23 @@
         iaiEl.innerHTML = renderIaiData(iaiData);
       } else {
         iaiEl.innerHTML = '<p class="empty">No instruction count data yet.</p>';
+      }
+
+      // Test vectors.
+      const katEl = document.getElementById('kat-content');
+      const katMeta = document.getElementById('kat-meta');
+      if (katData) {
+        const suites = katData.suites || [];
+        const totalPass = suites.reduce((s, x) => s + (x.pass || 0), 0);
+        const totalFail = suites.reduce((s, x) => s + (x.fail || 0), 0);
+        const totalAll = suites.reduce((s, x) => s + (x.total || 0), 0);
+        katMeta.innerHTML = totalFail > 0
+          ? `<span style="color:var(--red)">${totalFail} fail</span> / ${totalAll}`
+          : `${totalPass}/${totalAll} pass`;
+        katEl.innerHTML = renderKatData(katData);
+      } else {
+        katMeta.textContent = '';
+        katEl.innerHTML = '<p class="empty">No test vector data yet.</p>';
       }
 
       // Fuzzing.
