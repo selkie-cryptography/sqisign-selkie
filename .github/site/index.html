@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="dark light">
   <title>sqisign-selkie CI</title>
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" media="(prefers-color-scheme: light)" id="favicon-light">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" media="(prefers-color-scheme: light)">
-  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32-dark.png" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32-dark.png" media="(prefers-color-scheme: dark)" id="favicon-dark">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16-dark.png" media="(prefers-color-scheme: dark)">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -924,18 +924,6 @@
     }
 
     /* Status banner */
-    .status-banner {
-      padding: 8px 20px;
-      font-size: 13px;
-      font-weight: 600;
-      text-align: center;
-      color: var(--yellow);
-      background: rgba(210, 153, 34, 0.08);
-      border-bottom: 1px solid rgba(210, 153, 34, 0.2);
-      animation: pulse 2s ease-in-out infinite;
-      display: none;
-    }
-
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.5; }
@@ -1059,7 +1047,6 @@
     </div>
   </header>
 
-  <div class="status-banner" id="status-banner"></div>
 
   <div class="container">
     <div class="commit-nav">
@@ -2568,7 +2555,6 @@
     // --- Status banner ---
 
     async function updateStatus() {
-      const banner = document.getElementById('status-banner');
       const [covStatus, benchStatus, mutStatus, dudectStatus, tacetStatus] = await Promise.all([
         fetchJson('/coverage/status.json'),
         fetchJson('/bench/status.json'),
@@ -2576,31 +2562,24 @@
         fetchJson('/dudect/status.json'),
         fetchJson('/tacet/status.json'),
       ]);
-      const parts = [];
-      if (covStatus && covStatus.state === 'running') parts.push('coverage');
-      if (benchStatus && benchStatus.state === 'running') parts.push('benchmarks');
-      if (mutStatus && mutStatus.state === 'running') parts.push('mutation testing');
-      if (dudectStatus && dudectStatus.state === 'running' || tacetStatus && tacetStatus.state === 'running') parts.push('constant-time testing');
-      const isBuilding = parts.length > 0;
+      const isBuilding =
+        (covStatus && covStatus.state === 'running') ||
+        (benchStatus && benchStatus.state === 'running') ||
+        (mutStatus && mutStatus.state === 'running') ||
+        (dudectStatus && dudectStatus.state === 'running') ||
+        (tacetStatus && tacetStatus.state === 'running');
 
-      if (isBuilding) {
-        banner.textContent = `Building ${parts.join(' and ')}...`;
-        banner.style.display = 'block';
-      } else {
-        banner.style.display = 'none';
-      }
-
-      // Animate the header logo and favicon when building.
+      // Animate the header logo when building.
       document.querySelectorAll('.logo').forEach(el => {
         el.classList.toggle('building', isBuilding);
       });
 
       // Update page title.
       document.title = isBuilding
-        ? `\u23f3 sqisign-selkie CI`
+        ? '\u23f3 sqisign-selkie CI'
         : 'sqisign-selkie CI';
 
-      // Swap favicon to an animated version via canvas.
+      // Animate the favicon.
       updateFavicon(isBuilding);
     }
 
@@ -2609,28 +2588,36 @@
     let faviconInterval = null;
     let faviconCanvas = null;
     let faviconImg = null;
+    let faviconReady = false;
+
+    // Pick the active favicon link based on color scheme.
+    function getActiveFaviconLink() {
+      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      return document.getElementById(isDark ? 'favicon-dark' : 'favicon-light');
+    }
 
     function updateFavicon(building) {
       if (!building) {
-        // Restore static favicon.
         if (faviconInterval) {
           clearInterval(faviconInterval);
           faviconInterval = null;
         }
-        const link = document.querySelector('link[rel="icon"][sizes="32x32"]');
-        if (link) {
-          const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-          link.href = isDark ? '/favicon-32x32-dark.png' : '/favicon-32x32.png';
-        }
+        // Restore both favicon links to their static PNGs.
+        const light = document.getElementById('favicon-light');
+        const dark = document.getElementById('favicon-dark');
+        if (light) light.href = '/favicon-32x32.png';
+        if (dark) dark.href = '/favicon-32x32-dark.png';
         return;
       }
 
-      // Already animating.
       if (faviconInterval) return;
 
-      // Load the logo image for canvas rendering.
+      // Load the logo SVG for canvas rendering. Wait for it to load
+      // before starting the animation — drawImage on an unloaded
+      // image draws nothing.
       if (!faviconImg) {
         faviconImg = new Image();
+        faviconImg.onload = () => { faviconReady = true; };
         const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         faviconImg.src = isDark
           ? '/selkie-solid-white-on-transparent.svg'
@@ -2644,10 +2631,12 @@
 
       let phase = 0;
       faviconInterval = setInterval(() => {
+        if (!faviconReady) return;
+
         const ctx = faviconCanvas.getContext('2d');
         ctx.clearRect(0, 0, 32, 32);
 
-        // Opacity breathe: 0.3 to 1.0
+        // Opacity breathe: 0.3 to 1.0.
         const opacity = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(phase));
         ctx.globalAlpha = opacity;
 
@@ -2657,11 +2646,12 @@
         const h = faviconImg.naturalHeight * scale;
         ctx.drawImage(faviconImg, (32 - w) / 2, (32 - h) / 2, w, h);
 
-        // Update the favicon link.
-        const link = document.querySelector('link[rel="icon"][sizes="32x32"]');
-        if (link) {
-          link.href = faviconCanvas.toDataURL('image/png');
-        }
+        // Update both favicon links so it works regardless of color scheme.
+        const dataUrl = faviconCanvas.toDataURL('image/png');
+        const light = document.getElementById('favicon-light');
+        const dark = document.getElementById('favicon-dark');
+        if (light) light.href = dataUrl;
+        if (dark) dark.href = dataUrl;
 
         phase += 0.15;
       }, 50);
@@ -2707,7 +2697,6 @@
         const opt = document.createElement('option');
         opt.value = c.sha;
         let label = c.sha.slice(0, 7);
-        if (c.percent != null) label += ` (${c.percent.toFixed(1)}%)`;
         opt.textContent = label;
         select.appendChild(opt);
       }
