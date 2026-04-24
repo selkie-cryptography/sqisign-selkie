@@ -16,6 +16,8 @@
 
 use core::ops::Deref;
 
+use rand_core::{OsRng, RngCore};
+
 use super::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
@@ -152,15 +154,35 @@ impl ExtremalOrder<8> {
             raw.max(1)
         };
 
+        // Random sampler for `[lo, hi]` with rejection sampling
+        // (matches the C reference's `ibz_rand_interval`).
+        let rand_in_range = |lo: i64, hi: i64| -> i64 {
+            let range = (hi - lo + 1) as u64;
+            let threshold = u64::MAX - (u64::MAX % range);
+            loop {
+                let val = ((OsRng.next_u32() as u64) << 32) | (OsRng.next_u32() as u64);
+                if val < threshold {
+                    return (val % range) as i64 + lo;
+                }
+            }
+        };
+
         let mut _primes_found = 0u32;
         let mut _cornacchia_ok = 0u32;
         let mut _parity_ok = 0u32;
         let mut _isogeny_cond_fail = 0u32;
+        // Random sampling per spec [Alg. 3.12] and C ref
+        // (`normeq.c` calls `ibz_rand_interval` for both `z` and
+        // `t`). Each iteration picks one `(z, t)` pair uniformly
+        // from the search box; expected hits per `O(log M)` ≈ 400
+        // attempts. Linear iteration biased toward small `z` and
+        // never explored larger ones within budget — slow and
+        // narrow.
         let mut counter: u32 = 0;
         while counter < bound {
             counter += 1;
 
-            let z_val = ((counter as i64 - 1) % z_max.max(1)) + 1;
+            let z_val = rand_in_range(1, z_max.max(1));
             let z = BigInt::<8>::from_i64(z_val);
 
             let pz_sq = p.ct_mul(&z.ct_mul(&z));
@@ -177,14 +199,15 @@ impl ExtremalOrder<8> {
                 }
             };
 
-            // Line 5: sample t from [-m', m'] (spec uses both signs).
-            // M' = 4M - p(z² + qt²) depends only on t², so the
-            // prime and Cornacchia results are the same for ±t. But
-            // the isogeny condition (line 12-15) and the divisibility
-            // check (line 18-19) depend on the sign of t.
+            // One random `t` per iteration (was: linear loop over
+            // `[-50, 50]`). Each (z, t) pair gets evaluated once;
+            // the outer counter bound governs total work.
             let z_sq = z.ct_mul(&z);
-            let t_max_capped = t_max.min(50);
-            for t_val in (-t_max_capped)..=t_max_capped {
+            if t_max <= 0 {
+                continue;
+            }
+            let t_val = rand_in_range(-t_max, t_max);
+            {
                 let t = BigInt::<8>::from_i64(t_val);
                 let t_sq = t.ct_mul(&t);
                 let inner = z_sq.ct_add(&q.ct_mul(&t_sq));
