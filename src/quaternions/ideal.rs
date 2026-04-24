@@ -730,6 +730,33 @@ fn try_find_uv(
         v
     };
 
+    // Balance bias: jump to the line position where `u ≈ 2^{f/2}` so
+    // that `fixed_degree_isogeny`'s `represent_integer` has a
+    // reasonable search space (bound scales as `√(4m/p)`, which caps
+    // at 256 for `u ≲ 2^{25}` and produces a ~55-pair search — almost
+    // always rejects). For large `d_1, d_2` the line has few `(u, v)`
+    // pairs total, so even the initial pair is usually balanced; for
+    // small `d_1, d_2`, the walk would need billions of steps to
+    // reach balance. Computing the jump directly keeps this O(1).
+    //
+    // Target: u ≈ 2^{f/2}. k satisfies `u0 + k·d_2 ≥ 2^{f/2}`, i.e.,
+    // `k ≥ (2^{f/2} − u_0) / d_2`. Also require `k·d_1 ≤ v_0` so `v`
+    // stays positive. If both bounds are compatible, jump; otherwise
+    // fall back to the original `k = 0` start.
+    {
+        let target_u = BigInt::<8>::ONE.shl(f.value() / 2);
+        if target_u > u {
+            let (k, _) = target_u.ct_sub(&u).div_rem(&d2_w);
+            // Feasibility: after the jump, `v_new = v − k·d_1` must
+            // remain positive. Equivalent: `k · d_1 < v`.
+            let k_d1 = k.ct_mul(&d1_w);
+            if v > k_d1 {
+                u = u.ct_add(&k.ct_mul(&d2_w));
+                v = v.ct_sub(&k_d1);
+            }
+        }
+    }
+
     loop {
         if !bool::from(u.is_zero()) && !bool::from(v.is_zero()) {
             // Factor out the 2-adic part of `gcd(u, v)`, matching the
