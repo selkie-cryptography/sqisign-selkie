@@ -88,6 +88,44 @@ fn main() {
     ssh_cmd(&format!("rm -f {dir}/status.json"));
     sftp_put("/tmp/status.json", &format!("{dir}/status.json"));
     eprintln!("[ci-upload] done");
+
+    // Update the global manifest so the dashboard can poll one file.
+    update_manifest(kind, sha);
+}
+
+/// Updates `/data/manifest.json` — a single object mapping each data
+/// kind to its latest SHA and timestamp. The dashboard polls this one
+/// file instead of 20+ individual files.
+fn update_manifest(kind: &str, sha: &str) {
+    let manifest_url = format!("{SITE}/manifest.json");
+    let existing = fetch_url(&manifest_url).unwrap_or_else(|| "{}".to_string());
+
+    // Parse existing entries (simple key extraction).
+    let all_kinds = [
+        "coverage", "bench", "mutants", "dudect", "tacet", "deny",
+        "unsafe", "size", "docs", "msrv", "panic", "fuzz", "iai",
+        "alloc", "platform", "stack", "ctgrind", "api", "kat", "zeroize",
+    ];
+
+    let mut entries = Vec::new();
+    for k in &all_kinds {
+        if *k == kind {
+            // Replace with the new SHA.
+            entries.push(format!("  {}: {}", json_str(k), json_str(sha)));
+        } else {
+            // Preserve the existing value.
+            let existing_sha = extract_string(&existing, k);
+            if !existing_sha.is_empty() {
+                entries.push(format!("  {}: {}", json_str(k), json_str(&existing_sha)));
+            }
+        }
+    }
+
+    let manifest = format!("{{\n{}\n}}", entries.join(",\n"));
+    write_tmp("manifest.json", &manifest);
+    ssh_cmd("rm -f /data/manifest.json");
+    sftp_put("/tmp/manifest.json", "/data/manifest.json");
+    eprintln!("[ci-upload] updated manifest");
 }
 
 /// Build a new index JSON array by prepending this commit's entry

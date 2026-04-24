@@ -761,6 +761,43 @@
       border-radius: 6px;
       padding: 12px;
       text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+
+    .audit-badge:hover {
+      border-color: var(--fg-muted);
+    }
+
+    .audit-badge.active {
+      border-color: var(--fg);
+    }
+
+    .audit-detail {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+
+    .audit-detail table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .audit-detail th, .audit-detail td {
+      padding: 4px 8px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .audit-detail th {
+      color: var(--fg-dim);
+      font-weight: 700;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
     .audit-badge .badge-status {
@@ -1238,6 +1275,7 @@
     let mutantsIndex = [];  // [{sha, updated_at}, ...]
     let selectedSha = null; // Currently viewed commit.
     let covData = null;     // Current coverage data for drill-down.
+    let lastManifest = {};  // {kind: sha} from last poll — skip refetches when unchanged.
 
     // Track what's currently rendered to avoid clobbering state
     // (expanded modules, scroll position) on no-op poll cycles.
@@ -1955,6 +1993,26 @@
       return html;
     }
 
+    let activeAuditPanel = null;
+
+    function toggleAuditDetail(id) {
+      const el = document.getElementById('audit-detail-' + id);
+      const badge = document.querySelector(`[data-audit="${id}"]`);
+      if (!el) return;
+      if (activeAuditPanel === id) {
+        el.style.display = 'none';
+        badge && badge.classList.remove('active');
+        activeAuditPanel = null;
+      } else {
+        // Hide any open panel.
+        document.querySelectorAll('.audit-detail').forEach(d => d.style.display = 'none');
+        document.querySelectorAll('.audit-badge.active').forEach(b => b.classList.remove('active'));
+        el.style.display = 'block';
+        badge && badge.classList.add('active');
+        activeAuditPanel = id;
+      }
+    }
+
     function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData) {
       let html = '<div class="audit-grid">';
 
@@ -1968,7 +2026,7 @@
           panicData.unwrap > 0 ? `unwrap:${panicData.unwrap}` : '',
           panicData.panic_fmt > 0 ? `panic:${panicData.panic_fmt}` : '',
         ].filter(Boolean).join(', ');
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="panic" onclick="toggleAuditDetail('panic')">
           <div class="badge-status" style="color:${color}">${panicData.total}</div>
           <div class="badge-label">panic sites</div>
           <div class="badge-detail">${breakdown || 'none'}</div>
@@ -1979,7 +2037,7 @@
       if (deny) {
         const color = deny.status === 'pass' ? 'var(--green)' : 'var(--red)';
         const icon = deny.status === 'pass' ? '\u2714' : '\u2718';
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="deny" onclick="toggleAuditDetail('deny')">
           <div class="badge-status" style="color:${color}">${icon}</div>
           <div class="badge-label">cargo deny</div>
           <div class="badge-detail">${deny.warnings || 0} warnings, ${deny.errors || 0} errors</div>
@@ -1989,7 +2047,7 @@
       // Unsafe
       if (unsafeData) {
         const color = unsafeData.total === 0 ? 'var(--green)' : unsafeData.total <= 5 ? 'var(--yellow)' : 'var(--red)';
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="unsafe" onclick="toggleAuditDetail('unsafe')">
           <div class="badge-status" style="color:${color}">${unsafeData.total}</div>
           <div class="badge-label">unsafe</div>
           <div class="badge-detail">${(unsafeData.modules || []).filter(m => m.count > 0).map(m => esc(m.name) + ':' + m.count).join(', ') || 'none'}</div>
@@ -1999,7 +2057,7 @@
       // Binary size
       if (sizeData && sizeData.binary) {
         const kb = (sizeData.binary.total_bytes / 1024).toFixed(0);
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="size" onclick="toggleAuditDetail('size')">
           <div class="badge-status">${esc(kb)} KB</div>
           <div class="badge-label">binary size</div>
           <div class="badge-detail">text: ${sizeData.binary.text}, data: ${sizeData.binary.data}, bss: ${sizeData.binary.bss}</div>
@@ -2010,7 +2068,7 @@
       if (docsData) {
         const color = docsData.warnings === 0 ? 'var(--green)' : 'var(--yellow)';
         const icon = docsData.warnings === 0 ? '\u2714' : docsData.warnings;
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="docs" onclick="toggleAuditDetail('docs')">
           <div class="badge-status" style="color:${color}">${icon}</div>
           <div class="badge-label">docs</div>
           <div class="badge-detail">${docsData.warnings === 0 ? 'fully documented' : docsData.warnings + ' warnings'}</div>
@@ -2021,7 +2079,7 @@
       if (msrvData) {
         const color = msrvData.status === 'pass' ? 'var(--green)' : 'var(--red)';
         const icon = msrvData.status === 'pass' ? '\u2714' : '\u2718';
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="msrv" onclick="toggleAuditDetail('msrv')">
           <div class="badge-status" style="color:${color}">${icon}</div>
           <div class="badge-label">MSRV ${esc(msrvData.msrv || '')}</div>
           <div class="badge-detail">${msrvData.status === 'pass' ? 'compiles' : msrvData.errors + ' errors'}</div>
@@ -2033,18 +2091,17 @@
         const ops = allocData.operations || [];
         const totalAllocs = ops.reduce((s, o) => s + (o.allocs || 0), 0);
         const color = allocData.status === 'pass' ? 'var(--green)' : 'var(--red)';
-        const detail = ops.map(o => `${esc(o.name)}:${o.allocs}`).join(', ');
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="alloc" onclick="toggleAuditDetail('alloc')">
           <div class="badge-status" style="color:${color}">${totalAllocs}</div>
           <div class="badge-label">heap allocs</div>
-          <div class="badge-detail">${detail || 'none'}</div>
+          <div class="badge-detail">${ops.map(o => esc(o.name) + ':' + o.allocs).join(', ') || 'none'}</div>
         </div>`;
       }
 
       // Stack depth
       if (stackData) {
         const kb = (stackData.peak_stack_bytes / 1024).toFixed(1);
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="stack" onclick="toggleAuditDetail('stack')">
           <div class="badge-status">${esc(kb)} KB</div>
           <div class="badge-label">peak stack</div>
         </div>`;
@@ -2054,7 +2111,7 @@
       if (ctgrindData) {
         const color = ctgrindData.status === 'pass' ? 'var(--green)' : 'var(--red)';
         const icon = ctgrindData.status === 'pass' ? '\u2714' : ctgrindData.errors;
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="ctgrind" onclick="toggleAuditDetail('ctgrind')">
           <div class="badge-status" style="color:${color}">${icon}</div>
           <div class="badge-label">memcheck</div>
           <div class="badge-detail">${ctgrindData.tests || 0} tests, ${ctgrindData.errors || 0} errors</div>
@@ -2063,7 +2120,7 @@
 
       // API surface
       if (apiData) {
-        html += `<div class="audit-badge">
+        html += `<div class="audit-badge" data-audit="api" onclick="toggleAuditDetail('api')">
           <div class="badge-status">${apiData.total || 0}</div>
           <div class="badge-label">public API</div>
           <div class="badge-detail">fn:${apiData.functions||0} struct:${apiData.structs||0} enum:${apiData.enums||0}</div>
@@ -2072,14 +2129,176 @@
 
       html += '</div>';
 
-      // Bloat table (top functions by binary size).
-      if (sizeData && sizeData.top_functions && sizeData.top_functions.length > 0) {
-        html += '<div class="audit-bloat"><table><thead><tr><th>Function</th><th>Size</th></tr></thead><tbody>';
-        for (const f of sizeData.top_functions) {
-          const kb = (f.size / 1024).toFixed(1);
-          html += `<tr><td class="fn-name">${esc(f.name)}</td><td>${esc(kb)} KB</td></tr>`;
+      // --- Detail panels (hidden by default, toggled on click) ---
+
+      // Panic detail
+      if (panicData) {
+        html += '<div class="audit-detail" id="audit-detail-panic" style="display:none">';
+        html += '<table><thead><tr><th>Category</th><th>Count</th></tr></thead><tbody>';
+        const cats = [
+          ['Bounds check', panicData.bounds_check],
+          ['expect()', panicData.expect],
+          ['assert!()', panicData.assert],
+          ['unwrap()', panicData.unwrap],
+          ['panic!()/panic_fmt', panicData.panic_fmt],
+        ];
+        for (const [name, count] of cats) {
+          if (count > 0) {
+            html += `<tr><td>${esc(name)}</td><td>${count}</td></tr>`;
+          }
         }
+        if (panicData.total === 0) html += '<tr><td colspan="2" style="color:var(--green)">No panic sites in release binary.</td></tr>';
         html += '</tbody></table></div>';
+      }
+
+      // Deny detail
+      if (deny) {
+        html += '<div class="audit-detail" id="audit-detail-deny" style="display:none">';
+        html += `<p><strong>Status:</strong> ${deny.status === 'pass' ? 'PASS' : 'FAIL'}</p>`;
+        if (deny.advisories && deny.advisories.length > 0) {
+          html += '<table><thead><tr><th>Advisory</th><th>Severity</th><th>Crate</th></tr></thead><tbody>';
+          for (const a of deny.advisories) {
+            html += `<tr><td>${esc(a.id || '')}</td><td>${esc(a.severity || '')}</td><td>${esc(a.package || '')}</td></tr>`;
+          }
+          html += '</tbody></table>';
+        } else {
+          html += '<p style="color:var(--fg-dim)">No advisories or license issues.</p>';
+        }
+        html += '</div>';
+      }
+
+      // Unsafe detail
+      if (unsafeData) {
+        html += '<div class="audit-detail" id="audit-detail-unsafe" style="display:none">';
+        const mods = (unsafeData.modules || []).filter(m => m.count > 0);
+        if (mods.length > 0) {
+          html += '<table><thead><tr><th>Module</th><th>Unsafe blocks</th></tr></thead><tbody>';
+          for (const m of mods) {
+            html += `<tr><td class="fn-name">${esc(m.name)}</td><td>${m.count}</td></tr>`;
+          }
+          html += '</tbody></table>';
+        } else {
+          html += '<p style="color:var(--green)">No unsafe blocks in source.</p>';
+        }
+        html += '</div>';
+      }
+
+      // Binary size detail
+      if (sizeData) {
+        html += '<div class="audit-detail" id="audit-detail-size" style="display:none">';
+        if (sizeData.binary) {
+          html += `<p><strong>Segments:</strong> text ${esc(sizeData.binary.text)}, data ${esc(sizeData.binary.data)}, bss ${esc(sizeData.binary.bss)}</p>`;
+        }
+        if (sizeData.top_functions && sizeData.top_functions.length > 0) {
+          html += '<table><thead><tr><th>Function</th><th>Size</th></tr></thead><tbody>';
+          for (const f of sizeData.top_functions) {
+            const fkb = (f.size / 1024).toFixed(1);
+            html += `<tr><td class="fn-name">${esc(f.name)}</td><td>${esc(fkb)} KB</td></tr>`;
+          }
+          html += '</tbody></table>';
+        }
+        html += '</div>';
+      }
+
+      // Docs detail
+      if (docsData) {
+        html += '<div class="audit-detail" id="audit-detail-docs" style="display:none">';
+        if (docsData.warnings === 0) {
+          html += '<p style="color:var(--green)">All public and private items are documented.</p>';
+        } else {
+          html += `<p>${docsData.warnings} rustdoc warnings (missing or broken doc comments).</p>`;
+          if (docsData.details && docsData.details.length > 0) {
+            html += '<table><thead><tr><th>Item</th><th>Warning</th></tr></thead><tbody>';
+            for (const d of docsData.details.slice(0, 20)) {
+              html += `<tr><td class="fn-name">${esc(d.item || d.location || '')}</td><td>${esc(d.message || '')}</td></tr>`;
+            }
+            html += '</tbody></table>';
+          }
+        }
+        html += '</div>';
+      }
+
+      // MSRV detail
+      if (msrvData) {
+        html += '<div class="audit-detail" id="audit-detail-msrv" style="display:none">';
+        html += `<p><strong>Minimum Supported Rust Version:</strong> ${esc(msrvData.msrv || '?')}</p>`;
+        html += `<p><strong>Status:</strong> ${msrvData.status === 'pass' ? 'Compiles successfully' : (msrvData.errors || 0) + ' compilation errors'}</p>`;
+        html += '</div>';
+      }
+
+      // Alloc detail
+      if (allocData) {
+        html += '<div class="audit-detail" id="audit-detail-alloc" style="display:none">';
+        const ops = allocData.operations || [];
+        if (ops.length > 0) {
+          html += '<table><thead><tr><th>Operation</th><th>Allocs</th><th>Bytes</th><th>Budget</th></tr></thead><tbody>';
+          for (const o of ops) {
+            const budgetCol = o.budget != null ? (o.allocs <= o.budget ? `\u2264 ${o.budget}` : `> ${o.budget}`) : '\u2014';
+            const cls = o.budget != null && o.allocs > o.budget ? 'style="color:var(--red)"' : '';
+            html += `<tr><td class="fn-name">${esc(o.name)}</td><td>${o.allocs}</td><td>${o.bytes || '\u2014'}</td><td ${cls}>${budgetCol}</td></tr>`;
+          }
+          html += '</tbody></table>';
+        } else {
+          html += '<p style="color:var(--fg-dim)">No allocation data.</p>';
+        }
+        html += '</div>';
+      }
+
+      // Stack detail
+      if (stackData) {
+        html += '<div class="audit-detail" id="audit-detail-stack" style="display:none">';
+        const kb = (stackData.peak_stack_bytes / 1024).toFixed(1);
+        html += `<p><strong>Peak stack usage:</strong> ${esc(kb)} KB (${stackData.peak_stack_bytes} bytes)</p>`;
+        if (stackData.function) html += `<p><strong>Function:</strong> <code>${esc(stackData.function)}</code></p>`;
+        html += '</div>';
+      }
+
+      // ctgrind detail
+      if (ctgrindData) {
+        html += '<div class="audit-detail" id="audit-detail-ctgrind" style="display:none">';
+        html += `<p>Valgrind memcheck on crabgrind-instrumented secret data.</p>`;
+        const tests = ctgrindData.tests_detail || ctgrindData.results || [];
+        if (tests.length > 0) {
+          html += '<table><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>';
+          for (const t of tests) {
+            const icon = t.status === 'pass' ? '\u2714' : '\u2718';
+            const cls = t.status === 'pass' ? 'dudect-pass' : 'dudect-fail';
+            html += `<tr><td class="fn-name">${esc(t.name)}</td><td class="${cls}">${icon}</td></tr>`;
+          }
+          html += '</tbody></table>';
+        } else {
+          html += `<p>${ctgrindData.tests || 0} tests, ${ctgrindData.errors || 0} errors.</p>`;
+        }
+        html += '</div>';
+      }
+
+      // API surface detail
+      if (apiData) {
+        html += '<div class="audit-detail" id="audit-detail-api" style="display:none">';
+        html += '<table><thead><tr><th>Category</th><th>Count</th></tr></thead><tbody>';
+        const cats = [
+          ['Functions', apiData.functions],
+          ['Structs', apiData.structs],
+          ['Enums', apiData.enums],
+          ['Traits', apiData.traits],
+          ['Type aliases', apiData.type_aliases],
+          ['Constants', apiData.constants],
+          ['Macros', apiData.macros],
+        ];
+        for (const [name, count] of cats) {
+          if (count > 0) html += `<tr><td>${esc(name)}</td><td>${count}</td></tr>`;
+        }
+        html += '</tbody></table>';
+        if (apiData.items && apiData.items.length > 0) {
+          html += '<h4 style="margin:12px 0 6px">Items</h4>';
+          html += '<table><thead><tr><th>Item</th><th>Kind</th></tr></thead><tbody>';
+          for (const item of apiData.items.slice(0, 30)) {
+            html += `<tr><td class="fn-name">${esc(item.name || item.path || '')}</td><td>${esc(item.kind || '')}</td></tr>`;
+          }
+          if (apiData.items.length > 30) html += `<tr><td colspan="2" style="color:var(--fg-dim)">...and ${apiData.items.length - 30} more</td></tr>`;
+          html += '</tbody></table>';
+        }
+        html += '</div>';
       }
 
       return html;
@@ -2519,6 +2738,35 @@
       await loadCommitData(sha, true);
     }
 
+    // Cache for fetched data — keyed by "kind:sha". Avoids refetching
+    // data that hasn't changed between poll cycles. Capped at 200
+    // entries (~10 commits * 20 kinds) to prevent memory leaks.
+    const dataCache = new Map();
+    const DATA_CACHE_MAX = 200;
+
+    // Invalidate cache entries for a kind (all SHAs). Called when
+    // the manifest reports a new upload for that kind.
+    function invalidateKind(kind) {
+      for (const key of [...dataCache.keys()]) {
+        if (key.startsWith(kind + ':')) dataCache.delete(key);
+      }
+    }
+
+    async function fetchKind(kind, sha) {
+      const cacheKey = `${kind}:${sha}`;
+      if (dataCache.has(cacheKey)) return dataCache.get(cacheKey);
+      const data = await fetchJson(`/${kind}/${sha}.json`)
+        .then(d => d || fetchJson(`/${kind}/latest.json`));
+      if (data) {
+        dataCache.set(cacheKey, data);
+        if (dataCache.size > DATA_CACHE_MAX) {
+          const first = dataCache.keys().next().value;
+          dataCache.delete(first);
+        }
+      }
+      return data;
+    }
+
     async function loadCommitData(sha, force) {
       const covEl = document.getElementById('coverage-content');
       const covMeta = document.getElementById('coverage-meta');
@@ -2529,27 +2777,27 @@
       const dudectEl = document.getElementById('dudect-content');
       const dudectMeta = document.getElementById('dudect-meta');
 
-      // Try per-commit files, fall back to latest.
+      // Fetch all kinds in parallel, using the cache to skip unchanged data.
       const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, iaiData, allocData, platformData, stackData, ctgrindData, apiData, katData] = await Promise.all([
-        fetchJson(`/coverage/${sha}.json`).then(d => d || fetchJson('/coverage/latest.json')),
-        fetchJson(`/bench/${sha}.json`).then(d => d || fetchJson('/bench/latest.json')),
-        fetchJson(`/mutants/${sha}.json`).then(d => d || fetchJson('/mutants/latest.json')),
-        fetchJson(`/dudect/${sha}.json`).then(d => d || fetchJson('/dudect/latest.json')),
-        fetchJson(`/tacet/${sha}.json`).then(d => d || fetchJson('/tacet/latest.json')),
-        fetchJson(`/deny/${sha}.json`).then(d => d || fetchJson('/deny/latest.json')),
-        fetchJson(`/unsafe/${sha}.json`).then(d => d || fetchJson('/unsafe/latest.json')),
-        fetchJson(`/size/${sha}.json`).then(d => d || fetchJson('/size/latest.json')),
-        fetchJson(`/docs/${sha}.json`).then(d => d || fetchJson('/docs/latest.json')),
-        fetchJson(`/msrv/${sha}.json`).then(d => d || fetchJson('/msrv/latest.json')),
-        fetchJson(`/panic/${sha}.json`).then(d => d || fetchJson('/panic/latest.json')),
-        fetchJson(`/fuzz/${sha}.json`).then(d => d || fetchJson('/fuzz/latest.json')),
-        fetchJson(`/iai/${sha}.json`).then(d => d || fetchJson('/iai/latest.json')),
-        fetchJson(`/alloc/${sha}.json`).then(d => d || fetchJson('/alloc/latest.json')),
-        fetchJson(`/platform/${sha}.json`).then(d => d || fetchJson('/platform/latest.json')),
-        fetchJson(`/stack/${sha}.json`).then(d => d || fetchJson('/stack/latest.json')),
-        fetchJson(`/ctgrind/${sha}.json`).then(d => d || fetchJson('/ctgrind/latest.json')),
-        fetchJson(`/api/${sha}.json`).then(d => d || fetchJson('/api/latest.json')),
-        fetchJson(`/kat/${sha}.json`).then(d => d || fetchJson('/kat/latest.json')),
+        fetchKind('coverage', sha),
+        fetchKind('bench', sha),
+        fetchKind('mutants', sha),
+        fetchKind('dudect', sha),
+        fetchKind('tacet', sha),
+        fetchKind('deny', sha),
+        fetchKind('unsafe', sha),
+        fetchKind('size', sha),
+        fetchKind('docs', sha),
+        fetchKind('msrv', sha),
+        fetchKind('panic', sha),
+        fetchKind('fuzz', sha),
+        fetchKind('iai', sha),
+        fetchKind('alloc', sha),
+        fetchKind('platform', sha),
+        fetchKind('stack', sha),
+        fetchKind('ctgrind', sha),
+        fetchKind('api', sha),
+        fetchKind('kat', sha),
       ]);
 
       // Only re-render a section if the commit changed or the data
@@ -2674,24 +2922,43 @@
     // --- Polling ---
 
     async function poll() {
-      // Fetch indices and status.
-      const [ci, bi, mi] = await Promise.all([
-        fetchJson('/coverage/index.json'),
-        fetchJson('/bench/index.json'),
-        fetchJson('/mutants/index.json'),
-      ]);
-      covIndex = ci || [];
-      benchIndex = bi || [];
-      mutantsIndex = mi || [];
+      // Try the lightweight manifest first — one request instead of 20+.
+      // Falls back to always-fetch if manifest doesn't exist yet (no
+      // uploads since this feature was added).
+      const manifest = await fetchJson('/manifest.json');
+      const hasManifest = manifest != null;
+      const newManifest = manifest || {};
+      const manifestChanged = !hasManifest || JSON.stringify(newManifest) !== JSON.stringify(lastManifest);
 
-      const commits = buildCommitList();
-      renderCommitSelect(commits);
+      // Invalidate cache for any kind whose SHA changed in the manifest.
+      if (hasManifest) {
+        for (const [kind, sha] of Object.entries(newManifest)) {
+          if (lastManifest[kind] !== sha) invalidateKind(kind);
+        }
+      }
+      lastManifest = newManifest;
+
+      // Refetch indices when manifest changed or doesn't exist.
+      if (manifestChanged) {
+        const [ci, bi, mi] = await Promise.all([
+          fetchJson('/coverage/index.json'),
+          fetchJson('/bench/index.json'),
+          fetchJson('/mutants/index.json'),
+        ]);
+        covIndex = ci || [];
+        benchIndex = bi || [];
+        mutantsIndex = mi || [];
+
+        const commits = buildCommitList();
+        renderCommitSelect(commits);
+      }
 
       await updateStatus();
 
-      // Load data for the selected commit (or latest).
+      // Load data for the selected commit — fetchKind uses the cache
+      // to skip sections whose data hasn't changed.
       if (selectedSha) {
-        await loadCommitData(selectedSha);
+        await loadCommitData(selectedSha, manifestChanged);
       }
     }
 
