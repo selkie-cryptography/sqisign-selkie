@@ -2585,23 +2585,19 @@
 
     // --- Favicon animation ---
 
-    let faviconInterval = null;
+    let faviconAnimating = false;
+    let faviconRafId = null;
     let faviconCanvas = null;
     let faviconImg = null;
     let faviconReady = false;
 
-    // Pick the active favicon link based on color scheme.
-    function getActiveFaviconLink() {
-      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      return document.getElementById(isDark ? 'favicon-dark' : 'favicon-light');
-    }
-
     function updateFavicon(building) {
       if (!building) {
-        if (faviconInterval) {
-          clearInterval(faviconInterval);
-          faviconInterval = null;
+        if (faviconRafId) {
+          cancelAnimationFrame(faviconRafId);
+          faviconRafId = null;
         }
+        faviconAnimating = false;
         // Restore both favicon links to their static PNGs.
         const light = document.getElementById('favicon-light');
         const dark = document.getElementById('favicon-dark');
@@ -2610,11 +2606,10 @@
         return;
       }
 
-      if (faviconInterval) return;
+      if (faviconAnimating) return;
+      faviconAnimating = true;
 
-      // Load the logo SVG for canvas rendering. Wait for it to load
-      // before starting the animation — drawImage on an unloaded
-      // image draws nothing.
+      // Load the logo SVG once. Wait for onload before drawing.
       if (!faviconImg) {
         faviconImg = new Image();
         faviconImg.onload = () => { faviconReady = true; };
@@ -2629,32 +2624,43 @@
         faviconCanvas.height = 32;
       }
 
-      let phase = 0;
-      faviconInterval = setInterval(() => {
+      // Browsers throttle favicon updates — updating at 60fps just
+      // wastes toDataURL calls. Render at rAF rate but only push a
+      // new data URL every ~100ms (10fps is smooth enough for a
+      // slow breathe and avoids tab-bar flicker).
+      let lastPush = 0;
+      const BREATHE_PERIOD = 3000; // ms for a full cycle
+
+      function frame(ts) {
+        if (!faviconAnimating) return;
+        faviconRafId = requestAnimationFrame(frame);
         if (!faviconReady) return;
+        if (ts - lastPush < 100) return;
+        lastPush = ts;
 
         const ctx = faviconCanvas.getContext('2d');
         ctx.clearRect(0, 0, 32, 32);
 
-        // Opacity breathe: 0.3 to 1.0.
-        const opacity = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(phase));
-        ctx.globalAlpha = opacity;
+        // Smooth sine breathe: 0.3 → 1.0 → 0.3 over BREATHE_PERIOD ms.
+        const phase = (ts % BREATHE_PERIOD) / BREATHE_PERIOD * Math.PI * 2;
+        ctx.globalAlpha = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(phase));
 
         // Draw the logo centered and scaled to fit.
-        const scale = Math.min(32 / faviconImg.naturalWidth, 32 / faviconImg.naturalHeight) * 0.9;
-        const w = faviconImg.naturalWidth * scale;
-        const h = faviconImg.naturalHeight * scale;
+        const nw = faviconImg.naturalWidth || 32;
+        const nh = faviconImg.naturalHeight || 32;
+        const scale = Math.min(32 / nw, 32 / nh) * 0.9;
+        const w = nw * scale;
+        const h = nh * scale;
         ctx.drawImage(faviconImg, (32 - w) / 2, (32 - h) / 2, w, h);
 
-        // Update both favicon links so it works regardless of color scheme.
         const dataUrl = faviconCanvas.toDataURL('image/png');
         const light = document.getElementById('favicon-light');
         const dark = document.getElementById('favicon-dark');
         if (light) light.href = dataUrl;
         if (dark) dark.href = dataUrl;
+      }
 
-        phase += 0.15;
-      }, 50);
+      faviconRafId = requestAnimationFrame(frame);
     }
 
     // --- Commit nav ---
