@@ -31,13 +31,13 @@ jobs:
           submodules: true
 
       - name: Build paper
-        uses: xu-cheng/latex-action@v3
+        uses: xu-cheng/latex-action@v4
         with:
           working_directory: latex
           root_file: sqisign-selkie.tex
 
       - name: Build spec review
-        uses: xu-cheng/latex-action@v3
+        uses: xu-cheng/latex-action@v4
         with:
           working_directory: latex
           root_file: sqisign-v2-spec-review.tex
