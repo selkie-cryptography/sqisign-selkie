@@ -963,6 +963,12 @@
       background: var(--bar-bg);
     }
 
+    .section-nav a.active {
+      color: var(--fg);
+      background: var(--bar-bg);
+      border-bottom: 2px solid var(--fg);
+    }
+
     .empty {
       padding: 32px 8px;
       font-size: 14px;
@@ -1232,6 +1238,19 @@
       return d.innerHTML;
     }
 
+    // Render a sparkline from an array of numbers using Unicode block chars.
+    function sparkline(vals) {
+      if (vals.length === 0) return '';
+      const min = Math.min(...vals);
+      const max = Math.max(...vals);
+      const range = max - min || 1;
+      const blocks = '\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588';
+      return vals.map(v => {
+        const level = Math.min(7, Math.floor(((v - min) / range) * 7.99));
+        return blocks[level];
+      }).join('');
+    }
+
     function covColor(pct) {
       if (pct >= 80) return 'var(--green)';
       if (pct >= 50) return 'var(--yellow)';
@@ -1263,7 +1282,14 @@
       const totalPct = total.percent != null ? total.percent.toFixed(1) : '—';
       const modules = data.modules || [];
 
-      let html = `<div class="cov-summary" style="color:${covColor(total.percent)}">${totalPct}%</div>`;
+      // Coverage trend sparkline from index history.
+      let covSparkline = '';
+      if (covIndex.length >= 2) {
+        const vals = covIndex.slice(0, 15).reverse().map(e => e.percent || 0);
+        covSparkline = ` <span style="font-size:14px;color:var(--fg-dim)">${sparkline(vals)}</span>`;
+      }
+
+      let html = `<div class="cov-summary" style="color:${covColor(total.percent)}">${totalPct}%${covSparkline}</div>`;
 
       // Analyze all files for insights.
       if (modules.length > 0) {
@@ -2060,12 +2086,12 @@
 
     // --- Cross-analysis ---
 
-    function renderRisks(cov, mut, bench) {
+    function renderRisks(cov, mut, bench, dudect, panicData, unsafeData) {
       const section = document.getElementById('analysis-section');
       const el = document.getElementById('analysis-content');
 
-      // Need at least coverage + one other source.
-      if (!cov || (!mut && !bench)) {
+      // Need at least one data source.
+      if (!cov && !mut && !bench && !dudect && !panicData && !unsafeData) {
         section.style.display = 'none';
         return;
       }
@@ -2239,6 +2265,38 @@
         html += '</tbody></table>';
       }
 
+      // CT failures from dudect.
+      if (dudect) {
+        const failures = (dudect.results || []).filter(r => r.status === 'fail');
+        if (failures.length > 0) {
+          html += '<div class="analysis-grid"><div class="cov-insight"><h4>CT failures (dudect)</h4><ul class="cov-insight-list">';
+          for (const f of failures) {
+            html += `<li><span>${esc(f.name)}</span><span class="tag tag-ct">|t|=${Math.abs(f.max_t).toFixed(1)}</span></li>`;
+          }
+          html += '</ul></div></div>';
+        }
+      }
+
+      // Panic + unsafe hotspots.
+      if (panicData && panicData.total > 0) {
+        html += '<div class="analysis-grid"><div class="cov-insight"><h4>Panic exposure</h4><ul class="cov-insight-list">';
+        html += `<li><span>Total panic sites</span><span class="tag tag-ct">${panicData.total}</span></li>`;
+        if (panicData.bounds_check > 0) html += `<li><span>Bounds checks</span><span>${panicData.bounds_check}</span></li>`;
+        if (panicData.expect > 0) html += `<li><span>expect()</span><span>${panicData.expect}</span></li>`;
+        if (panicData.panic_fmt > 0) html += `<li><span>panic!()</span><span>${panicData.panic_fmt}</span></li>`;
+        html += '</ul></div>';
+
+        if (unsafeData && unsafeData.total > 0) {
+          html += '<div class="cov-insight"><h4>Unsafe code</h4><ul class="cov-insight-list">';
+          for (const m of (unsafeData.modules || []).filter(m => m.count > 0)) {
+            html += `<li><span>${esc(m.name)}</span><span class="tag tag-ct">${m.count}</span></li>`;
+          }
+          html += '</ul></div>';
+        }
+
+        html += '</div>';
+      }
+
       el.innerHTML = html;
     }
 
@@ -2271,6 +2329,11 @@
       document.querySelectorAll('.logo').forEach(el => {
         el.classList.toggle('building', isBuilding);
       });
+
+      // Update page title.
+      document.title = isBuilding
+        ? `\u23f3 sqisign-selkie CI`
+        : 'sqisign-selkie CI';
 
       // Swap favicon to an animated version via canvas.
       updateFavicon(isBuilding);
@@ -2380,11 +2443,6 @@
         opt.value = c.sha;
         let label = c.sha.slice(0, 7);
         if (c.percent != null) label += ` (${c.percent.toFixed(1)}%)`;
-        const tags = [];
-        if (c.hasCov) tags.push('cov');
-        if (c.hasBench) tags.push('bench');
-        if (c.hasMutants) tags.push('mutants');
-        label += ` [${tags.join('+')}]`;
         opt.textContent = label;
         select.appendChild(opt);
       }
@@ -2511,7 +2569,7 @@
       }
 
       // Cross-analysis — needs at least coverage + one other source.
-      renderRisks(cov, mut, bench);
+      renderRisks(cov, mut, bench, dudect, panicData, unsafeData);
 
       // Audits.
       const auditsEl = document.getElementById('audits-content');
@@ -2576,6 +2634,25 @@
     // Initial render, then poll.
     poll();
     setInterval(poll, POLL_INTERVAL);
+
+    // --- Scroll-aware nav highlighting ---
+    const navLinks = document.querySelectorAll('.section-nav a');
+    const sections = [...navLinks].map(a => {
+      const id = a.getAttribute('href').slice(1);
+      return { a, el: document.getElementById(id) };
+    }).filter(s => s.el);
+
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          navLinks.forEach(a => a.classList.remove('active'));
+          const match = sections.find(s => s.el === entry.target);
+          if (match) match.a.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-40% 0px -55% 0px' });
+
+    sections.forEach(s => observer.observe(s.el));
   </script>
 
 </body>

@@ -143,6 +143,89 @@ fn fp2_mul(runner: &mut CtRunner, rng: &mut BenchRng) {
     }
 }
 
+/// Fp2 addition: Left = (0, 0), Right = (random, random).
+fn fp2_add(runner: &mut CtRunner, rng: &mut BenchRng) {
+    let mut inputs = Vec::new();
+    let mut classes = Vec::new();
+    for _ in 0..100_000 {
+        if rng.random::<bool>() {
+            inputs.push((Fp2::ZERO, Fp2::ZERO));
+            classes.push(Class::Left);
+        } else {
+            let a = Fp2::new(
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+            );
+            let b = Fp2::new(
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+            );
+            inputs.push((a, b));
+            classes.push(Class::Right);
+        }
+    }
+    for (class, (a, b)) in classes.into_iter().zip(inputs) {
+        runner.run_one(class, || {
+            let _ = std::hint::black_box(a + b);
+        });
+    }
+}
+
+/// Fp2 subtraction: Left = (x, x), Right = (random, random).
+fn fp2_sub(runner: &mut CtRunner, rng: &mut BenchRng) {
+    let mut inputs = Vec::new();
+    let mut classes = Vec::new();
+    for _ in 0..100_000 {
+        if rng.random::<bool>() {
+            let a = Fp2::new(
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+            );
+            inputs.push((a, a));
+            classes.push(Class::Left);
+        } else {
+            let a = Fp2::new(
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+            );
+            let b = Fp2::new(
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+            );
+            inputs.push((a, b));
+            classes.push(Class::Right);
+        }
+    }
+    for (class, (a, b)) in classes.into_iter().zip(inputs) {
+        runner.run_one(class, || {
+            let _ = std::hint::black_box(a - b);
+        });
+    }
+}
+
+/// Fp2 squaring: Left = 0², Right = random².
+fn fp2_square(runner: &mut CtRunner, rng: &mut BenchRng) {
+    let mut inputs = Vec::new();
+    let mut classes = Vec::new();
+    for _ in 0..100_000 {
+        if rng.random::<bool>() {
+            inputs.push(Fp2::ZERO);
+            classes.push(Class::Left);
+        } else {
+            inputs.push(Fp2::new(
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+                Fp::from_bytes(&rng.random::<[u8; 32]>()),
+            ));
+            classes.push(Class::Right);
+        }
+    }
+    for (class, a) in classes.into_iter().zip(inputs) {
+        runner.run_one(class, || {
+            let _ = std::hint::black_box(a * a);
+        });
+    }
+}
+
 // --- subtle trait impls ---
 
 /// Fp conditional select: Left = select(0, a), Right = select(1, a).
@@ -363,6 +446,9 @@ ctbench_main!(
     fp_sub,
     fp_square,
     fp2_mul,
+    fp2_add,
+    fp2_sub,
+    fp2_square,
     fp_ct_select,
     fp_ct_eq,
     scalar_mul,

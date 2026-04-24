@@ -34,6 +34,7 @@ iai-callgrind = "0.16"
 dhat = "0.3"
 crabgrind = "0.2"
 tacet = "0.4"
+proptest = "1"
 mutants = "0.0.4"  # #[mutants::skip] attribute for cargo-mutants
 serde = { version = "1", features = ["derive"] }
 hex = "0.4"
@@ -91,6 +92,10 @@ required-features = ["expose-internals"]
 
 [[test]]
 name = "alloc_budget"
+required-features = ["expose-internals"]
+
+[[test]]
+name = "proptest_field"
 required-features = ["expose-internals"]
 
 [[bench]]
