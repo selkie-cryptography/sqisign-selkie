@@ -76,6 +76,28 @@ proptest! {
         let b = Fp::from_bytes(&bytes);
         prop_assert_eq!(a, b);
     }
+
+    #[test]
+    fn fp_square_equals_mul(a in arb_fp()) {
+        prop_assert_eq!(a.square(), a * a);
+    }
+
+    #[test]
+    fn fp_inversion(a in arb_fp()) {
+        use subtle::ConstantTimeEq;
+        // Skip zero (not invertible).
+        prop_assume!(!bool::from(a.ct_eq(&Fp::ZERO)));
+        prop_assert_eq!(a * a.invert(), Fp::ONE);
+    }
+
+    #[test]
+    fn fp_sqrt_of_square(a in arb_fp()) {
+        let a2 = a.square();
+        prop_assert!(bool::from(a2.is_square()));
+        let s = a2.sqrt();
+        // sqrt returns either a or -a.
+        prop_assert!(s == a || s == -a);
+    }
 }
 
 // --- Fp2 properties ---
@@ -118,5 +140,41 @@ proptest! {
     #[test]
     fn fp2_distributive(a in arb_fp2(), b in arb_fp2(), c in arb_fp2()) {
         prop_assert_eq!(a * (b + c), a * b + a * c);
+    }
+
+    #[test]
+    fn fp2_sub_is_add_neg(a in arb_fp2(), b in arb_fp2()) {
+        prop_assert_eq!(a - b, a + (-b));
+    }
+
+    #[test]
+    fn fp2_double_neg(a in arb_fp2()) {
+        prop_assert_eq!(-(-a), a);
+    }
+
+    #[test]
+    fn fp2_square_equals_mul(a in arb_fp2()) {
+        prop_assert_eq!(a.square(), a * a);
+    }
+
+    #[test]
+    fn fp2_inversion(a in arb_fp2()) {
+        use subtle::ConstantTimeEq;
+        prop_assume!(!bool::from(a.ct_eq(&Fp2::ZERO)));
+        prop_assert_eq!(a * a.invert(), Fp2::ONE);
+    }
+
+    #[test]
+    fn fp2_conjugate_mul_is_norm(a in arb_fp2()) {
+        // a * conj(a) should be a real element (imaginary part zero).
+        let n = a * a.conjugate();
+        prop_assert_eq!(n, n.conjugate());
+    }
+
+    #[test]
+    fn fp2_serialization_roundtrip(a in arb_fp2()) {
+        let bytes = a.to_bytes();
+        let b = Fp2::from_bytes(&bytes);
+        prop_assert_eq!(a, b);
     }
 }

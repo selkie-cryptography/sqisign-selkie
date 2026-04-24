@@ -64,9 +64,9 @@
 
     .container {
       width: 100%;
-      max-width: 900px;
+      max-width: 1400px;
       margin: 0 auto;
-      padding: 0 20px;
+      padding: 0 32px;
     }
 
     .header {
@@ -1051,12 +1051,15 @@
       <section class="section" id="analysis-section" style="display:none">
         <div class="section__header">
           <h2 class="section__title">Risks<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Cross-references coverage, mutation testing, and benchmark data to surface actionable insights.</p>
+            <p style="margin-bottom:8px">Cross-references all data sources to surface actionable security and correctness risks.</p>
             <dl>
             <dt>Untested hot paths</dt><dd>Functions with high hit counts but surviving mutants — code that runs a lot but isn't verified.</dd>
+            <dt>CT failures</dt><dd>DudeCT or Tacet tests detecting timing leaks on secret-derived data.</dd>
+            <dt>Panic sites</dt><dd>Panic symbols in the release binary — each is a potential DoS vector.</dd>
+            <dt>Unsafe blocks</dt><dd>Unsafe code count per module. Should trend toward zero.</dd>
             <dt>CT + mutant overlap</dt><dd>Secret-data paths (TODO(ct)) with surviving mutants — a side-channel fix here would be untested.</dd>
             <dt>Benchmark blind spots</dt><dd>Hot functions without benchmarks, or benchmarked functions that aren't hot.</dd>
-            <dt>Module health</dt><dd>Combined score from coverage, kill rate, and hot path density.</dd>
+            <dt>Module health</dt><dd>Combined score from coverage, kill rate, CT status, and hot path density.</dd>
             </dl></span></span></h2>
         </div>
         <div id="analysis-content"></div>
@@ -1081,7 +1084,13 @@
 
       <section class="section" id="bench-section">
         <div class="section__header">
-          <h2 class="section__title">Benchmarks</h2>
+          <h2 class="section__title">Benchmarks<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Wall-clock benchmarks via <a href="https://github.com/nvzqz/divan" style="color:var(--fg)">divan</a>. Each operation runs thousands of iterations to measure median time.</p>
+            <dl>
+            <dt>Modules</dt><dd>field, bigint, curves, surfaces, quaternions, deuring, sqisign (keygen/sign/verify).</dd>
+            <dt>Units</dt><dd>Toggle between ns/&mu;s/ms. Sort by name or time.</dd>
+            <dt>Trend</dt><dd>Historical sparkline per benchmark when multiple commits are available.</dd>
+            </dl></span></span></h2>
           <span class="meta" id="bench-meta"></span>
         </div>
         <div id="bench-content">
@@ -1110,11 +1119,12 @@
       <section class="section" id="dudect-section">
         <div class="section__header">
           <h2 class="section__title">Constant-Time<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Statistical constant-time testing using <a href="https://eprint.iacr.org/2016/1123.pdf" style="color:var(--fg)">DudeCT</a>. Runs each function with two input classes and measures whether execution time depends on the input.</p>
+            <p style="margin-bottom:8px">Two complementary constant-time analysis tools:</p>
             <dl>
-            <dt>|t| &lt; 4.5</dt><dd>Pass — no statistically significant timing difference detected.</dd>
-            <dt>|t| &ge; 4.5</dt><dd>Fail — timing leakage detected. The function is not constant-time.</dd>
-            <dt>Samples</dt><dd>Number of measurements taken. More samples = higher confidence.</dd>
+            <dt>DudeCT</dt><dd><a href="https://eprint.iacr.org/2016/1123.pdf" style="color:var(--fg)">Statistical t-test</a>. |t| &lt; 4.5 = pass, |t| &ge; 4.5 = timing leak detected.</dd>
+            <dt>Tacet</dt><dd><a href="https://crates.io/crates/tacet" style="color:var(--fg)">Bayesian attacker-model-aware</a> analysis. Tests against specific adversary capabilities (online, cache, physical) and reports leak probability.</dd>
+            <dt>Samples</dt><dd>Number of measurements. More samples = higher confidence for both tools.</dd>
+            <dt>Targets</dt><dd>Fp/Fp2 arithmetic, ct_select, ct_eq, scalar_mul, point_double, verify, keygen, sign.</dd>
             </dl></span></span></h2>
           <span class="meta" id="dudect-meta"></span>
         </div>
@@ -1169,11 +1179,17 @@
       <section class="section" id="audits-section">
         <div class="section__header">
           <h2 class="section__title">Audits<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Automated code health checks run on every push.</p>
+            <p style="margin-bottom:8px">Automated code health and security checks run on every push.</p>
             <dl>
             <dt>cargo deny</dt><dd>Dependency advisories and license compliance.</dd>
-            <dt>Unsafe</dt><dd>Count of <code>unsafe</code> blocks in source. Should trend toward zero.</dd>
-            <dt>Binary size</dt><dd>Release binary text/data/bss segments and top functions by size.</dd>
+            <dt>Unsafe</dt><dd>Count of <code>unsafe</code> blocks per module. Should trend toward zero.</dd>
+            <dt>Panic count</dt><dd>Panic symbols in the release binary via <code>nm</code>. Each is a potential DoS channel.</dd>
+            <dt>Binary size</dt><dd>Release binary text/data/bss segments and top functions by size (cargo-bloat).</dd>
+            <dt>Alloc budget</dt><dd>Heap allocation counts for keygen, sign, verify (dhat). Budget assertions fail CI if allocations grow.</dd>
+            <dt>Zeroize</dt><dd>Verifies SigningKey memory is zeroed after drop.</dd>
+            <dt>Stack depth</dt><dd>Peak stack usage via Valgrind Massif. Tracks signing/verification stack footprint.</dd>
+            <dt>ctgrind</dt><dd>Valgrind memcheck on crabgrind-instrumented secret data. Detects branches or memory access on uninit-marked secrets.</dd>
+            <dt>API surface</dt><dd>Public API item count by category (cargo-public-api). Tracks API growth.</dd>
             <dt>Doc coverage</dt><dd>Rustdoc warning count. Zero = full doc coverage.</dd>
             <dt>MSRV</dt><dd>Minimum Supported Rust Version compliance (1.81.0).</dd>
             </dl></span></span></h2>
@@ -2042,7 +2058,7 @@
     function renderBenchmarkData(data) {
       lastBenchData = data;
       const groups = data.groups || [];
-      if (groups.length === 0) return '';
+      if (groups.length === 0) return '<p class="empty">No benchmark data for this commit.</p>';
 
       const sortArrow = benchSortAsc ? '\u25b2' : '\u25bc';
 
