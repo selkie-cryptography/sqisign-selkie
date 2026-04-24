@@ -15,7 +15,7 @@ use sqisign_selkie::{
         montgomery::{Curve, ProjectiveXOnlyPoint},
     },
     fields::{fp::Fp, fp2::Fp2},
-    params::{BASIS_E0_P_X, BASIS_E0_Q_X},
+    params::BASIS_E0_P_X,
 };
 
 // --- Fp arithmetic ---

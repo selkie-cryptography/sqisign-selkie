@@ -68,7 +68,7 @@ fn main() {
     // --- Fp mul: zero vs random ---
     for &(mname, model) in MODELS {
         let outcome = TimingOracle::for_attacker(model).test(
-            InputPair::new(|| [0u8; 64], || random_bytes::<64>()),
+            InputPair::new(|| [0u8; 64], random_bytes::<64>),
             |bytes| {
                 let a = Fp::from_bytes(bytes[..32].try_into().unwrap());
                 let b = Fp::from_bytes(bytes[32..].try_into().unwrap());
@@ -81,7 +81,7 @@ fn main() {
     // --- Fp add: zero vs random ---
     for &(mname, model) in MODELS {
         let outcome = TimingOracle::for_attacker(model).test(
-            InputPair::new(|| [0u8; 64], || random_bytes::<64>()),
+            InputPair::new(|| [0u8; 64], random_bytes::<64>),
             |bytes| {
                 let a = Fp::from_bytes(bytes[..32].try_into().unwrap());
                 let b = Fp::from_bytes(bytes[32..].try_into().unwrap());
@@ -102,7 +102,7 @@ fn main() {
                     out[32..].copy_from_slice(&a); // equal → result is 0
                     out
                 },
-                || random_bytes::<64>(),
+                random_bytes::<64>,
             ),
             |bytes| {
                 let a = Fp::from_bytes(bytes[..32].try_into().unwrap());
@@ -116,7 +116,7 @@ fn main() {
     // --- Fp2 mul: zero vs random ---
     for &(mname, model) in MODELS {
         let outcome = TimingOracle::for_attacker(model).test(
-            InputPair::new(|| [0u8; 128], || random_bytes::<128>()),
+            InputPair::new(|| [0u8; 128], random_bytes::<128>),
             |bytes| {
                 let a = Fp2::new(
                     Fp::from_bytes(bytes[..32].try_into().unwrap()),
@@ -172,7 +172,7 @@ fn main() {
     let p = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_P_X, &Curve::E0);
     for &(mname, model) in MODELS {
         let outcome = TimingOracle::for_attacker(model).test(
-            InputPair::new(|| [0u8; 32], || random_bytes::<32>()),
+            InputPair::new(|| [0u8; 32], random_bytes::<32>),
             |bytes| {
                 let mut limbs = [0u64; 4];
                 for (i, chunk) in bytes.chunks(8).enumerate() {

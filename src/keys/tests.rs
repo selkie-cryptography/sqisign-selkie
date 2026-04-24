@@ -183,6 +183,7 @@ fn kat_verify_all() {
 /// Run with: `cargo test c_ref_kat_cross_check -- --ignored`
 #[test]
 #[ignore]
+#[cfg(unix)] // reqwest dev-dep is unix-only
 fn c_ref_kat_cross_check() {
     const COMMIT: &str = "91e9e464fe5400192d13e1f9240cbf180200a103";
     let url = format!(

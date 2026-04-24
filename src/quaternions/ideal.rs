@@ -111,12 +111,13 @@ impl ExtremalOrder<8> {
         // ≈ 2^64 — far beyond any reasonable iteration budget.
         // The algorithm is probabilistic: by the prime number
         // theorem, `O(log M) ≈ 400` attempts suffice in expectation.
-        // Cap at `MAX_ITER = 1_000_000` to retain the spec's
+        // Cap at `MAX_ITER = 100_000` to retain the spec's
         // mathematical structure (z cycles through a non-trivial
-        // range) while bounding wall-clock time. A caller seeing
-        // `None` after this many iterations should retry with a
-        // different seed rather than wait for `2^64` evaluations.
-        const MAX_ITER: u32 = 1_000_000;
+        // range) while bounding wall-clock time to ~10s in release
+        // builds. A caller seeing `None` after this many iterations
+        // should retry with a different seed rather than wait for
+        // `2^64` evaluations.
+        const MAX_ITER: u32 = 100_000;
         let bound: u32 = {
             let q_sqrt = (q_val as f64).sqrt();
             let ratio = four_m.to_f64() / (p.to_f64() * q_sqrt);
@@ -130,13 +131,23 @@ impl ExtremalOrder<8> {
             } else {
                 raw as u32
             };
-            raw_u32.max(256).min(MAX_ITER)
+            raw_u32.clamp(256, MAX_ITER)
         };
+        // z_max also overflows for aux-path `M ≈ 2^378`: the
+        // unbounded value would be `√(4M/p) ≈ 2^64`. `f64 as i64`
+        // saturates non-deterministically near `i64::MAX`, leaving
+        // `z_max` huge. Cap to `MAX_ITER` so the cyclic `z` walk
+        // covers every distinct `z` within the iteration budget.
         let z_max = {
             let approx = (four_m.to_f64() / p.to_f64() - q_val as f64)
                 .max(0.0)
                 .sqrt();
-            approx as i64
+            let raw = if approx >= MAX_ITER as f64 {
+                MAX_ITER as i64
+            } else {
+                approx as i64
+            };
+            raw.max(1)
         };
 
         let mut _primes_found = 0u32;
@@ -1276,12 +1287,24 @@ impl<const N: usize> LeftIdeal<N> {
                     continue;
                 }
                 let refreshed_norm = *result.norm();
-                if refreshed_norm == BigInt::<4>::ONE
-                    || bool::from(refreshed_norm.is_zero())
-                {
+                if refreshed_norm == BigInt::<4>::ONE || bool::from(refreshed_norm.is_zero()) {
                     #[cfg(test)]
                     eprintln!(
                         "[smallest_equiv_narrow] skipping trivial post-refresh, norm={} bits",
+                        refreshed_norm.bitsize()
+                    );
+                    continue;
+                }
+                // Skip even-norm candidates: `to_isogeny` scales
+                // step-6 matrix entries by `invmod(parent_norm·d₁,
+                // 2^f)`, which is undefined when `parent_norm` is
+                // even. Mirrors the C ref's
+                // `quat_lideal_prime_norm_reduced_equivalent`,
+                // which only accepts prime-norm candidates.
+                if bool::from(refreshed_norm.is_even()) {
+                    #[cfg(test)]
+                    eprintln!(
+                        "[smallest_equiv_narrow] skipping even-norm candidate, norm={} bits",
                         refreshed_norm.bitsize()
                     );
                     continue;
@@ -1322,8 +1345,6 @@ impl<const N: usize> LeftIdeal<N> {
                 "build_equiv_from_delta: W must be >= 2*N for LLL headroom"
             )
         };
-        let lattice: Lattice<N> = (*self.lattice()).into();
-
         let delta_w = Element::<W>::new(
             Coordinate::from_bigint(delta_coords[0]),
             Coordinate::from_bigint(delta_coords[1]),
@@ -1367,121 +1388,133 @@ impl<const N: usize> LeftIdeal<N> {
             Coordinate::from_bigint(delta_w.d.as_bigint().wrapping_neg()),
             Denominator::from_bigint_unchecked(*delta_w.denom.as_bigint()),
         );
-        // Compute the new ideal `I·δ̄/N(I)` columns at width W.
-        //
-        // Each `bj·δ̄ ∈ I·conj(I) = N(I)·O_0`, so the **quaternion**
-        // is divisible by `N(I)` — equivalently, each integer
-        // coordinate of `bj·δ̄` is divisible by `N(I)`. Divide
-        // up front so the resulting columns represent the
-        // equivalent ideal directly (not amplified by `N(I)^4`
-        // in the determinant). Without this division, HNF of
-        // the un-divided columns has entries ~`equiv_norm² ·
-        // N(I)^4 · denom^4` (≳ 2^1300 at NIST-I) — far over
-        // `BigInt<4>`'s 256-bit budget even after dividing
-        // afterward by `gcd(entries, product_denom)`.
-        let mut new_cols = [Vector::<W>::ZERO; 4];
-        #[allow(clippy::needless_range_loop)]
-        for j in 0..4 {
-            let bj = lattice.basis_elem(j);
-            let bj_w = Element::<W>::new(
-                Coordinate::from_bigint(bj.a.as_bigint().widen::<W>()),
-                Coordinate::from_bigint(bj.b.as_bigint().widen::<W>()),
-                Coordinate::from_bigint(bj.c.as_bigint().widen::<W>()),
-                Coordinate::from_bigint(bj.d.as_bigint().widen::<W>()),
-                Denominator::from_bigint_unchecked(bj.denom.as_bigint().widen::<W>()),
-            );
-            let product = bj_w.mul_direct(&delta_conj_w);
-            // Divide each coord by N(I). Each coord is divisible
-            // by `N(I)` since `bj·δ̄ ∈ N(I)·O_0`.
-            let coords = [
-                *product.a.as_bigint(),
-                *product.b.as_bigint(),
-                *product.c.as_bigint(),
-                *product.d.as_bigint(),
-            ];
-            let mut divided = [BigInt::<W>::ZERO; 4];
-            for (k, c) in coords.iter().enumerate() {
-                let (q, rem) = c.div_rem(&self_norm_w);
-                if !bool::from(rem.is_zero()) {
-                    #[cfg(test)]
-                    eprintln!(
-                        "[build_equiv_from_delta] column {j}, coord {k} not divisible by N(I): \
-                         coord bits={}, N(I) bits={}, rem bits={}",
-                        c.bitsize(),
-                        self_norm_w.bitsize(),
-                        rem.bitsize(),
-                    );
-                    return None;
-                }
-                divided[k] = q;
-            }
-            new_cols[j] = Vector::new(divided[0], divided[1], divided[2], divided[3]);
-        }
-        // After dividing by N(I), the columns represent the
-        // equivalent ideal at the original lattice denom (`d`).
-        // No additional `N(I)` factor in the denom.
-        let product_denom: BigInt<W> = denom_w.ct_mul(&denom_w);
 
-        // HNF the post-division columns under a known modulus so
-        // intermediate xgcd cascades don't grow entries beyond the
-        // final HNF size.
+        // Build the equivalent ideal as `O₀·δ̄ + O₀·equiv_norm`
+        // directly, NOT as `I·δ̄/N(I)` via per-column quaternion
+        // multiplication. The two ideals are mathematically
+        // identical (both are the unique left `O₀`-ideal in `[I]`
+        // with norm `equiv_norm`), but the construction-from-the-
+        // generator approach has bounded entry sizes:
+        // `O₀·δ̄` columns are bounded by `p · max(δ̄)` ≈ `p · √nrd(δ)`
+        // and `O₀·equiv_norm` columns are bounded by `equiv_norm`,
+        // so the 8 generators all fit in `BigInt<W>`. The
+        // `I·δ̄/N(I)` per-column path produces integer columns
+        // with denom `d²·N(I)` and entries up to `~equiv_norm² ·
+        // N(I)^4 · d^4` (≳ 2^1300) before division, which the
+        // mod-HNF reduction couldn't tame at any reasonable
+        // modulus without corrupting the lattice.
         //
-        // The Z-lattice spanned by `new_cols` has covolume
-        // `equiv_norm² · denom_w^8` (the ideal `I'·denom_w²` at
-        // integer level), so every HNF entry is bounded by this
-        // covolume. Pass it as the modulus to
-        // `from_hnf_columns_mod`, which reduces entries mod the
-        // modulus throughout the reduction. Without this, when
-        // the HNF has an unbalanced pivot pattern (e.g. `(1, 1,
-        // 1, equiv_norm² · denom_w^8)`), the small pivots' xgcd
-        // step inflates other columns by factors of order
-        // `entry / pivot` ≈ `entry` — producing 4× column-count
-        // growth, ~1500 bits at NIST-I instead of the ~256-bit
-        // final HNF entries.
-        let equiv_norm_w: BigInt<W> = equiv_norm.widen::<W>();
-        let denom_w_4 = product_denom.ct_mul(&product_denom);
-        let modulus = equiv_norm_w
-            .ct_mul(&equiv_norm_w)
-            .ct_mul(&denom_w_4)
-            .ct_mul(&BigInt::<W>::from_u64(2));
-        let hnf_w = Matrix::<W>::from_hnf_columns_mod::<W>(&new_cols, &modulus);
-        let mut g = product_denom.abs();
-        for row in 0..4 {
-            for col in 0..4 {
-                if !bool::from(hnf_w[row][col].is_zero()) {
-                    g = g.gcd(&hnf_w[row][col].abs());
-                }
+        // Same construction as `reduce_to_prime_norm`
+        // (`lattice.rs:2621-2700`).
+        let order = self.parent_order();
+        let order_basis = order.basis();
+        let order_denom = order.denom();
+        let alpha_denom = *delta_conj_w.denom.as_bigint();
+
+        let p_w: BigInt<W> = P_WIDE.widen::<W>();
+        let qmul = |a: &[BigInt<W>; 4], b: &[BigInt<W>; 4]| -> [BigInt<W>; 4] {
+            let (a0, a1, a2, a3) = (&a[0], &a[1], &a[2], &a[3]);
+            let (b0, b1, b2, b3) = (&b[0], &b[1], &b[2], &b[3]);
+            [
+                a0.ct_mul(b0)
+                    .ct_sub(&a1.ct_mul(b1))
+                    .ct_sub(&p_w.ct_mul(&a2.ct_mul(b2).ct_add(&a3.ct_mul(b3)))),
+                a0.ct_mul(b1)
+                    .ct_add(&a1.ct_mul(b0))
+                    .ct_add(&p_w.ct_mul(&a2.ct_mul(b3).ct_sub(&a3.ct_mul(b2)))),
+                a0.ct_mul(b2)
+                    .ct_add(&a2.ct_mul(b0))
+                    .ct_sub(&a1.ct_mul(b3))
+                    .ct_add(&a3.ct_mul(b1)),
+                a0.ct_mul(b3)
+                    .ct_add(&a3.ct_mul(b0))
+                    .ct_add(&a1.ct_mul(b2))
+                    .ct_sub(&a2.ct_mul(b1)),
+            ]
+        };
+        let alpha_arr = [
+            *delta_conj_w.a.as_bigint(),
+            *delta_conj_w.b.as_bigint(),
+            *delta_conj_w.c.as_bigint(),
+            *delta_conj_w.d.as_bigint(),
+        ];
+
+        // Compute O₀·δ̄ at width W.
+        let mut o_alpha_cols = [Vector::<W>::ZERO; 4];
+        for (j, o_col) in o_alpha_cols.iter_mut().enumerate() {
+            let e = [
+                order_basis[0][j].widen::<W>(),
+                order_basis[1][j].widen::<W>(),
+                order_basis[2][j].widen::<W>(),
+                order_basis[3][j].widen::<W>(),
+            ];
+            let r = qmul(&e, &alpha_arr);
+            *o_col = Vector::new(r[0], r[1], r[2], r[3]);
+        }
+        let o_alpha_denom = order_denom.widen::<W>().ct_mul(&alpha_denom);
+
+        // Compute O₀·equiv_norm, rescaled to the shared denom
+        // `order.denom · α.denom`.
+        let equiv_norm_w: BigInt<W> = equiv_norm_w; // shadow
+        let mut o_n_cols: [Vector<W>; 4] = core::array::from_fn(|j| {
+            Vector::new(
+                order_basis[0][j].widen::<W>(),
+                order_basis[1][j].widen::<W>(),
+                order_basis[2][j].widen::<W>(),
+                order_basis[3][j].widen::<W>(),
+            )
+        });
+        for col in &mut o_n_cols {
+            for row in 0..4 {
+                col[row] = col[row].ct_mul(&equiv_norm_w).ct_mul(&alpha_denom);
             }
         }
+
+        // Mod-HNF with modulus `4 · d⁴ · equiv_norm² · p` (a
+        // multiple of the integer-column covolume for the O₀-ideal
+        // of norm `equiv_norm` with denom `d_total`).
+        let d_sq = o_alpha_denom.ct_mul(&o_alpha_denom);
+        let d_fourth = d_sq.ct_mul(&d_sq);
+        let m_sq = equiv_norm_w.ct_mul(&equiv_norm_w);
+        let four = BigInt::<W>::from_u64(4);
+        let modulus = four.ct_mul(&d_fourth).ct_mul(&m_sq).ct_mul(&p_w);
+
+        let all_cols = [
+            o_alpha_cols[0],
+            o_alpha_cols[1],
+            o_alpha_cols[2],
+            o_alpha_cols[3],
+            o_n_cols[0],
+            o_n_cols[1],
+            o_n_cols[2],
+            o_n_cols[3],
+        ];
+        let hnf_w = Matrix::<W>::from_hnf_columns_mod::<W>(&all_cols, &modulus);
+
+        // Narrow basis and denom to BigInt<4>.
         let mut basis_4 = Matrix::<4>::ZERO;
         for row in 0..4 {
             for col in 0..4 {
-                let (q, _) = hnf_w[row][col].div_rem(&g);
-                match q.narrow_to::<4>() {
+                match hnf_w[row][col].narrow_to::<4>() {
                     Some(v) => basis_4[row][col] = v,
                     None => {
                         #[cfg(test)]
                         eprintln!(
-                            "[build_equiv_from_delta] basis[{row}][{col}] q.narrow_to<4> None: q bits={}, hnf_w bits={}, g bits={}",
-                            q.bitsize(),
+                            "[build_equiv_from_delta] basis[{row}][{col}] narrow_to<4> None: hnf_w bits={}",
                             hnf_w[row][col].bitsize(),
-                            g.bitsize(),
                         );
                         return None;
                     }
                 }
             }
         }
-        let (denom_simplified, _) = product_denom.div_rem(&g);
-        let denom_4: BigInt<4> = match denom_simplified.narrow_to() {
+        let denom_4: BigInt<4> = match o_alpha_denom.narrow_to() {
             Some(d) => d,
             None => {
                 #[cfg(test)]
                 eprintln!(
-                    "[build_equiv_from_delta] denom narrow_to<4> None: denom bits={}, product_denom bits={}, g bits={}",
-                    denom_simplified.bitsize(),
-                    product_denom.bitsize(),
-                    g.bitsize(),
+                    "[build_equiv_from_delta] denom narrow_to<4> None: o_alpha_denom bits={}",
+                    o_alpha_denom.bitsize(),
                 );
                 return None;
             }

@@ -56,11 +56,7 @@ fn signing_key_zeroed_on_drop() {
         "zeroize: {}/{} bytes zeroed ({}% clean)",
         len - nonzero,
         len,
-        if len > 0 {
-            (len - nonzero) * 100 / len
-        } else {
-            0
-        }
+        ((len - nonzero) * 100).checked_div(len).unwrap_or(0)
     );
 
     // For now, just report — don't fail the test since ZeroizeOnDrop

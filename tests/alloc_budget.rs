@@ -22,8 +22,8 @@ fn measure(name: &'static str, budget: u64, f: impl FnOnce()) -> OpResult {
     let _profiler = Profiler::builder().testing().build();
     f();
     let stats = dhat::HeapStats::get();
-    let allocs = stats.total_blocks as u64;
-    let bytes = stats.total_bytes as u64;
+    let allocs = stats.total_blocks;
+    let bytes = stats.total_bytes;
     eprintln!("{name}: {allocs} allocs, {bytes} bytes (budget: {budget})");
     assert!(
         allocs <= budget,

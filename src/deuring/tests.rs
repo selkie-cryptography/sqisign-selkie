@@ -125,6 +125,7 @@ fn torsion_basis_points_on_e0() {
 /// Run with: `cargo test c_ref_basis_cross_check -- --ignored`
 #[test]
 #[ignore]
+#[cfg(unix)] // reqwest/regex dev-deps are unix-only
 fn c_ref_basis_cross_check() {
     let commit = C_REF_COMMIT;
     let url = format!(
@@ -231,6 +232,7 @@ fn c_ref_basis_cross_check() {
 /// Run with: `cargo test c_ref_all_bases_cross_check -- --ignored`
 #[test]
 #[ignore]
+#[cfg(unix)] // reqwest/regex dev-deps are unix-only
 fn c_ref_all_bases_cross_check() {
     let commit = C_REF_COMMIT;
     let url = format!(
