@@ -593,7 +593,7 @@ impl SigningKey {
             // Line 7: E_com, P_com, Q_com ← IdealToIsogeny(I_com)
             #[cfg(test)]
             eprintln!("[sign {_iter}] commitment to_isogeny...");
-            let (e_com, _phi_p_com, _phi_q_com) = match i_com_narrow.to_isogeny() {
+            let (e_com, p_com, q_com) = match i_com_narrow.to_isogeny() {
                 Some(r) => {
                     #[cfg(test)]
                     eprintln!("[sign {_iter}] commitment OK ({:?})", _iter_start.elapsed());
@@ -605,19 +605,6 @@ impl SigningKey {
                     continue;
                 }
             };
-            // `to_isogeny` returns `(E, phi(P_0), phi(Q_0))` — the
-            // image of E_0's basis through the chain. After a
-            // ~244-step (2,2)-chain, the pushed images have only
-            // `2^(f - chain_e)` ≈ 2^4 torsion, far less than the
-            // 2^f needed by downstream `split_auxiliary_isogeny`.
-            // Compute a canonical 2^f basis on the new curve from
-            // scratch via `to_hint`, matching the C reference's
-            // `dim2id2iso_arbitrary_isogeny_evaluation` which
-            // returns the codomain's canonical basis (not the
-            // pushed image of the domain's basis).
-            let (basis_com, _hint_com) = TorsionBasis::to_hint(&e_com);
-            let p_com = basis_com.R;
-            let q_com = basis_com.RS;
 
             // --- Challenge (line 10) ---
             let chl = Challenge::derive(&self.verifying_key, &e_com, msg);
@@ -1111,7 +1098,7 @@ impl SigningKey {
                     "[sign {_iter}] response to_isogeny... (cumul {:?})",
                     _iter_start.elapsed()
                 );
-                let (e_aux_prime, _phi_p_aux, _phi_q_aux) = match i_inter.to_isogeny() {
+                let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_inter.to_isogeny() {
                     Some(r) => {
                         #[cfg(test)]
                         eprintln!(
@@ -1126,14 +1113,6 @@ impl SigningKey {
                         continue;
                     }
                 };
-
-                // Same reasoning as for `e_com`: the pushed images
-                // have insufficient torsion. Compute the canonical
-                // 2^f basis on E_aux' from scratch.
-                let (basis_aux_prime, _hint_aux_prime) =
-                    TorsionBasis::to_hint(&e_aux_prime);
-                let p_aux_prime = basis_aux_prime.R;
-                let q_aux_prime = basis_aux_prime.RS;
 
                 let split = match split_auxiliary_isogeny(
                     &e_com,

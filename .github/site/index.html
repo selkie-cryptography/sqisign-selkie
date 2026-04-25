@@ -2324,43 +2324,29 @@
 
     // --- Favicon animation ---
     //
-    // Fetches the logo SVG, injects a SMIL <animate> on opacity into
-    // the root <svg> element, and sets it as a blob URL favicon. The
-    // browser renders the animation natively — no JS frame loop, no
-    // canvas, no toDataURL. Smooth and zero-CPU.
+    // Draws the logo onto a canvas with varying opacity, then pushes
+    // the result as a data URL favicon. Updates every 500ms (2fps) —
+    // fast enough for a smooth 3s breathe cycle, slow enough to avoid
+    // the jitter that comes from rapid favicon href swaps.
 
     let faviconAnimating = false;
-    let faviconBlobUrl = null;
+    let faviconTimer = null;
+    let faviconCanvas = null;
+    let faviconImg = null;
+    let faviconReady = false;
 
-    async function buildAnimatedFavicon() {
-      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const src = isDark
-        ? '/selkie-solid-white-on-transparent.svg'
-        : '/selkie-solid-black-on-transparent.svg';
-      const resp = await fetch(src);
-      if (!resp.ok) return null;
-      let svg = await resp.text();
-      // Inject a SMIL opacity animation on the root <svg> element.
-      svg = svg.replace(
-        /<svg([^>]*)>/,
-        `<svg$1><animate attributeName="opacity" values="1;0.3;1" dur="3s" repeatCount="indefinite"/>`
-      );
-      const blob = new Blob([svg], { type: 'image/svg+xml' });
-      return URL.createObjectURL(blob);
-    }
-
-    async function updateFavicon(building) {
+    function updateFavicon(building) {
       const light = document.getElementById('favicon-light');
       const dark = document.getElementById('favicon-dark');
 
       if (!building) {
+        if (faviconTimer) {
+          clearInterval(faviconTimer);
+          faviconTimer = null;
+        }
         if (faviconAnimating) {
           if (light) light.href = '/favicon-32x32.png';
           if (dark) dark.href = '/favicon-32x32-dark.png';
-          if (faviconBlobUrl) {
-            URL.revokeObjectURL(faviconBlobUrl);
-            faviconBlobUrl = null;
-          }
           faviconAnimating = false;
         }
         return;
@@ -2369,12 +2355,44 @@
       if (faviconAnimating) return;
       faviconAnimating = true;
 
-      const url = await buildAnimatedFavicon();
-      if (url) {
-        faviconBlobUrl = url;
-        if (light) light.href = url;
-        if (dark) dark.href = url;
+      if (!faviconImg) {
+        faviconImg = new Image();
+        faviconImg.onload = () => { faviconReady = true; };
+        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        faviconImg.src = isDark
+          ? '/selkie-solid-white-on-transparent.svg'
+          : '/selkie-solid-black-on-transparent.svg';
       }
+      if (!faviconCanvas) {
+        faviconCanvas = document.createElement('canvas');
+        faviconCanvas.width = 32;
+        faviconCanvas.height = 32;
+      }
+
+      const PERIOD = 3000;
+      const start = performance.now();
+
+      faviconTimer = setInterval(() => {
+        if (!faviconReady) return;
+
+        const ctx = faviconCanvas.getContext('2d');
+        ctx.clearRect(0, 0, 32, 32);
+
+        const elapsed = performance.now() - start;
+        const phase = (elapsed % PERIOD) / PERIOD * Math.PI * 2;
+        ctx.globalAlpha = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(phase));
+
+        const nw = faviconImg.naturalWidth || 32;
+        const nh = faviconImg.naturalHeight || 32;
+        const scale = Math.min(32 / nw, 32 / nh) * 0.9;
+        const w = nw * scale;
+        const h = nh * scale;
+        ctx.drawImage(faviconImg, (32 - w) / 2, (32 - h) / 2, w, h);
+
+        const dataUrl = faviconCanvas.toDataURL('image/png');
+        if (light) light.href = dataUrl;
+        if (dark) dark.href = dataUrl;
+      }, 16);
     }
 
     // --- Commit nav ---
