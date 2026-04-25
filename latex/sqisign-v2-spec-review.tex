@@ -942,4 +942,94 @@ Absent these changes, a faithful implementation that reads the
 spec straight through will silently produce invalid signing keys
 that fail only when compared against known-answer test vectors.
 
+% =====================================================================
+\section{\textsc{IdealToIsogeny} output basis must be aligned with
+  the isogeny, not canonical on the codomain}
+\label{sec:id2iso-aligned-basis}
+
+\finding{Affects \algo{3.13} (\textsc{IdealToIsogeny}) and
+  \algo{4.5} (\textsc{SplitAuxiliaryIsogeny}).}{\high}
+
+\algo{3.13} states that its output is ``the codomain~$E_I$
+of~$\varphi_I$, $\varphi_I(P_0)$, and $\varphi_I(Q_0)$.'' Read
+literally, this is the image of the canonical $\mathcal{O}_0$
+basis~$(P_0, Q_0)$ of~$E_0[2^f]$ through the full
+ideal-to-isogeny~$\varphi_I$.
+
+\paragraph{The implicit requirement.} \algo{4.5}
+(\textsc{SplitAuxiliaryIsogeny}) takes as input curves~$E_1$,
+$E_2$ and bases~$(P_1, Q_1)$, $(P_2, Q_2)$ together with
+``positive integers~$q$, $e'$, $r$ such that there exist four
+isogenies $\varphi_q$, $\varphi_{2^{e'}-q}$, $\psi_{2^{e'}-q}$,
+$\psi_q$ verifying \dots\ $(P_2, Q_2) = (\varphi(P_1),
+\varphi(Q_1))$.''  The condition $(P_2, Q_2) = \varphi(P_1, Q_1)$
+forces $(P_2, Q_2)$ to be the image of $(P_1, Q_1)$ through the
+specific odd-degree isogeny $\varphi$ of degree~$q\,(2^{e'}-q)$.
+An independently-chosen torsion basis on $E_2$ does not satisfy
+this and produces a kernel that fails the splitting condition
+inside \algo{8.47}.
+
+\paragraph{Why this is implicit.}
+The spec states the output of \algo{3.13} as ``$\varphi_I(P_0)$,
+$\varphi_I(Q_0)$.'' The composition~$\varphi_I = \varphi_{2^e} \circ
+\dots \circ \varphi_d$ has both odd-degree and~$2$-power factors.
+The image of~$P_0$ through the full composition retains
+$2^f$-torsion only because every odd-degree factor preserves the
+$2^f$-torsion subgroup; the~$2$-power factors are evaluated
+through the dimension-2~$(2,2)$-chain on the abelian-surface
+side, where the input torsion is determined by what the
+implementer pushes through the chain.  The C reference's
+\textsc{Clapotis} algorithm
+(\texttt{dim2id2iso\_ideal\_to\_isogeny\_clapotis} in
+\texttt{dim2id2iso.c:778--1228}) navigates this by pushing the
+canonical basis of the \emph{intermediate} extremal-order
+curve~$E_t$ through the~$(2,2)$-chain after the
+\textsc{FixedDegreeIsogeny} step has already produced an aligned
+basis on the chain's input curve, $E_u$.  The final output basis
+on $E_I$ is then the image of $E_t$'s basis (not~$E_0$'s) through
+the chain, which is consistent with the alignment required
+by~\algo{4.5}.  None of this is in the spec.
+
+\paragraph{Impact.}
+A naive implementation following \algo{3.13} returns either
+(a)~the literal $\varphi_I(P_0), \varphi_I(Q_0)$ via push-through
+of $E_0$'s basis through the entire chain --- the resulting points
+have torsion $2^{f - 2\,\mathsf{chain\_e}}$, which is trivial for
+realistic parameters where $\mathsf{chain\_e}$ approaches $f$ ---
+or (b)~a freshly-sampled canonical $2^f$-torsion basis on~$E_I$
+unrelated to~$\varphi_I$.  Either choice causes \algo{4.5} to
+silently fail at the~$(2,2)$-chain splitting check.
+
+\paragraph{What the C reference does.}
+The C reference's \textsc{Clapotis}
+(\texttt{dim2id2iso\_ideal\_to\_isogeny\_clapotis}) effectively
+treats the ideal-to-isogeny output basis as ``aligned with~$\varphi_I$
+in a way that downstream~\algo{4.5} can consume.''  Concretely it
+takes the canonical basis of the matching extremal-order
+curve~$E_t$, pushes it through \textsc{FixedDegreeIsogeny} (an
+odd-degree isogeny~$\varphi_v$ that preserves $2^f$-torsion),
+applies the endomorphism~$\theta = \beta_2\,\widehat{\beta_1}$ to
+get a kernel structure on~$E_u \times E_v$, runs the~$(2,2)$-chain
+with the basis-preserving push-through, and reports the surviving
+basis on the chain's first codomain factor.
+
+\paragraph{Recommendation.}  The spec should:
+\begin{enumerate}
+  \item State explicitly that the output of \algo{3.13} is a
+    pair $(R, S) \in E_I[2^f]^2$ such that $(R, S) = \nu(P_0, Q_0)$
+    for an isogeny~$\nu$ \emph{whose 2-adic valuation} the caller
+    can recover from $(\beta_1, \beta_2, u, v, d_1, d_2)$, and
+    pin down the convention so~\algo{4.5}'s precondition
+    $(P_2, Q_2) = \varphi(P_1, Q_1)$ is realized.
+  \item Reference the C reference's basis-alignment construction
+    (or describe it inline) so an implementor doesn't read the
+    \emph{output} of \algo{3.13} as ``the literal image of $E_0$'s
+    basis through the full chain'' --- which has the wrong
+    torsion --- nor as ``a fresh canonical basis on $E_I$'' ---
+    which has the right torsion but no alignment with~$\varphi$.
+\end{enumerate}
+We follow the C reference's basis-alignment construction in our
+implementation; the resulting basis is what \algo{4.5} consumes
+without further adjustment.
+
 \end{document}
