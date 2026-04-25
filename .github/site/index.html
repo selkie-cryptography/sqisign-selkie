@@ -2088,8 +2088,8 @@
       }
       section.style.display = '';
 
-      const sha = cov.sha;
-      const modules = cov.modules || [];
+      const sha = (cov && cov.sha) || (mut && mut.sha) || (bench && bench.sha) || '';
+      const modules = cov ? (cov.modules || []) : [];
       const allFiles = modules.flatMap(m => (m.files || []).map(f => ({...f, module: m.name})));
       const survivors = mut ? (mut.survivors || []) : [];
       const benchNames = bench ? (bench.groups || []).flatMap(g => g.benchmarks.map(b => g.name + '::' + b.name)) : [];
