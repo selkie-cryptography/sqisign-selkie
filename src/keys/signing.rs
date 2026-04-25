@@ -1413,7 +1413,17 @@ pub(crate) fn split_auxiliary_isogeny(
     // Line 3: q_inv ← q^{-1} (mod 2^{f-e'-2})
     let mod_bits = f - e_prime_val - 2;
     let q_scalar = Scalar::from_limbs(*q_rsp.as_limbs());
-    let q_inv = q_scalar.inv_mod2k(mod_bits)?;
+    let q_inv = match q_scalar.inv_mod2k(mod_bits) {
+        Some(v) => v,
+        None => {
+            #[cfg(test)]
+            eprintln!(
+                "[split_aux] q.inv_mod2k None: q_rsp parity={:?}, mod_bits={mod_bits}",
+                if bool::from(q_rsp.is_even()) { "even" } else { "odd" }
+            );
+            return None;
+        }
+    };
 
     // Line 4: P'₂, Q'₂ ← [q_inv·2^{f-e'-2}]P₂, [q_inv·2^{f-e'-2}]Q₂
     let shift_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(mod_bits).as_limbs());
@@ -1427,19 +1437,44 @@ pub(crate) fn split_auxiliary_isogeny(
     let product = surfaces::EllipticProduct::new(*e1, *e2);
     let pmq1_prime = p1_prime.projective_difference(&q1_prime);
     let pmq2_prime = p2_prime.projective_difference(&q2_prime);
-    let kernel = surfaces::Kernel::from_montgomery(
+    let kernel = match surfaces::Kernel::from_montgomery(
         product,
         (p1_prime, p2_prime),
         (q1_prime, q2_prime),
         (pmq1_prime, pmq2_prime),
-    )?;
+    ) {
+        Some(k) => k,
+        None => {
+            #[cfg(test)]
+            eprintln!("[split_aux] Kernel::from_montgomery None");
+            return None;
+        }
+    };
 
     let zero_e2 = ProjectiveXOnlyPoint::identity(e2);
-    let e_chain = TorsionExponent::try_from(e_prime_val + r_val).ok()?;
-    let (codomain, images) = kernel.isogeny(
+    // Chain length matches the C ref's `pow_dim2_deg_resp =
+    // SQIsign_response_length − exp_diadic_val_full_resp −
+    // backtracking` = `e_rsp − r − n_bt = e_prime`. Earlier this
+    // used `e_prime + r`, which expected `2^(e'+r+2)` kernel
+    // torsion — the kernel `(P'₁, P'₂)` has only `2^(e'+2)`
+    // torsion (after the `[2^(f-e'-2)]` reductions on each
+    // side), so the longer chain ran out of kernel material and
+    // every iteration dropped at the splitting check.
+    let e_chain = e_prime;
+    let (codomain, images) = match kernel.isogeny(
         e_chain,
         &[(p1_double_prime, zero_e2), (q1_double_prime, zero_e2)],
-    )?;
+    ) {
+        Some(r) => r,
+        None => {
+            #[cfg(test)]
+            eprintln!(
+                "[split_aux] kernel.isogeny None: e_chain={}",
+                e_chain.value()
+            );
+            return None;
+        }
+    };
 
     // Line 6: return F₁, S₁, R₁, F₂, S₂, R₂
     // The codomain is F₁ × F₂; images are (S₁,S₂) and (R₁,R₂).
