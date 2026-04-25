@@ -989,12 +989,43 @@
 
     @media only screen and (max-width: 640px) {
       body { font-size: 16px; }
-      .header { padding: 24px 0; }
-      .sections { padding: 32px 0; }
-      .section { margin-bottom: 36px; }
-      .cov-summary { font-size: 28px; }
+      .container { padding: 0 12px; }
+      .header { padding: 16px 0; }
+      .header__title { font-size: 18px; }
+      .header__org { display: none; }
+      .sections { padding: 20px 0; }
+      .section { margin-bottom: 28px; }
+      .cov-summary { font-size: 24px; }
       .cov-bar-cell { display: none; }
-      .footer__inner { flex-direction: column; gap: 16px; }
+
+      /* Nav: horizontal scroll instead of wrapping */
+      .section-nav {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding: 8px 0;
+      }
+      .section-nav::-webkit-scrollbar { display: none; }
+      .section-nav a { font-size: 11px; padding: 4px 8px; }
+
+      /* Commit nav: stack vertically */
+      .commit-nav { flex-direction: column; gap: 6px; }
+
+      /* Tables: horizontal scroll */
+      .bench-table, .dudect-table, .cov-table { display: block; overflow-x: auto; }
+      .bench-table th, .bench-table td,
+      .dudect-table th, .dudect-table td { font-size: 12px; padding: 4px 6px; }
+
+      /* Audit badges: 2 per row */
+      .audit-grid { gap: 8px; }
+      .audit-badge { min-width: calc(50% - 8px); padding: 10px; }
+      .badge-status { font-size: 18px; }
+      .badge-detail { font-size: 10px; }
+
+      /* Tooltips: full-width on mobile */
+      .help-icon .tooltip { left: -120px; width: 280px; }
+
+      .footer__inner { flex-direction: column; gap: 12px; }
     }
   </style>
 </head>
