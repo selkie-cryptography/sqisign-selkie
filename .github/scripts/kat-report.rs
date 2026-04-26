@@ -227,13 +227,17 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-/// Counts individual KAT vectors by looking for `KAT_SK` entries in
-/// `src/keys/kat_data.rs`. Each entry is one signing key = one vector
-/// tested across multiple assertions (parse, roundtrip, verify).
+/// Counts individual KAT vectors from `src/keys/kat_data.rs`.
+/// Each vector is a tuple starting with `(` on its own indented line.
 fn count_kat_vectors() -> u64 {
-    let path = "src/keys/kat_data.rs";
-    let content = fs::read_to_string(path).unwrap_or_default();
-    content.matches("KatEntry").count() as u64
+    let content = fs::read_to_string("src/keys/kat_data.rs").unwrap_or_default();
+    content
+        .lines()
+        .filter(|line| {
+            let t = line.trim();
+            t == "("
+        })
+        .count() as u64
 }
 
 /// Counts individual Wycheproof test vectors by summing
