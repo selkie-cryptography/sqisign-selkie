@@ -10,6 +10,7 @@
 //! Compile: `rustc -O kat-report.rs -o kat-report`
 
 use std::env;
+use std::fs;
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
@@ -163,9 +164,13 @@ fn main() -> io::Result<()> {
     eprintln!("[kat-report] Running Wycheproof tests...");
     let wyche_results = run_tests(&["test", "--test", "wycheproof"]);
 
-    let all_results: Vec<(&str, &[TestResult])> = vec![
-        ("kat", &kat_results[..]),
-        ("wycheproof", &wyche_results[..]),
+    // Count individual test vectors from the JSON/source files.
+    let kat_vectors = count_kat_vectors();
+    let wycheproof_vectors = count_wycheproof_vectors();
+
+    let all_results: Vec<(&str, &[TestResult], u64)> = vec![
+        ("kat", &kat_results[..], kat_vectors),
+        ("wycheproof", &wyche_results[..], wycheproof_vectors),
     ];
 
     let out = io::stdout();
@@ -177,7 +182,7 @@ fn main() -> io::Result<()> {
 
     // Per-suite summary and results.
     writeln!(w, "  \"suites\": [")?;
-    for (si, &(suite_name, results)) in all_results.iter().enumerate() {
+    for (si, &(suite_name, results, vectors)) in all_results.iter().enumerate() {
         let pass = results.iter().filter(|r| r.status == "pass").count();
         let fail = results.iter().filter(|r| r.status == "fail").count();
         let skip = results.iter().filter(|r| r.status == "skip").count();
@@ -188,6 +193,7 @@ fn main() -> io::Result<()> {
         writeln!(w, "      \"fail\": {},", fail)?;
         writeln!(w, "      \"skip\": {},", skip)?;
         writeln!(w, "      \"total\": {},", results.len())?;
+        writeln!(w, "      \"vectors\": {},", vectors)?;
         writeln!(w, "      \"tests\": [")?;
 
         for (i, r) in results.iter().enumerate() {
@@ -219,4 +225,52 @@ fn main() -> io::Result<()> {
     writeln!(w, "}}")?;
 
     Ok(())
+}
+
+/// Counts individual KAT vectors by looking for `KAT_SK` entries in
+/// `src/keys/kat_data.rs`. Each entry is one signing key = one vector
+/// tested across multiple assertions (parse, roundtrip, verify).
+fn count_kat_vectors() -> u64 {
+    let path = "src/keys/kat_data.rs";
+    let content = fs::read_to_string(path).unwrap_or_default();
+    content.matches("KatEntry").count() as u64
+}
+
+/// Counts individual Wycheproof test vectors by summing
+/// `numberOfTests` across all JSON files in `tests/vectors/`.
+fn count_wycheproof_vectors() -> u64 {
+    let mut total = 0u64;
+    let dir = match fs::read_dir("tests/vectors") {
+        Ok(d) => d,
+        Err(_) => return 0,
+    };
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().map_or(true, |e| e != "json") {
+            continue;
+        }
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        // Extract "numberOfTests": N from the JSON.
+        total += extract_num_u64(&content, "numberOfTests");
+    }
+    total
+}
+
+fn extract_num_u64(json: &str, key: &str) -> u64 {
+    let needle = format!("\"{}\"", key);
+    let Some(idx) = json.find(&needle) else {
+        return 0;
+    };
+    let rest = &json[idx + needle.len()..];
+    let Some(colon) = rest.find(':') else {
+        return 0;
+    };
+    let after = rest[colon + 1..].trim_start();
+    let end = after
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(after.len());
+    after[..end].parse().unwrap_or(0)
 }

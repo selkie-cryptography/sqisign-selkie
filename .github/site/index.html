@@ -1954,30 +1954,32 @@
 
     function renderKatData(data) {
       const suites = data.suites || [];
+      const totalVectors = suites.reduce((s, x) => s + (x.vectors || 0), 0);
+      const anyFail = suites.some(s => s.fail > 0);
+
       let html = '<div class="audit-grid">';
       for (const s of suites) {
         const hasFail = s.fail > 0;
         const color = hasFail ? 'var(--red)' : 'var(--green)';
+        const vectors = s.vectors || '?';
         html += `<div class="audit-badge">
-          <div class="badge-status" style="color:${color}">${hasFail ? s.fail + ' FAIL' : s.pass + ' pass'}</div>
+          <div class="badge-status" style="color:${color}">${hasFail ? '\u2718' : '\u2714'}</div>
           <div class="badge-label">${esc(s.name)}</div>
-          <div class="badge-detail">${s.total} total, ${s.skip} skipped</div>
+          <div class="badge-detail">${vectors} vectors, ${s.total} tests${s.skip > 0 ? `, ${s.skip} skipped` : ''}</div>
         </div>`;
       }
       html += '</div>';
 
+      // Show test functions (not individual vectors) with pass/fail status.
+      html += '<table class="dudect-table"><thead><tr><th>Test suite</th><th>Status</th></tr></thead><tbody>';
       for (const s of suites) {
-        const tests = s.tests || [];
-        if (tests.length === 0) continue;
-        html += `<h4 style="margin:16px 0 8px">${esc(s.name)} (${tests.length})</h4>`;
-        html += '<table class="dudect-table"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>';
-        for (const t of tests) {
+        for (const t of (s.tests || [])) {
           const icon = t.status === 'pass' ? '\u2714' : t.status === 'skip' ? '\u2013' : '\u2718';
           const cls = t.status === 'pass' ? 'dudect-pass' : t.status === 'fail' ? 'dudect-fail' : '';
           html += `<tr><td class="fn-name">${esc(t.name)}</td><td class="${cls}">${icon}</td></tr>`;
         }
-        html += '</tbody></table>';
       }
+      html += '</tbody></table>';
 
       return html;
     }
@@ -2655,12 +2657,11 @@
       const katMeta = document.getElementById('kat-meta');
       if (katData) {
         const suites = katData.suites || [];
-        const totalPass = suites.reduce((s, x) => s + (x.pass || 0), 0);
+        const totalVectors = suites.reduce((s, x) => s + (x.vectors || 0), 0);
         const totalFail = suites.reduce((s, x) => s + (x.fail || 0), 0);
-        const totalAll = suites.reduce((s, x) => s + (x.total || 0), 0);
         katMeta.innerHTML = totalFail > 0
-          ? `<span style="color:var(--red)">${totalFail} fail</span> / ${totalAll}`
-          : `${totalPass}/${totalAll} pass`;
+          ? `<span style="color:var(--red)">${totalFail} fail</span>`
+          : `${totalVectors} vectors`;
         katEl.innerHTML = renderKatData(katData);
       } else {
         katMeta.textContent = '';
