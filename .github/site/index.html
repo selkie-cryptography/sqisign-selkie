@@ -1782,80 +1782,96 @@
         <div class="mutants-stat"><span class="value" style="color:${summaryColor}">${summaryText}</span><span class="label">${funcs.size} functions tested</span></div>
       </div>`;
 
-      // --- DudeCT table ---
-      if (dResults.length > 0) {
-        html += '<h4 style="margin:16px 0 8px">DudeCT (statistical t-test)</h4>';
-        html += '<p style="font-size:12px;color:var(--fg-dim);margin:0 0 8px">Measures timing difference between two input classes. <strong>|t| &lt; 4.5</strong> = no detectable leak. Higher = timing varies with input.</p>';
-        html += `<table class="dudect-table">
-          <thead><tr>
-            <th>Function</th>
-            <th>|t| statistic</th>
-            <th>Samples</th>
-            <th>Result</th>
-          </tr></thead><tbody>`;
+      // Collect tacet model names from data.
+      const tacetModels = [...new Set(tResults.map(r => r.model))];
+      const modelLabels = {
+        shared_hw: 'Shared HW',
+        pq_sentinel: 'PQ sentinel',
+        adjacent: 'Adjacent',
+      };
+      const modelTips = {
+        shared_hw: 'Same CPU: cache + branch predictor',
+        pq_sentinel: 'Quantum-assisted side channel',
+        adjacent: 'Co-located, no shared microarch',
+      };
 
-        const dSorted = [...dResults].sort((a, b) => {
-          if (a.status !== b.status) return a.status === 'fail' ? -1 : 1;
-          return Math.abs(b.max_t || 0) - Math.abs(a.max_t || 0);
-        });
+      // Column headers: Function | DudeCT | Tacet models...
+      // Two header rows: top labels + bottom explainers.
+      const hasDudect = dResults.length > 0;
+      const hasTacet = tResults.length > 0;
 
-        for (const r of dSorted) {
-          const absT = Math.abs(r.max_t || 0);
-          const tClass = r.status === 'fail' ? 'dudect-fail' : 'dudect-pass';
-          const icon = r.status === 'fail' ? '\u2718 leak' : '\u2714 ok';
-          const samples = r.samples ? r.samples.toLocaleString() : '\u2014';
-          html += `<tr>
-            <td class="fn-name">${esc(r.name)}</td>
-            <td class="${tClass}">${absT.toFixed(2)}</td>
-            <td>${samples}</td>
-            <td class="${tClass}">${icon}</td>
-          </tr>`;
-        }
-        html += '</tbody></table>';
+      html += '<table class="dudect-table"><thead>';
+      // Top row: group headers.
+      html += '<tr>';
+      html += '<th rowspan="2" style="vertical-align:bottom">Function</th>';
+      if (hasDudect) {
+        html += `<th colspan="2" style="text-align:center;border-bottom:none">DudeCT</th>`;
       }
+      if (hasTacet) {
+        html += `<th colspan="${tacetModels.length}" style="text-align:center;border-bottom:none">Tacet</th>`;
+      }
+      html += '</tr>';
+      // Bottom row: column details.
+      html += '<tr>';
+      if (hasDudect) {
+        html += '<th title="|t| < 4.5 = no detectable timing leak">|t| stat</th>';
+        html += '<th title="Number of timing measurements">samples</th>';
+      }
+      for (const m of tacetModels) {
+        const label = modelLabels[m] || m;
+        const tip = modelTips[m] || '';
+        html += `<th title="${esc(tip)}" style="cursor:help">${esc(label)}</th>`;
+      }
+      html += '</tr></thead><tbody>';
 
-      // --- Tacet table ---
-      if (tResults.length > 0) {
-        // Collect model names from data.
-        const tacetModels = [...new Set(tResults.map(r => r.model))];
-        const modelDescriptions = {
-          shared_hw: 'Shared hardware — attacker runs on the same CPU (cache, branch predictor)',
-          pq_sentinel: 'Post-quantum sentinel — quantum-assisted side-channel attacker',
-          adjacent: 'Adjacent process — attacker co-located but no shared microarchitecture',
-        };
+      // Sort: failures first, then by |t| descending.
+      const sorted = [...funcs.values()].sort((a, b) => {
+        const aFail = (a.dudect && a.dudect.status === 'fail') || Object.values(a.tacet).some(t => t.status === 'fail');
+        const bFail = (b.dudect && b.dudect.status === 'fail') || Object.values(b.tacet).some(t => t.status === 'fail');
+        if (aFail !== bFail) return aFail ? -1 : 1;
+        const aT = a.dudect ? Math.abs(a.dudect.max_t || 0) : 0;
+        const bT = b.dudect ? Math.abs(b.dudect.max_t || 0) : 0;
+        return bT - aT;
+      });
 
-        html += '<h4 style="margin:24px 0 8px">Tacet (Bayesian attacker models)</h4>';
-        html += '<p style="font-size:12px;color:var(--fg-dim);margin:0 0 8px">Estimates leak probability under specific attacker capabilities. Lower % = less likely to leak.</p>';
+      for (const fn of sorted) {
+        html += `<tr><td class="fn-name">${esc(fn.name)}</td>`;
 
-        for (const model of tacetModels) {
-          const modelResults = tResults.filter(r => r.model === model);
-          const desc = modelDescriptions[model] || model;
-          html += `<h5 style="margin:12px 0 4px;font-size:12px;color:var(--fg-muted)">${esc(model)} <span style="font-weight:400">\u2014 ${esc(desc)}</span></h5>`;
-          html += `<table class="dudect-table">
-            <thead><tr>
-              <th>Function</th>
-              <th>Leak probability</th>
-              <th>Result</th>
-            </tr></thead><tbody>`;
-
-          const mSorted = [...modelResults].sort((a, b) => {
-            if (a.status !== b.status) return a.status === 'fail' ? -1 : 1;
-            return (b.leak_prob || 0) - (a.leak_prob || 0);
-          });
-
-          for (const r of mSorted) {
-            const lp = r.leak_prob != null ? (r.leak_prob * 100).toFixed(1) + '%' : '\u2014';
-            const cls = r.status === 'fail' ? 'dudect-fail' : 'dudect-pass';
-            const icon = r.status === 'fail' ? '\u2718 leak' : '\u2714 ok';
-            html += `<tr>
-              <td class="fn-name">${esc(r.name)}</td>
-              <td class="${cls}">${lp}</td>
-              <td class="${cls}">${icon}</td>
-            </tr>`;
+        // DudeCT columns.
+        if (hasDudect) {
+          const d = fn.dudect;
+          if (d) {
+            const absT = Math.abs(d.max_t || 0);
+            const cls = d.status === 'fail' ? 'dudect-fail' : 'dudect-pass';
+            html += `<td class="${cls}">${absT.toFixed(2)}</td>`;
+            html += `<td>${d.samples ? d.samples.toLocaleString() : '\u2014'}</td>`;
+          } else {
+            html += '<td>\u2014</td><td>\u2014</td>';
           }
-          html += '</tbody></table>';
         }
+
+        // Tacet columns: show leak probability.
+        for (const m of tacetModels) {
+          const t = fn.tacet[m];
+          if (!t) {
+            html += '<td>\u2014</td>';
+          } else {
+            const lp = t.leak_prob != null ? (t.leak_prob * 100).toFixed(1) + '%' : '';
+            const cls = t.status === 'fail' ? 'dudect-fail' : 'dudect-pass';
+            html += `<td class="${cls}">${lp}</td>`;
+          }
+        }
+
+        html += '</tr>';
       }
+
+      html += '</tbody></table>';
+
+      // Legend below the table.
+      html += '<div style="font-size:11px;color:var(--fg-dim);margin-top:8px">';
+      html += '<strong>DudeCT:</strong> statistical t-test on timing. |t| &lt; 4.5 = no leak detected. ';
+      html += '<strong>Tacet:</strong> Bayesian leak probability under attacker models (lower = better).';
+      html += '</div>';
 
       return html;
     }
