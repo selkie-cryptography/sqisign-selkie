@@ -720,7 +720,10 @@ impl SplittingKernel {
         // correspond to a product of elliptic curves. Anything
         // else is a malformed chain output (see Divergences
         // above).
-        if count_splitting_indices(&self.domain.null) != 1 {
+        let split_count = count_splitting_indices(&self.domain.null);
+        if split_count != 1 {
+            #[cfg(test)]
+            eprintln!("    [chain] splitting: zeros={split_count}");
             return None;
         }
 

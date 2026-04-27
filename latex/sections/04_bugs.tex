@@ -312,6 +312,75 @@ $x(Q)$ alone (because $x(P{-}Q) = x(P{+}Q)$ on the Kummer line, and
 whose sign is fragile).  Treat $P{-}Q$ as a first-class member of the
 basis triple and propagate it through every transformation.
 
+\subsection{Premature optimization of cubical pairing arithmetic}
+\label{sec:bug-cubical-opt}
+
+Algorithm~8.14 (\textsc{CubicalDiffAdd}) ends with line~7,
+\[
+  X_2 \gets X_2 / x(P{-}Q),
+\]
+which divides one coordinate of the output cubical point by the
+$x$-coordinate of the difference.  An ``optimization'' that looks
+free moves the factor onto the other coordinate instead:
+\[
+  Z_2 \gets Z_2 \cdot x(P{-}Q).
+\]
+Both choices produce points with the same affine
+ratio~$X/Z$, so on the Kummer line they represent the same point;
+the rewrite saves one $\mathbb{F}_{p^2}$ inversion per ladder step.
+Our implementation took the second form.  Every test that probed
+only the affine projection passed: \textsc{CubicalLadder} produced
+points on the curve, \texttt{tate\_pairing\_is\_root\_of\_unity}
+confirmed the final value lay in $\mu_{2^e}$, and dlog round-trips
+recovered the right scalars.
+
+The cubical pairing pipeline is not projectively invariant.
+\textsc{CubicalTranslate} (Alg.~8.16) is bilinear in $(X, Z)$, not
+in $X/Z$:
+\[
+  X' \gets X(T)\,X(P) - Z(T)\,Z(P), \quad
+  Z' \gets Z(T)\,X(P) - X(T)\,Z(P).
+\]
+Multiplying~$Z(P)$ by a factor that the spec attaches to~$X(P)$
+scales the two coordinates asymmetrically, and the translate
+produces a different cubical point.  The error compounds across
+ladder iterations and \textsc{CubicalRatio}~(Alg.~8.17), and
+surfaces as a non-bilinear ``Tate pairing'': the output is still a
+$2^e$-th root of unity, but $T([2]P, Q) \neq T(P, Q)^2$.  That
+alone breaks every downstream pairing-based check---in our case,
+the Weil-pairing codomain disambiguation in
+\textsc{IdealToIsogeny} that distinguishes the two factors of the
+$(2,2)$-isogeny chain's output product
+(\texttt{dim2id2iso.c:1148--1178}).  The chain quietly hands back
+``a curve and some basis points,'' downstream
+\textsc{SplitAuxiliaryIsogeny} fails the splitting condition with
+$\#\{i,j : U_{i,j}(0) = 0\} = 0$ instead of the unique~$1$, and
+the diagnosis points everywhere except at the
+\textsc{CubicalDiffAdd} optimization that introduced the asymmetry.
+
+We discovered the bug only by writing a direct bilinearity test
+\[
+  T([2]P,\,Q,\,[2]P{+}Q) \;\stackrel{?}{=}\; T(P,\,Q,\,P{+}Q)^2,
+\]
+which failed under both the $P{+}Q$ and $P{-}Q$ conventions for
+the third argument.  The fix was a one-line revert of the
+``optimization'' to the spec's literal form.
+
+\noindent
+\textbf{Advice for implementers:} For
+$x$-only / cubical / theta arithmetic, transcribe the spec's
+formulas line by line on the first pass, including operand
+placement.  Reject the urge to ``save an inversion'' by moving a
+factor between $X$ and $Z$: the affine ratio is preserved, but the
+specific projective representative is load-bearing for the next
+algorithm.  Add a bilinearity test for any pairing primitive---the
+unit-of-output check (the result lies in $\mu_n$) passes for many
+non-bilinear ``pairing-like'' functions and is not enough.  When
+profiling later identifies the inversion as a bottleneck, batch
+inversions across ladder steps via a Montgomery-style trick that
+preserves the projective rep at each step; do not rewrite the
+algebra.
+
 \section{Bugs from Fixed-Width Arithmetic}
 \label{sec:fixed-width-bugs}
 

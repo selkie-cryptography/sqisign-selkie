@@ -258,7 +258,7 @@ impl SigningKey {
             };
 
             // Line 5: E_pk, φ_sk(P₀), φ_sk(Q₀) ← IdealToIsogeny(I_sk).
-            let (e_pk, phi_p, phi_q) = match i_sk_narrow.to_isogeny() {
+            let (e_pk, phi_p, phi_q, phi_pmq) = match i_sk_narrow.to_isogeny() {
                 Some(r) => r,
                 None => continue,
             };
@@ -267,7 +267,6 @@ impl SigningKey {
             let (basis_pk, basis_hint) = TorsionBasis::to_hint(&e_pk);
 
             // Line 9: M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk, Q_pk)).
-            let phi_pmq = phi_p.projective_difference(&phi_q);
             let eval_basis = TorsionBasis::from_propagated(phi_p, phi_pmq, phi_q);
             let mat_sk = SecretKeyMatrix::encode(&eval_basis, &basis_pk);
 
@@ -591,9 +590,15 @@ impl SigningKey {
             };
 
             // Line 7: E_com, P_com, Q_com ← IdealToIsogeny(I_com)
+            //
+            // The fourth return value is the propagated `PmQ_com`,
+            // needed by `split_auxiliary_isogeny` so the response
+            // (2,2)-chain's `lift_basis` sees a projective rep
+            // consistent with the chain's evaluation history of
+            // `P_com` and `Q_com`.
             #[cfg(test)]
             eprintln!("[sign {_iter}] commitment to_isogeny...");
-            let (e_com, p_com, q_com) = match i_com_narrow.to_isogeny() {
+            let (e_com, p_com, q_com, pmq_com) = match i_com_narrow.to_isogeny() {
                 Some(r) => {
                     #[cfg(test)]
                     eprintln!("[sign {_iter}] commitment OK ({:?})", _iter_start.elapsed());
@@ -1098,29 +1103,32 @@ impl SigningKey {
                     "[sign {_iter}] response to_isogeny... (cumul {:?})",
                     _iter_start.elapsed()
                 );
-                let (e_aux_prime, p_aux_prime, q_aux_prime) = match i_inter.to_isogeny() {
-                    Some(r) => {
-                        #[cfg(test)]
-                        eprintln!(
-                            "[sign {_iter}] response to_isogeny OK (cumul {:?})",
-                            _iter_start.elapsed()
-                        );
-                        r
-                    }
-                    None => {
-                        #[cfg(test)]
-                        eprintln!("[sign {_iter}] DROP: i_inter.to_isogeny() None");
-                        continue;
-                    }
-                };
+                let (e_aux_prime, p_aux_prime, q_aux_prime, pmq_aux_prime) =
+                    match i_inter.to_isogeny() {
+                        Some(r) => {
+                            #[cfg(test)]
+                            eprintln!(
+                                "[sign {_iter}] response to_isogeny OK (cumul {:?})",
+                                _iter_start.elapsed()
+                            );
+                            r
+                        }
+                        None => {
+                            #[cfg(test)]
+                            eprintln!("[sign {_iter}] DROP: i_inter.to_isogeny() None");
+                            continue;
+                        }
+                    };
 
                 let split = match split_auxiliary_isogeny(
                     &e_com,
                     &e_aux_prime,
                     &p_com,
                     &q_com,
+                    &pmq_com,
                     &p_aux_prime,
                     &q_aux_prime,
+                    &pmq_aux_prime,
                     q_rsp,
                     e_rsp_prime_te,
                     r_rsp,
@@ -1140,7 +1148,7 @@ impl SigningKey {
                 q_chl = split.5;
             } else {
                 // Lines 28–31: direct path
-                let (ec, pc, qc) = match i_com_narrow.to_isogeny() {
+                let (ec, pc, qc, _pmq_chl) = match i_com_narrow.to_isogeny() {
                     Some(r) => r,
                     None => {
                         #[cfg(test)]
@@ -1368,19 +1376,30 @@ pub(crate) fn compute_challenge_isogeny(
 /// (= E'_aux) with torsion points, and computes the (2,2)-isogeny
 /// chain that splits the response isogeny into odd and even parts.
 ///
+/// `pmq1` and `pmq2` are the propagated `P − Q` projective reps on
+/// each curve. They MUST come from the same chain that produced
+/// `(p1, q1)` and `(p2, q2)` — typically [`LeftIdeal::to_isogeny`]'s
+/// fourth return value. Recomputing them via `projective_difference`
+/// at this site picks a sqrt branch that is not aligned with the
+/// chain's evaluation history, and the resulting kernel produces a
+/// terminal theta null with `count_splitting_indices = 0`.
+///
 /// Returns `(E_aux, P_aux, Q_aux, E_chl, P_chl, Q_chl)`.
 ///
 /// Implements [SplitAuxiliaryIsogeny][Alg. 4.5] ([Algorithm 4.5][Alg. 4.5]).
 ///
 /// [Alg. 4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.5
+/// [`LeftIdeal::to_isogeny`]: crate::quaternions::lattice::LeftIdeal::to_isogeny
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn split_auxiliary_isogeny(
     e1: &Curve,
     e2: &Curve,
     p1: &ProjectiveXOnlyPoint,
     q1: &ProjectiveXOnlyPoint,
+    pmq1: &ProjectiveXOnlyPoint,
     p2: &ProjectiveXOnlyPoint,
     q2: &ProjectiveXOnlyPoint,
+    pmq2: &ProjectiveXOnlyPoint,
     q_rsp: BigInt<4>,
     e_prime: TorsionExponent,
     r_rsp: TorsionExponent,
@@ -1396,52 +1415,131 @@ pub(crate) fn split_auxiliary_isogeny(
     let e_prime_val = e_prime.value();
     let r_val = r_rsp.value();
 
-    // Line 1: P''₁, Q''₁ ← [2^{f-e'-r-2}]P₁, [2^{f-e'-r-2}]Q₁
-    let scale1 = f - e_prime_val - r_val - 2;
-    let scale1_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale1).as_limbs());
-    let p1_double_prime = &scale1_scalar * p1;
-    let q1_double_prime = &scale1_scalar * q1;
+    // Kernel construction follows the C reference's
+    // `compute_dim2_isogeny_challenge` (sign.c:578-590, 240-256).
+    // The C ref reduces the bases on both curves to order
+    // `2^(reduced_order) = 2^(e_prime + 2 + r)` BEFORE forming
+    // the kernel, then forms `(P1_red, q_inv · P2_red)` and doubles
+    // by `r`. After the `r`-doubling the kernel has order
+    // `2^(e_prime + 2)`, exactly what the (2,2)-chain of length
+    // `e_prime` requires (the chain's gluing step needs 8-torsion
+    // at the bottom of the strategy, and the chain length `e_prime`
+    // implies a kernel of order `2^(e_prime + 2)`).
+    //
+    // Earlier attempts that fed raw `2^f`-torsion bases into the
+    // kernel left `2^(f - r - e_prime - 2)` extra torsion above
+    // the chain's expected order. Our `Kernel::isogeny` always
+    // computes exactly `e` doubling-down steps before gluing, so
+    // any extra torsion shifts the strategy bottom away from the
+    // gluing's required 8-torsion level — `count_splitting_indices`
+    // returns 0 and the chain returns `None`.
+    //
+    // The kernel `PmQ` projective reps come from `pmq1`/`pmq2`
+    // inputs, scaled alongside `P` and `Q` to keep the projective
+    // history aligned. Recomputing via `projective_difference` on
+    // post-scaling kernel points picks a sqrt branch that the
+    // chain's `lift_basis` then rejects, again surfacing as
+    // `count_splitting_indices = 0`.
+    //
+    // # Divergences
+    //
+    // The spec (Algorithm 4.5 lines 1–4) describes a kernel with
+    // torsion `2^(e' + 2)` directly (via `[2^(f-e'-2)]` reductions
+    // on each side), but does not spell out (a) the basis-reduction
+    // step that the C reference performs before invoking the chain
+    // or (b) that downstream consumers of `IdealToIsogeny`'s output
+    // require a `PmQ` whose projective rep is propagated alongside
+    // `P` and `Q`, not recomputed via `projective_difference`. Both
+    // are required for interoperability with the C reference's KAT
+    // vectors.
 
-    // Line 2: P'₁, Q'₁ ← [2^r]P''₁, [2^r]Q''₁
-    let mut p1_prime = p1_double_prime;
-    let mut q1_prime = q1_double_prime;
-    for _ in 0..r_val {
-        p1_prime = p1_prime.double();
-        q1_prime = q1_prime.double();
+    // C ref: reduced_order = pow_dim2_deg_resp + HD_extra_torsion +
+    //                        sig->two_resp_length
+    //                      = e_prime + 2 + r
+    let reduced_order = match e_prime_val
+        .checked_add(2)
+        .and_then(|x| x.checked_add(r_val))
+    {
+        Some(o) if o <= f => o,
+        _ => {
+            #[cfg(test)]
+            eprintln!(
+                "[split_aux] reduced_order out of range: e_prime={e_prime_val}, r={r_val}, f={f}"
+            );
+            return None;
+        }
+    };
+    let reduce_steps = f - reduced_order;
+
+    // Reduce all six basis points (P, Q, PmQ on each curve) from
+    // order `2^f` to order `2^reduced_order = 2^(e_prime + 2 + r)`.
+    // Matches the C reference's [`ec_dbl_iter_basis`][c-ref] which
+    // doubles all of `(B.P, B.Q, B.PmQ)` together to keep the
+    // projective rep history consistent.
+    //
+    // [c-ref]: https://github.com/SQIsign/the-sqisign/blob/91e9e464fe5400192d13e1f9240cbf180200a103/src/signature/ref/lvlx/sign.c#L579-L580
+    let mut p1_red = *p1;
+    let mut q1_red = *q1;
+    let mut pmq1_red = *pmq1;
+    let mut p2_red = *p2;
+    let mut q2_red = *q2;
+    let mut pmq2_red = *pmq2;
+    for _ in 0..reduce_steps {
+        p1_red = p1_red.double();
+        q1_red = q1_red.double();
+        pmq1_red = pmq1_red.double();
+        p2_red = p2_red.double();
+        q2_red = q2_red.double();
+        pmq2_red = pmq2_red.double();
     }
 
-    // Line 3: q_inv ← q^{-1} (mod 2^{f-e'-2})
-    let mod_bits = f - e_prime_val - 2;
+    // q_inv ← q^{-1} (mod 2^reduced_order). C ref uses
+    // `degree_resp_inv = degree_odd_resp^{-1} mod 2^(reduced_order)`
+    // (computed in compute_random_aux_norm_and_helpers).
     let q_scalar = Scalar::from_limbs(*q_rsp.as_limbs());
-    let q_inv = match q_scalar.inv_mod2k(mod_bits) {
+    let q_inv = match q_scalar.inv_mod2k(reduced_order) {
         Some(v) => v,
         None => {
             #[cfg(test)]
             eprintln!(
-                "[split_aux] q.inv_mod2k None: q_rsp parity={:?}, mod_bits={mod_bits}",
-                if bool::from(q_rsp.is_even()) { "even" } else { "odd" }
+                "[split_aux] q.inv_mod2k None: q_rsp parity={:?}, reduced_order={reduced_order}",
+                if bool::from(q_rsp.is_even()) {
+                    "even"
+                } else {
+                    "odd"
+                }
             );
             return None;
         }
     };
 
-    // Line 4: P'₂, Q'₂ ← [q_inv·2^{f-e'-2}]P₂, [q_inv·2^{f-e'-2}]Q₂
-    let shift_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(mod_bits).as_limbs());
-    let scale2 = q_inv.mul_mod2k(&shift_scalar, f);
-    let p2_prime = &scale2 * p2;
-    let q2_prime = &scale2 * q2;
+    // Kernel:
+    //   T1 = (P1_red,         q_inv · P2_red)
+    //   T2 = (Q1_red,         q_inv · Q2_red)
+    //   T1m2 = (P1mQ1_red,    q_inv · P2mQ2_red)   [propagated PmQ]
+    // Then double all three pairs by `r`. After the `r`-doubling
+    // the kernel has order exactly `2^(e_prime + 2)`. The PmQ
+    // points are scaled by the same `q_inv · 2^r` as P and Q, so
+    // the projective rep stays aligned with the chain's evaluator.
+    let p2_qinv = &q_inv * &p2_red;
+    let q2_qinv = &q_inv * &q2_red;
+    let pmq2_qinv = &q_inv * &pmq2_red;
 
-    // Line 5: (2,2)-isogeny chain
-    // Kernel: ((P'₁, P'₂), (Q'₁, Q'₂))
-    // Torsion to push through: {(P''₁, 0_{E₂}), (Q''₁, 0_{E₂})}
+    let two_r_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(r_val).as_limbs());
+    let p1_ker = &two_r_scalar * &p1_red;
+    let q1_ker = &two_r_scalar * &q1_red;
+    let pmq1_ker = &two_r_scalar * &pmq1_red;
+    let p2_ker = &two_r_scalar * &p2_qinv;
+    let q2_ker = &two_r_scalar * &q2_qinv;
+    let pmq2_ker = &two_r_scalar * &pmq2_qinv;
+
+    // (2,2)-isogeny chain on E_com × E_aux.
     let product = surfaces::EllipticProduct::new(*e1, *e2);
-    let pmq1_prime = p1_prime.projective_difference(&q1_prime);
-    let pmq2_prime = p2_prime.projective_difference(&q2_prime);
     let kernel = match surfaces::Kernel::from_montgomery(
         product,
-        (p1_prime, p2_prime),
-        (q1_prime, q2_prime),
-        (pmq1_prime, pmq2_prime),
+        (p1_ker, p2_ker),
+        (q1_ker, q2_ker),
+        (pmq1_ker, pmq2_ker),
     ) {
         Some(k) => k,
         None => {
@@ -1451,25 +1549,18 @@ pub(crate) fn split_auxiliary_isogeny(
         }
     };
 
+    // Pushed points: the REDUCED bases (order `2^(e_prime + 2 + r)`)
+    // with zero on E_aux, matching sign.c:262-269. After the chain
+    // these become the canonical bases on the codomain components.
     let zero_e2 = ProjectiveXOnlyPoint::identity(e2);
-    // Chain length matches the C ref's `pow_dim2_deg_resp =
-    // SQIsign_response_length − exp_diadic_val_full_resp −
-    // backtracking` = `e_rsp − r − n_bt = e_prime`. Earlier this
-    // used `e_prime + r`, which expected `2^(e'+r+2)` kernel
-    // torsion — the kernel `(P'₁, P'₂)` has only `2^(e'+2)`
-    // torsion (after the `[2^(f-e'-2)]` reductions on each
-    // side), so the longer chain ran out of kernel material and
-    // every iteration dropped at the splitting check.
     let e_chain = e_prime;
-    let (codomain, images) = match kernel.isogeny(
-        e_chain,
-        &[(p1_double_prime, zero_e2), (q1_double_prime, zero_e2)],
-    ) {
+    let (codomain, images) = match kernel.isogeny(e_chain, &[(p1_red, zero_e2), (q1_red, zero_e2)])
+    {
         Some(r) => r,
         None => {
             #[cfg(test)]
             eprintln!(
-                "[split_aux] kernel.isogeny None: e_chain={}",
+                "[split_aux] kernel.isogeny None: e_chain={}, reduced_order={reduced_order}",
                 e_chain.value()
             );
             return None;

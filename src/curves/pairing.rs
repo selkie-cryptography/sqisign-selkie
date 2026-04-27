@@ -222,13 +222,36 @@ impl CubicalPoint {
     }
 
     /// Cubical differential addition ([§8.3.2], Algorithm 8.14).
+    ///
+    /// # Why this *must* divide X by `x(P-Q)`, not multiply Z by `x(P-Q)`
+    ///
+    /// The spec writes line 7 as `X_2 ← X_2 / x(P-Q)`. A naïve
+    /// "optimization" replaces it with `Z_2 ← Z_2 * x(P-Q)` — the
+    /// two produce points with the same affine `X/Z` ratio and skip
+    /// one `Fp2::invert()` per ladder step. **That optimization is
+    /// wrong.** The cubical Tate pairing (Alg 8.18) is not
+    /// projectively invariant: downstream `CubicalTranslate`
+    /// (Alg 8.16, `X ← X(T)·X(P) − Z(T)·Z(P)`) is bilinear in
+    /// `(X, Z)`, not in the ratio `X/Z`. Multiplying Z by a factor
+    /// that the spec attaches to X scales the two coordinates
+    /// asymmetrically, and the translate then produces a different
+    /// cubical point. The error compounds across ladder iterations,
+    /// `Translate`, and `Ratio` (Alg 8.17), and surfaces as a
+    /// non-bilinear "Tate pairing" — the output is still a 2^e-th
+    /// root of unity, but `T([2]P, Q) ≠ T(P, Q)^2`. That alone breaks
+    /// every downstream pairing-based check (Weil-pairing codomain
+    /// disambiguation in `LeftIdeal::to_isogeny`,
+    /// dlog-based change-of-basis recovery, etc).
     fn differential_add(&self, other: &Self, x_diff: &Fp2) -> Self {
         let a = &self.X + &self.Z;
         let b = &self.X - &self.Z;
         let c = &other.X + &other.Z;
         let d = &other.X - &other.Z;
         let x2 = (&a * &d + &b * &c).square();
-        let z2 = &(&a * &d - &b * &c).square() * x_diff;
+        let z2 = (&a * &d - &b * &c).square();
+        // Spec line 7: X_2 ← X_2 / x(P-Q). See doc comment above for
+        // why we cannot move the factor onto Z_2 instead.
+        let x2 = &x2 * &x_diff.invert();
         Self { X: x2, Z: z2 }
     }
 
@@ -331,6 +354,28 @@ pub(crate) fn tate_pairing(
     RootOfUnity(result)
 }
 
+/// Compute the Weil pairing e_{2^e}(P, Q).
+///
+/// Defined as `e(P, Q) = T(P, Q) / T(Q, P)` where `T` is the
+/// reduced Tate pairing. Takes the same `(P, Q, P+Q)` triple as
+/// [`tate_pairing`].
+///
+/// Used in [`LeftIdeal::to_isogeny`] to disambiguate the two
+/// codomain components of the (2,2)-chain on `E_u × E_v`.
+///
+/// [`LeftIdeal::to_isogeny`]: crate::quaternions::lattice::LeftIdeal::to_isogeny
+pub(crate) fn weil_pairing(
+    p: &ProjectiveXOnlyPoint,
+    q: &ProjectiveXOnlyPoint,
+    pq: &ProjectiveXOnlyPoint,
+    e: TorsionExponent,
+) -> RootOfUnity {
+    let t_pq = tate_pairing(p, q, pq, e);
+    let t_qp = tate_pairing(q, p, pq, e);
+    let result = t_pq.as_fp2() * &t_qp.as_fp2().invert();
+    RootOfUnity(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +422,84 @@ mod tests {
         let zeta42 = zeta.pow(42);
         let k = zeta.dlog(&zeta42, e);
         assert_eq!(k, Scalar::from_u64(42), "dlog(ζ^42) should be 42");
+    }
+
+    /// Verify Tate pairing bilinearity (P+Q convention).
+    ///
+    /// `T([2]P, Q, [2]P+Q) == T(P, Q, P+Q)^2`. The third argument
+    /// is the SUM, computed via `differential_add(P, Q, P-Q)`.
+    ///
+    /// Currently fails: our cubical Tate implementation does not
+    /// satisfy this relation. The output is always a 2^e-th root of
+    /// unity (verified by `tate_pairing_is_root_of_unity`), so the
+    /// algorithm produces "a pairing-like value" — but it does not
+    /// scale linearly under doubling of the first argument. This
+    /// blocks Weil-pairing-based codomain disambiguation in
+    /// `LeftIdeal::to_isogeny` (which the C reference uses to pick
+    /// `codomain.E1` vs `codomain.E2` in `dim2id2iso.c:1148-1178`).
+    #[test]
+    fn tate_bilinear_in_first_arg_with_sum() {
+        let basis = e0_basis();
+        let e = TorsionExponent::FULL;
+
+        // Compute P+Q from (P, Q, P-Q): differential_add(P, Q, P-Q) = P + Q.
+        let ppq = basis.R.differential_add(&basis.S, &basis.RS);
+        let t_pq = tate_pairing(&basis.R, &basis.S, &ppq, e);
+        let t_pq_squared = t_pq.square_n(1);
+
+        let p2 = basis.R.double();
+        // [2]P + Q via differential_add([2]P, Q, [2]P-Q).
+        // [2]P-Q from differential_add(P, P-Q, Q).
+        let two_p_minus_q = basis.R.differential_add(&basis.RS, &basis.S);
+        let two_p_plus_q = p2.differential_add(&basis.S, &two_p_minus_q);
+
+        let t_2p_q = tate_pairing(&p2, &basis.S, &two_p_plus_q, e);
+        assert_eq!(
+            t_2p_q, t_pq_squared,
+            "Tate bilinearity (P+Q form): T([2]P, Q, [2]P+Q) should equal T(P, Q, P+Q)^2"
+        );
+    }
+
+    /// Verify Tate pairing bilinearity (P-Q convention).
+    ///
+    /// `T([2]P, Q, [2]P-Q) == T(P, Q, P-Q)^2`. Same root cause as
+    /// [`tate_bilinear_in_first_arg_with_sum`] — fails for both
+    /// sum and difference conventions of the third argument.
+    #[test]
+    fn tate_bilinear_in_first_arg_with_diff() {
+        let basis = e0_basis();
+        let e = TorsionExponent::FULL;
+
+        let t_pq = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+        let t_pq_squared = t_pq.square_n(1);
+
+        let p2 = basis.R.double();
+        // [2]P - Q via differential_add(P, P-Q, Q).
+        let two_p_minus_q = basis.R.differential_add(&basis.RS, &basis.S);
+
+        let t_2p_q = tate_pairing(&p2, &basis.S, &two_p_minus_q, e);
+        assert_eq!(
+            t_2p_q, t_pq_squared,
+            "Tate bilinearity (P-Q form): T([2]P, Q, [2]P-Q) should equal T(P, Q, P-Q)^2"
+        );
+    }
+
+    /// Verify Weil pairing antisymmetry: `W(P, Q) * W(Q, P) == 1`.
+    #[test]
+    fn weil_antisymmetric() {
+        let basis = e0_basis();
+        let e = TorsionExponent::FULL;
+
+        // Use P+Q form for Weil since Tate's bilinearity probably holds there.
+        let ppq = basis.R.differential_add(&basis.S, &basis.RS);
+        let w_pq = weil_pairing(&basis.R, &basis.S, &ppq, e);
+        let w_qp = weil_pairing(&basis.S, &basis.R, &ppq, e);
+        let product = w_pq.as_fp2() * w_qp.as_fp2();
+        assert_eq!(
+            product,
+            Fp2::ONE,
+            "Weil antisymmetry: W(P, Q) * W(Q, P) should equal 1"
+        );
     }
 
     #[test]

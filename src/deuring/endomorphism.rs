@@ -103,6 +103,14 @@ impl ActionMatrix {
     ///
     /// Computes P' = [s·m₀₀]P + [s·m₁₀]Q and
     ///          Q' = [s·m₀₁]P + [s·m₁₁]Q, all mod 2^f.
+    ///
+    /// The input difference `P − Q` is recovered via
+    /// `projective_difference`. Callers that already carry a
+    /// propagated `PmQ` should use [`Self::apply_scaled_basis`]
+    /// instead; otherwise the sqrt-branch of `projective_difference`
+    /// will yield a `PmQ' = projective_difference(P', Q')` whose
+    /// projective rep is inconsistent with downstream consumers
+    /// like `Kernel::from_montgomery`.
     pub fn apply_scaled(
         &self,
         scalar: &BigInt<4>,
@@ -122,6 +130,49 @@ impl ActionMatrix {
         let p_prime = basis.eval_decomposition(&s00, &s10);
         let q_prime = basis.eval_decomposition(&s01, &s11);
         (p_prime, q_prime)
+    }
+
+    /// Apply this matrix, scaled by a scalar, to a propagated basis.
+    ///
+    /// Computes
+    ///   P'   = [s·m₀₀]P + [s·m₁₀]Q
+    ///   Q'   = [s·m₀₁]P + [s·m₁₁]Q
+    ///   PmQ' = [s·(m₀₀ − m₀₁)]P + [s·(m₁₀ − m₁₁)]Q
+    /// all mod 2^f. All three are computed via biscalar
+    /// multiplication using the input basis's tracked `PmQ`, so the
+    /// output `PmQ'` is propagated — never recovered through
+    /// `projective_difference(P', Q')`.
+    ///
+    /// Required when the output basis will be fed to a chain whose
+    /// `lift_basis` (Okeya-Sakurai) expects a `PmQ` projective rep
+    /// consistent with `P` and `Q`'s computation history. The
+    /// sqrt-branch of `projective_difference` is not aligned with
+    /// such a history, and a downstream `Kernel::from_montgomery →
+    /// kernel.isogeny` chain that depends on it can produce a
+    /// terminal theta null with `count_splitting_indices = 0`.
+    pub fn apply_scaled_basis(
+        &self,
+        scalar: &BigInt<4>,
+        basis: &TorsionBasis,
+        f: TorsionExponent,
+    ) -> (
+        ProjectiveXOnlyPoint,
+        ProjectiveXOnlyPoint,
+        ProjectiveXOnlyPoint,
+    ) {
+        let s = Scalar::from(*scalar);
+        let fv = f.value();
+
+        let s00 = s.mul_mod2k(self.entry(0, 0), fv);
+        let s01 = s.mul_mod2k(self.entry(0, 1), fv);
+        let s10 = s.mul_mod2k(self.entry(1, 0), fv);
+        let s11 = s.mul_mod2k(self.entry(1, 1), fv);
+
+        let p_prime = basis.eval_decomposition(&s00, &s10);
+        let q_prime = basis.eval_decomposition(&s01, &s11);
+        let pmq_prime =
+            basis.eval_decomposition(&s00.sub_mod2k(&s01, fv), &s10.sub_mod2k(&s11, fv));
+        (p_prime, q_prime, pmq_prime)
     }
 
     /// Apply this action matrix to a torsion basis, returning a new

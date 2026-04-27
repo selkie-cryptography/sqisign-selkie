@@ -43,9 +43,13 @@
 Each item below describes something that the SQIsign
 specification~\cite{sqisign-spec} (version 2.0.1, dated 2025-07-07) leaves unstated,
 ambiguous, or implicit, and that we could only resolve by inspecting the
-C reference implementation.  We file these as constructive suggestions so
-that future implementors can achieve interoperability from the spec
-alone.
+C reference implementation.  Implementing SQIsign from the v2.0.1 spec
+alone does not currently produce an implementation that interoperates
+with the C reference: the gaps below are not edge cases or
+optimizations, but load-bearing conventions whose absence causes silent
+KAT failures during signing or verification.  We file these as
+constructive suggestions so that future implementors can achieve
+interoperability from the spec alone.
 \end{abstract}
 
 \tableofcontents
@@ -1031,5 +1035,74 @@ basis on the chain's first codomain factor.
 We follow the C reference's basis-alignment construction in our
 implementation; the resulting basis is what \algo{4.5} consumes
 without further adjustment.
+
+% =====================================================================
+\section{\textsc{IdealToIsogeny} must propagate $P{-}Q$ alongside
+  $(P, Q)$}
+\label{sec:id2iso-pmq}
+
+\finding{Affects \algo{3.13} (\textsc{IdealToIsogeny}) output and
+  \algo{4.5} (\textsc{SplitAuxiliaryIsogeny}) input.}{\critical}
+
+\algo{3.13} writes its output as ``$E_I, \varphi_I(P_0),
+\varphi_I(Q_0)$''---a curve and two points, no third
+coordinate.  But \algo{4.5} forms a $(2, 2)$-kernel from those
+two points (line~3, ``$T \leftarrow [2^{f-e'}](\varphi_{\text{com}}(P_0),
+[q_{\text{rsp}}^{-1}\,2^{f-e'}]\varphi_{\text{com,rsp,aux}}(P_0))$''),
+and any $(2, 2)$-chain that consumes such a kernel must call
+\textsc{lift\_basis} (Okeya--Sakurai) to recover the Jacobian
+$y$-coordinate.  Okeya--Sakurai requires a third basis
+component~$P{-}Q$ \emph{whose projective representative is
+consistent with the chain's prior evaluations of $P$ and~$Q$} ---
+see~\S\ref{sec:pmq-recompute} and~\S\ref{sec:endo-pmq} for the
+already-noted instances of the same pitfall.
+
+If \algo{3.13} returns only $(\varphi_I(P_0), \varphi_I(Q_0))$
+and the next stage recovers $\varphi_I(P_0 - Q_0)$ via
+\textsc{DifferencePoint}, the fresh square root branches
+independently of the chain's internal lift.  The downstream
+$(2, 2)$-chain (here the response-phase chain inside
+\algo{4.5}) then reaches its terminal theta null with
+$\#\{i, j : U_{i, j}(0) = 0\} = 0$ instead of the unique~$1$
+that identifies a product splitting (\S\ref{sec:get-index}),
+and the chain fails.
+
+\paragraph{What the C reference does.}
+A C-reference \texttt{theta\_couple\_curve\_with\_basis\_t}
+always carries~$B.\mathrm{PmQ}$ alongside $B.P$ and~$B.Q$, and
+every isogeny evaluation pushes all three through together.
+\texttt{dim2id2iso\_ideal\_to\_isogeny\_clapotis}
+(\texttt{dim2id2iso.c:778--1228}) does so for the
+\algo{3.13} chain, and the \texttt{copy\_bases\_to\_kernel}
+helper inside \texttt{compute\_dim2\_isogeny\_challenge}
+(\texttt{sign.c:240--256}) carries~$\mathrm{PmQ}$ into the
+response-phase kernel.  No conversion to/from
+$\textsc{DifferencePoint}$ ever occurs after the canonical
+basis is lifted.
+
+\paragraph{Impact.}
+A literal reading of \algo{3.13}'s output triple
+$(E_I, \varphi_I(P_0), \varphi_I(Q_0))$ leads an implementor to
+recover $P{-}Q$ via \textsc{DifferencePoint} at the next call
+site, which silently corrupts \algo{4.5} on every input, with
+no error message: the chain returns ``no splitting found''
+which is indistinguishable from a probabilistic chain failure
+that should trigger a retry.  The implementor concludes the
+input ideals are pathological rather than that the basis is
+malformed.
+
+\paragraph{Recommendation.}
+Make explicit in \algo{3.13} that the output is a triple
+$(R, S, R{-}S) \in E_I[2^f]^3$, not a pair, and that the third
+component must be the propagated image~$\varphi_I(P_0 - Q_0)$ of
+the canonical basis difference --- never recovered via
+\textsc{DifferencePoint} from~$R$ and~$S$.  Add a corresponding
+note to \algo{4.5} that its input bases on~$E_1$ and~$E_2$ each
+include a propagated~$\mathrm{PmQ}$, and that the kernel
+construction (lines~1--4) must scale~$\mathrm{PmQ}$ alongside
+$P$ and~$Q$ rather than recomputing.  Equivalently, update the
+\textsc{TorsionBasisFromHint} and \textsc{IdealToIsogeny} signatures
+to return the standard $(P, Q, P{-}Q)$ triple that \S2 already
+implicitly assumes throughout.
 
 \end{document}

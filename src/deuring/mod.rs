@@ -536,9 +536,44 @@ fn fixed_degree_isogeny(
 impl LeftIdeal<4> {
     /// Compute the isogeny corresponding to this ideal.
     ///
-    /// Returns `(E_I, φ_I(P₀), φ_I(Q₀))` or `None` if the
-    /// decomposition or chain fails probabilistically.
-    pub fn to_isogeny(self) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
+    /// Returns `(E_I, φ_I(P₀), φ_I(Q₀), φ_I(P₀ − Q₀))` or `None` if
+    /// the decomposition or chain fails probabilistically.
+    ///
+    /// # Why a `PmQ` is returned
+    ///
+    /// Downstream consumers (`SplitAuxiliaryIsogeny`, even-response
+    /// chain) form additional kernels from these basis points. The
+    /// (2,2)-chain's `lift_basis` (Okeya-Sakurai y-recovery) requires
+    /// a `PmQ` projective representative consistent with the chain's
+    /// own evaluation history of `P` and `Q`. Recomputing
+    /// `projective_difference(P, Q)` after the chain picks a sqrt
+    /// branch that is not aligned with the chain's internal lift,
+    /// which manifests as `count_splitting_indices = 0` at the next
+    /// (2,2)-chain's terminal theta null. Pushing `PmQ` through the
+    /// chain alongside `P` and `Q`, and propagating it through the
+    /// final `M_{β₁}` matrix application via `biscalar_mul`, keeps
+    /// every downstream kernel splittable.
+    ///
+    /// # Divergences
+    ///
+    /// The SQIsign v2.0.1 spec (Algorithm 3.13) describes
+    /// `IdealToIsogeny` as returning only `(E_I, φ_I(P₀), φ_I(Q₀))`
+    /// and does not specify how the projective representative of
+    /// `φ_I(P₀ − Q₀)` is to be constructed for downstream consumers.
+    /// The C reference threads `PmQ` through every isogeny it
+    /// computes (a `theta_couple_curve_with_basis_t` always carries
+    /// `B.PmQ`). Implementing the spec without that thread produces
+    /// a build that fails interoperability against C-reference KAT
+    /// vectors at the response phase even when every other invariant
+    /// matches.
+    pub fn to_isogeny(
+        self,
+    ) -> Option<(
+        Curve,
+        ProjectiveXOnlyPoint,
+        ProjectiveXOnlyPoint,
+        ProjectiveXOnlyPoint,
+    )> {
         let f = TorsionExponent::FULL;
 
         // Step 1: Decompose via SuitableIdeals.
@@ -871,32 +906,82 @@ impl LeftIdeal<4> {
         // candidate indices.
         let chain_e = sui.e;
         let zero_v = ProjectiveXOnlyPoint::identity(&e_v);
-        let (codomain, images) =
-            kernel.isogeny(chain_e, &[(phi_u_p, zero_v), (phi_u_q, zero_v)])?;
+        // Push `PmQ` through the chain alongside `P` and `Q`. The
+        // chain's evaluator (`gluing_eval_point_special_case` →
+        // `theta_isogeny_eval`) preserves the projective rep
+        // semantics required by the next chain's `lift_basis`. See
+        // the doc comment on this function for why we cannot recover
+        // `PmQ` after the fact via `projective_difference`.
+        let (codomain, images) = kernel.isogeny(
+            chain_e,
+            &[(phi_u_p, zero_v), (phi_u_q, zero_v), (phi_u_pmq, zero_v)],
+        )?;
 
-        // Steps 10–13: Pick correct output curve.
+        // Steps 10–13: Pick correct output curve via Weil-pairing
+        // disambiguation.
         //
         // The (2,2)-chain on `E_u × E_v` splits as a product of two
-        // curves; one is `E_I` (what we want), the other is an
-        // auxiliary. A full Weil-pairing disambiguation matching
-        // `dim2id2iso.c:1148-1178` would compare
-        // `tate(images on E_i)` against `tate(E_s basis)^{d₁·u²}`
-        // for each side. Our Tate-pairing push-forward
-        // compatibility with the (2,2)-chain restriction is not
-        // yet fully verified — some valid splits have pairings
-        // that don't match the spec's degree formula under our
-        // implementation. Until that relation is pinned down,
-        // default to `codomain.E1` (which is the convention the
-        // C reference lands on after its optional swap), and
-        // detect gross failures via the downstream curve-membership
-        // checks in `from_bases` and the KAT comparison.
+        // curves; one is `E_I` (what we want), the other an auxiliary
+        // unrelated to the response isogeny. Following the C reference
+        // (`dim2id2iso.c:1148-1178`):
         //
-        // TODO: finish the pairing-based disambiguation once the
-        // Tate push-forward sign is known. For now this matches
-        // the behavior the test suite was validated against
-        // (generate_runs + sign-pipeline tests).
-        let e_i = codomain.E1;
-        let (p_chain, q_chain) = (images[0].0, images[1].0);
+        //   w_s     = e_{2^f}(canonical basis on E_s)
+        //   w_chain = e_{2^f}(images on chosen codomain side)
+        //   E_I = side where `w_chain == w_s^(d₁ · u² mod 2^f)`
+        //
+        // The exponent `d₁·u²` accounts for the composite isogeny
+        // `phi_u (degree u) ∘ chain restriction (degree d₁·u)` from
+        // E_s to the correct codomain side. Without this disambiguation
+        // a 50/50 wrong-side selection produces a basis on the
+        // auxiliary curve, and downstream `SplitAuxiliaryIsogeny`
+        // reports `count_splitting_indices = 0` because its kernel is
+        // malformed — not a (2,2)-isotropic subgroup of the intended
+        // product.
+        let s_idx_for_disamb = EXTREMAL_ORDERS
+            .iter()
+            .position(|o| o.q() == sui.factor1.order.q())?;
+        let s_curve_idx = precomputed::torsion_basis::ExtremalCurve::try_from(s_idx_for_disamb)
+            .expect("EXTREMAL_ORDERS length matches ExtremalCurve::ALL by compile-time assert");
+        let (s_px, s_qx, s_pmq_x, s_a_coeff) = s_curve_idx.basis();
+        let s_curve = if s_curve_idx == precomputed::torsion_basis::ExtremalCurve::E0 {
+            Curve::E0
+        } else {
+            Curve::from(crate::curves::montgomery::Coefficient::from(s_a_coeff))
+        };
+        let s_p = ProjectiveXOnlyPoint::from_affine_x(s_px, &s_curve);
+        let s_q = ProjectiveXOnlyPoint::from_affine_x(s_qx, &s_curve);
+        let s_pmq = ProjectiveXOnlyPoint::from_affine_x(s_pmq_x, &s_curve);
+        // Tate-based Weil pairing expects P+Q as third arg; compute
+        // it via differential addition from (P, Q, P-Q).
+        let s_ppq = s_p.differential_add(&s_q, &s_pmq);
+        let w_s = crate::curves::pairing::weil_pairing(&s_p, &s_q, &s_ppq, f);
+
+        // Expected: w_s^(d₁ · u² mod 2^f).
+        let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
+        let u_sq = sui.u.ct_mul(&sui.u);
+        let exp_disamb = d1_big.ct_mul(&u_sq).ct_mod(&modulus);
+        let expected = w_s.pow_scalar(&Scalar::from(exp_disamb));
+
+        // Compute Weil pairing on codomain.E1 side using propagated
+        // PmQ; convert to P+Q via differential addition.
+        let ppq_e1 = images[0].0.differential_add(&images[1].0, &images[2].0);
+        let w1 = crate::curves::pairing::weil_pairing(&images[0].0, &images[1].0, &ppq_e1, f);
+
+        let matched_e1 = w1 == expected;
+        #[cfg(test)]
+        {
+            // Cross-check with E2 side too — exactly one should match
+            // if disambiguation is sound.
+            let ppq_e2 = images[0].1.differential_add(&images[1].1, &images[2].1);
+            let w2 = crate::curves::pairing::weil_pairing(&images[0].1, &images[1].1, &ppq_e2, f);
+            let matched_e2 = w2 == expected;
+            eprintln!("[to_isogeny] disamb: E1 match={matched_e1}, E2 match={matched_e2}");
+        }
+        let (e_i, p_chain, q_chain, pmq_chain) = if matched_e1 {
+            (codomain.E1, images[0].0, images[1].0, images[2].0)
+        } else {
+            (codomain.E2, images[0].1, images[1].1, images[2].1)
+        };
 
         // Step 14: [P_I, Q_I]^T ← (1/(u·d₁)) M_{β₁} [P_I, Q_I]^T
         let s_index = EXTREMAL_ORDERS
@@ -920,9 +1005,14 @@ impl LeftIdeal<4> {
             .ct_mul(&BigInt::<4>::from_sign_and_limbs(0, *d1.limbs()));
         let ud1_inv = ud1.invert_mod(&modulus)?;
 
-        let (p_i, q_i) = m_beta1.apply_scaled(&ud1_inv, p_chain, q_chain, f);
+        // Apply `(1/(u·d₁)) M_{β₁}` to the basis `(P, Q, PmQ)` using
+        // biscalar multiplication for all three points so the
+        // resulting `PmQ` is a propagated projective rep — never the
+        // sqrt-branch result of `projective_difference(P', Q')`.
+        let chain_basis = TorsionBasis::from_propagated(p_chain, q_chain, pmq_chain);
+        let (p_i, q_i, pmq_i) = m_beta1.apply_scaled_basis(&ud1_inv, &chain_basis, f);
 
-        Some((e_i, p_i, q_i))
+        Some((e_i, p_i, q_i, pmq_i))
     }
 }
 
