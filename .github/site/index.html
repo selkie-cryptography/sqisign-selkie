@@ -2006,29 +2006,39 @@
       const wycheSuite = suites.find(s => s.name === 'wycheproof');
       const vectorFiles = wycheSuite ? (wycheSuite.vector_files || []) : [];
 
+      // Did the wycheproof test function pass? If so, all vectors passed.
+      const wycheTests = wycheSuite ? (wycheSuite.tests || []) : [];
+      const allWychePassed = wycheTests.length > 0 && wycheTests.every(t => t.status === 'pass');
+
       if (vectorFiles.length > 0) {
         for (const vf of vectorFiles) {
           const name = vf.file || '?';
           const label = name.replace('sqisign_', '').replace(/_/g, ' ');
+          const total = (vf.vectors || []).length;
           html += `<h4 style="margin:16px 0 6px;cursor:pointer" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">`;
-          html += `${esc(label)} <span style="font-weight:400;font-size:12px;color:var(--fg-dim)">${vf.valid || 0} valid, ${vf.invalid || 0} invalid</span>`;
+          html += `${esc(label)} <span style="font-weight:400;font-size:12px;color:var(--fg-dim)">${total} vectors (${vf.valid || 0} accept, ${vf.invalid || 0} reject)</span>`;
           html += ` <span style="font-size:11px;color:var(--fg-muted)">\u25bc</span></h4>`;
-          html += '<table class="dudect-table" style="display:none"><thead><tr><th>#</th><th>Description</th><th>Expected</th></tr></thead><tbody>';
+          html += '<table class="dudect-table" style="display:none"><thead><tr><th>Test</th><th>Expects</th><th>Result</th></tr></thead><tbody>';
           for (const v of (vf.vectors || [])) {
-            const cls = v.result === 'valid' ? 'dudect-pass' : v.result === 'invalid' ? 'dudect-fail' : '';
+            const expects = v.result === 'valid' ? 'accept' : v.result === 'invalid' ? 'reject' : v.result;
+            // If the test function passed, every vector matched its expectation.
+            const passed = allWychePassed;
+            const icon = passed ? '\u2714' : '\u2718';
+            const cls = passed ? 'dudect-pass' : 'dudect-fail';
             html += `<tr>
-              <td>${v.tcId}</td>
               <td>${esc(v.comment)}</td>
-              <td class="${cls}">${esc(v.result)}</td>
+              <td>${esc(expects)}</td>
+              <td class="${cls}">${icon}</td>
             </tr>`;
           }
           html += '</tbody></table>';
         }
       }
 
-      // Test function results.
-      html += '<h4 style="margin:16px 0 6px">Test functions</h4>';
-      html += '<table class="dudect-table"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>';
+      // Test function summary (collapsed by default).
+      html += `<h4 style="margin:16px 0 6px;cursor:pointer" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">`;
+      html += `Test functions <span style="font-size:11px;color:var(--fg-muted)">\u25bc</span></h4>`;
+      html += '<table class="dudect-table" style="display:none"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>';
       for (const s of suites) {
         for (const t of (s.tests || [])) {
           const icon = t.status === 'pass' ? '\u2714' : t.status === 'skip' ? '\u2013' : '\u2718';
