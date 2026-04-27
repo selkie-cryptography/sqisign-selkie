@@ -1150,7 +1150,6 @@
             <dt>DudeCT</dt><dd><a href="https://eprint.iacr.org/2016/1123.pdf" style="color:var(--fg)">Statistical t-test</a>. |t| &lt; 4.5 = pass, |t| &ge; 4.5 = timing leak detected.</dd>
             <dt>Tacet</dt><dd><a href="https://crates.io/crates/tacet" style="color:var(--fg)">Bayesian attacker-model-aware</a> analysis. Tests against specific adversary capabilities (online, cache, physical) and reports leak probability.</dd>
             <dt>Samples</dt><dd>Number of measurements. More samples = higher confidence for both tools.</dd>
-            <dt>Targets</dt><dd>Fp/Fp2 arithmetic, ct_select, ct_eq, scalar_mul, point_double, verify, keygen, sign.</dd>
             </dl></span></span></h2>
           <span class="meta" id="dudect-meta"></span>
         </div>
@@ -1797,30 +1796,25 @@
 
       // Column headers: Function | DudeCT | Tacet models...
       // Two header rows: top labels + bottom explainers.
-      const hasDudect = dResults.length > 0;
-      const hasTacet = tResults.length > 0;
+      // Always show both tool groups — "no data" when a tool hasn't run.
 
       html += '<table class="dudect-table"><thead>';
       // Top row: group headers.
       html += '<tr>';
       html += '<th rowspan="2" style="vertical-align:bottom">Function</th>';
-      if (hasDudect) {
-        html += `<th colspan="2" style="text-align:center;border-bottom:none">DudeCT</th>`;
-      }
-      if (hasTacet) {
+      html += `<th colspan="2" style="text-align:center;border-bottom:none">DudeCT</th>`;
+      if (tacetModels.length > 0) {
         html += `<th colspan="${tacetModels.length}" style="text-align:center;border-bottom:none">Tacet</th>`;
       }
       html += '</tr>';
-      // Bottom row: column details.
+      // Bottom row: column details — all right-aligned to match data.
       html += '<tr>';
-      if (hasDudect) {
-        html += '<th title="|t| < 4.5 = no detectable timing leak">|t| stat</th>';
-        html += '<th title="Number of timing measurements">samples</th>';
-      }
-      for (const m of tacetModels) {
+      html += '<th style="text-align:right">|t| stat</th>';
+      html += '<th style="text-align:right">samples</th>';
+      for (let mi = 0; mi < tacetModels.length; mi++) {
+        const m = tacetModels[mi];
         const label = modelLabels[m] || m;
-        const tip = modelTips[m] || '';
-        html += `<th title="${esc(tip)}" style="cursor:help">${esc(label)}</th>`;
+        html += `<th style="text-align:right">${esc(label)}</th>`;
       }
       html += '</tr></thead><tbody>';
 
@@ -1837,26 +1831,28 @@
       for (const fn of sorted) {
         html += `<tr><td class="fn-name">${esc(fn.name)}</td>`;
 
-        // DudeCT columns.
-        if (hasDudect) {
-          const d = fn.dudect;
-          if (d) {
-            const absT = Math.abs(d.max_t || 0);
-            const cls = d.status === 'fail' ? 'dudect-fail' : 'dudect-pass';
-            html += `<td class="${cls}">${absT.toFixed(2)}</td>`;
-            html += `<td>${d.samples ? d.samples.toLocaleString() : '\u2014'}</td>`;
-          } else {
-            html += '<td>\u2014</td><td>\u2014</td>';
-          }
+        // DudeCT columns (always shown).
+        const d = fn.dudect;
+        if (d) {
+          const absT = Math.abs(d.max_t || 0);
+          const cls = d.status === 'fail' ? 'dudect-fail' : 'dudect-pass';
+          html += `<td class="${cls}">${absT.toFixed(2)}</td>`;
+          html += `<td>${d.samples ? d.samples.toLocaleString() : '\u2014'}</td>`;
+        } else {
+          html += '<td style="color:var(--fg-dim)">pending</td>';
+          html += '<td style="color:var(--fg-dim)">pending</td>';
         }
 
         // Tacet columns: show leak probability.
-        for (const m of tacetModels) {
+        for (let mi = 0; mi < tacetModels.length; mi++) {
+          const m = tacetModels[mi];
           const t = fn.tacet[m];
           if (!t) {
-            html += '<td>\u2014</td>';
+            html += '<td style="color:var(--fg-dim)">\u2014</td>';
+          } else if (t.status === 'skip' || t.leak_prob == null) {
+            html += '<td style="color:var(--fg-dim)">pending</td>';
           } else {
-            const lp = t.leak_prob != null ? (t.leak_prob * 100).toFixed(1) + '%' : '';
+            const lp = (t.leak_prob * 100).toFixed(1) + '%';
             const cls = t.status === 'fail' ? 'dudect-fail' : 'dudect-pass';
             html += `<td class="${cls}">${lp}</td>`;
           }
@@ -1867,11 +1863,6 @@
 
       html += '</tbody></table>';
 
-      // Legend below the table.
-      html += '<div style="font-size:11px;color:var(--fg-dim);margin-top:8px">';
-      html += '<strong>DudeCT:</strong> statistical t-test on timing. |t| &lt; 4.5 = no leak detected. ';
-      html += '<strong>Tacet:</strong> Bayesian leak probability under attacker models (lower = better).';
-      html += '</div>';
 
       return html;
     }
