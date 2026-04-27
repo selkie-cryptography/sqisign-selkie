@@ -168,6 +168,9 @@ fn main() -> io::Result<()> {
     let kat_vectors = count_kat_vectors();
     let wycheproof_vectors = count_wycheproof_vectors();
 
+    // Parse wycheproof vector details for the dashboard.
+    let wycheproof_files = parse_wycheproof_files();
+
     let all_results: Vec<(&str, &[TestResult], u64)> = vec![
         ("kat", &kat_results[..], kat_vectors),
         ("wycheproof", &wyche_results[..], wycheproof_vectors),
@@ -214,7 +217,22 @@ fn main() -> io::Result<()> {
             }
         }
 
-        write!(w, "      ]\n    }}")?;
+        // Add vector_files for wycheproof suite.
+        if suite_name == "wycheproof" && !wycheproof_files.is_empty() {
+            writeln!(w, "      ],")?;
+            writeln!(w, "      \"vector_files\": [")?;
+            for (fi, vf) in wycheproof_files.iter().enumerate() {
+                write!(w, "        {}", vf)?;
+                if fi + 1 < wycheproof_files.len() {
+                    writeln!(w, ",")?;
+                } else {
+                    writeln!(w)?;
+                }
+            }
+            write!(w, "      ]\n    }}")?;
+        } else {
+            write!(w, "      ]\n    }}")?;
+        }
         if si + 1 < all_results.len() {
             writeln!(w, ",")?;
         } else {
@@ -261,6 +279,111 @@ fn count_wycheproof_vectors() -> u64 {
         total += extract_num_u64(&content, "numberOfTests");
     }
     total
+}
+
+/// Parses each wycheproof JSON file into a compact JSON object for
+/// the dashboard: file name, algorithm, per-vector tcId/comment/result.
+fn parse_wycheproof_files() -> Vec<String> {
+    let dir = match fs::read_dir("tests/vectors") {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+    let mut files = Vec::new();
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().map_or(true, |e| e != "json") {
+            continue;
+        }
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let filename = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let algorithm = extract_string_val(&content, "algorithm");
+        let num_tests = extract_num_u64(&content, "numberOfTests");
+
+        // Extract vectors: walk testGroups[].tests[].
+        let mut vectors = Vec::new();
+        let mut pos = 0;
+        while let Some(tc_start) = content[pos..].find("\"tcId\"") {
+            let abs = pos + tc_start;
+            let tc_id = extract_num_u64(&content[abs..], "tcId");
+            let comment = extract_string_val(&content[abs..], "comment");
+            let result = extract_string_val(&content[abs..], "result");
+            vectors.push(format!(
+                "{{\"tcId\":{},\"comment\":{},\"result\":{}}}",
+                tc_id,
+                json_str(&comment),
+                json_str(&result)
+            ));
+            // Advance past this tcId to find the next one.
+            pos = abs + 6;
+        }
+
+        // Count by result type.
+        let valid = vectors
+            .iter()
+            .filter(|v| v.contains("\"valid\""))
+            .count();
+        let invalid = vectors
+            .iter()
+            .filter(|v| v.contains("\"invalid\""))
+            .count();
+
+        let mut out = String::from("{\n");
+        out.push_str(&format!(
+            "          \"file\": {},\n",
+            json_str(&filename)
+        ));
+        out.push_str(&format!(
+            "          \"algorithm\": {},\n",
+            json_str(&algorithm)
+        ));
+        out.push_str(&format!("          \"total\": {},\n", num_tests));
+        out.push_str(&format!("          \"valid\": {},\n", valid));
+        out.push_str(&format!("          \"invalid\": {},\n", invalid));
+        out.push_str("          \"vectors\": [\n");
+        for (i, v) in vectors.iter().enumerate() {
+            out.push_str("            ");
+            out.push_str(v);
+            if i + 1 < vectors.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        out.push_str("          ]\n        }");
+        files.push(out);
+    }
+    files
+}
+
+/// Extracts a JSON string value for a key (simple, non-nested).
+fn extract_string_val(json: &str, key: &str) -> String {
+    let needle = format!("\"{}\"", key);
+    let Some(idx) = json.find(&needle) else {
+        return String::new();
+    };
+    let rest = &json[idx + needle.len()..];
+    let Some(colon) = rest.find(':') else {
+        return String::new();
+    };
+    let after = rest[colon + 1..].trim_start();
+    if !after.starts_with('"') {
+        return String::new();
+    }
+    let mut end = 1;
+    let bytes = after.as_bytes();
+    while end < bytes.len() {
+        if bytes[end] == b'"' && bytes[end - 1] != b'\\' {
+            break;
+        }
+        end += 1;
+    }
+    after[1..end].to_string()
 }
 
 fn extract_num_u64(json: &str, key: &str) -> u64 {

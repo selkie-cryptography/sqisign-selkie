@@ -1983,8 +1983,8 @@
     function renderKatData(data) {
       const suites = data.suites || [];
       const totalVectors = suites.reduce((s, x) => s + (x.vectors || 0), 0);
-      const anyFail = suites.some(s => s.fail > 0);
 
+      // Summary badges per suite.
       let html = '<div class="audit-grid">';
       for (const s of suites) {
         const hasFail = s.fail > 0;
@@ -1998,8 +1998,33 @@
       }
       html += '</div>';
 
-      // Show test functions (not individual vectors) with pass/fail status.
-      html += '<table class="dudect-table"><thead><tr><th>Test suite</th><th>Status</th></tr></thead><tbody>';
+      // Wycheproof vector detail: per-file breakdown with individual vectors.
+      const wycheSuite = suites.find(s => s.name === 'wycheproof');
+      const vectorFiles = wycheSuite ? (wycheSuite.vector_files || []) : [];
+
+      if (vectorFiles.length > 0) {
+        for (const vf of vectorFiles) {
+          const name = vf.file || '?';
+          const label = name.replace('sqisign_', '').replace(/_/g, ' ');
+          html += `<h4 style="margin:16px 0 6px;cursor:pointer" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">`;
+          html += `${esc(label)} <span style="font-weight:400;font-size:12px;color:var(--fg-dim)">${vf.valid || 0} valid, ${vf.invalid || 0} invalid</span>`;
+          html += ` <span style="font-size:11px;color:var(--fg-muted)">\u25bc</span></h4>`;
+          html += '<table class="dudect-table" style="display:none"><thead><tr><th>#</th><th>Description</th><th>Expected</th></tr></thead><tbody>';
+          for (const v of (vf.vectors || [])) {
+            const cls = v.result === 'valid' ? 'dudect-pass' : v.result === 'invalid' ? 'dudect-fail' : '';
+            html += `<tr>
+              <td>${v.tcId}</td>
+              <td>${esc(v.comment)}</td>
+              <td class="${cls}">${esc(v.result)}</td>
+            </tr>`;
+          }
+          html += '</tbody></table>';
+        }
+      }
+
+      // Test function results.
+      html += '<h4 style="margin:16px 0 6px">Test functions</h4>';
+      html += '<table class="dudect-table"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>';
       for (const s of suites) {
         for (const t of (s.tests || [])) {
           const icon = t.status === 'pass' ? '\u2714' : t.status === 'skip' ? '\u2013' : '\u2718';
