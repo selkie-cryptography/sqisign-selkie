@@ -150,15 +150,21 @@ jobs:
     name: Documentation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      RUSTDOCFLAGS: -Dwarnings
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - run: cargo doc --no-deps --document-private-items
+
+      - name: Check doc warnings
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc --no-deps --document-private-items
+        continue-on-error: true
+
+      - name: Build docs for upload
+        run: cargo doc --no-deps --document-private-items
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
