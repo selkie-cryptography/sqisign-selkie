@@ -1070,6 +1070,7 @@
       <a href="#platform-section">Platforms</a>
       <a href="#audits-section">Audits</a>
       <a href="#fuzz-section">Fuzzing</a>
+      <a href="#docs-section">Docs</a>
     </nav>
 
     <div class="sections">
@@ -1215,7 +1216,6 @@
             <dt>Stack depth</dt><dd>Peak stack usage via Valgrind Massif. Tracks signing/verification stack footprint.</dd>
             <dt>ctgrind</dt><dd>Valgrind memcheck on crabgrind-instrumented secret data. Detects branches or memory access on uninit-marked secrets.</dd>
             <dt>API surface</dt><dd>Public API item count by category (cargo-public-api). Tracks API growth.</dd>
-            <dt>Doc coverage</dt><dd>Rustdoc warning count. Zero = full doc coverage.</dd>
             <dt>MSRV</dt><dd>Minimum Supported Rust Version compliance (1.81.0).</dd>
             </dl></span></span></h2>
           <span class="meta" id="audits-meta"></span>
@@ -1239,6 +1239,18 @@
         </div>
         <div id="fuzz-content">
           <p class="empty">No fuzzing data yet.</p>
+        </div>
+      </section>
+
+      <section class="section" id="docs-section">
+        <div class="section__header">
+          <h2 class="section__title">Docs</h2>
+        </div>
+        <div id="docs-content">
+          <a href="/rustdoc/" target="_blank" rel="noopener" style="display:inline-block;padding:8px 16px;border:1px solid var(--border);border-radius:6px;color:var(--fg);text-decoration:none;font-weight:600;font-size:14px">
+            Rustdoc &rarr;
+          </a>
+          <span style="font-size:13px;color:var(--fg-dim);margin-left:12px">Full API documentation (public + private items)</span>
         </div>
       </section>
 
@@ -2055,8 +2067,9 @@
       const auditUrl = `https://github.com/${REPO}/actions/workflows/audit.yml`;
       let html = '<div class="audit-grid">';
 
-      function badge(status, label, detail, color) {
-        return `<a class="audit-badge" href="${auditUrl}" target="_blank" rel="noopener">
+      function badge(status, label, detail, color, href) {
+        const url = href || auditUrl;
+        return `<a class="audit-badge" href="${url}" target="_blank" rel="noopener">
           <div class="badge-status"${color ? ` style="color:${color}"` : ''}>${status}</div>
           <div class="badge-label">${label}</div>
           ${detail ? `<div class="badge-detail">${detail}</div>` : ''}
@@ -2092,11 +2105,6 @@
         html += badge(`${esc(kb)} KB`, 'binary size', `text: ${sizeData.binary.text}, data: ${sizeData.binary.data}, bss: ${sizeData.binary.bss}`);
       }
 
-      if (docsData) {
-        const color = docsData.warnings === 0 ? 'var(--green)' : 'var(--yellow)';
-        const icon = docsData.warnings === 0 ? '\u2714' : docsData.warnings;
-        html += badge(icon, 'docs', docsData.warnings === 0 ? 'fully documented' : docsData.warnings + ' warnings', color);
-      }
 
       if (msrvData) {
         const color = msrvData.status === 'pass' ? 'var(--green)' : 'var(--red)';
