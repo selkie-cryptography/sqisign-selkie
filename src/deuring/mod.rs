@@ -533,7 +533,7 @@ fn fixed_degree_isogeny(
 /// [Alg. 3.13]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.13
 /// [Alg. 3.15]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
 /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
-impl LeftIdeal<4> {
+impl<const N: usize> LeftIdeal<N> {
     /// Compute the isogeny corresponding to this ideal.
     ///
     /// Returns `(E_I, φ_I(P₀), φ_I(Q₀), φ_I(P₀ − Q₀))` or `None` if
@@ -574,6 +574,37 @@ impl LeftIdeal<4> {
         ProjectiveXOnlyPoint,
         ProjectiveXOnlyPoint,
     )> {
+        let norm = *self.norm();
+        self.to_isogeny_with_norm(&norm)
+    }
+
+    /// [`to_isogeny`](Self::to_isogeny) with an explicit norm override
+    /// for the post-matrix scaling factor.
+    ///
+    /// `to_isogeny` uses `self.norm()` for both the suitable-ideals
+    /// decomposition and the post-matrix `1/(nrd(I)·d₁)` scaling.
+    /// When the caller has pre-reduced the ideal (replacing `I` with
+    /// `δ⁻¹ · I` to fit a width budget), `self.norm()` is the
+    /// *reduced* norm — but the kernel-isotropy condition consumed
+    /// downstream by `SplitAuxiliaryIsogeny` requires the *original*
+    /// norm in the scaling formula. The C reference handles this
+    /// implicitly: `find_uv` makes a local copy of the input and
+    /// reduces it internally, so `lideal->norm` (used at the
+    /// post-matrix scaling step) keeps the original value even
+    /// though the enumeration uses the reduced lattice.
+    ///
+    /// This entry point lets the caller supply the original norm
+    /// while still passing the pre-reduced ideal as `self`.
+    pub fn to_isogeny_with_norm(
+        self,
+        original_norm: &BigInt<N>,
+    ) -> Option<(
+        Curve,
+        ProjectiveXOnlyPoint,
+        ProjectiveXOnlyPoint,
+        ProjectiveXOnlyPoint,
+    )> {
+        const { assert!(N <= 8, "to_isogeny supports N ≤ 8") };
         let f = TorsionExponent::FULL;
 
         // Step 1: Decompose via SuitableIdeals.
@@ -706,7 +737,14 @@ impl LeftIdeal<4> {
         // `nrd(δ)/nrd(I)`, and the resulting matrix equation
         // collapses back to the spec's `1/nrd(I)` scaling modulo
         // 2^f.
-        let parent_norm = *self.norm();
+        // Reduce the original norm mod 2^f; the scaling factor is
+        // computed mod 2^f, so the value always fits in `BigInt<4>`
+        // even when `original_norm` itself spans more limbs.
+        let modulus_8: BigInt<8> = modulus.widen();
+        let original_norm_mod_f_8 = original_norm.widen::<8>().ct_mod(&modulus_8);
+        let parent_norm: BigInt<4> = original_norm_mod_f_8
+            .narrow_to::<4>()
+            .expect("nrd(I) mod 2^248 fits in BigInt<4>");
         let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
         let scale_denom = {
             let base = parent_norm.ct_mul(&d1_big).ct_mod(&modulus);
@@ -1009,6 +1047,24 @@ impl LeftIdeal<4> {
         // biscalar multiplication for all three points so the
         // resulting `PmQ` is a propagated projective rep — never the
         // sqrt-branch result of `projective_difference(P', Q')`.
+        //
+        // # Mathematical invariant (verified)
+        //
+        // The output basis `(P_I, Q_I, PmQ_I)` satisfies
+        //   `e_{2^f}(P_I, Q_I) = e_{2^f}(canonical basis on E_s)^nrd(self)`
+        // where `self` is the input ideal. Derivation:
+        //   chain Weil = e_E_s^(d₁·u²)  (from disambiguation step)
+        //   M_{β₁} det ≡ nrd(β₁) = d₁·nrd(self) mod 2^f
+        //   scaling by 1/(u·d₁) multiplies det by 1/(u·d₁)²
+        //   final det = nrd(self)/(u²·d₁)
+        //   total Weil = e_E_s^(d₁·u² · nrd(self)/(u²·d₁)) = e_E_s^nrd(self)
+        //
+        // This invariant matters for downstream `SplitAuxiliaryIsogeny`:
+        // the response-phase kernel's isotropy condition
+        // `e_E_com · q⁻² · e_E_aux' = 1` only holds when
+        // `nrd(I_inter) = q · nrd(I_com) · nrd(I_aux)` literally —
+        // i.e., when `self` here is the input ideal's *original* norm,
+        // not a reduced equivalent.
         let chain_basis = TorsionBasis::from_propagated(p_chain, q_chain, pmq_chain);
         let (p_i, q_i, pmq_i) = m_beta1.apply_scaled_basis(&ud1_inv, &chain_basis, f);
 

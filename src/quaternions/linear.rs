@@ -41,6 +41,19 @@ impl<const N: usize> Vector<N> {
         acc = acc.ct_add(&self.0[3].ct_mul(&other.0[3]));
         acc
     }
+
+    /// Widen each component from `BigInt<N>` to `BigInt<W>`.
+    ///
+    /// Sign-extends per [`BigInt::widen`]. Requires `W ≥ N`.
+    #[inline]
+    pub fn widen<const W: usize>(self) -> Vector<W> {
+        Vector::new(
+            self.0[0].widen::<W>(),
+            self.0[1].widen::<W>(),
+            self.0[2].widen::<W>(),
+            self.0[3].widen::<W>(),
+        )
+    }
 }
 
 impl<const N: usize> Copy for Vector<N> where BigInt<N>: Copy {}

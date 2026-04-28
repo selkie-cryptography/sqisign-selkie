@@ -443,7 +443,13 @@ impl ExtremalOrder<8> {
 /// extremal order it came from and its degree d = nrd(β) / nrd(J_t · I).
 /// Grouping these prevents accidentally pairing one factor's degree
 /// with another factor's element.
-pub(crate) struct IdealFactor {
+///
+/// Generic over the parent-ideal storage width `N`: callers with a
+/// narrowed ideal use `IdealFactor<4>`; the response phase passes
+/// the un-reduced intersection at `IdealFactor<N>` for some
+/// `N ≥ 8` so that downstream `to_isogeny` scaling reads the
+/// original (un-reduced) `nrd(parent_ideal)`.
+pub(crate) struct IdealFactor<const N: usize> {
     /// The extremal order that produced this factor.
     pub(crate) order: &'static ExtremalOrder<4>,
     /// The short vector β.
@@ -460,7 +466,7 @@ pub(crate) struct IdealFactor {
     /// it through [`LeftIdeal::norm`] on this field rather than
     /// reaching for the caller-supplied ideal whose norm no longer
     /// matches β after the reduction step.
-    pub(crate) parent_ideal: LeftIdeal<4>,
+    pub(crate) parent_ideal: LeftIdeal<N>,
 }
 
 /// Result of [Alg. 3.16][Alg. 3.16] (SuitableIdeals).
@@ -471,7 +477,7 @@ pub(crate) struct IdealFactor {
 /// and [`factor2`](Self::factor2).
 ///
 /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
-pub(crate) struct SuitableIdealResult {
+pub(crate) struct SuitableIdealResult<const N: usize> {
     /// Odd positive integer u.
     // TODO: Replace with a positive-integer newtype.
     pub(crate) u: BigInt<4>,
@@ -481,9 +487,9 @@ pub(crate) struct SuitableIdealResult {
     /// Exponent e ≤ f.
     pub(crate) e: TorsionExponent,
     /// First factor (β₁, d₁, order index s).
-    pub(crate) factor1: IdealFactor,
+    pub(crate) factor1: IdealFactor<N>,
     /// Second factor (β₂, d₂, order index t).
-    pub(crate) factor2: IdealFactor,
+    pub(crate) factor2: IdealFactor<N>,
 }
 
 /// A candidate from the short-vector enumeration, retaining its
@@ -510,11 +516,11 @@ struct ShortVectorCandidate {
 /// Passing this through [`try_find_uv`] keeps the per-factor
 /// `(order, parent_ideal)` pair local to each β; in the
 /// multi-order search the two factors come from different batches.
-struct ShortVectorBatch {
+struct ShortVectorBatch<const N: usize> {
     /// The extremal order that produced this batch.
     order: &'static ExtremalOrder<4>,
     /// The ideal the short vectors live in.
-    parent_ideal: LeftIdeal<4>,
+    parent_ideal: LeftIdeal<N>,
 }
 
 /// A quaternion element that is a short vector in some ideal lattice.
@@ -545,27 +551,35 @@ impl Deref for ShortVector {
     }
 }
 
-impl NrdBasis<8> {
+impl<const W: usize> NrdBasis<W> {
     /// Enumerate non-zero lattice vectors within the box \[-m, m\]⁴
     /// from an L2-reduced basis, compute their degrees, and sort by
     /// norm.
     ///
     /// For NIST-I with m = 2, this produces up to
     /// (2·2+1)⁴ − 1 = 624 non-zero vectors.
+    ///
+    /// Generic over the working-width `W`. Use `W = 8` for typical
+    /// commitment ideals (~2^133 norm); use `W = 16` for the wide
+    /// response-phase intersection `I_inter ≈ 2^385` whose Gram
+    /// matrix entries reach ~2^770.
     fn enumerate_short_vectors(
         &self,
-        ideal_norm: &BigInt<8>,
-        lattice_denom: &BigInt<8>,
+        ideal_norm: &BigInt<W>,
+        lattice_denom: &BigInt<W>,
     ) -> Vec<ShortVectorCandidate> {
         let m = crate::params::FINDUV_BOX_SIZE;
         let denom_sq = lattice_denom.ct_mul(lattice_denom);
         let divisor = ideal_norm.ct_mul(&denom_sq);
 
-        let Some(den_4) = lattice_denom.narrow() else {
+        // Verify the lattice denom fits in BigInt<4> — we only check
+        // existence here (not actually used below) to mirror the
+        // pre-generic invariant.
+        let Some(den_4) = lattice_denom.narrow_to::<4>() else {
             return Vec::new();
         };
 
-        let coeffs: Vec<BigInt<8>> = (-m..=m).map(BigInt::<8>::from_i64).collect();
+        let coeffs: Vec<BigInt<W>> = (-m..=m).map(BigInt::<W>::from_i64).collect();
         let width = coeffs.len();
         let mut vectors = Vec::with_capacity(width.pow(4) - 1);
 
@@ -641,7 +655,7 @@ impl NrdBasis<8> {
                             }
                             continue;
                         }
-                        let Some(degree_4) = degree_wide.narrow() else {
+                        let Some(degree_4) = degree_wide.narrow_to::<4>() else {
                             #[cfg(test)]
                             {
                                 _rej_narrow_degree += 1;
@@ -657,8 +671,8 @@ impl NrdBasis<8> {
                         };
 
                         // β = Σ x_k · col_k.
-                        let coords: [BigInt<8>; 4] = core::array::from_fn(|row| {
-                            (0..4).fold(BigInt::<8>::ZERO, |acc, k| {
+                        let coords: [BigInt<W>; 4] = core::array::from_fn(|row| {
+                            (0..4).fold(BigInt::<W>::ZERO, |acc, k| {
                                 acc.ct_add(&x[k].ct_mul(&self.cols()[k][row]))
                             })
                         });
@@ -666,7 +680,7 @@ impl NrdBasis<8> {
                         // Narrow coordinates to BigInt<4>. After L2 reduction
                         // with small coefficients this should always succeed.
                         let narrow: [Option<BigInt<4>>; 4] =
-                            core::array::from_fn(|i| coords[i].narrow());
+                            core::array::from_fn(|i| coords[i].narrow_to::<4>());
                         let [Some(a), Some(b), Some(c), Some(d)] = narrow else {
                             #[cfg(test)]
                             {
@@ -738,14 +752,14 @@ impl NrdBasis<8> {
 /// conditions: non-coprime degrees, no solution to
 /// `u·d₁ + v·d₂ = 2^f` with `u, v > 0`, or an exponent that would
 /// push `e` out of range.
-fn try_find_uv(
+fn try_find_uv<const N: usize>(
     sv1: &ShortVectorCandidate,
     sv2: &ShortVectorCandidate,
-    batch1: &ShortVectorBatch,
-    batch2: &ShortVectorBatch,
+    batch1: &ShortVectorBatch<N>,
+    batch2: &ShortVectorBatch<N>,
     two_f: &BigInt<8>,
     f: TorsionExponent,
-) -> Option<SuitableIdealResult> {
+) -> Option<SuitableIdealResult<N>> {
     let d1 = &sv1.degree;
     let d2 = &sv2.degree;
 
@@ -1573,9 +1587,13 @@ impl<const N: usize> LeftIdeal<N> {
     }
 }
 
-impl LeftIdeal<4> {
+impl<const N: usize> LeftIdeal<N> {
     /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
-    pub(crate) fn suitable_ideals(&self) -> Option<SuitableIdealResult> {
+    pub(crate) fn suitable_ideals(&self) -> Option<SuitableIdealResult<N>> {
+        // Internal arithmetic widens to 8 limbs for the L2 reduction
+        // and short-vector enumeration. Inputs with `N > 8` would
+        // require a wider `NrdBasis`; reject at compile time.
+        const { assert!(N <= 8, "suitable_ideals supports N ≤ 8") };
         let f = TorsionExponent::FULL;
         let two_f = BigInt::<8>::ONE.shl(f.value());
 
@@ -1603,7 +1621,7 @@ impl LeftIdeal<4> {
         // Per-order enumeration: compute an L2-reduced basis and
         // short-vector list for each extremal order, then stage a
         // `ShortVectorBatch` pointing at the matching parent ideal.
-        let mut batches: [Option<ShortVectorBatch>; NUM_EXTREMAL_ORDERS] = Default::default();
+        let mut batches: [Option<ShortVectorBatch<N>>; NUM_EXTREMAL_ORDERS] = Default::default();
         let mut short_vecs_per_order: [Vec<ShortVectorCandidate>; NUM_EXTREMAL_ORDERS] =
             Default::default();
 
@@ -1613,29 +1631,36 @@ impl LeftIdeal<4> {
                 *self
             } else {
                 // Compute pushforward at `BigInt<8>` to avoid
-                // `Lattice<4>::product`'s mul_direct overflow when
+                // `Lattice<N>::product`'s mul_direct overflow when
                 // the intersection ideal has coords ~2^252. The
-                // resulting lattice should fit back in `BigInt<4>`
-                // for narrow-path callers (N ≤ 2^127); if not,
-                // skip this curve index this iteration.
+                // resulting lattice should fit back in `BigInt<N>`;
+                // if not, skip this curve index this iteration.
                 let j_t_8 = connecting_ideal(t).widen::<8>();
                 let self_8 = self.widen::<8>();
                 let order_t_8 = EXTREMAL_ORDERS[t].widen::<8>();
                 let push_8 = j_t_8.pushforward(&self_8, order_t_8.order());
-                match push_8.narrow() {
+                match push_8.narrow_to::<N>() {
                     Some(p) => p,
                     None => continue,
                 }
             };
 
-            let lattice_t: Lattice<4> = (*parent_ideal_t.lattice()).into();
-            let cols_4 = lattice_t.basis().columns();
-            let cols_8: [Vector<8>; 4] = core::array::from_fn(|j| cols_4[j].into());
-            let denom_8: BigInt<8> = (*lattice_t.denom()).into();
-            let norm_8: BigInt<8> = (*parent_ideal_t.norm()).into();
+            // Widen the parent ideal's lattice to width 16 for L2
+            // reduction. Width 16 fits the response-phase
+            // intersection ideal (`nrd(I) ≈ 2^385`, lattice cols
+            // ~2^385) — its Gram matrix entries can reach ~2^770,
+            // which overflows the previous width-8 working space.
+            // For the commitment path (norm ~2^133) width 16 has
+            // ample slack.
+            const W: usize = 16;
+            let lattice_n: Lattice<N> = (*parent_ideal_t.lattice()).into();
+            let cols_n = lattice_n.basis().columns();
+            let cols_w: [Vector<W>; 4] = core::array::from_fn(|j| cols_n[j].widen());
+            let denom_w: BigInt<W> = (*lattice_n.denom()).widen();
+            let norm_w: BigInt<W> = (*parent_ideal_t.norm()).widen();
 
-            let nrd_basis = NrdBasis::new(cols_8).l2_reduce();
-            short_vecs_per_order[t] = nrd_basis.enumerate_short_vectors(&norm_8, &denom_8);
+            let nrd_basis = NrdBasis::new(cols_w).l2_reduce();
+            short_vecs_per_order[t] = nrd_basis.enumerate_short_vectors(&norm_w, &denom_w);
             batches[t] = Some(ShortVectorBatch {
                 order: &EXTREMAL_ORDERS[t],
                 parent_ideal: parent_ideal_t,

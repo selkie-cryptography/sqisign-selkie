@@ -959,22 +959,20 @@ impl SigningKey {
                 eprintln!("[sign {_iter}] DROP: refresh_norm None");
                 continue;
             }
-            // The response ideal has norm ~2^257 which may exceed
-            // BigInt<4>. Always reduce via `smallest_equiv_narrow`
-            // to ensure the norm is small enough that downstream
-            // operations (e.g. `i_com_rsp.norm() · i_aux.norm()`
-            // in the intersection below) don't silently truncate
-            // at BigInt<4>. A bare `narrow()` path keeps norms up
-            // to 2^256, and multiplying by aux_norm ~2^126 gives
-            // ~2^382 which wraps mod 2^256 and corrupts the
-            // intersection ideal's stored norm. The smallest-
-            // equiv reduction brings the norm down to ~√p ≈ 2^126,
-            // so the product fits in BigInt<4>.
-            let i_com_rsp = match i_com_rsp_w.smallest_equiv_narrow::<120>() {
+            // Narrow `i_com_rsp` to `LeftIdeal<8>` for the intersection
+            // step. Earlier the response phase reduced this to width 4
+            // via `smallest_equiv_narrow::<120>()`, but the reduction
+            // replaces `I_com_rsp` with `δ⁻¹·I_com_rsp` and the
+            // resulting `I_inter` is no longer the same ideal as the
+            // C reference's `lideal_aux_resp_com`. The downstream
+            // kernel-isotropy condition in `SplitAuxiliaryIsogeny`
+            // breaks (`count_splitting_indices = 0` on every input).
+            // Keeping width 8 fits `~2^257` norms with room to spare.
+            let i_com_rsp = match i_com_rsp_w.narrow_to::<8>() {
                 Some(i) => i,
                 None => {
                     #[cfg(test)]
-                    eprintln!("[sign {_iter}] DROP: smallest_equiv_narrow::<120> None");
+                    eprintln!("[sign {_iter}] DROP: i_com_rsp narrow_to::<8> None");
                     continue;
                 }
             };
@@ -1034,9 +1032,11 @@ impl SigningKey {
                 // HNF entries (up to `~n(I_1)·n(I_2) ≈ 2^374`,
                 // about 6 limbs) fit, then `smallest_equiv_narrow`
                 // produces the final `LeftIdeal<4>`.
-                let i_com_rsp_w: LeftIdeal<8> = i_com_rsp.widen::<8>();
+                // `i_com_rsp` is already at `LeftIdeal<8>` (un-reduced
+                // — see comment at line 956). Widen `i_aux` to match
+                // and intersect at width 8.
                 let i_aux_w: LeftIdeal<8> = i_aux.widen::<8>();
-                let i_com_rsp_lat_w: Lattice<8> = (*i_com_rsp_w.lattice()).into();
+                let i_com_rsp_lat_w: Lattice<8> = (*i_com_rsp.lattice()).into();
                 let i_aux_lat_w: Lattice<8> = (*i_aux_w.lattice()).into();
                 #[cfg(test)]
                 let _t_inter = std::time::Instant::now();
@@ -1082,29 +1082,24 @@ impl SigningKey {
                     continue;
                 }
                 #[cfg(test)]
-                let _t_smeq = std::time::Instant::now();
-                let i_inter = match i_inter_w.smallest_equiv_narrow::<32>() {
-                    Some(i) => i,
-                    None => {
-                        #[cfg(test)]
-                        eprintln!("[sign {_iter}] DROP: i_inter.smallest_equiv_narrow None");
-                        continue;
-                    }
-                };
-                #[cfg(test)]
                 eprintln!(
-                    "[sign {_iter}] i_inter smallest_equiv_narrow OK: {:?}, norm={} bits (cumul {:?})",
-                    _t_smeq.elapsed(),
-                    i_inter.norm().bitsize(),
+                    "[sign {_iter}] response to_isogeny (wide N=8)... (cumul {:?})",
                     _iter_start.elapsed()
                 );
-                #[cfg(test)]
-                eprintln!(
-                    "[sign {_iter}] response to_isogeny... (cumul {:?})",
-                    _iter_start.elapsed()
-                );
+                // Pass the un-reduced `i_inter_w` (at width 8) directly
+                // to `to_isogeny`. The C reference's
+                // `dim2id2iso_arbitrary_isogeny_evaluation` is invoked
+                // on the un-reduced `lideal_aux_resp_com`; `find_uv`
+                // reduces internally on a local copy, but `lideal->norm`
+                // (used in the post-matrix `1/(nrd(I)·d₁)` scaling)
+                // remains the original. Pre-reducing here would replace
+                // `I_inter` with a δ⁻¹·equivalent and the resulting
+                // `(u, v, β₁, β₂)` decomposition differs from what the
+                // C reference produces — `SplitAuxiliaryIsogeny`'s
+                // kernel-isotropy condition then fails with
+                // `count_splitting_indices = 0`.
                 let (e_aux_prime, p_aux_prime, q_aux_prime, pmq_aux_prime) =
-                    match i_inter.to_isogeny() {
+                    match i_inter_w.to_isogeny() {
                         Some(r) => {
                             #[cfg(test)]
                             eprintln!(

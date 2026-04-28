@@ -2335,43 +2335,38 @@ impl<const N: usize> LeftIdeal<N> {
     ///
     /// Returns `None` if any entry doesn't fit in `BigInt<4>`.
     pub fn narrow(&self) -> Option<LeftIdeal<4>> {
-        let narrow_int = |v: &BigInt<N>| -> Option<BigInt<4>> {
-            // Check that all limbs above 4 are zero (positive) or all-ones (negative sign).
-            let limbs = v.as_limbs();
-            for &limb in &limbs[4..] {
-                if limb != 0 {
-                    return None;
-                }
-            }
-            let mut out = [0u64; 4];
-            out.copy_from_slice(&limbs[..4]);
-            let sign = if bool::from(v.is_negative()) { 1 } else { 0 };
-            Some(BigInt::from_sign_and_limbs(sign, out))
-        };
+        self.narrow_to::<4>()
+    }
 
-        let mut basis_4 = [[BigInt::<4>::ZERO; 4]; 4];
-        let basis_8 = self.lattice().basis();
+    /// Generic narrow: convert a wide `LeftIdeal<N>` to `LeftIdeal<M>`
+    /// when all coordinates fit in `BigInt<M>`. Returns `None`
+    /// otherwise.
+    pub fn narrow_to<const M: usize>(&self) -> Option<LeftIdeal<M>> {
+        let narrow_int = |v: &BigInt<N>| -> Option<BigInt<M>> { v.narrow_to::<M>() };
+
+        let mut basis_m = [[BigInt::<M>::ZERO; 4]; 4];
+        let basis_n = self.lattice().basis();
         for row in 0..4 {
             for col in 0..4 {
-                basis_4[row][col] = narrow_int(&basis_8[row][col])?;
+                basis_m[row][col] = narrow_int(&basis_n[row][col])?;
             }
         }
 
-        let norm_4 = narrow_int(self.norm())?;
-        let denom_4 = narrow_int(self.lattice().denom())?;
+        let norm_m = narrow_int(self.norm())?;
+        let denom_m = narrow_int(self.lattice().denom())?;
 
         // Narrow the parent order.
-        let order_8 = self.parent_order();
-        let mut order_basis_4 = [[BigInt::<4>::ZERO; 4]; 4];
-        let order_basis_8 = order_8.basis();
+        let order_n = self.parent_order();
+        let mut order_basis_m = [[BigInt::<M>::ZERO; 4]; 4];
+        let order_basis_n = order_n.basis();
         for row in 0..4 {
             for col in 0..4 {
-                order_basis_4[row][col] = narrow_int(&order_basis_8[row][col])?;
+                order_basis_m[row][col] = narrow_int(&order_basis_n[row][col])?;
             }
         }
-        let order_denom_4 = narrow_int(order_8.denom())?;
+        let order_denom_m = narrow_int(order_n.denom())?;
 
-        let to_matrix = |rows: [[BigInt<4>; 4]; 4]| -> Matrix<4> {
+        let to_matrix = |rows: [[BigInt<M>; 4]; 4]| -> Matrix<M> {
             Matrix::from_rows(
                 Vector::new(rows[0][0], rows[0][1], rows[0][2], rows[0][3]),
                 Vector::new(rows[1][0], rows[1][1], rows[1][2], rows[1][3]),
@@ -2382,13 +2377,13 @@ impl<const N: usize> LeftIdeal<N> {
 
         Some(LeftIdeal {
             lattice: HnfLattice {
-                basis: to_matrix(basis_4),
-                denom: denom_4,
+                basis: to_matrix(basis_m),
+                denom: denom_m,
             },
-            norm: norm_4,
+            norm: norm_m,
             parent_order: Order::from_lattice_unchecked(Lattice {
-                basis: to_matrix(order_basis_4),
-                denom: order_denom_4,
+                basis: to_matrix(order_basis_m),
+                denom: order_denom_m,
             }),
         })
     }
