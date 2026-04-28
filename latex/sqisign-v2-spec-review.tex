@@ -179,15 +179,184 @@ prevent this.
 \label{sec:basis-swap}
 
 \finding{Affects \algo{2.2}
-(\textsc{TorsionBasisFromHint}).}{\medium}
+(\textsc{TorsionBasisFromHint}), \algo{2.5}
+(\textsc{ChangeOfBasis}), \algo{4.7}
+(\textsc{ComputeChallengeIsogeny}), \algo{4.8}
+(\textsc{SetChangeOfBasisMatrix}), and \algo{4.9}
+(\textsc{Verify}).}{\critical}
 
-The spec says the algorithm returns $(P, Q, P{-}Q)$.  The C reference
-stores $P{-}Q$ in the \texttt{Q} slot and $Q$ in \texttt{PmQ}, so
-\textsc{Ladder3pt} computes $P + [m](P{-}Q)$, not $P + [m]Q$.  The swap
-ensures the multiplied point avoids $(0,0)$ but is not documented.
+The spec says \algo{2.2} returns the triple $(P, Q, P{-}Q)$.  The C
+reference stores $P{-}Q$ in the \texttt{Q} slot and $Q$ in \texttt{PmQ},
+so \textsc{Ladder3pt} computes $P + [m](P{-}Q)$, not $P + [m]Q$.  The
+swap ensures the multiplied point avoids $(0,0)$ but is not documented.
 
-State the output convention explicitly, or note that \textsc{Ladder3pt}
-is called with the difference in the $Q$ position.
+\paragraph{Why this is critical, not medium.}
+The shuffled storage layout is not a local
+\textsc{TorsionBasisFromHint} quirk: it is the convention in which
+$M_{\mathrm{chl}}$ (\algo{4.8}, signature byte 96 onwards) is encoded.
+\textsc{Ladder3pt} reads the basis triple as $(P, P{-}Q, Q)$; both
+signing's \textsc{SetChangeOfBasisMatrix} and \algo{4.9} line~14's
+$(P, Q) \leftarrow M_{\mathrm{chl}} \cdot (P_{\mathrm{can}},
+Q_{\mathrm{can}})$ run \textsc{LadderBiscalar} with that same
+shuffled triple.  The matrix entries therefore express
+``coordinates of the response basis in the $(P, P{-}Q)$ basis,''
+not in the $(P, Q)$ basis the spec describes.
+
+If the implementer reads the spec literally and assembles
+$M_{\mathrm{chl}}$ against $(P, Q, P{-}Q)$, the bytes still parse,
+verify still runs, and the resulting basis on the codomain
+\emph{collapses to a singular pair} — typically $P_{\mathrm{chl}} =
+Q_{\mathrm{chl}}$ bit-for-bit, since the matrix's rows project the
+canonical basis onto the same point in the wrong frame.  The
+$(2,2)$-chain inside \algo{4.9} either crashes (\textsc{lift\_basis}
+fails, since the lift expects a non-degenerate triple) or reaches
+its terminal theta null with $\#\{i, j : U_{i, j}(0) = 0\} = 0$.
+Verification then rejects, and the diagnosis points everywhere except
+at the basis layout.
+
+The same convention must be used end-to-end: at
+\textsc{TorsionBasisFromHint} output, at every basis manipulated in
+\textsc{SplitAuxiliaryIsogeny}, \textsc{ComputeEvenNonBacktrackingResponse},
+\textsc{ComputeChallengeIsogeny}, and at the change-of-basis matrix
+encoding and decoding.  Mixing layouts at any one of those sites
+breaks signing/verify interoperability with itself, not just with
+the C reference.
+
+\paragraph{Recommendation.}
+State the layout once at the top of \S2.2 as a normative convention,
+and reference it explicitly at every algorithm that manipulates a
+torsion basis triple --- especially \algo{2.5}, \algo{4.7},
+\algo{4.8}, and \algo{4.9}'s line 14.  An implementer who sees
+``$(P, Q, P{-}Q)$'' uniformly in pseudocode has no way of knowing
+that \textsc{Ladder3pt} expects the difference in the second slot.
+
+% =====================================================================
+\section{Matrix storage convention for $M_{\mathrm{chl}}$ and $M_{\mathrm{sk}}$}
+\label{sec:matrix-storage}
+
+\finding{Affects \algo{2.5}
+(\textsc{ChangeOfBasis}), \algo{4.1}
+(\textsc{KeyGen}: $M_{\mathrm{sk}}$), \algo{4.8}
+(\textsc{SetChangeOfBasisMatrix}: $M_{\mathrm{chl}}$), and \algo{4.9}
+(\textsc{Verify}: line 14 application of $M_{\mathrm{chl}}$).}{\critical}
+
+The pseudocode of \algo{2.5} returns ``$x_1, x_2, x_3, x_4$ such that
+$Q_1 = [x_1] P_1 + [x_2] P_2$ and $Q_2 = [x_3] P_1 + [x_4] P_2$.''  The
+spec does not say how to lay these four scalars out as a $2 \times 2$
+matrix on the wire (\S4.6 simply concatenates the four components).
+Two natural layouts produce the same wire bytes only if the matrix is
+written in column-major form $\bigl[\begin{smallmatrix} x_1 & x_3 \\
+x_2 & x_4 \end{smallmatrix}\bigr]$, which is what the C reference does
+in \texttt{change\_of\_basis\_matrix\_tate} and consumes via
+\texttt{matrix\_application\_even\_basis} (column 0 yields the new
+$P$).  An implementer who reads ``$Q_1 = [x_1] P_1 + [x_2] P_2$'' as a
+\emph{row} ($x_1, x_2$ on row 0, $x_3, x_4$ on row 1) writes
+\emph{transposed} bytes: positions for $x_2$ and $x_3$ get swapped.
+
+\paragraph{What goes wrong.} The transposed encoding is not detectable
+from a single signature because parsing succeeds, the matrix entries
+are still bounded, and \algo{4.9} runs.  The defect manifests only
+after \algo{4.9} line~14 applies $M_{\mathrm{chl}}$ to the canonical
+basis: instead of $(P_{\mathrm{chl}}, Q_{\mathrm{chl}})$ the result is
+$([x_1] P + [x_3] Q, [x_2] P + [x_4] Q)$, the application of
+$M_{\mathrm{chl}}^{T}$.  The $(2,2)$-chain that follows then proceeds
+on the wrong torsion basis, and verification rejects with no useful
+signal.  $M_{\mathrm{sk}}$ has the same issue inside \algo{4.1}.
+
+This is a different bug from the basis-slot swap of
+\S\ref{sec:basis-swap}.  Even with the basis layout fixed,
+the matrix-encoding ambiguity remains and produces
+identical-looking failures.
+
+\paragraph{Recommendation.} Either:
+\begin{enumerate}
+\item State \algo{4.8} explicitly produces the matrix
+$\bigl[\begin{smallmatrix} x_1 & x_3 \\ x_2 & x_4 \end{smallmatrix}\bigr]$
+(column-major, with column 0 the coordinates of $Q_1$ and column 1 the
+coordinates of $Q_2$), and \algo{4.9} line~14 applies it by reading
+column 0 to get the first new basis point; or
+\item Re-state the wire encoding in \S4.6 in basis-coordinate terms:
+\emph{``$M_{\mathrm{chl}}[\![0]\!]$ are the bytes of $x_1$;
+$M_{\mathrm{chl}}[\![1]\!]$ of $x_3$; $M_{\mathrm{chl}}[\![2]\!]$ of $x_2$;
+$M_{\mathrm{chl}}[\![3]\!]$ of $x_4$,''} so the transpose ambiguity
+cannot survive a careful reading.
+\end{enumerate}
+
+% =====================================================================
+\section{Spec's $2^{f-e}$ scaling in \algo{2.5} is wrong for \algo{4.8}}
+\label{sec:matrix-shift}
+
+\finding{Affects \algo{2.5} (\textsc{ChangeOfBasis}) and
+\algo{4.8} (\textsc{SetChangeOfBasisMatrix}).}{\critical}
+
+Line 4 of \algo{2.5} returns
+$x_i \leftarrow 2^{f-e} \cdot \log_{\zeta}(\zeta_i)$.
+The $2^{f-e}$ factor scales the $e$-bit dlog up to a $2^f$-precision
+value, so the matrix can be applied to a full $2^f$-torsion basis.
+
+But \algo{4.8} (lines 12--13) reduces both bases to order $2^e$
+\emph{before} computing the matrix.  Once the bases are reduced,
+the $2^{f-e}$ scaling is wrong: applying an $f$-bit entry to a
+$2^e$-torsion point ignores everything above the $e$-bit window.
+The wire encoding (\S4.6) stores $\lceil e/8 \rceil$ bytes per
+entry; the spec's shift puts the dlog above this window, so the
+encoded bytes are zero except for a few bits at the boundary.
+
+The C reference's \texttt{\_change\_of\_basis\_matrix\_tate} omits
+the $2^{f-e}$ scaling and stores raw dlogs.  This is undocumented
+but necessary for the wire format and reduced-basis application
+to work.
+
+An implementer following \algo{2.5}'s step 4 literally produces
+signatures whose $M_{\mathrm{chl}}$ entries are mostly zero on the
+wire.  Verification accepts and runs but \algo{4.9}'s line 24
+chain collapses to all-zero theta nulls; nothing flags
+``$M_{\mathrm{chl}}$ entries unexpectedly small.''
+
+\paragraph{Recommendation.}
+Either fold the basis reduction into \algo{2.5}, or rewrite
+\algo{2.5} step 4 conditionally: ``return $\log_{\zeta}(\zeta_i)$
+when the bases are pre-reduced to order $2^e$; return
+$2^{f-e} \cdot \log_{\zeta}(\zeta_i)$ when applied to a full
+$2^f$-torsion basis.''  As written, the algorithm is correct for
+its declared semantics (full-torsion application) but wrong for
+how every protocol algorithm actually uses it.
+
+% =====================================================================
+\section{Matrix exponent in \algo{4.8} omits \texttt{HD\_extra\_torsion}}
+\label{sec:matrix-exponent}
+
+\finding{Affects \algo{4.8} (\textsc{SetChangeOfBasisMatrix}) and
+\algo{4.9} (\textsc{Verify}).}{\high}
+
+\algo{4.8}'s pseudocode (lines 12--13) describes scaling the bases
+by $2^{f - e_{\mathrm{rsp}}' - r_{\mathrm{rsp}}}$, leaving them at
+order $2^{e_{\mathrm{rsp}}' + r_{\mathrm{rsp}}}$, and computing the
+matrix at this exponent.  The dlog at this exponent recovers the
+low $e_{\mathrm{rsp}}' + r_{\mathrm{rsp}}$ bits of each scalar
+relationship; the high bits are silently zero.
+
+But \algo{4.9}'s line 24 $(2,2)$-chain consumes
+$\texttt{HD\_extra\_torsion} = 2$ bits of additional torsion: it
+needs the basis at order $2^{e_{\mathrm{rsp}}' + r_{\mathrm{rsp}} + 2}$.
+The C reference does both: it reduces to $2^{e_{\mathrm{rsp}}' +
+r_{\mathrm{rsp}} + 2}$ \emph{and} computes the matrix at the same
+exponent.  The two extra bits in the matrix entries are essential
+for verify to reproduce the basis the chain needs.
+
+The spec's \algo{4.8} omits the $+2$ silently.  An implementer who
+follows the pseudocode exactly produces a matrix whose entries
+truncate two high bits.  Verify then runs but its post-matrix basis
+is wrong in those two bits, and the chain fails with all-zero theta
+nulls — same symptom as the previous two findings, indistinguishable
+from those without inspecting matrix entries directly.
+
+\paragraph{Recommendation.}  Add ``$+ \texttt{HD\_extra\_torsion}$''
+to the exponents in \algo{4.8} lines 11 and 13, matching the C
+reference's \texttt{reduced\_order = pow\_dim2\_deg\_resp +
+HD\_extra\_torsion + two\_resp\_length}.  This makes the dependency
+on \algo{4.9}'s torsion needs explicit at the matrix-construction
+site, where it can actually be implemented.
 
 % =====================================================================
 \section{Normalization of $(A_{24} : C_{24})$}

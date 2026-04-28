@@ -9,6 +9,8 @@ use subtle::ConstantTimeEq;
 
 #[cfg(test)]
 use crate::curves::montgomery::ProjectiveXOnlyPoint;
+#[cfg(test)]
+use crate::curves::scalar::Scalar;
 use crate::{
     curves::{
         BasisHint, TorsionBasis, TorsionExponent, VerifyingKeyHint,
@@ -267,6 +269,42 @@ impl VerifyingKey {
             basis_chl_transformed.S,
             basis_chl_transformed.RS,
         );
+
+        #[cfg(test)]
+        {
+            let fp2_short = |v: &Fp2| -> String {
+                let bytes = v.to_bytes();
+                let r: String = bytes[..8]
+                    .iter()
+                    .rev()
+                    .map(|b| format!("{:02x}", b))
+                    .collect();
+                format!("0x{r}")
+            };
+            let aff = |p: &ProjectiveXOnlyPoint| -> String { fp2_short(&(&p.X * &p.Z.invert())) };
+            eprintln!(
+                "VERIFY post-M_chl: R={}, S={}, RS={}, R==S={}, R==RS={}",
+                aff(&P_chl),
+                aff(&Q_chl),
+                aff(&PmQ_chl),
+                P_chl == Q_chl,
+                P_chl == PmQ_chl,
+            );
+            let dump = |s: &Scalar| -> String {
+                let l = s.as_limbs();
+                format!("{:016x}_{:016x}_{:016x}_{:016x}", l[3], l[2], l[1], l[0])
+            };
+            eprintln!("VERIFY M_chl[0][0]={}", dump(&sig.M_chl.entries[0][0]));
+            eprintln!("VERIFY M_chl[0][1]={}", dump(&sig.M_chl.entries[0][1]));
+            eprintln!("VERIFY M_chl[1][0]={}", dump(&sig.M_chl.entries[1][0]));
+            eprintln!("VERIFY M_chl[1][1]={}", dump(&sig.M_chl.entries[1][1]));
+            eprintln!(
+                "VERIFY basis_chl_scaled (det_chl): R={}, S={}, RS={}",
+                aff(&basis_chl_scaled.R),
+                aff(&basis_chl_scaled.S),
+                aff(&basis_chl_scaled.RS),
+            );
+        }
 
         // --- Lines 15–20: even response isogeny ---
         //

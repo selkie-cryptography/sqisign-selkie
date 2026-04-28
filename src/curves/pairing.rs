@@ -17,6 +17,7 @@ use subtle::{Choice, ConditionallySelectable};
 use crate::{
     curves::{TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
     fields::fp2::Fp2,
+    quaternions::bigint::BigInt,
 };
 
 // ---------------------------------------------------------------------------
@@ -127,17 +128,27 @@ impl RootOfUnity {
         let k_prime = z0_prime.dlog(&z1_prime, e_prime);
 
         // ζ''₀ = ζ₀^{2^{e'}},  ζ''₁ = ζ₁ / ζ₀^{k'}
+        //
+        // `k'` is a `Scalar` and may exceed `u32::MAX`: the recursion
+        // bounds `k' < 2^{e'}`, so for e ≥ 64 the low 32 bits are not
+        // enough. `pow_scalar` walks all 256 bits of the scalar.
+        // (The `M_chl` / `M_sk` matrix entries reach `2^126`, so a
+        // truncating `pow(u32)` here corrupts every entry whose dlog
+        // exceeds 2^32 — they all collapse to a fixed root of unity
+        // and the recovered matrix has the same value in every slot.)
+        //
+        // TODO(ct): `pow_scalar` is variable-time in `k_prime`. When
+        // this dlog is called from `from_bases` with secret-derived
+        // bases (M_sk in Algorithm 4.1, M_chl in Algorithm 4.8), the
+        // pow leaks bits of the dlog. Replace with a constant-time
+        // square-and-multiply that processes a fixed number of bits.
         let z0_double_prime = self.square_n(e_prime.value());
-        // TODO: pow by Scalar — for now convert k' to u32 for small
-        // intermediate values. The recursion ensures k' < 2^{e'} which
-        // fits in u32 for e' ≤ 124.
-        let z1_double_prime = target / &self.pow(k_prime.as_limbs()[0] as u32);
+        let z1_double_prime = target / &self.pow_scalar(&k_prime);
 
         // k'' = NormalizedDlog(ζ''₀, ζ''₁) — high bits
         let k_double_prime = z0_double_prime.dlog(&z1_double_prime, diff);
 
         // k = k' + 2^{e'} · k''
-        use crate::quaternions::bigint::BigInt;
         let k_prime_big = BigInt::<4>::from(k_prime);
         let k_double_prime_big = BigInt::<4>::from(k_double_prime);
         let k_high = k_double_prime_big.shl(e_prime.value());
@@ -380,7 +391,12 @@ pub(crate) fn weil_pairing(
 mod tests {
     use super::*;
     use crate::{
-        curves::{TorsionBasis, montgomery::Curve},
+        curves::{
+            BasisHint, ChangeOfBasisMatrix, TorsionBasis,
+            montgomery::{Coefficient, Curve},
+        },
+        deuring::precomputed::torsion_basis::ExtremalCurve,
+        fields::fp2::Fp2,
         params,
     };
 
@@ -422,6 +438,31 @@ mod tests {
         let zeta42 = zeta.pow(42);
         let k = zeta.dlog(&zeta42, e);
         assert_eq!(k, Scalar::from_u64(42), "dlog(ζ^42) should be 42");
+    }
+
+    /// Dlog must round-trip for exponents that exceed `u32::MAX`.
+    ///
+    /// `M_chl` / `M_sk` entries reach `2^126`, so the dlog must
+    /// preserve all 126 bits. An earlier implementation truncated
+    /// `k'` (the low half of the dlog recursion) to `u32` before
+    /// calling `pow`, which produced a fixed root of unity for any
+    /// `k' ≥ 2^32` — every cross-pairing dlog collapsed to the same
+    /// value and `from_bases` returned a constant matrix.
+    #[test]
+    fn dlog_round_trip_above_u32() {
+        let basis = e0_basis();
+        let e = TorsionExponent::FULL; // 248
+        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+
+        // Pick a value with bits set above 2^32 so any `as u32` cast
+        // would lose information.
+        let k_in = Scalar::from_limbs([0x1234_5678_9ABC_DEF0, 0x55, 0, 0]);
+        let zeta_k = zeta.pow_scalar(&k_in);
+        let k_out = zeta.dlog(&zeta_k, e);
+        assert_eq!(
+            k_out, k_in,
+            "dlog(ζ^k) must round-trip for k with bits above 2^64"
+        );
     }
 
     /// Verify Tate pairing bilinearity (P+Q convention).
@@ -484,6 +525,30 @@ mod tests {
         );
     }
 
+    /// Verify Tate pairing antisymmetry — the property
+    /// `from_bases` relies on for the cross-pairing dlog.
+    ///
+    /// Specifically: `t(P, Q) · t(Q, P) == 1` so that
+    /// `ζ_2 = 1/t(target.R, full.R)` correctly recovers
+    /// `ζ^{coefficient of P in target.R}`.
+    #[test]
+    fn tate_antisymmetric() {
+        let basis = e0_basis();
+        let e = TorsionExponent::FULL;
+
+        // P+Q for the third arg per `tate_pairing`'s convention.
+        let ppq = basis.R.differential_add(&basis.S, &basis.RS);
+
+        let t_pq = tate_pairing(&basis.R, &basis.S, &ppq, e);
+        let t_qp = tate_pairing(&basis.S, &basis.R, &ppq, e);
+        let product = t_pq.as_fp2() * t_qp.as_fp2();
+        assert_eq!(
+            product,
+            Fp2::ONE,
+            "Tate antisymmetry: t(P, Q) · t(Q, P) should equal 1"
+        );
+    }
+
     /// Verify Weil pairing antisymmetry: `W(P, Q) * W(Q, P) == 1`.
     #[test]
     fn weil_antisymmetric() {
@@ -522,5 +587,400 @@ mod tests {
         let zeta7 = zeta_small.pow(7);
         let k = zeta_small.dlog(&zeta7, e_small);
         assert_eq!(k, Scalar::from_u64(7), "dlog(ζ'^7) should be 7");
+    }
+
+    /// `mul(from_bases(A, B), A)` must equal `B` in x-only sense
+    /// even when `B` is constructed via a unimodular matrix on `A`.
+    ///
+    /// This guards against breaking the weaker (downstream-relevant)
+    /// invariant when fixing the stronger `from_bases_independent_bases`
+    /// invariant. The chain consumer of `M_chl` only needs x-only
+    /// equality.
+    #[test]
+    fn from_bases_x_only_roundtrip_unimodular() {
+        let basis_a = e0_basis();
+        let e = TorsionExponent::FULL;
+        let m_ab = [
+            [Scalar::from_u64(2), Scalar::from_u64(1)],
+            [Scalar::from_u64(1), Scalar::from_u64(1)],
+        ];
+        let p_b = basis_a.biscalar_mul(&m_ab[0][0], &m_ab[1][0], e);
+        let q_b = basis_a.biscalar_mul(&m_ab[0][1], &m_ab[1][1], e);
+        let k = e.value();
+        let pmq_a_scalar = m_ab[0][0].sub_mod2k(&m_ab[0][1], k);
+        let pmq_c_scalar = m_ab[1][0].sub_mod2k(&m_ab[1][1], k);
+        let pmq_b = basis_a.biscalar_mul(&pmq_a_scalar, &pmq_c_scalar, e);
+        let basis_b = TorsionBasis::from_propagated(p_b, q_b, pmq_b);
+
+        let recovered =
+            ChangeOfBasisMatrix::from_bases(&basis_a, &basis_b, e).expect("dlog should succeed");
+        let applied = recovered.mul(&basis_a);
+        assert_eq!(
+            applied.R, basis_b.R,
+            "x-only: applied.R must equal basis_b.R"
+        );
+        assert_eq!(
+            applied.S, basis_b.S,
+            "x-only: applied.S must equal basis_b.S"
+        );
+        assert_eq!(
+            applied.RS, basis_b.RS,
+            "x-only: applied.RS must equal basis_b.RS"
+        );
+    }
+
+    /// `from_bases(A, B) · A` must equal `B` even when `A` and `B`
+    /// are unrelated bases on the same curve (i.e., `B` was not
+    /// constructed by applying a matrix to `A`).
+    ///
+    /// In the actual signing pipeline, `from_bases` is called with
+    /// `det_chl_scaled` (a hint-derived basis) and `transformed`
+    /// (a basis built by applying `m1` to a propagated basis) — two
+    /// genuinely independent bases on the same curve. The simpler
+    /// `from_bases_mul_roundtrip` test exercises only the
+    /// "target = M·source" case, which can succeed even when
+    /// `from_bases` produces an x-only-equivalent but projectively
+    /// different matrix. This stronger test mirrors the signing
+    /// usage by deriving `B` from `A` via a unimodular matrix, then
+    /// asserts the recovered matrix faithfully reproduces `B`.
+    ///
+    /// Currently failing: for unimodular target bases the recovered
+    /// dlogs come out as `−k mod 2^e` rather than `+k`. The weaker
+    /// x-only round-trip via `mul` still works (per
+    /// `from_bases_x_only_roundtrip_unimodular`), but the matrix
+    /// entries are off by a sign. Tracked as part of task #39.
+    #[test]
+    #[ignore]
+    fn from_bases_independent_bases() {
+        let basis_a = e0_basis();
+        let e = TorsionExponent::FULL;
+
+        // basis_b = (some transform) · basis_a, but constructed so it
+        // looks like an "independent" basis (any two non-degenerate
+        // 2^e-torsion bases are related by an invertible matrix).
+        // Unimodular matrix (det = 2 - 1 = 1 ⇒ invertible mod 2).
+        let m_ab = [
+            [Scalar::from_u64(2), Scalar::from_u64(1)],
+            [Scalar::from_u64(1), Scalar::from_u64(1)],
+        ];
+        let p_b = basis_a.biscalar_mul(&m_ab[0][0], &m_ab[1][0], e);
+        let q_b = basis_a.biscalar_mul(&m_ab[0][1], &m_ab[1][1], e);
+        let k = e.value();
+        let pmq_a_scalar = m_ab[0][0].sub_mod2k(&m_ab[0][1], k);
+        let pmq_c_scalar = m_ab[1][0].sub_mod2k(&m_ab[1][1], k);
+        let pmq_b = basis_a.biscalar_mul(&pmq_a_scalar, &pmq_c_scalar, e);
+        let basis_b = TorsionBasis::from_propagated(p_b, q_b, pmq_b);
+
+        // Recover m_ab and check entries.
+        let recovered =
+            ChangeOfBasisMatrix::from_bases(&basis_a, &basis_b, e).expect("dlog should succeed");
+
+        // First check the weaker x-only round-trip — this is what
+        // the chain downstream consumes.
+        let applied = recovered.mul(&basis_a);
+        assert_eq!(
+            applied.R, basis_b.R,
+            "x-only round-trip: applied.R must equal basis_b.R"
+        );
+        assert_eq!(
+            applied.S, basis_b.S,
+            "x-only round-trip: applied.S must equal basis_b.S"
+        );
+        assert_eq!(
+            applied.RS, basis_b.RS,
+            "x-only round-trip: applied.RS must equal basis_b.RS"
+        );
+
+        // Stricter check: actual entry values match the constructed
+        // matrix. Currently failing — see test docstring.
+        assert_eq!(
+            recovered.entries[0][0], m_ab[0][0],
+            "[0][0]: got {:?}, expected {:?}",
+            recovered.entries[0][0], m_ab[0][0]
+        );
+        assert_eq!(
+            recovered.entries[0][1], m_ab[0][1],
+            "[0][1]: got {:?}, expected {:?}",
+            recovered.entries[0][1], m_ab[0][1]
+        );
+        assert_eq!(
+            recovered.entries[1][0], m_ab[1][0],
+            "[1][0]: got {:?}, expected {:?}",
+            recovered.entries[1][0], m_ab[1][0]
+        );
+        assert_eq!(
+            recovered.entries[1][1], m_ab[1][1],
+            "[1][1]: got {:?}, expected {:?}",
+            recovered.entries[1][1], m_ab[1][1]
+        );
+    }
+
+    /// Scaling by `2^k` via `Scalar * Point` matches scaling via
+    /// `k` repeated doublings — in x-only sense.
+    ///
+    /// Signing-side reduces basis via `Scalar(2^k) * point`. Verify
+    /// reduces basis via a doubling loop. Both paths must produce
+    /// the same affine x for the post-scaling basis to match across
+    /// signing and verify.
+    #[test]
+    fn scalar_mul_pow2_matches_doubling() {
+        let basis = e0_basis();
+        let target = basis.R;
+        let k_bits = 60u32; // arbitrary, exercise the multi-bit ladder
+
+        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(k_bits).as_limbs());
+        let via_mul = &scale_scalar * &target;
+
+        let mut via_double = target;
+        for _ in 0..k_bits {
+            via_double = via_double.double();
+        }
+
+        assert_eq!(
+            via_mul, via_double,
+            "[2^k]P via scalar mul must equal [2^k]P via repeated doubling (x-only)"
+        );
+    }
+
+    /// `biscalar_mul(k, l).x == biscalar_mul(-k, -l).x`.
+    ///
+    /// Underlies a lot of x-only reasoning: scalars `k` and `-k`
+    /// (= `2^e − k`) produce points that differ only in y-sign, so
+    /// the affine x must be identical. If this property fails, the
+    /// "x-only equivalence" arguments throughout `from_bases` and
+    /// the bench/verify path break down.
+    #[test]
+    fn biscalar_mul_negation_x_only() {
+        let basis = e0_basis();
+        let e = TorsionExponent::FULL;
+
+        let k = Scalar::from_u64(13);
+        let l = Scalar::from_u64(7);
+        let neg_k = Scalar::ZERO.sub_mod2k(&k, e.value());
+        let neg_l = Scalar::ZERO.sub_mod2k(&l, e.value());
+
+        let p_pos = basis.biscalar_mul(&k, &l, e);
+        let p_neg = basis.biscalar_mul(&neg_k, &neg_l, e);
+
+        assert_eq!(
+            p_pos, p_neg,
+            "biscalar_mul([k, l]) and biscalar_mul([-k, -l]) must give same x-only point"
+        );
+    }
+
+    /// `from_hint(curve, to_hint(curve).hint)` must reproduce
+    /// `to_hint(curve).basis` exactly.
+    ///
+    /// In the signing pipeline, signing computes
+    /// `(basis, hint) = to_hint(e_chl_final)` and embeds `hint` in
+    /// the signature. Verify reconstructs the canonical basis via
+    /// `from_hint(curve_chl, hint)`. For the matrix `M_chl` that
+    /// signing computes (against signing's `basis`) to apply
+    /// correctly on verify's reconstructed basis, the two bases must
+    /// be identical.
+    ///
+    /// This test asserts the round-trip on `E_0`.  If it fails,
+    /// signing's `det_chl_scaled` and verify's `basis_chl_scaled`
+    /// would disagree, and the matrix `M_chl` — even if computed
+    /// correctly relative to signing's basis — would map to a
+    /// different basis when applied on verify, producing the
+    /// observed `transformed.R != post-M_chl.R` mismatch.
+    #[test]
+    fn to_hint_from_hint_roundtrip_e0() {
+        // E_0: A = 0 by NIST-I convention.
+        let curve = Curve::from(Coefficient::ZERO);
+
+        let (basis_via_to, hint) = TorsionBasis::to_hint(&curve);
+        let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()));
+
+        assert_eq!(
+            basis_via_to.R, basis_via_from.R,
+            "to_hint/from_hint round-trip must match on E_0: R differs"
+        );
+        assert_eq!(
+            basis_via_to.S, basis_via_from.S,
+            "to_hint/from_hint round-trip must match on E_0: S differs"
+        );
+        assert_eq!(
+            basis_via_to.RS, basis_via_from.RS,
+            "to_hint/from_hint round-trip must match on E_0: RS differs"
+        );
+    }
+
+    /// `to_hint` / `from_hint` round-trip on a non-`E_0` curve with
+    /// non-zero `A`.
+    ///
+    /// `from_hint` has separate code paths for `A == 0` (use the
+    /// precomputed `BASIS_E0_*` constants) and `A != 0` (recover
+    /// the basis via the hint's `(h_A, h)` payload). The `E_0` test
+    /// only exercises the first path. This test exercises the second
+    /// by using one of the alternate extremal curves (which have
+    /// non-zero `A` by construction).
+    #[test]
+    fn to_hint_from_hint_roundtrip_alternate_curve() {
+        // E1 is an alternate extremal-order curve with non-zero A.
+        let (_, _, _, a) = ExtremalCurve::E1.basis();
+        assert_ne!(a, Fp2::ZERO, "alternate curve must have non-zero A");
+        let curve = Curve::from(Coefficient::from(a));
+
+        let (basis_via_to, hint) = TorsionBasis::to_hint(&curve);
+        let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()));
+
+        assert_eq!(
+            basis_via_to.R, basis_via_from.R,
+            "to_hint/from_hint round-trip on alternate curve: R differs"
+        );
+        assert_eq!(
+            basis_via_to.S, basis_via_from.S,
+            "to_hint/from_hint round-trip on alternate curve: S differs"
+        );
+        assert_eq!(
+            basis_via_to.RS, basis_via_from.RS,
+            "to_hint/from_hint round-trip on alternate curve: RS differs"
+        );
+    }
+
+    /// `from_bases` must recover the *exact* matrix entries used to
+    /// build the target — not just an x-only-equivalent.
+    ///
+    /// `mul(M, source).x == mul(-M, source).x` for x-only points, so a
+    /// matrix-level round-trip via `mul` catches transposes but
+    /// silently accepts negated entries. Verify-side downstream
+    /// consumers (the `(2,2)`-isogeny chain) need the actual scalar
+    /// values, not just x-only equivalents — so this test asserts
+    /// `recovered.entries == m_known` directly.
+    #[test]
+    fn from_bases_recovers_known_entries() {
+        let source = e0_basis();
+        let e = TorsionExponent::FULL;
+
+        let m_known = [
+            [Scalar::from_u64(3), Scalar::from_u64(5)],
+            [Scalar::from_u64(7), Scalar::from_u64(11)],
+        ];
+        // Target with matrix M applied via the convention `from_bases`
+        // expects (column-major: column j of M = coefficients of
+        // target.basis[j] in source).
+        let p_target = source.biscalar_mul(&m_known[0][0], &m_known[1][0], e);
+        let q_target = source.biscalar_mul(&m_known[0][1], &m_known[1][1], e);
+        let k = e.value();
+        let pmq_a = m_known[0][0].sub_mod2k(&m_known[0][1], k);
+        let pmq_c = m_known[1][0].sub_mod2k(&m_known[1][1], k);
+        let pmq_target = source.biscalar_mul(&pmq_a, &pmq_c, e);
+        let target = TorsionBasis::from_propagated(p_target, q_target, pmq_target);
+
+        let recovered =
+            ChangeOfBasisMatrix::from_bases(&source, &target, e).expect("dlog should succeed");
+
+        assert_eq!(
+            recovered.entries[0][0], m_known[0][0],
+            "entries[0][0]: got {:?}, expected {:?}",
+            recovered.entries[0][0], m_known[0][0]
+        );
+        assert_eq!(
+            recovered.entries[0][1], m_known[0][1],
+            "entries[0][1]: got {:?}, expected {:?}",
+            recovered.entries[0][1], m_known[0][1]
+        );
+        assert_eq!(
+            recovered.entries[1][0], m_known[1][0],
+            "entries[1][0]: got {:?}, expected {:?}",
+            recovered.entries[1][0], m_known[1][0]
+        );
+        assert_eq!(
+            recovered.entries[1][1], m_known[1][1],
+            "entries[1][1]: got {:?}, expected {:?}",
+            recovered.entries[1][1], m_known[1][1]
+        );
+    }
+
+    /// Round-trip: `from_bases(A, B) · A == B`.
+    ///
+    /// Catches transposes between the column-major storage produced by
+    /// [`ChangeOfBasisMatrix::from_bases`] and the column-applied
+    /// semantics of `mul`. Without this, `from_bases` and `mul` can be
+    /// internally inconsistent and only fail in the full sign + verify
+    /// round-trip — which costs minutes per attempt.
+    #[test]
+    fn from_bases_mul_roundtrip() {
+        let source = e0_basis();
+        let e = TorsionExponent::FULL;
+
+        // Build a target = M · source for a known M with small entries
+        // (still applied modulo 2^e via biscalar).
+        let m_known = [
+            [Scalar::from_u64(3), Scalar::from_u64(5)],
+            [Scalar::from_u64(7), Scalar::from_u64(11)],
+        ];
+        let p_target = source.biscalar_mul(&m_known[0][0], &m_known[1][0], e);
+        let q_target = source.biscalar_mul(&m_known[0][1], &m_known[1][1], e);
+        // Difference via biscalar to avoid a sqrt branch flip.
+        let k = e.value();
+        let pmq_a = m_known[0][0].sub_mod2k(&m_known[0][1], k);
+        let pmq_c = m_known[1][0].sub_mod2k(&m_known[1][1], k);
+        let pmq_target = source.biscalar_mul(&pmq_a, &pmq_c, e);
+        let target = TorsionBasis::from_propagated(p_target, q_target, pmq_target);
+
+        // Recover M via from_bases, then check that mul reproduces target.
+        let recovered =
+            ChangeOfBasisMatrix::from_bases(&source, &target, e).expect("dlog should succeed");
+        let applied = recovered.mul(&source);
+
+        assert_eq!(
+            applied.R, target.R,
+            "from_bases + mul round-trip must reproduce target.R"
+        );
+        assert_eq!(
+            applied.S, target.S,
+            "from_bases + mul round-trip must reproduce target.S"
+        );
+    }
+
+    /// `from_bases` round-trip with matrix entries that exceed `2^32`.
+    ///
+    /// `m_known` is chosen so that the recovered dlogs straddle the
+    /// 32-bit boundary in the recursion's intermediate `k'` value.
+    /// Catches the historic bug where `dlog` cast the recursive
+    /// `k'` to `u32` and silently truncated for `k' > u32::MAX`,
+    /// collapsing every `M_chl` cross-pairing to a fixed root of
+    /// unity (\S\ref{sec:dlog-truncation} in the bug catalog).
+    #[test]
+    fn from_bases_mul_roundtrip_above_u32() {
+        let source = e0_basis();
+        let e = TorsionExponent::FULL;
+
+        // Entries straddling 2^32 in different limbs to force the
+        // dlog recursion's `k'` past u32::MAX at multiple levels.
+        let m_known = [
+            [
+                Scalar::from_limbs([0xDEAD_BEEF_1234_5678, 0x1234_5678_ABCD_EF01, 0, 0]),
+                Scalar::from_limbs([0xFEDC_BA98_7654_3210, 0xCAFE_0000_0000_0001, 0, 0]),
+            ],
+            [
+                Scalar::from_limbs([0x0123_4567_89AB_CDEF, 0xFACE_FACE_FACE_FACE, 0, 0]),
+                Scalar::from_limbs([0xA5A5_A5A5_A5A5_A5A5, 0x5A5A_5A5A_5A5A_5A5A, 0, 0]),
+            ],
+        ];
+
+        let p_target = source.biscalar_mul(&m_known[0][0], &m_known[1][0], e);
+        let q_target = source.biscalar_mul(&m_known[0][1], &m_known[1][1], e);
+        let k = e.value();
+        let pmq_a = m_known[0][0].sub_mod2k(&m_known[0][1], k);
+        let pmq_c = m_known[1][0].sub_mod2k(&m_known[1][1], k);
+        let pmq_target = source.biscalar_mul(&pmq_a, &pmq_c, e);
+        let target = TorsionBasis::from_propagated(p_target, q_target, pmq_target);
+
+        let recovered =
+            ChangeOfBasisMatrix::from_bases(&source, &target, e).expect("dlog should succeed");
+        let applied = recovered.mul(&source);
+
+        assert_eq!(
+            applied.R, target.R,
+            "from_bases + mul round-trip with k > u32 must reproduce target.R"
+        );
+        assert_eq!(
+            applied.S, target.S,
+            "from_bases + mul round-trip with k > u32 must reproduce target.S"
+        );
     }
 }

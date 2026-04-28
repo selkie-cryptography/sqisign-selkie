@@ -273,9 +273,34 @@ impl From<(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> for TorsionBasis {
 }
 
 impl TorsionBasis {
-    /// Construct a basis from pre-propagated components (R, S, R−S).
+    /// Construct a basis from pre-propagated components.
     ///
-    /// `rs` must have been obtained from one of:
+    /// # Slot convention
+    ///
+    /// We use the C reference's shuffled layout
+    /// `(R, S, RS) = (P, P − Q, Q)` — *not* the naïve
+    /// `(P, Q, P − Q)` the spec's pseudocode suggests. Every
+    /// caller of this constructor passes points in the
+    /// shuffled order, so that `LadderBiscalar` reads
+    /// `(R, S, RS)` as `(P, Q, PmQ)` *internally* and ends up
+    /// computing `[m]P + [n](P − Q)` rather than `[m]P + [n]Q`.
+    /// The matrix `M_chl` recorded in the signature is encoded in
+    /// this same shuffled frame, so signing and verify must agree.
+    ///
+    /// Concretely:
+    /// - `R` slot: `P`
+    /// - `S` slot: `P − Q` (the difference)
+    /// - `RS` slot: `Q` (despite the name)
+    ///
+    /// [`from_hint`](Self::from_hint) and [`to_hint`](Self::to_hint)
+    /// already produce bases in this layout. New callers must match
+    /// it, otherwise `LadderBiscalar` and `from_bases` operate in a
+    /// different frame and the resulting `M_chl` will collapse the
+    /// basis when verify applies it.
+    ///
+    /// # Provenance of `RS`
+    ///
+    /// `RS` must have been obtained from one of:
     /// - a precomputed constant (e.g., `BASIS_E0_PMQ_X`)
     /// - propagation through a group homomorphism alongside R and S (scalar
     ///   multiplication, isogeny evaluation, doubling)
@@ -750,14 +775,29 @@ impl TorsionBasis {
 
 /// A 2×2 change-of-basis matrix over Z/2^e Z.
 ///
-/// Represents the matrix M such that M · (P₁, P₂)ᵀ = (Q₁, Q₂)ᵀ,
-/// i.e., Q₁ = [x₁]P₁ + [x₂]P₂ and Q₂ = [x₃]P₁ + [x₄]P₂.
-/// The entries are reduced mod 2^e where `e` is the torsion exponent.
+/// Encodes the relationship `Q₁ = [x₁]P₁ + [x₂]P₂`,
+/// `Q₂ = [x₃]P₁ + [x₄]P₂`. Entries are reduced mod 2^e where `e`
+/// is the torsion exponent.
+///
+/// # Storage
+///
+/// **Column-major**, matching the C reference:
+/// - `entries[0][0] = x₁`, `entries[1][0] = x₂` (column 0 = coeffs of Q₁)
+/// - `entries[0][1] = x₃`, `entries[1][1] = x₄` (column 1 = coeffs of Q₂)
+///
+/// `entries[i][j]` is the coefficient of source basis element `i` in
+/// target basis element `j`. The wire format writes the four entries
+/// in row-major byte order — `[0][0], [0][1], [1][0], [1][1]` — which
+/// is what both this implementation and the C reference produce.
 ///
 /// No `PartialEq`/`Eq`: M_sk in the signing key is secret.
 #[derive(Copy, Clone, Debug)]
 pub struct ChangeOfBasisMatrix {
-    /// Matrix entries as Scalars: [[x₁, x₂], [x₃, x₄]].
+    /// Column-major matrix entries.
+    ///
+    /// `entries[i][j]` = coefficient of source basis element `i`
+    /// in target basis element `j`. Column 0 yields target.P,
+    /// column 1 yields target.Q when applied via `mul`.
     pub entries: [[Scalar; 2]; 2],
     /// Torsion exponent: entries are reduced mod 2^e.
     pub e: TorsionExponent,
@@ -767,9 +807,22 @@ impl ChangeOfBasisMatrix {
     /// Compute the change-of-basis matrix from a full basis (P₁, P₂) of
     /// E[2^f] to a target basis (Q₁, Q₂) of E[2^e].
     ///
-    /// Returns the matrix (x₁, x₂, x₃, x₄) such that:
+    /// The relationship encoded is:
     ///   Q₁ = [x₁]P₁ + [x₂]P₂
     ///   Q₂ = [x₃]P₁ + [x₄]P₂
+    ///
+    /// # Storage
+    ///
+    /// Entries are stored **column-major**, matching the C reference:
+    ///   `entries[i][j]` = coefficient of `source.basis[i]` in
+    ///   `target.basis[j]`.
+    ///
+    /// Concretely, with the (x₁, x₂, x₃, x₄) above:
+    /// - `entries[0][0] = x₁`, `entries[1][0] = x₂` (column 0 = coeffs of Q₁)
+    /// - `entries[0][1] = x₃`, `entries[1][1] = x₄` (column 1 = coeffs of Q₂)
+    ///
+    /// `mul` consumes this layout by applying columns: column 0 yields
+    /// the new first basis element, column 1 yields the new second.
     ///
     /// Implements [ChangeOfBasis][Alg. 2.5] ([Alg. 2.5][Alg. 2.5]).
     ///
@@ -784,51 +837,57 @@ impl ChangeOfBasisMatrix {
         e: TorsionExponent,
     ) -> Option<Self> {
         let curve = full_basis.R.curve();
-        let f = TorsionExponent::FULL;
 
         // Lift both bases to Jacobian for deterministic cross-sum computation.
         let (p1_jac, p2_jac) = full_basis.lift(curve)?;
         let (q1_jac, q2_jac) = target_basis.lift(curve)?;
 
         // Compute cross-sum x-coordinates via Jacobian arithmetic.
+        // We use SUM throughout: ζ pairs `(P₁, P₂)` with third arg
+        // `x(P₁ + P₂)`, and each cross pairing pairs
+        // `(target_i, full_j)` with third arg
+        // `x(target_i + full_j)`. Mixing SUM and DIFFERENCE conventions
+        // silently negates every recovered dlog.
         let (q1_plus_p2, _) = q1_jac.x_add_sub(&p2_jac);
         let (q1_plus_p1, _) = q1_jac.x_add_sub(&p1_jac);
         let (q2_plus_p2, _) = q2_jac.x_add_sub(&p2_jac);
         let (q2_plus_p1, _) = q2_jac.x_add_sub(&p1_jac);
+        let (p1_plus_p2, _) = p1_jac.x_add_sub(&p2_jac);
 
-        // Step 1: ζ ← t_{2^e}(P₁, P₂)
-        let zeta = tate_pairing(&full_basis.R, &full_basis.S, &full_basis.RS, e);
+        // Step 1: ζ ← t_{2^e}(P₁, P₂) — SUM third-arg convention.
+        let zeta = tate_pairing(&full_basis.R, &full_basis.S, &p1_plus_p2, e);
 
-        // Step 2: Compute the four cross-pairings.
+        // Step 2: Compute the four cross-pairings — SUM form throughout.
         let zeta1 = tate_pairing(&target_basis.R, &full_basis.S, &q1_plus_p2, e);
         let zeta2 = RootOfUnity::ONE / tate_pairing(&target_basis.R, &full_basis.R, &q1_plus_p1, e);
         let zeta3 = tate_pairing(&target_basis.S, &full_basis.S, &q2_plus_p2, e);
         let zeta4 = RootOfUnity::ONE / tate_pairing(&target_basis.S, &full_basis.R, &q2_plus_p1, e);
 
-        // Step 3-4: x_i ← 2^{f-e} · log_ζ(ζ_i)
+        // Steps 3-4 of Alg. 2.5: x_i ← log_ζ(ζ_i).
+        //
+        // # Divergence from spec
+        //
+        // The spec returns `2^{f-e} · log_ζ(ζ_i)`, scaled up to a
+        // 2^f-precision value, intended for application against a
+        // full-torsion basis. Our (and the C reference's) callers
+        // first reduce both bases to order 2^e via doublings, then
+        // apply this matrix to that reduced basis. The 2^{f-e} factor
+        // is wrong for that usage — it places the dlog bits above the
+        // 2^e window the wire encoding writes (16 bytes = 128 bits)
+        // and verify multiplies by zero. We follow the C reference's
+        // `_change_of_basis_matrix_tate`, which stores raw dlogs.
+        //
         let k1 = zeta.dlog(&zeta1, e);
         let k2 = zeta.dlog(&zeta2, e);
         let k3 = zeta.dlog(&zeta3, e);
         let k4 = zeta.dlog(&zeta4, e);
 
-        // Scale by 2^{f-e}: shift left by (f - e) bits.
-        let shift = f.value() - e.value();
-        let x1 = BigInt::<4>::from(k1).shl(shift);
-        let x2 = BigInt::<4>::from(k2).shl(shift);
-        let x3 = BigInt::<4>::from(k3).shl(shift);
-        let x4 = BigInt::<4>::from(k4).shl(shift);
-
+        // Column-major storage matching the C reference:
+        // column 0 = coeffs of target.P, column 1 = coeffs of target.Q.
+        // This pairs with `mul`, which applies columns to produce
+        // (target.P, target.Q) = (col0 · source, col1 · source).
         Some(Self {
-            entries: [
-                [
-                    Scalar::from_limbs(*x1.as_limbs()),
-                    Scalar::from_limbs(*x2.as_limbs()),
-                ],
-                [
-                    Scalar::from_limbs(*x3.as_limbs()),
-                    Scalar::from_limbs(*x4.as_limbs()),
-                ],
-            ],
+            entries: [[k1, k3], [k2, k4]],
             e,
         })
     }

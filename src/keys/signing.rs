@@ -16,6 +16,8 @@ use zeroize::ZeroizeOnDrop;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+use crate::fields::fp2::Fp2;
 use crate::{
     curves::{
         AuxiliaryHint, BasisHint, ChallengeHint, ChangeOfBasisMatrix, TorsionBasis,
@@ -1149,10 +1151,13 @@ impl SigningKey {
 
                 #[cfg(test)]
                 {
-                    let fp2_short = |v: &crate::fields::fp2::Fp2| -> String {
+                    let fp2_short = |v: &Fp2| -> String {
                         let bytes = v.to_bytes();
-                        let r: String =
-                            bytes[..8].iter().rev().map(|b| format!("{:02x}", b)).collect();
+                        let r: String = bytes[..8]
+                            .iter()
+                            .rev()
+                            .map(|b| format!("{:02x}", b))
+                            .collect();
                         format!("0x{r}")
                     };
                     let aff = |p: &ProjectiveXOnlyPoint| -> String {
@@ -1261,9 +1266,17 @@ impl SigningKey {
             let (det_aux, hint_aux_raw) = TorsionBasis::to_hint(&curve_aux);
             let (det_chl, hint_chl_raw) = TorsionBasis::to_hint(&e_chl_final);
 
-            let e_cob = TorsionExponent::try_from(e_rsp_prime + r_rsp_val)
+            // Matrix exponent: e_rsp' + r_rsp + 2 (HD extra torsion).
+            //
+            // The scaled bases have order 2^(e_rsp' + r_rsp + 2).
+            // The dlog and matrix entries must use the same exponent so
+            // that the recovered scalars carry the full precision of
+            // the basis. With only e_rsp' + r_rsp bits, the matrix
+            // entries lose the top 2 bits and verification produces a
+            // basis off by a 2^(e_rsp' + r_rsp) multiple.
+            let e_cob = TorsionExponent::try_from(e_rsp_prime + r_rsp_val + 2)
                 .map_err(|_| SignatureError::SigningFailed)?;
-            let scale = f - e_cob.value() - 2;
+            let scale = f - e_cob.value();
             let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
 
             let det_aux_scaled = TorsionBasis::from_propagated(
@@ -1299,15 +1312,17 @@ impl SigningKey {
 
             #[cfg(test)]
             {
-                let fp2_short = |v: &crate::fields::fp2::Fp2| -> String {
+                let fp2_short = |v: &Fp2| -> String {
                     let bytes = v.to_bytes();
-                    let r: String =
-                        bytes[..8].iter().rev().map(|b| format!("{:02x}", b)).collect();
+                    let r: String = bytes[..8]
+                        .iter()
+                        .rev()
+                        .map(|b| format!("{:02x}", b))
+                        .collect();
                     format!("0x{r}")
                 };
-                let aff = |p: &ProjectiveXOnlyPoint| -> String {
-                    fp2_short(&(&p.X * &p.Z.invert()))
-                };
+                let aff =
+                    |p: &ProjectiveXOnlyPoint| -> String { fp2_short(&(&p.X * &p.Z.invert())) };
                 eprintln!(
                     "[sign {_iter}] basis_chl: R={}, S={}, RS={}, R==S={}",
                     aff(&basis_chl.R),
@@ -1332,6 +1347,44 @@ impl SigningKey {
                     continue;
                 }
             };
+
+            #[cfg(test)]
+            {
+                let dump = |s: &Scalar| -> String {
+                    let l = s.as_limbs();
+                    format!("{:016x}_{:016x}_{:016x}_{:016x}", l[3], l[2], l[1], l[0])
+                };
+                let fp2_short = |v: &Fp2| -> String {
+                    let bytes = v.to_bytes();
+                    let r: String = bytes[..8]
+                        .iter()
+                        .rev()
+                        .map(|b| format!("{:02x}", b))
+                        .collect();
+                    format!("0x{r}")
+                };
+                let aff =
+                    |p: &ProjectiveXOnlyPoint| -> String { fp2_short(&(&p.X * &p.Z.invert())) };
+                eprintln!(
+                    "[sign {_iter}] j(e_chl_final)={} hint_chl_raw={:08b}",
+                    fp2_short(&e_chl_final.j_invariant()),
+                    hint_chl_raw.to_byte(),
+                );
+                eprintln!(
+                    "[sign {_iter}] det_chl_scaled: R={}, S={}, RS={}",
+                    aff(&det_chl_scaled.R),
+                    aff(&det_chl_scaled.S),
+                    aff(&det_chl_scaled.RS),
+                );
+                eprintln!(
+                    "[sign {_iter}] m_chl e={} entries: [00]={} [01]={} [10]={} [11]={}",
+                    m_chl.e.value(),
+                    dump(&m_chl.entries[0][0]),
+                    dump(&m_chl.entries[0][1]),
+                    dump(&m_chl.entries[1][0]),
+                    dump(&m_chl.entries[1][1]),
+                );
+            }
 
             // Line 38: assemble signature.
             let hint_aux = AuxiliaryHint::from(hint_aux_raw.to_byte());

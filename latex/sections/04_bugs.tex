@@ -99,11 +99,308 @@ This means the three-point ladder computes $P + [m](P-Q)$, not
 $P + [m]Q$.  The swap ensures the multiplied point avoids $(0,0)$
 for differential addition.  This is not documented in the spec.
 
-\noindent
-\textbf{Advice for implementers:} Undocumented conventions in reference code can look
-like bugs in your own code.  Verify against the reference before
-``fixing'' something that isn't broken.
+\paragraph{The convention is load-bearing through $M_{\mathrm{chl}}$.}
+The shuffled layout is not local to
+\textsc{TorsionBasisFromHint}.  Every site that consumes a basis
+through \textsc{LadderBiscalar}~--- including signing's
+\textsc{SetChangeOfBasisMatrix} (\algo{4.8}) and verify's
+$(P, Q) \leftarrow M_{\mathrm{chl}} \cdot (P_{\mathrm{can}},
+Q_{\mathrm{can}})$ (\algo{4.9}, line~14)~--- reads the triple as
+$(P, P{-}Q, Q)$.  The matrix $M_{\mathrm{chl}}$ is therefore encoded
+in the $(P, P{-}Q)$ frame, not in the spec's nominal $(P, Q)$ frame.
 
+If signing builds the bases that feed
+\textsc{SetChangeOfBasisMatrix} with the naïve $(P, Q, P{-}Q)$
+layout, the byte-level signature parses, verify runs, and the
+matrix application produces a singular pair on the codomain ---
+in our debugging both rows of the resulting basis on $E_{\mathrm{chl}}$
+ended up as the same point on the curve, bit-for-bit.  The
+$(2,2)$-chain in \algo{4.9} either crashes inside
+\textsc{lift\_basis} (the lift expects three non-degenerate
+projective representatives) or completes with
+$\#\{i, j : U_{i, j}(0) = 0\} = 0$, and verify rejects.  Without
+intermediate diagnostics it looks like ``the chain is just wrong''
+rather than a basis-layout mismatch.
+
+We hit this when end-to-end signing first started producing a
+signature: the verify-side $P_{\mathrm{chl}}$ and $Q_{\mathrm{chl}}$
+differed only at the layout level.  Switching the signing-side
+\texttt{basis\_aux} and \texttt{basis\_chl} construction from
+\texttt{from\_propagated(P, Q, PmQ)} to
+\texttt{from\_propagated(P, PmQ, Q)} aligned the convention and
+let verify accept our own signatures.
+
+\noindent
+\textbf{Advice for implementers:} Undocumented conventions in
+reference code can look like bugs in your own code.  Verify against
+the reference before ``fixing'' something that isn't broken --- and
+in particular, check that the convention is uniform from
+\textsc{TorsionBasisFromHint} all the way through the
+$M_{\mathrm{chl}}$ encoding and decoding pipeline.
+
+
+\subsection{Matrix storage transpose in \textsc{ChangeOfBasis}}
+\label{sec:matrix-transpose}
+
+\algo{2.5} (\textsc{ChangeOfBasis}) returns four scalars
+$x_1, x_2, x_3, x_4$ satisfying
+\[
+Q_1 = [x_1] P_1 + [x_2] P_2, \qquad Q_2 = [x_3] P_1 + [x_4] P_2,
+\]
+and packs them into a $2 \times 2$ matrix.  The spec does not say
+which of two natural layouts is on the wire:
+\[
+M_{\mathrm{row}} = \begin{pmatrix} x_1 & x_2 \\ x_3 & x_4 \end{pmatrix}
+\quad\text{vs.}\quad
+M_{\mathrm{col}} = \begin{pmatrix} x_1 & x_3 \\ x_2 & x_4 \end{pmatrix}.
+\]
+The C reference uses $M_{\mathrm{col}}$.
+\texttt{change\_of\_basis\_matrix\_tate} stores
+\texttt{mat[0][0]=x1, mat[1][0]=x2, mat[0][1]=x3, mat[1][1]=x4}, so
+column~0 is the coordinates of $Q_1$ in the $(P_1, P_2)$ basis and
+column~1 is the coordinates of $Q_2$.
+\texttt{matrix\_application\_even\_basis} consumes this layout by
+columns:
+\texttt{bas$\rightarrow$P = [mat[0][0]] P + [mat[1][0]] Q}
+(column~0 yields the new first basis point).
+
+We initially stored the matrix in $M_{\mathrm{row}}$ form.  This was
+not detectable from KAT verification alone~--- KAT signatures arrive
+on the wire already in the C-ref layout, our \texttt{from\_bytes}
+deposits the four scalars into the same four positions, and our
+\texttt{mul} reads columns just like the C ref.  So consuming
+externally-produced matrices worked.
+
+The defect manifested only when our own signing code produced
+$M_{\mathrm{chl}}$.  \texttt{from\_bases} writes the row-major
+convention, \texttt{to\_bytes} serialises the entries in
+positional order, and the resulting wire bytes encode
+$M_{\mathrm{chl}}^T$ rather than $M_{\mathrm{chl}}$.  Verify on our
+own signatures (or any other implementation reading the wire) then
+applies the transposed matrix to the canonical basis on the
+challenge codomain.  The points it gets are not garbage~--- they are
+$([x_1] P + [x_3] Q,\, [x_2] P + [x_4] Q)$, i.e., the application of
+$M^T$~--- so the $(2,2)$-chain proceeds, the curve arithmetic does
+not crash, and verify rejects with no useful signal.
+
+The same bug exists in $M_{\mathrm{sk}}$ inside \algo{4.1}
+(\textsc{KeyGen}) because key generation goes through the same
+\textsc{ChangeOfBasis} call.  KAT secret keys parse correctly
+because we read them by position; new keys we generate ourselves
+would carry transposed $M_{\mathrm{sk}}$ and refuse to round-trip
+through any spec-faithful verifier.
+
+\paragraph{Catching this earlier.}  A four-line unit test
+\texttt{from\_bases\_mul\_roundtrip}~--- ``construct a target as
+$M \cdot \mathrm{source}$ for a known $M$ with small entries, run
+\texttt{from\_bases} to recover $M'$, check that $\texttt{mul}(M',
+\mathrm{source})$ equals the target''~--- catches it instantly,
+without going anywhere near the response phase.  We did not have
+this test.  Sign~+~verify is a 600-second feedback loop; the
+roundtrip test runs in milliseconds and would have isolated the
+defect to one function.
+
+\paragraph{Advice for implementers.}  When the spec specifies a
+matrix as four scalars and a row of pseudocode, write a regression
+test that fixes a known matrix, runs your basis construction +
+matrix recovery + matrix application, and asserts equality.
+Otherwise the only signal you get is from a slow, end-to-end test
+that fails for many reasons at once, and it takes a careful read of
+both \texttt{change\_of\_basis\_matrix\_tate} and
+\texttt{matrix\_application\_even\_basis} in the C reference to
+notice that one stores by columns and the other reads by columns.
+
+\subsection{Spec's $2^{f-e}$ matrix scaling is wrong for reduced bases}
+\label{sec:matrix-shift}
+
+\algo{2.5} step~4 specifies that the returned matrix entries are
+\[
+x_i \leftarrow 2^{f-e} \cdot \log_{\zeta}(\zeta_i),
+\]
+i.e., the $e$-bit discrete log scaled up to a $2^f$-precision value.
+The intent is that the matrix can be applied directly to a full
+$2^f$-torsion basis: applying $x_i \in [0, 2^f)$ via biscalar
+multiplication recovers the corresponding $2^e$-torsion linear
+combination after the inherent $2^{f-e}$ scaling of the basis.
+
+In practice (and in the C reference), \algo{4.8} reduces both bases
+to order $2^e$ via doublings \emph{before} computing the matrix.
+Once the bases are reduced, the $2^{f-e}$ scaling is wrong:
+applying an $f$-bit-shifted entry to a $2^e$-torsion point produces
+a value whose useful bits live above the wire encoding's window.
+
+The wire encoding stores $\lceil e/8 \rceil$ bytes per entry
+(\S4.6).  After the spec's shift, those low $\lceil e/8 \rceil$
+bytes are mostly zero ($f - e$ bits of leading zero from the shift),
+with only a few bits of the actual dlog spilling into the encoded
+range.  Verify reads near-zero entries, applies them as scalars,
+and gets a near-zero output basis.  The downstream $(2,2)$-chain
+then fails with a fully-degenerate theta null
+(\texttt{splitting: zeros=10}).
+
+The C reference's \texttt{\_change\_of\_basis\_matrix\_tate}
+omits the spec's $2^{f-e}$ scaling and stores the raw dlog values.
+This is undocumented but necessary for the wire format to work.
+
+\paragraph{Advice for implementers.}  Read \algo{4.8}, observe the
+basis reduction, and treat \algo{2.5}'s step~4 scaling as
+informational — applicable only if you skip the reduction.  If you
+follow the spec literally, your matrix entries are silently zero
+on the wire and verification fails with no useful diagnostic
+(the chain reaches its terminal step with all-zero theta null).
+A unit test that fixes a known reduced-basis pair and asserts
+the round-trip catches this in milliseconds; the end-to-end test
+takes ten minutes and fails for many reasons at once.
+
+\subsection{Matrix exponent missing $\texttt{HD\_extra\_torsion}$}
+\label{sec:matrix-exponent}
+
+\algo{4.8} computes the change-of-basis matrix at exponent $e$
+where the bases have been pre-reduced to order $2^e$.  The exact
+value of $e$ matters: dlog precision is $e$ bits, so an
+under-specified $e$ silently truncates the high bits of every
+matrix entry.
+
+We initially used $e = e_{\mathrm{rsp}}' + r_{\mathrm{rsp}}$ (line 13
+of \algo{4.8}'s scaling step in the spec), missing the
+\texttt{HD\_extra\_torsion} = 2 bits required by the dim-2 chain
+that follows in \algo{4.9}.  The C reference uses $e =
+\texttt{pow\_dim2\_deg\_resp} + \texttt{HD\_extra\_torsion} +
+\texttt{two\_resp\_length} = e_{\mathrm{rsp}}' + r_{\mathrm{rsp}} + 2$
+for both basis reduction and matrix computation, so its dlog has
+the full precision the chain needs.
+
+The spec's \algo{4.8} is silent on this $+2$.  The bases that
+arrive at \algo{4.8} (from \algo{4.5}, \textsc{SplitAuxiliaryIsogeny})
+do carry the extra two bits; the spec just doesn't tell you to
+preserve them through the matrix.  Without preservation, verify
+applies the matrix and gets a basis that's correct mod
+$2^{e_{\mathrm{rsp}}' + r_{\mathrm{rsp}}}$ but wrong in the high
+two bits — the same two bits the chain will consume for
+\texttt{HD\_extra\_torsion}.  Symptoms: chain runs for a few steps
+then collapses to all-zero theta nulls.
+
+\paragraph{Advice for implementers.}  When the spec gives an
+exponent for matrix arithmetic, cross-reference what bits the
+downstream consumer needs.  If \algo{4.9}'s $(2,2)$-chain needs
+$2^{e_{\mathrm{rsp}}' + 2}$-torsion, the matrix that applies to its
+input basis must also carry those two bits.  The C reference's
+\texttt{reduced\_order} expression is the source of truth.
+
+\subsection{32-bit truncation in dlog recursion}
+\label{sec:dlog-truncation}
+
+\textsc{NormalizedDlog} (\algo{2.4}) reduces the dlog computation
+modulo $2^e$ by splitting the exponent: it recurses on the upper
+half $e' = \lceil e/2 \rceil$ to recover the low bits $k'$, then
+computes $\zeta_1 / \zeta_0^{k'}$ to reduce the residual problem
+to the upper half.  Implemented naively in Rust, the
+$\zeta_0^{k'}$ exponentiation is the only sub-step that takes a
+\emph{large} exponent — up to $2^{e'}$.
+
+We initially passed $k'$ through a \texttt{u32} cast:
+\begin{lstlisting}[language=Rust]
+let z1_double_prime = target / &self.pow(k_prime.as_limbs()[0] as u32);
+\end{lstlisting}
+A comment justified this with ``$k' < 2^{e'}$ which fits in
+\texttt{u32} for $e' \leq 124$,'' which is straightforwardly wrong:
+$2^{124}$ does not fit in a \texttt{u32}; only $2^{32}$ does.
+
+In \algo{4.8} the matrix entries are dlogs of cross-pairings at
+exponent $e_{\mathrm{rsp}}' + r_{\mathrm{rsp}} + 2 \approx 126$.
+At $e \approx 126$ the recursion's $k'$ values regularly exceed
+$2^{32}$.  The cast then silently truncates, $\zeta_0^{k'}$ is
+computed for the wrong exponent, and the final dlog is junk.
+
+\paragraph{Symptoms.}  The bug only fires for ``large enough''
+inputs.  KAT round-trips, the existing
+\texttt{dlog\_round\_trip\_large} test (which used $\zeta^{42}$),
+and any dlog test with $k < 2^{32}$ all pass cleanly.  The first
+real exposure is in $M_{\mathrm{chl}}$ at exponent $\sim 126$:
+roughly half the cross-pairings have their dlog truncated to a
+fixed root of unity, and several entries in the resulting matrix
+collapse to the same value (most strikingly, every entry's low
+$64$ bits are \texttt{0xffff\_ffff\_ffff\_ffff} when the dlog
+returns $-1 \bmod 2^e$).  Verify reads the matrix, applies it to
+the canonical basis, and gets $P_{\mathrm{chl}} = Q_{\mathrm{chl}}$
+since both columns now have identical scalar combinations.  The
+$(2,2)$-chain immediately fails with a fully-degenerate theta null.
+
+\paragraph{Fix.}  Use a scalar-sized exponent throughout:
+\begin{lstlisting}[language=Rust]
+let z1_double_prime = target / &self.pow_scalar(&k_prime);
+\end{lstlisting}
+\texttt{pow\_scalar} walks all 256 bits of the \texttt{Scalar}, so
+it handles dlogs up to the full torsion exponent $f = 248$.
+
+\paragraph{Catching this earlier.}  A regression test
+\texttt{dlog\_round\_trip\_above\_u32} that exercises a known
+$k > 2^{32}$ catches the bug in milliseconds.  We did not have one;
+the previous large-dlog test used $k = 42$.  A type-system signal
+(``the exponent is a \texttt{Scalar}'') would have prevented the
+\texttt{u32} cast from being written in the first place.
+
+\paragraph{Advice for implementers.}  When recursing on a 2-power
+dlog, the recursive sub-call's output is a full $e'$-bit value, not
+a small index.  Test with exponents $> 2^{32}$ and $> 2^{64}$
+explicitly — small-value tests will not exercise the truncation
+path, and the truncation only manifests downstream as ``the matrix
+makes the basis collapse,'' which is a long way from the actual
+defect site.
+
+\subsection{Cubical Tate third-arg sign convention in \texttt{from\_bases}}
+\label{sec:tate-thirdarg-sign}
+
+The cubical Tate pairing $t_{2^e}(P, Q, P {+} Q)$ takes a third
+projective input that fixes the sign branch of the differential
+ladder.  Passing $P {+} Q$ versus $P {-} Q$ as the third argument
+produces values that are inverses of each other:
+$t_{2^e}(P, Q, P {-} Q) = t_{2^e}(P, Q, P {+} Q)^{-1}$.  Both
+satisfy bilinearity in their respective conventions, both pass
+``output is a $2^e$-th root of unity'' tests, and the two
+conventions are individually self-consistent — but mixing them
+silently inverts the dlog.
+
+\algo{2.5} step 1 sets $\zeta \leftarrow t_{2^e}(P_1, P_2)$ without
+naming the third argument's sign.  Our \texttt{from\_bases} initially
+passed \texttt{full\_basis.RS} (which is $P_1 {-} P_2$ in the
+shuffled basis layout — \S\ref{sec:from-hint}) for the base $\zeta$,
+while the four cross-pairings $\zeta_i$ used $\mathrm{target} {+}
+\mathrm{full}$ (the SUM, computed via Jacobian addition).  The base
+$\zeta$ then equals $T^{-1}$ where the cross-pairings equal $T_i$,
+so $\log_\zeta(\zeta_i)$ returns $-x_i \bmod 2^e$ instead of $x_i$.
+
+\paragraph{Symptom.} For a target basis with all coefficients in
+$\{1, 2\}$ (a fairly common case in \algo{4.8}), every dlog comes
+out near $2^e - 1$ or $2^e - 2$ — every cell of the resulting
+matrix has its low limbs entirely set to $\mathtt{0xff\ldots ff}$,
+with at most a few low bits differing.  Verify accepts the matrix
+syntactically (entries are within bounds), applies it to the
+canonical basis, and gets a \emph{non-degenerate but wrong} basis;
+the $(2,2)$-chain runs to completion, lands on a non-product
+theta null, and verification rejects.
+
+\paragraph{Fix.}  Compute $\zeta$ using the same SUM convention as
+the cross-pairings: $\zeta \leftarrow t_{2^e}(P_1, P_2, P_1 {+}
+P_2)$ where $P_1 {+} P_2$ is computed via the same Jacobian
+\texttt{x\_add\_sub} that produces the cross-sums.
+
+\paragraph{Catching this earlier.}  This bug bypasses every test
+that exercises only \emph{one} of the two conventions.
+\texttt{tate\_bilinear\_in\_first\_arg\_with\_diff},
+\texttt{tate\_bilinear\_in\_first\_arg\_with\_sum},
+\texttt{tate\_antisymmetric}, and the original
+\texttt{dlog\_round\_trip\_large} all hold internally; what they
+miss is that \texttt{from\_bases} mixes them.  A unit test that
+constructs a known matrix with small positive entries and asserts
+\texttt{from\_bases} recovers them with the right sign would have
+caught it.
+
+\paragraph{Advice for implementers.}  When an algorithm uses both
+``$\zeta = t(P, Q)$'' and ``$\zeta_i = t(\mathrm{target}, P_j)$,''
+fix one third-argument convention everywhere.  The sign-flip
+between SUM and DIFFERENCE conventions is invisible at every
+single call site — only the cross-call interaction reveals it.
 
 \subsection{Different formulas for the last two chain steps}
 \label{sec:bug-hadamard-bool}
