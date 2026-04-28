@@ -172,9 +172,11 @@ jobs:
           tar -czf /tmp/rustdoc.tar.gz -C target/doc .
           flyctl apps restart sqisign-selkie-ci --skip-health-checks
           sleep 5
-          flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/rustdoc && mkdir -p /data/rustdoc"
+          flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/rustdoc"
+          flyctl ssh console -a sqisign-selkie-ci -C "mkdir -p /data/rustdoc"
           echo "put /tmp/rustdoc.tar.gz /data/rustdoc/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
-          flyctl ssh console -a sqisign-selkie-ci -C "cd /data/rustdoc && tar -xzf rustdoc.tar.gz && rm rustdoc.tar.gz"
+          flyctl ssh console -a sqisign-selkie-ci -C "tar -xzf /data/rustdoc/rustdoc.tar.gz -C /data/rustdoc"
+          flyctl ssh console -a sqisign-selkie-ci -C "rm /data/rustdoc/rustdoc.tar.gz"
 
   kat-report:
     name: KAT report
