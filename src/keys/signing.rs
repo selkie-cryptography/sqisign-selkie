@@ -1146,6 +1146,30 @@ impl SigningKey {
                 p_chl = split.5;
                 q_chl = split.6;
                 pmq_chl = split.7;
+
+                #[cfg(test)]
+                {
+                    let fp2_short = |v: &crate::fields::fp2::Fp2| -> String {
+                        let bytes = v.to_bytes();
+                        let r: String =
+                            bytes[..8].iter().rev().map(|b| format!("{:02x}", b)).collect();
+                        format!("0x{r}")
+                    };
+                    let aff = |p: &ProjectiveXOnlyPoint| -> String {
+                        let v = &p.X * &p.Z.invert();
+                        fp2_short(&v)
+                    };
+                    eprintln!(
+                        "[sign {_iter}] split_aux out: P_aux={}, Q_aux={}, PmQ_aux={}, P_chl={}, Q_chl={}, PmQ_chl={}, P_chl==Q_chl={}",
+                        aff(&p_aux),
+                        aff(&q_aux),
+                        aff(&pmq_aux),
+                        aff(&p_chl),
+                        aff(&q_chl),
+                        aff(&pmq_chl),
+                        p_chl == q_chl,
+                    );
+                }
             } else {
                 // Lines 28–31: direct path
                 let (ec, pc, qc, pc_pmq) = match i_com_narrow.to_isogeny() {
@@ -1253,7 +1277,12 @@ impl SigningKey {
                 &scale_scalar * &det_chl.RS,
             );
 
-            let basis_aux = TorsionBasis::from_propagated(p_aux, q_aux, pmq_aux);
+            // C-ref-shuffled basis convention: `(R, S, RS) = (P, P−Q,
+            // Q)` — matches what `TorsionBasis::from_hint` returns
+            // and what verify expects when applying `M_chl`. Using
+            // the naive `(P, Q, P−Q)` here produces an `M_chl` that
+            // verify rejects (post-application bases collapse).
+            let basis_aux = TorsionBasis::from_propagated(p_aux, pmq_aux, q_aux);
             let m1 = match ChangeOfBasisMatrix::from_bases(&basis_aux, &det_aux_scaled, e_cob) {
                 Some(m) => m,
                 None => {
@@ -1263,8 +1292,37 @@ impl SigningKey {
                 }
             };
 
-            let basis_chl = TorsionBasis::from_propagated(p_chl_final, q_chl_final, pmq_chl_final);
+            // C-ref-shuffled basis convention: `(P, P−Q, Q)`. See
+            // `basis_aux` above for the rationale.
+            let basis_chl = TorsionBasis::from_propagated(p_chl_final, pmq_chl_final, q_chl_final);
             let transformed = m1.mul(&basis_chl);
+
+            #[cfg(test)]
+            {
+                let fp2_short = |v: &crate::fields::fp2::Fp2| -> String {
+                    let bytes = v.to_bytes();
+                    let r: String =
+                        bytes[..8].iter().rev().map(|b| format!("{:02x}", b)).collect();
+                    format!("0x{r}")
+                };
+                let aff = |p: &ProjectiveXOnlyPoint| -> String {
+                    fp2_short(&(&p.X * &p.Z.invert()))
+                };
+                eprintln!(
+                    "[sign {_iter}] basis_chl: R={}, S={}, RS={}, R==S={}",
+                    aff(&basis_chl.R),
+                    aff(&basis_chl.S),
+                    aff(&basis_chl.RS),
+                    basis_chl.R == basis_chl.S,
+                );
+                eprintln!(
+                    "[sign {_iter}] transformed: R={}, S={}, RS={}, R==S={}",
+                    aff(&transformed.R),
+                    aff(&transformed.S),
+                    aff(&transformed.RS),
+                    transformed.R == transformed.S,
+                );
+            }
             let m_chl = match ChangeOfBasisMatrix::from_bases(&det_chl_scaled, &transformed, e_cob)
             {
                 Some(m) => m,
@@ -1384,7 +1442,8 @@ pub(crate) fn compute_challenge_isogeny(
     let e_chain = TorsionExponent::try_from(TORSION_EVEN_POWER - n_bt.value()).ok()?;
     let (curve_chl, _) = Kernel::new(kernel_point).isogeny(e_chain, &[]);
 
-    // Line 2: P'', Q'', P''-Q'' ← IsomorphismMontgomeryCurves(E', P', Q', P'-Q', E'')
+    // Line 2: P'', Q'', P''-Q'' ← IsomorphismMontgomeryCurves(E', P', Q', P'-Q',
+    // E'')
     //
     // The isomorphism is a curve-level map (it preserves x-coordinates
     // up to the iso transform), so applying it to the propagated `PmQ`
@@ -1599,13 +1658,8 @@ pub(crate) fn split_auxiliary_isogeny(
     // the `ChangeOfBasisMatrix::from_bases` lift.
     let (codomain, images) = match kernel.isogeny(
         e_chain,
-        &[
-            (p1_red, zero_e2),
-            (q1_red, zero_e2),
-            (pmq1_red, zero_e2),
-        ],
-    )
-    {
+        &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
+    ) {
         Some(r) => r,
         None => {
             #[cfg(test)]
