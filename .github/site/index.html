@@ -1497,10 +1497,21 @@
     function synRust(text) {
       let s = esc(text);
 
-      // Order matters: comments must go first to prevent inner matches.
+      // Full-line comments (//! doc comments, // regular comments):
+      // wrap and return early — no keyword/type highlighting inside.
+      if (/^\s*\/\//.test(s)) {
+        return s.replace(/(\/\/.*)$/, '<span class="syn-comment">$1</span>');
+      }
 
-      // Line comments (// ...)
-      s = s.replace(/(\/\/.*)$/, '<span class="syn-comment">$1</span>');
+      // Trailing comments: split, highlight code part only, re-join.
+      const commentMatch = s.match(/^(.*?)(\/\/.*)$/);
+      if (commentMatch) {
+        const code = commentMatch[1];
+        const comment = `<span class="syn-comment">${commentMatch[2]}</span>`;
+        s = code;
+        // Fall through to highlight `s` (the code part), then append comment.
+        var trailingComment = comment;
+      }
 
       // Attributes (#[...] and #![...])
       s = s.replace(/(#!?\[.*?\])/g, '<span class="syn-attr">$1</span>');
@@ -1520,14 +1531,15 @@
       // Numeric literals
       s = s.replace(/\b(0x[0-9a-fA-F_]+|0b[01_]+|0o[0-7_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:e[+-]?\d+)?)\b/g, '<span class="syn-num">$1</span>');
 
-      // Type names (capitalized identifiers)
-      s = s.replace(/\b([A-Z][A-Za-z0-9_]*)\b/g, '<span class="syn-type">$1</span>');
-
-      // self, Self
-      s = s.replace(/\b(self|Self)\b/g, '<span class="syn-self">$1</span>');
-
-      // Keywords
-      s = s.replace(/\b(fn|let|mut|const|pub|use|mod|struct|enum|impl|trait|type|where|for|in|if|else|match|return|super|crate|as|ref|move|async|await|unsafe|extern|dyn|static|true|false|loop|while|break|continue)\b/g, '<span class="syn-kw">$1</span>');
+      // Highlight in a single pass to avoid cascading replacements
+      // (e.g. `type` inside `syn-type">`).
+      s = s.replace(/\b([A-Za-z_]\w*)\b/g, (m, w) => {
+        const KW = /^(fn|let|mut|const|pub|use|mod|struct|enum|impl|trait|type|where|for|in|if|else|match|return|super|crate|as|ref|move|async|await|unsafe|extern|dyn|static|true|false|loop|while|break|continue)$/;
+        if (KW.test(w)) return `<span class="syn-kw">${w}</span>`;
+        if (w === 'self' || w === 'Self') return `<span class="syn-self">${w}</span>`;
+        if (/^[A-Z]/.test(w)) return `<span class="syn-type">${w}</span>`;
+        return m;
+      });
 
       // Function definitions (fn name)
       s = s.replace(/(<span class="syn-kw">fn<\/span>) (\w+)/g, '$1 <span class="syn-fn">$2</span>');
@@ -1535,6 +1547,7 @@
       // Operators
       s = s.replace(/(&amp;&amp;|&amp;|\|\||[=!<>]=|\.\.=?|-&gt;|=&gt;)/g, '<span class="syn-op">$1</span>');
 
+      if (typeof trailingComment !== 'undefined') s += trailingComment;
       return s;
     }
 
