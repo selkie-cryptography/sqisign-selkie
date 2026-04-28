@@ -132,6 +132,8 @@ fn kat_verify() {
 }
 
 // Deterministic keygen from KAT seed 0.
+// Too slow under Valgrind (~30 min). Excluded from the benchmark
+// group below; uncomment in `operations` to run manually.
 #[library_benchmark]
 fn kat_keygen() {
     let seed_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].0;
@@ -141,6 +143,8 @@ fn kat_keygen() {
 }
 
 // Deterministic sign with KAT key 0.
+// Too slow under Valgrind (~30 min). Excluded from the benchmark
+// group below; uncomment in `operations` to run manually.
 #[library_benchmark]
 fn kat_sign() {
     let sk_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].2;
@@ -169,7 +173,9 @@ library_benchmark_group!(
 
 library_benchmark_group!(
     name = operations;
-    benchmarks = kat_verify, kat_keygen, kat_sign
+    // TODO: re-enable kat_keygen and kat_sign once they complete under
+    // Valgrind within the CI timeout (currently ~30 min each).
+    benchmarks = kat_verify
 );
 
 main!(
