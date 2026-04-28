@@ -277,12 +277,12 @@ impl ChallengeMatrix {
         full_basis: &TorsionBasis,
         target_basis: &TorsionBasis,
         e: TorsionExponent,
-    ) -> Self {
-        Self(crate::curves::ChangeOfBasisMatrix::from_bases(
+    ) -> Option<Self> {
+        Some(Self(crate::curves::ChangeOfBasisMatrix::from_bases(
             full_basis,
             target_basis,
             e,
-        ))
+        )?))
     }
 }
 

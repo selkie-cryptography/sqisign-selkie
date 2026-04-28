@@ -180,10 +180,16 @@ pub fn compute_even_response(
     _curve: &Curve,
     P: &ProjectiveXOnlyPoint,
     Q: &ProjectiveXOnlyPoint,
+    PmQ: &ProjectiveXOnlyPoint,
     alpha: &Element<4>,
     e_prime: TorsionExponent,
     r_rsp: TorsionExponent,
-) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
+) -> Option<(
+    Curve,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+)> {
     let e_prime = e_prime.value();
     let r_rsp = r_rsp.value();
 
@@ -211,25 +217,31 @@ pub fn compute_even_response(
         256,
     );
 
-    // Compute K = [s_shifted]P + [t_shifted]Q using the biladder.
-    // Need PmQ for the three-point ladder.
-    let PmQ = P.projective_difference(Q);
-    let basis = TorsionBasis::from_propagated(*P, *Q, PmQ);
-    // TODO: PmQ from projective_difference may pick wrong branch.
-    // In signing, the basis (P, Q, P-Q) should have been propagated
-    // from a prior computation, not recomputed here.
+    // Compute K = [s_shifted]P + [t_shifted]Q using the biladder
+    // with the propagated `PmQ` from the caller — never recompute via
+    // `projective_difference` here.
+    let basis = TorsionBasis::from_propagated(*P, *Q, *PmQ);
     let K = basis.biscalar_mul(
         &s_shifted,
         &t_shifted,
         TorsionExponent::try_from(r_rsp + shift).ok()?,
     );
 
-    // Step 4: E', {P', Q'} ← TwoisogenyChainSmall(K, E, r, {P, Q}, true)
+    // Step 4: E', {P', Q', PmQ'} ← TwoisogenyChainSmall(K, E, r, {P, Q, PmQ}, true)
+    //
+    // Push `PmQ` as a third evaluated point so the codomain basis
+    // carries a propagated difference; downstream
+    // `compute_challenge_isogeny` and `ChangeOfBasisMatrix::from_bases`
+    // require `PmQ` consistent with `P` and `Q`'s evaluation history.
     let (new_curve, images) = CurveKernel::new(K)
-        .isogeny_small(TorsionExponent::try_from(r_rsp).ok()?, &[*P, *Q], true)
+        .isogeny_small(
+            TorsionExponent::try_from(r_rsp).ok()?,
+            &[*P, *Q, *PmQ],
+            true,
+        )
         .ok()?;
 
-    Some((new_curve, images[0], images[1]))
+    Some((new_curve, images[0], images[1], images[2]))
 }
 
 // ---------------------------------------------------------------------------

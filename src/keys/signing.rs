@@ -111,12 +111,12 @@ impl SecretKeyMatrix {
     ///
     /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
     /// [Alg. 4.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.1
-    pub(crate) fn encode(full_basis: &TorsionBasis, target_basis: &TorsionBasis) -> Self {
-        Self(ChangeOfBasisMatrix::from_bases(
+    pub(crate) fn encode(full_basis: &TorsionBasis, target_basis: &TorsionBasis) -> Option<Self> {
+        Some(Self(ChangeOfBasisMatrix::from_bases(
             full_basis,
             target_basis,
             TorsionExponent::FULL,
-        ))
+        )?))
     }
 }
 
@@ -268,7 +268,9 @@ impl SigningKey {
 
             // Line 9: M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk, Q_pk)).
             let eval_basis = TorsionBasis::from_propagated(phi_p, phi_pmq, phi_q);
-            let mat_sk = SecretKeyMatrix::encode(&eval_basis, &basis_pk);
+            let Some(mat_sk) = SecretKeyMatrix::encode(&eval_basis, &basis_pk) else {
+                continue; // basis lift failed — retry with fresh ideal
+            };
 
             // Assemble the verifying key with its cached byte form.
             let hint_pk = VerifyingKeyHint::from(basis_hint.to_byte());
@@ -978,10 +980,11 @@ impl SigningKey {
             };
 
             // Lines 21–33: compute response isogeny
-            let (mut e_chl, mut p_chl, mut q_chl);
+            let (mut e_chl, mut p_chl, mut q_chl, mut pmq_chl);
             let curve_aux;
             let p_aux;
             let q_aux;
+            let pmq_aux;
 
             if e_rsp_prime > 0 {
                 // Lines 22–27: auxiliary isogeny path.
@@ -1138,12 +1141,14 @@ impl SigningKey {
                 curve_aux = split.0;
                 p_aux = split.1;
                 q_aux = split.2;
-                e_chl = split.3;
-                p_chl = split.4;
-                q_chl = split.5;
+                pmq_aux = split.3;
+                e_chl = split.4;
+                p_chl = split.5;
+                q_chl = split.6;
+                pmq_chl = split.7;
             } else {
                 // Lines 28–31: direct path
-                let (ec, pc, qc, _pmq_chl) = match i_com_narrow.to_isogeny() {
+                let (ec, pc, qc, pc_pmq) = match i_com_narrow.to_isogeny() {
                     Some(r) => r,
                     None => {
                         #[cfg(test)]
@@ -1156,9 +1161,11 @@ impl SigningKey {
                 e_chl = ec;
                 p_chl = pc;
                 q_chl = qc;
+                pmq_chl = pc_pmq;
                 curve_aux = e_chl;
                 p_aux = p_chl;
                 q_aux = q_chl;
+                pmq_aux = pmq_chl;
             }
 
             // Lines 34–35: even response.
@@ -1188,10 +1195,11 @@ impl SigningKey {
                         continue;
                     }
                 };
-                let (ec, pc, qc) = match deuring::compute_even_response(
+                let (ec, pc, qc, pc_pmq) = match deuring::compute_even_response(
                     &e_chl,
                     &p_chl,
                     &q_chl,
+                    &pmq_chl,
                     &alpha_narrow,
                     e_rsp_prime_te,
                     r_rsp,
@@ -1206,11 +1214,14 @@ impl SigningKey {
                 e_chl = ec;
                 p_chl = pc;
                 q_chl = qc;
+                pmq_chl = pc_pmq;
             }
 
             // Line 36: ComputeChallengeIsogeny
-            let (e_chl_final, p_chl_final, q_chl_final) =
-                match compute_challenge_isogeny(&basis_pk, &chl, &e_chl, &p_chl, &q_chl, n_bt_te) {
+            let (e_chl_final, p_chl_final, q_chl_final, pmq_chl_final) =
+                match compute_challenge_isogeny(
+                    &basis_pk, &chl, &e_chl, &p_chl, &q_chl, &pmq_chl, n_bt_te,
+                ) {
                     Some(r) => r,
                     None => {
                         #[cfg(test)]
@@ -1242,12 +1253,27 @@ impl SigningKey {
                 &scale_scalar * &det_chl.RS,
             );
 
-            let basis_aux = TorsionBasis::from((p_aux, q_aux));
-            let m1 = ChangeOfBasisMatrix::from_bases(&basis_aux, &det_aux_scaled, e_cob);
+            let basis_aux = TorsionBasis::from_propagated(p_aux, q_aux, pmq_aux);
+            let m1 = match ChangeOfBasisMatrix::from_bases(&basis_aux, &det_aux_scaled, e_cob) {
+                Some(m) => m,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: ChangeOfBasisMatrix::from_bases (m1) None");
+                    continue;
+                }
+            };
 
-            let basis_chl = TorsionBasis::from((p_chl_final, q_chl_final));
+            let basis_chl = TorsionBasis::from_propagated(p_chl_final, q_chl_final, pmq_chl_final);
             let transformed = m1.mul(&basis_chl);
-            let m_chl = ChangeOfBasisMatrix::from_bases(&det_chl_scaled, &transformed, e_cob);
+            let m_chl = match ChangeOfBasisMatrix::from_bases(&det_chl_scaled, &transformed, e_cob)
+            {
+                Some(m) => m,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: ChangeOfBasisMatrix::from_bases (m_chl) None");
+                    continue;
+                }
+            };
 
             // Line 38: assemble signature.
             let hint_aux = AuxiliaryHint::from(hint_aux_raw.to_byte());
@@ -1342,8 +1368,14 @@ pub(crate) fn compute_challenge_isogeny(
     e_prime: &Curve,
     p_prime: &ProjectiveXOnlyPoint,
     q_prime: &ProjectiveXOnlyPoint,
+    pmq_prime: &ProjectiveXOnlyPoint,
     n_bt: TorsionExponent,
-) -> Option<(Curve, ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> {
+) -> Option<(
+    Curve,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+)> {
     // Line 1: E'' ← TwoIsogenyChain([2^n](P + [ch]Q), E, f-n)
     let mut kernel_point = basis.scalar_mul_add(chl.as_ref());
     for _ in 0..n_bt.value() {
@@ -1352,13 +1384,21 @@ pub(crate) fn compute_challenge_isogeny(
     let e_chain = TorsionExponent::try_from(TORSION_EVEN_POWER - n_bt.value()).ok()?;
     let (curve_chl, _) = Kernel::new(kernel_point).isogeny(e_chain, &[]);
 
-    // Line 2: P'', Q'' ← IsomorphismMontgomeryCurves(E', P', Q', E'')
+    // Line 2: P'', Q'', P''-Q'' ← IsomorphismMontgomeryCurves(E', P', Q', P'-Q', E'')
+    //
+    // The isomorphism is a curve-level map (it preserves x-coordinates
+    // up to the iso transform), so applying it to the propagated `PmQ`
+    // gives a propagated `PmQ` on the codomain — never recompute via
+    // `projective_difference` here, since downstream consumers
+    // (`ChangeOfBasisMatrix::from_bases`) call `lift_basis` and the
+    // sqrt branch of `projective_difference` is fragile.
     let iso = e_prime.isomorphism(&curve_chl)?;
     let p_chl = iso.eval(p_prime);
     let q_chl = iso.eval(q_prime);
+    let pmq_chl = iso.eval(pmq_prime);
 
     // Line 3
-    Some((curve_chl, p_chl, q_chl))
+    Some((curve_chl, p_chl, q_chl, pmq_chl))
 }
 
 // ---------------------------------------------------------------------------
@@ -1402,7 +1442,9 @@ pub(crate) fn split_auxiliary_isogeny(
     Curve,
     ProjectiveXOnlyPoint,
     ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
     Curve,
+    ProjectiveXOnlyPoint,
     ProjectiveXOnlyPoint,
     ProjectiveXOnlyPoint,
 )> {
@@ -1549,7 +1591,20 @@ pub(crate) fn split_auxiliary_isogeny(
     // these become the canonical bases on the codomain components.
     let zero_e2 = ProjectiveXOnlyPoint::identity(e2);
     let e_chain = e_prime;
-    let (codomain, images) = match kernel.isogeny(e_chain, &[(p1_red, zero_e2), (q1_red, zero_e2)])
+    // Push pmq1_red as a third pushed point so the codomain basis on
+    // E_chl carries a propagated `PmQ` — recomputing via
+    // `projective_difference` downstream picks a sqrt branch that
+    // makes `lift_basis` recover an inconsistent y, breaking
+    // `compute_challenge_isogeny`'s subsequent isomorphism eval and
+    // the `ChangeOfBasisMatrix::from_bases` lift.
+    let (codomain, images) = match kernel.isogeny(
+        e_chain,
+        &[
+            (p1_red, zero_e2),
+            (q1_red, zero_e2),
+            (pmq1_red, zero_e2),
+        ],
+    )
     {
         Some(r) => r,
         None => {
@@ -1562,14 +1617,21 @@ pub(crate) fn split_auxiliary_isogeny(
         }
     };
 
-    // Line 6: return F₁, S₁, R₁, F₂, S₂, R₂
-    // The codomain is F₁ × F₂; images are (S₁,S₂) and (R₁,R₂).
+    // Line 6: return (curve_aux, P_aux, Q_aux, PmQ_aux,
+    //                 curve_chl, P_chl, Q_chl, PmQ_chl).
+    // The codomain is curve_aux × curve_chl; image[k].0 is on
+    // curve_aux, image[k].1 is on curve_chl. Indices 0/1/2 are the
+    // images of the pushed (p1_red, q1_red, pmq1_red).
     let curve_aux = codomain.E1;
     let curve_chl = codomain.E2;
     let p_aux = images[0].0;
     let q_aux = images[1].0;
+    let pmq_aux = images[2].0;
     let p_chl = images[0].1;
     let q_chl = images[1].1;
+    let pmq_chl = images[2].1;
 
-    Some((curve_aux, p_aux, q_aux, curve_chl, p_chl, q_chl))
+    Some((
+        curve_aux, p_aux, q_aux, pmq_aux, curve_chl, p_chl, q_chl, pmq_chl,
+    ))
 }
