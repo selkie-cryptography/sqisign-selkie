@@ -157,13 +157,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
-      - name: Check doc warnings
-        env:
-          RUSTDOCFLAGS: -Dwarnings
-        run: cargo doc --no-deps --document-private-items
-        continue-on-error: true
-
-      - name: Build docs for upload
+      - name: Build docs
         run: cargo doc --no-deps --document-private-items
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
@@ -179,9 +173,7 @@ jobs:
           flyctl apps restart sqisign-selkie-ci --skip-health-checks
           sleep 5
           flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/rustdoc && mkdir -p /data/rustdoc"
-          flyctl ssh sftp shell -a sqisign-selkie-ci <<SFTP
-          put /tmp/rustdoc.tar.gz /data/rustdoc/rustdoc.tar.gz
-          SFTP
+          echo "put /tmp/rustdoc.tar.gz /data/rustdoc/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
           flyctl ssh console -a sqisign-selkie-ci -C "cd /data/rustdoc && tar -xzf rustdoc.tar.gz && rm rustdoc.tar.gz"
 
   kat-report:

@@ -155,7 +155,7 @@ impl From<Coefficient> for ProjectiveCoefficient {
 
 /// Projective doubling constants `(A₂₄ : C₂₄) = (A + 2C : 4C)`.
 ///
-/// Isogeny codomain computations ([`TwoIsogeny`], [`FourIsogeny`])
+/// Isogeny codomain computations (`TwoIsogeny`, `FourIsogeny`)
 /// naturally produce these. They are consumed by the Montgomery
 /// ladder's doubling and differential addition formulas.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

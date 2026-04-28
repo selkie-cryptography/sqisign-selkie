@@ -178,7 +178,7 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
-    /// Clear the odd cofactor: computes [c]P where c = 5 = (p+1)/2^f.
+    /// Clear the odd cofactor: computes `[c]P` where `c = 5 = (p+1)/2^f`.
     ///
     /// Projects a point onto the 2^f-torsion subgroup. Uses two
     /// doublings and one differential addition (much cheaper than

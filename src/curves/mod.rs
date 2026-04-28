@@ -4,8 +4,8 @@
 //! - [`montgomery`]: Montgomery curves and x-only projective point arithmetic
 //! - [`TorsionBasis`]: generators of torsion subgroups, used to define isogeny
 //!   kernels
-//! - [`two_isogeny`], [`four_isogeny`]: individual isogeny steps
-//! - [`chain`]: chains of isogenies of degree 2^e
+//! - `two_isogeny`, `four_isogeny`: individual isogeny steps
+//! - `chain`: chains of isogenies of degree 2^e
 //! - Torsion basis hints and ladders ([§2.2.3], [§8.2])
 //!
 //! # Divergences from spec / C reference
@@ -773,22 +773,22 @@ impl ChangeOfBasisMatrix {
     ///
     /// Implements [ChangeOfBasis][Alg. 2.5] ([Alg. 2.5][Alg. 2.5]).
     ///
-    /// # Panics
-    ///
-    /// Panics if basis lifting fails (point not on curve).
+    /// Returns `None` if either basis fails to lift to Jacobian
+    /// coordinates (e.g. a recomputed `P − Q` whose sqrt branch is
+    /// inconsistent with `P` and `Q`'s y-coordinates).
     ///
     /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
     pub(crate) fn from_bases(
         full_basis: &TorsionBasis,
         target_basis: &TorsionBasis,
         e: TorsionExponent,
-    ) -> Self {
+    ) -> Option<Self> {
         let curve = full_basis.R.curve();
         let f = TorsionExponent::FULL;
 
         // Lift both bases to Jacobian for deterministic cross-sum computation.
-        let (p1_jac, p2_jac) = full_basis.lift(curve).expect("full basis lift failed");
-        let (q1_jac, q2_jac) = target_basis.lift(curve).expect("target basis lift failed");
+        let (p1_jac, p2_jac) = full_basis.lift(curve)?;
+        let (q1_jac, q2_jac) = target_basis.lift(curve)?;
 
         // Compute cross-sum x-coordinates via Jacobian arithmetic.
         let (q1_plus_p2, _) = q1_jac.x_add_sub(&p2_jac);
@@ -818,7 +818,7 @@ impl ChangeOfBasisMatrix {
         let x3 = BigInt::<4>::from(k3).shl(shift);
         let x4 = BigInt::<4>::from(k4).shl(shift);
 
-        Self {
+        Some(Self {
             entries: [
                 [
                     Scalar::from_limbs(*x1.as_limbs()),
@@ -830,7 +830,7 @@ impl ChangeOfBasisMatrix {
                 ],
             ],
             e,
-        }
+        })
     }
 
     /// Multiply this matrix by a [`TorsionBasis`]: `(P', Q') = M · (P, Q)`.

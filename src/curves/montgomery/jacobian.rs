@@ -11,7 +11,7 @@ use crate::fields::fp2::Fp2;
 ///
 /// Jacobian coordinates are needed for the gluing step of the
 /// (2,2)-isogeny chain, where the y-coordinate is required to
-/// compute the cross-addition components ([`jac_to_xz_add_components`]
+/// compute the cross-addition components (`jac_to_xz_add_components`
 /// in the C reference). Montgomery x-only arithmetic is insufficient
 /// because it cannot distinguish P+Q from P−Q.
 ///
@@ -128,12 +128,12 @@ impl JacobianPoint {
 
     /// Jacobian doubling matching the C ref's `DBL` (ec_jac.c:110).
     ///
-    /// Uses `Z' = 2yz` (standard Jacobian), unlike [`double`] which
+    /// Uses `Z' = 2yz` (standard Jacobian), unlike `double` which
     /// uses `Z' = 2yz²`. The theta change-of-basis requires the
     /// standard convention so that `jac_to_xz` produces the same
     /// projective representative as the C ref.
     ///
-    /// TODO: reconcile with [`double`] — one doubling formula for
+    /// TODO: reconcile with `double` — one doubling formula for
     /// all uses, matching the C ref's convention throughout.
     #[must_use]
     pub fn double_for_theta(&self) -> JacobianPoint {
