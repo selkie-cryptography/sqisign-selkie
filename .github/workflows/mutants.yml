@@ -64,7 +64,6 @@ jobs:
         run: |
           cargo mutants --no-shuffle -vV \
             --test-tool nextest \
-            --timeout 180 \
             --in-place \
             --in-diff git.diff -- --lib
 
@@ -121,7 +120,6 @@ jobs:
         run: |
           cargo mutants --shard ${{ matrix.shard }}/16 \
             --test-tool nextest \
-            --timeout 180 \
             --in-place \
             -vV -- --lib
       - name: Archive mutants.out
