@@ -543,3 +543,86 @@ fn cornacchia_no_solution() {
     let result = I256::cornacchia(&I256::ONE, &I256::from(3i64));
     assert!(result.is_none());
 }
+
+#[test]
+fn rand_interval_zero_range_no_rng_consumed() {
+    use crate::drbg::Aes256CtrDrbg;
+
+    // a == b: rand_interval must return a without consuming any randomness.
+    let mut drbg = Aes256CtrDrbg::new(&[0u8; 48]);
+    let initial_consumed = drbg.bytes_consumed();
+    let a = I256::from(42i64);
+    let v = I256::rand_interval(&mut drbg, &a, &a);
+    assert_eq!(v, a);
+    assert_eq!(drbg.bytes_consumed(), initial_consumed);
+}
+
+#[test]
+fn rand_interval_in_range_for_many_samples() {
+    use crate::drbg::Aes256CtrDrbg;
+
+    // Every sample must lie in `[a, b]` inclusive across a wide range.
+    let mut drbg = Aes256CtrDrbg::new(&[1u8; 48]);
+    let a = I256::from(100i64);
+    let b = I256::from(1_000_000i64);
+    for _ in 0..200 {
+        let v = I256::rand_interval(&mut drbg, &a, &b);
+        assert!(v >= a, "value {v} below lower bound {a}");
+        assert!(v <= b, "value {v} above upper bound {b}");
+    }
+}
+
+#[test]
+fn rand_interval_deterministic_under_same_seed() {
+    use crate::drbg::Aes256CtrDrbg;
+
+    // Same DRBG seed must produce the same sequence of samples.
+    let seed = [7u8; 48];
+    let a = I256::from(1i64);
+    let b = I256::from(1i64 << 40);
+
+    let mut d1 = Aes256CtrDrbg::new(&seed);
+    let mut d2 = Aes256CtrDrbg::new(&seed);
+    for _ in 0..50 {
+        let v1 = I256::rand_interval(&mut d1, &a, &b);
+        let v2 = I256::rand_interval(&mut d2, &a, &b);
+        assert_eq!(v1, v2, "same-seed DRBGs must produce identical samples");
+    }
+}
+
+#[test]
+fn rand_interval_byte_aligned_bound() {
+    use crate::drbg::Aes256CtrDrbg;
+
+    // Range `[0, 2^64 - 1]`: bit-length is exactly 64 (byte-aligned),
+    // so the top-byte mask is `0xFF` and every drawn 8-byte value is
+    // accepted on the first try.
+    let mut drbg = Aes256CtrDrbg::new(&[2u8; 48]);
+    let a = I256::ZERO;
+    let b = I256::from_limbs([u64::MAX, 0, 0, 0]);
+    let initial = drbg.bytes_consumed();
+    let _ = I256::rand_interval(&mut drbg, &a, &b);
+    // Single accepted draw consumes exactly 8 bytes; with `top_mask =
+    // 0xFF` and `bmina = 2^64 − 1`, every drawn value satisfies
+    // `val ≤ bmina`, so no rejection cycle.
+    assert_eq!(drbg.bytes_consumed() - initial, 8);
+}
+
+#[test]
+fn rand_interval_partial_byte_bound() {
+    use crate::drbg::Aes256CtrDrbg;
+
+    // Range `[0, 2^70 − 1]`: bit-length is exactly 70, so
+    // `len_bytes = 9` and the top byte must be masked to its low 6
+    // bits. Verify all samples respect the bound (no over-large
+    // values leaking through a wrong mask).
+    let mut drbg = Aes256CtrDrbg::new(&[3u8; 48]);
+    let a = I256::ZERO;
+    // b = 2^70 − 1: limb 0 = 0xFFFFFFFF_FFFFFFFF, limb 1 = 0x3F.
+    let b = I256::from_limbs([u64::MAX, 0x3F, 0, 0]);
+    for _ in 0..100 {
+        let v = I256::rand_interval(&mut drbg, &a, &b);
+        assert!(v >= a);
+        assert!(v <= b, "value {v} > 2^70 − 1");
+    }
+}
