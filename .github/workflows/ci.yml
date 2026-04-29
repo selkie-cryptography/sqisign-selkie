@@ -173,7 +173,9 @@ jobs:
           flyctl apps restart sqisign-selkie-ci --skip-health-checks
           # Wait for VM to start (auto-stop VMs need time).
           for i in 1 2 3 4 5; do
-            flyctl ssh console -a sqisign-selkie-ci -C "true" 2>/dev/null && break
+            if flyctl ssh console -a sqisign-selkie-ci -C "true" 2>/dev/null; then
+              break
+            fi
             echo "Waiting for VM to start (attempt $i)..."
             sleep 5
           done
