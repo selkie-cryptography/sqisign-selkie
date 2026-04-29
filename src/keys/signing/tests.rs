@@ -159,6 +159,41 @@ fn kat_sk_roundtrip_all() {
     }
 }
 
+/// Sign + self-verify on KAT vector 0 only — focused test for
+/// task #32 ("First sign() SUCCESS + self-verify roundtrip").
+///
+/// Avoids the cost of running through all 100 KAT vectors when
+/// all we want is the answer to "does any signature round-trip
+/// successfully?" If this passes, the response-phase pipeline
+/// (`to_isogeny`, `split_aux`, `from_bases`, signature encoding,
+/// verification) is end-to-end functional.
+///
+/// Run with: `cargo test --lib --release sign_kat_zero_only -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn sign_kat_zero_only() {
+    let (_, pk_hex, sk_hex, msg_hex, _) = crate::keys::kat_data::KAT_VECTORS[0];
+    let sk_bytes = hex::decode(sk_hex).expect("valid hex");
+    let pk_bytes = hex::decode(pk_hex).expect("valid hex");
+    let msg = hex::decode(msg_hex).expect("valid hex");
+
+    let sk = SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap())
+        .expect("sk should parse");
+    let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap())
+        .expect("pk should parse");
+
+    let t0 = std::time::Instant::now();
+    let sig = sk
+        .sign(&msg, &mut OsRng)
+        .expect("KAT[0] sign must succeed within retry budget");
+    eprintln!("sign_kat_zero_only: sign OK in {:?}", t0.elapsed());
+
+    let t1 = std::time::Instant::now();
+    vk.verify(&msg, &sig)
+        .expect("KAT[0] signature must verify against paired pk");
+    eprintln!("sign_kat_zero_only: verify OK in {:?}", t1.elapsed());
+}
+
 /// Generate a fresh key, sign a random message, verify.
 ///
 /// Run with: `cargo test --lib --release sign_fresh -- --ignored`.
@@ -330,7 +365,7 @@ fn keygen_target_to_isogeny_seed_0() {
     // Run `to_isogeny` and compare `e_pk` byte-for-byte against the
     // standalone KAT pk's curve coefficient.
     let (e_pk, _phi_p, _phi_q, _phi_pmq) = ideal
-        .to_isogeny()
+        .to_isogeny(&mut OsRng)
         .expect("to_isogeny on KAT[0] reconstructed ideal must succeed");
 
     let computed_a = e_pk.coefficient().to_bytes();
@@ -418,7 +453,7 @@ fn survey_keygen_target_to_isogeny_first_10() {
 
         total += 1;
 
-        match ideal.to_isogeny() {
+        match ideal.to_isogeny(&mut OsRng) {
             None => {
                 eprintln!("[SURVEY] vec={i} to_isogeny=None");
                 none_count += 1;
@@ -606,7 +641,7 @@ fn keygen_drbg_byte_probe_seed_0() {
         };
 
         let t_before_iso = drbg.bytes_consumed();
-        let iso = ideal_narrow.to_isogeny();
+        let iso = ideal_narrow.to_isogeny(&mut drbg);
         let t_after_iso = drbg.bytes_consumed();
         eprintln!(
             "[PROBE] iter={iter} to_isogeny: {} bytes (Some={})",
@@ -629,6 +664,60 @@ fn keygen_drbg_byte_probe_seed_0() {
         return;
     }
     eprintln!("[PROBE] exhausted 8 attempts");
+}
+
+/// Lock in byte-stream alignment of `Lattice::random_prime_norm_wide`
+/// with the C reference's `quat_sampling_random_ideal_O0_given_norm`
+/// (`normeq.c:297-384`).
+///
+/// Captured 2026-04-29 via `[SAMPID]` instrumentation: with the
+/// AES-CTR-DRBG seeded from KAT vector 0's seed, `quat_sampling_random_ideal`
+/// consumes exactly **1040 bytes** for the first call (Phase A
+/// trace-zero sampling + sqrt-mod-N + Phase B `gen_rerand`
+/// rerandomization, all driven by `ibz_rand_interval`).
+///
+/// We additionally verified that the FIRST KAT vector's resulting
+/// quaternion `γ` (Phase A), `δ` (Phase B), and `γ·δ` (multiply)
+/// are byte-identical between Rust and C ref. See
+/// `project_mode_b_diagnostic.md`.
+///
+/// This regression test asserts the byte count alone — values are
+/// validated by `keygen_drbg_byte_probe_seed_0` running alongside.
+/// If a future change breaks the byte-stream contract, this test
+/// fails first.
+#[test]
+#[ignore]
+fn random_prime_norm_wide_byte_aligned_with_cref_kat0() {
+    use crate::{
+        params::D_MIX,
+        quaternions::{bigint::BigInt, lattice::LeftIdeal, precomputed::EXTREMAL_ORDERS},
+    };
+
+    let (seed_hex, ..) = crate::keys::kat_data::KAT_VECTORS[0];
+    let seed: [u8; 48] = hex::decode(seed_hex)
+        .expect("valid seed hex")
+        .as_slice()
+        .try_into()
+        .expect("seed is 48 bytes");
+
+    let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
+    let d_mix_wide: BigInt<30> = D_MIX.widen();
+
+    let before = drbg.bytes_consumed();
+    let ideal =
+        LeftIdeal::<30>::random_prime_norm_wide(&d_mix_wide, &EXTREMAL_ORDERS[0], &mut drbg)
+            .expect("KAT[0] first random_prime_norm_wide must succeed");
+    let after = drbg.bytes_consumed();
+
+    let consumed = after - before;
+    assert_eq!(
+        consumed, 1040,
+        "byte-stream contract: random_prime_norm_wide must consume exactly C ref's \
+         1040 bytes for KAT seed 0's first call (got {consumed})"
+    );
+
+    // Sanity: produced an ideal of the requested norm.
+    assert_eq!(*ideal.norm(), d_mix_wide);
 }
 
 /// Reproduce the SQIsign C reference's byte consumption for a KAT

@@ -171,7 +171,12 @@ jobs:
             > target/doc/index.html
           tar -czf /tmp/rustdoc.tar.gz -C target/doc .
           flyctl apps restart sqisign-selkie-ci --skip-health-checks
-          sleep 5
+          # Wait for VM to start (auto-stop VMs need time).
+          for i in 1 2 3 4 5; do
+            flyctl ssh console -a sqisign-selkie-ci -C "true" 2>/dev/null && break
+            echo "Waiting for VM to start (attempt $i)..."
+            sleep 5
+          done
           flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/rustdoc"
           flyctl ssh console -a sqisign-selkie-ci -C "mkdir -p /data/rustdoc"
           echo "put /tmp/rustdoc.tar.gz /data/rustdoc/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
