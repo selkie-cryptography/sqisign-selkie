@@ -630,6 +630,28 @@ impl GenericKernel4 {
         let images = pts.iter().map(|p| eval(p, &dual, &codomain)).collect();
         (codomain, images)
     }
+
+    /// Penultimate-step (2,2)-isogeny for an `extra_torsion=false`
+    /// chain tail.
+    ///
+    /// Uses [`codomain_4torsion_no_hadamard`] (flag `(0, 0)`) and
+    /// [`eval_no_outer_hadamard`]. The codomain is left in dual
+    /// form for the matching ultimate step or splitting consumer.
+    ///
+    /// C reference: `theta_isogeny_compute_4(..., 0, 0)` at
+    /// `theta_isogenies.c:1258`.
+    pub(crate) fn isogeny_penultimate(
+        &self,
+        domain: &Jacobian,
+        pts: &[JacobianPoint],
+    ) -> (Jacobian, Vec<JacobianPoint>) {
+        let (dual, codomain) = codomain_4torsion_no_hadamard(&self.T1, domain);
+        let images = pts
+            .iter()
+            .map(|p| eval_no_outer_hadamard(p, &dual, &codomain))
+            .collect();
+        (codomain, images)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +682,27 @@ impl GenericKernel2 {
     ) -> (Jacobian, Vec<JacobianPoint>) {
         let (dual, codomain) = codomain_from_null(domain);
         let images = pts.iter().map(|p| eval(p, &dual, &codomain)).collect();
+        (codomain, images)
+    }
+
+    /// Ultimate-step (2,2)-isogeny for an `extra_torsion=false`
+    /// chain tail.
+    ///
+    /// Uses [`codomain_2torsion_ultimate`] (flag `(1, 0)`) and
+    /// [`eval_ultimate`]. The codomain is left in dual form for the
+    /// splitting consumer.
+    ///
+    /// C reference: `theta_isogeny_compute_2(..., 1, 0)` at
+    /// `theta_isogenies.c:1266`.
+    pub(crate) fn isogeny_ultimate(
+        domain: &Jacobian,
+        pts: &[JacobianPoint],
+    ) -> (Jacobian, Vec<JacobianPoint>) {
+        let (dual, codomain) = codomain_2torsion_ultimate(domain);
+        let images = pts
+            .iter()
+            .map(|p| eval_ultimate(p, &dual, &codomain))
+            .collect();
         (codomain, images)
     }
 }
@@ -1014,6 +1057,109 @@ pub(crate) fn codomain_8torsion_ultimate(
     let beta_inv = &hs1.X * &zgwd;
     let gamma_inv = delta;
     let delta_inv = gamma;
+
+    let dual = DualThetaNullPoint {
+        alpha,
+        beta,
+        gamma,
+        delta,
+        alpha_inv,
+        beta_inv,
+        gamma_inv,
+        delta_inv,
+    };
+    // bool_2=0: NO final Hadamard — codomain stays in dual form.
+    let null = ThetaNullPoint::new(dual.alpha, dual.beta, dual.gamma, dual.delta);
+    (dual, Jacobian::new(null))
+}
+
+/// Codomain from 4-torsion: penultimate step (`hadamard_bool_1=0,
+/// hadamard_bool_2=0`).
+///
+/// Same as [`codomain_4torsion`] (Algorithm 8.32) but omits the final
+/// Hadamard on the codomain null point. The codomain stays in dual
+/// form, matching the C reference's `theta_isogeny_compute_4(..., 0, 0)`
+/// call at `theta_isogenies.c:1258` — the dedicated penultimate step
+/// in an `extra_torsion=false` chain.
+///
+/// Pair with [`eval_no_outer_hadamard`] for the matching evaluator.
+pub(crate) fn codomain_4torsion_no_hadamard(
+    T1: &JacobianPoint,
+    domain: &Jacobian,
+) -> (DualThetaNullPoint, Jacobian) {
+    let hs = T1.squared().hadamard();
+
+    let (a2, b2, g2, d2) = hadamard4(
+        &domain.null.a.square(),
+        &domain.null.b.square(),
+        &domain.null.c.square(),
+        &domain.null.d.square(),
+    );
+
+    let ab = (&a2 * &b2).sqrt();
+    let ag = (&a2 * &g2).sqrt();
+
+    let beta = &(&ab * &ag) * &hs.Z;
+    let delta_inv = &beta * &hs.X;
+    let beta_mul = &beta * &hs.X;
+    let xgd_ab_a2 = &(&hs.Z * &ab) * &a2;
+    let _delta = &xgd_ab_a2 * &(&ab * &a2);
+    let alpha = &(&hs.X * &ab) * &a2;
+    let gamma = &alpha * &g2;
+    let delta_final = &alpha * &d2;
+
+    let alpha_inv = &hs.X * &d2;
+    let beta_inv = &alpha * &b2;
+    let gamma_inv_val = &delta_inv * &b2;
+
+    let dual = DualThetaNullPoint {
+        alpha,
+        beta: beta_mul,
+        gamma,
+        delta: delta_final,
+        alpha_inv,
+        beta_inv,
+        gamma_inv: gamma_inv_val,
+        delta_inv,
+    };
+    let null = ThetaNullPoint::new(dual.alpha, dual.beta, dual.gamma, dual.delta);
+    (dual, Jacobian::new(null))
+}
+
+/// Codomain from 2-torsion (null only): ultimate step
+/// (`hadamard_bool_1=1, hadamard_bool_2=0`).
+///
+/// Same shape as [`codomain_from_null`] (Algorithm 8.33) but applies
+/// Hadamard to the domain null before squaring (compensating for the
+/// previous step's dual-form output) and omits the final Hadamard on
+/// the codomain.
+///
+/// C reference: `theta_isogeny_compute_2(..., 1, 0)` at
+/// `theta_isogenies.c:1266` — the dedicated ultimate step in an
+/// `extra_torsion=false` chain.
+///
+/// Pair with [`eval_ultimate`] for the matching evaluator.
+pub(crate) fn codomain_2torsion_ultimate(domain: &Jacobian) -> (DualThetaNullPoint, Jacobian) {
+    // bool_1=1: Hadamard the null before squaring.
+    let (na, nb, nc, nd) = hadamard4(
+        &domain.null.a,
+        &domain.null.b,
+        &domain.null.c,
+        &domain.null.d,
+    );
+    let (a2, b2, g2, d2) = hadamard4(&na.square(), &nb.square(), &nc.square(), &nd.square());
+
+    let alpha = a2;
+    let beta = (&a2 * &b2).sqrt();
+    let gamma = (&a2 * &g2).sqrt();
+    let delta = (&a2 * &d2).sqrt();
+
+    let ab = &alpha * &beta;
+    let gd = &gamma * &delta;
+    let alpha_inv = &ab * &d2;
+    let beta_inv = &ab * &g2;
+    let gamma_inv = &gd * &b2;
+    let delta_inv = &gd * &a2;
 
     let dual = DualThetaNullPoint {
         alpha,

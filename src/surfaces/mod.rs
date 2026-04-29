@@ -483,6 +483,31 @@ impl Kernel {
         self.isogeny_inner(e, pts, true)
     }
 
+    /// Compute the chain consuming a kernel of order exactly `2^e`,
+    /// using a dedicated 4-isogeny + 2-isogeny tail in place of the
+    /// 8-torsion penultimate/ultimate hadamard absorption.
+    ///
+    /// Mirrors the C reference's `extra_torsion=false` mode at
+    /// `theta_isogenies.c:1250-1270`. Used by `to_isogeny`'s outer
+    /// chain when `sui.e ∈ {f-1, f}` — the only case where the
+    /// `extra_torsion=true` path can't pad the kernel up to
+    /// `2^(sui.e + 2)` because we only have `2^f` torsion available.
+    ///
+    /// `e` is the chain length (number of (2,2)-isogeny steps).
+    /// The kernel basis points `(P, Q)` must have order exactly
+    /// `2^e`; the function consumes all of it.
+    ///
+    /// Returns `None` if the splitting step does not find a
+    /// product structure (signaling a malformed kernel or numerical
+    /// breakdown).
+    pub fn isogeny_no_extra_torsion(
+        &self,
+        e: crate::curves::TorsionExponent,
+        pts: &[ProductPoint],
+    ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
+        self.isogeny_inner_no_extra_torsion(e, pts)
+    }
+
     fn isogeny_inner(
         &self,
         e: crate::curves::TorsionExponent,
@@ -938,6 +963,189 @@ impl Kernel {
             }
         }
 
+        let splitter = SplittingKernel {
+            domain: current_jacobian,
+        };
+        splitter.isogeny(&theta_pts)
+    }
+
+    /// Body for [`Self::isogeny_no_extra_torsion`].
+    ///
+    /// Mirrors the C reference's `_theta_chain_compute_impl` with
+    /// `extra_torsion = false` (`theta_isogenies.c:1086-1314`).
+    /// Differences from [`Self::isogeny_inner`]:
+    ///
+    ///   * Strategy starts at `orders[0] = e - 2` instead of `e`. The kernel
+    ///     basis has order exactly `2^e`, so the bottom of the strategy tree
+    ///     gives 8-torsion at level `current = 1` (after Phase 1) for the
+    ///     gluing — same as Mode A — and the main loop runs `e − 2` total
+    ///     isogeny steps including the gluing.
+    ///   * The main loop uses normal hadamard (`(0, 1)`) for every step. There
+    ///     are no penultimate/ultimate special cases — they are replaced by
+    ///     dedicated 4- and 2-isogeny tail steps after the loop.
+    ///   * After the loop: push the level-0 kernel point through the last
+    ///     main-loop step, then run a dedicated 4-isogeny
+    ///     ([`isogeny::GenericKernel4::isogeny_penultimate`]) and a dedicated
+    ///     2-isogeny ([`isogeny::GenericKernel2::isogeny_ultimate`]) before
+    ///     handing off to the splitter.
+    fn isogeny_inner_no_extra_torsion(
+        &self,
+        e: crate::curves::TorsionExponent,
+        pts: &[ProductPoint],
+    ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
+        let e = e.value();
+        assert!(
+            e >= 4,
+            "extra_torsion=false chain requires e >= 4 (gluing + 1 main + 4-iso + 2-iso)"
+        );
+
+        type JacPair = JacobianProductPoint;
+
+        // Phase 1: balanced strategy with `orders[0] = e - 2`.
+        let mut strat_pts: Vec<(JacPair, JacPair)> = vec![(self.P, self.Q)];
+        let mut orders: Vec<u32> = vec![e - 2];
+        let mut k: usize = 0;
+
+        while orders[k] != 1 {
+            k += 1;
+            let n = if orders[k - 1] >= 16 {
+                orders[k - 1] / 2
+            } else {
+                orders[k - 1] - 1
+            };
+            let (mut R, mut S) = strat_pts[k - 1];
+            for _ in 0..n {
+                R = (R.0.double_for_theta(), R.1.double_for_theta());
+                S = (S.0.double_for_theta(), S.1.double_for_theta());
+            }
+            strat_pts.push((R, S));
+            orders.push(orders[k - 1] - n);
+        }
+
+        // Phase 2: gluing — same as Mode A.
+        let A1 = *self.domain.E1.coefficient();
+        let A2 = *self.domain.E2.coefficient();
+
+        let gluing_T1_jac = strat_pts[k].0;
+        let gluing_T2_jac = strat_pts[k].1;
+        let gluing_T1_mont: ProductPoint = (
+            ProjectiveXOnlyPoint::from(&gluing_T1_jac.0),
+            ProjectiveXOnlyPoint::from(&gluing_T1_jac.1),
+        );
+        let gluing_T2_mont: ProductPoint = (
+            ProjectiveXOnlyPoint::from(&gluing_T2_jac.0),
+            ProjectiveXOnlyPoint::from(&gluing_T2_jac.1),
+        );
+
+        let gluing = GluingKernel {
+            T1: gluing_T1_mont,
+            T1_jac: gluing_T1_jac,
+            T2: gluing_T2_mont,
+            T2_jac: gluing_T2_jac,
+        };
+        let (gluing_data, _) = gluing.isogeny(&[]);
+
+        let mut theta_pts: Vec<JacobianPoint> = pts
+            .iter()
+            .map(|p| GluingKernel::eval_special(p, &gluing_data))
+            .collect();
+
+        let mut theta_strat: Vec<(JacobianPoint, JacobianPoint)> = Vec::new();
+        for &(ri_jac, si_jac) in strat_pts.iter().take(k) {
+            let R = GluingKernel::eval(&ri_jac, &gluing.T1_jac, &A1, &A2, &gluing_data);
+            let S = GluingKernel::eval(&si_jac, &gluing.T1_jac, &A1, &A2, &gluing_data);
+            theta_strat.push((R, S));
+        }
+        let mut orders: Vec<u32> = orders[..k].iter().map(|o| o - 1).collect();
+        k = k.saturating_sub(1);
+
+        let mut current_jacobian = gluing_data.codomain.clone();
+
+        // Phase 3: main loop — ALL steps use normal hadamard.
+        // Track the last step's `(dual, codomain)` and the level-0
+        // kernel point separately so we can push the level-0 point
+        // through the last step *after* the loop exits (mirrors C
+        // ref's `if (n >= 3) { theta_isogeny_eval(thetaQ1[0], step,
+        // thetaQ1[0]); }` at `theta_isogenies.c:1252`).
+        let mut last_step: Option<(DualThetaNullPoint, Jacobian)> = None;
+        let mut last_kernel: Option<(JacobianPoint, JacobianPoint)> = None;
+
+        while !orders.is_empty() && (k > 0 || orders[0] != 0) {
+            // Push down with ThetaDBL until order = 1.
+            while orders[k] != 1 {
+                k += 1;
+                let n = orders[k - 1] / 2;
+                let (mut R, mut S) = theta_strat[k - 1].clone();
+                for _ in 0..n {
+                    R = R.double();
+                    S = S.double();
+                }
+                if k >= theta_strat.len() {
+                    theta_strat.push((R, S));
+                    orders.push(orders[k - 1] - n);
+                }
+            }
+
+            let (dual, new_jac) = isogeny::codomain_8torsion(&theta_strat[k].0, &theta_strat[k].1);
+
+            // If this is the last main-loop iteration (kernel at
+            // level 0), capture the level-0 point and the step's
+            // (dual, codomain) for the post-loop push.
+            if k == 0 {
+                last_kernel = Some(theta_strat[0].clone());
+                last_step = Some((dual, new_jac.clone()));
+            }
+
+            for pt in theta_pts.iter_mut() {
+                *pt = isogeny::eval(pt, &dual, &new_jac);
+            }
+
+            for i in 0..k {
+                theta_strat[i].0 = isogeny::eval(&theta_strat[i].0, &dual, &new_jac);
+                theta_strat[i].1 = isogeny::eval(&theta_strat[i].1, &dual, &new_jac);
+                orders[i] -= 1;
+            }
+
+            theta_strat.truncate(k);
+            orders.truncate(k);
+            k = k.saturating_sub(1);
+            current_jacobian = new_jac;
+        }
+
+        // Post-loop: push the level-0 kernel point through the last
+        // main-loop step's isogeny so it becomes the 4-torsion
+        // kernel for the dedicated penultimate (4-iso) step.
+        // Mirrors C ref's `if (n >= 3) { theta_isogeny_eval(thetaQ1[0],
+        // step, thetaQ1[0]); }` at `theta_isogenies.c:1252`.
+        let (last_dual, last_codomain) = last_step?;
+        let (kp1, _kp2) = last_kernel?;
+        let kp1 = isogeny::eval(&kp1, &last_dual, &last_codomain);
+
+        // Dedicated penultimate: 4-isogeny.
+        // C ref: `theta_isogeny_compute_4(step, theta, thetaQ1[0],
+        // thetaQ2[0], 0, 0)` at `theta_isogenies.c:1258`. We use only
+        // `kp1` because [`isogeny::codomain_4torsion_no_hadamard`]
+        // computes the codomain from a single 4-torsion generator
+        // (Algorithm 8.32).
+        let kernel_4 = isogeny::GenericKernel4 { T1: kp1 };
+        let (codomain_after_4iso, theta_pts_after_4iso) =
+            kernel_4.isogeny_penultimate(&current_jacobian, &theta_pts);
+        theta_pts = theta_pts_after_4iso;
+        current_jacobian = codomain_after_4iso;
+
+        // Dedicated ultimate: 2-isogeny.
+        // C ref: `theta_isogeny_compute_2(step, theta, thetaQ1[0],
+        // thetaQ2[0], 1, 0)` at `theta_isogenies.c:1266`. Algorithm
+        // 8.33 computes the codomain from the null point alone — the
+        // kernel basis is implicit in the null structure, so our
+        // [`isogeny::GenericKernel2::isogeny_ultimate`] takes only
+        // the domain.
+        let (codomain_after_2iso, theta_pts_after_2iso) =
+            isogeny::GenericKernel2::isogeny_ultimate(&current_jacobian, &theta_pts);
+        theta_pts = theta_pts_after_2iso;
+        current_jacobian = codomain_after_2iso;
+
+        // Phase 4: splitting.
         let splitter = SplittingKernel {
             domain: current_jacobian,
         };

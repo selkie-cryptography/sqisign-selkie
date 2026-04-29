@@ -904,8 +904,6 @@ fn try_find_uv<const N: usize>(
             // `v_2(u)` in Algorithm 3.16 line 14, but that is only
             // equivalent to `v_2(gcd(u, v))` when `v_2(u) ≤ v_2(v)`.
             let e_val = u.gcd(&v).trailing_zeros();
-            // Require `sui.e = f − e_val ≤ f − 2` — i.e., `e_val ≥ 2`.
-            //
             // [`LeftIdeal::to_isogeny`]'s outer (2,2)-chain feeds
             // [`surfaces::Kernel::isogeny`] a kernel of order
             // `2^(sui.e + 2)` — two torsion bits above the
@@ -921,10 +919,15 @@ fn try_find_uv<const N: usize>(
             // The C reference's alternate `extra_torsion = false`
             // chain path (`theta_isogenies.c:1088`) accepts a
             // kernel of order exactly `2^sui.e` by running a
-            // shorter 8-torsion chain followed by dedicated
-            // 4-isogeny and 2-isogeny tail steps, so it handles
-            // `sui.e ∈ {f-1, f}` directly. We don't implement
-            // that variant, so we reject those cases here.
+            // shorter chain followed by dedicated 4-isogeny and
+            // 2-isogeny tail steps, so it handles
+            // `sui.e ∈ {f − 1, f}` directly. We have a draft
+            // implementation in
+            // [`surfaces::Kernel::isogeny_no_extra_torsion`] but
+            // it currently produces `splitting: zeros=0` — debug
+            // pending against the C reference's per-step chain
+            // dump. Until that's resolved, we reject pairs with
+            // `e_val < 2` here so [`to_isogeny`] never picks them.
             //
             // Pairs with `e_val < 2` get skipped; the outer v-loop
             // enumerates more `(u, v)` solutions for the same
