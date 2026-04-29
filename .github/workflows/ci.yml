@@ -171,13 +171,14 @@ jobs:
             > target/doc/index.html
           tar -czf /tmp/rustdoc.tar.gz -C target/doc .
           flyctl apps restart sqisign-selkie-ci --skip-health-checks
-          # Wait for VM to start (auto-stop VMs need time).
-          for i in 1 2 3 4 5; do
+          # Wait for VM to start (auto-stop VMs can take 30-60s).
+          for i in $(seq 1 12); do
             if flyctl ssh console -a sqisign-selkie-ci -C "true" 2>/dev/null; then
+              echo "VM ready (attempt $i)"
               break
             fi
-            echo "Waiting for VM to start (attempt $i)..."
-            sleep 5
+            echo "Waiting for VM to start (attempt $i/12)..."
+            sleep 10
           done
           flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/rustdoc"
           flyctl ssh console -a sqisign-selkie-ci -C "mkdir -p /data/rustdoc"
