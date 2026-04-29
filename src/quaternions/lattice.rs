@@ -1596,36 +1596,45 @@ impl LeftIdeal<4> {
         // `BigInt<8>` (512 bits) with margin: 2^(250+127+127) =
         // 2^504 < 2^512. `BigInt<4>` (256 bits) would overflow
         // already at N > 2^3.
-        // Widen α and the order's basis to BigInt<8>.
-        let alpha_8 = Element::<8>::new(
-            Coordinate::from_bigint(alpha.a.as_bigint().widen::<8>()),
-            Coordinate::from_bigint(alpha.b.as_bigint().widen::<8>()),
-            Coordinate::from_bigint(alpha.c.as_bigint().widen::<8>()),
-            Coordinate::from_bigint(alpha.d.as_bigint().widen::<8>()),
-            Denominator::from_bigint_unchecked(alpha.denom.as_bigint().widen::<8>()),
+        // Widen α and the order's basis to BigInt<12> (= 768 bits).
+        //
+        // Width-12 is required for KAT-shaped α: every NIST-I KAT
+        // secret-ideal generator has |coord| in [2^134, 2^140] (see
+        // `survey_kat_secret_ideal_coord_magnitudes`). The largest
+        // intermediate is `|p · c · d| ≈ 2^(250 + 140 + 140) = 2^530`
+        // and the modulus `64 · N² · p · denom²` ≈ 2^538 — both
+        // overflow BigInt<8> (= 512 bits). Width 12 (= 768 bits)
+        // gives ~230 bits of headroom and absorbs the post-HNF
+        // canonicalization without truncation.
+        let alpha_w = Element::<12>::new(
+            Coordinate::from_bigint(alpha.a.as_bigint().widen::<12>()),
+            Coordinate::from_bigint(alpha.b.as_bigint().widen::<12>()),
+            Coordinate::from_bigint(alpha.c.as_bigint().widen::<12>()),
+            Coordinate::from_bigint(alpha.d.as_bigint().widen::<12>()),
+            Denominator::from_bigint_unchecked(alpha.denom.as_bigint().widen::<12>()),
         );
         let order_basis_cols_4 = order.basis().columns();
-        let widen_col_4_to_8 = |col: &Vector<4>| -> Vector<8> {
+        let widen_col_4_to_w = |col: &Vector<4>| -> Vector<12> {
             Vector::new(
-                col[0].widen::<8>(),
-                col[1].widen::<8>(),
-                col[2].widen::<8>(),
-                col[3].widen::<8>(),
+                col[0].widen::<12>(),
+                col[1].widen::<12>(),
+                col[2].widen::<12>(),
+                col[3].widen::<12>(),
             )
         };
-        let order_denom_8: BigInt<8> = order.denom().widen();
+        let order_denom_w: BigInt<12> = order.denom().widen();
 
-        let mut o_alpha_cols_8 = [Vector::<8>::ZERO; 4];
-        for (j, col) in o_alpha_cols_8.iter_mut().enumerate() {
-            let basis_col_8 = widen_col_4_to_8(&order_basis_cols_4[j]);
-            let basis_j_8 = Element::<8>::new(
-                Coordinate::from_bigint(basis_col_8[0]),
-                Coordinate::from_bigint(basis_col_8[1]),
-                Coordinate::from_bigint(basis_col_8[2]),
-                Coordinate::from_bigint(basis_col_8[3]),
-                Denominator::from_bigint_unchecked(order_denom_8),
+        let mut o_alpha_cols_w = [Vector::<12>::ZERO; 4];
+        for (j, col) in o_alpha_cols_w.iter_mut().enumerate() {
+            let basis_col_w = widen_col_4_to_w(&order_basis_cols_4[j]);
+            let basis_j_w = Element::<12>::new(
+                Coordinate::from_bigint(basis_col_w[0]),
+                Coordinate::from_bigint(basis_col_w[1]),
+                Coordinate::from_bigint(basis_col_w[2]),
+                Coordinate::from_bigint(basis_col_w[3]),
+                Denominator::from_bigint_unchecked(order_denom_w),
             );
-            let product = basis_j_8.mul_direct(&alpha_8);
+            let product = basis_j_w.mul_direct(&alpha_w);
             *col = Vector::new(
                 *product.a.as_bigint(),
                 *product.b.as_bigint(),
@@ -1633,30 +1642,26 @@ impl LeftIdeal<4> {
                 *product.d.as_bigint(),
             );
         }
-        let o_alpha_denom_8 = order_denom_8.ct_mul(&alpha.denom.as_bigint().widen::<8>());
+        let o_alpha_denom_w = order_denom_w.ct_mul(&alpha.denom.as_bigint().widen::<12>());
 
-        // Compute ON: scale each basis vector of O by N, at `BigInt<8>`.
-        let norm_8: BigInt<8> = norm.widen();
-        let mut o_n_cols_8: [Vector<8>; 4] =
-            core::array::from_fn(|j| widen_col_4_to_8(&order_basis_cols_4[j]));
-        for col in &mut o_n_cols_8 {
+        // Compute ON: scale each basis vector of O by N, at `BigInt<12>`.
+        let norm_w: BigInt<12> = norm.widen();
+        let mut o_n_cols_w: [Vector<12>; 4] =
+            core::array::from_fn(|j| widen_col_4_to_w(&order_basis_cols_4[j]));
+        for col in &mut o_n_cols_w {
             for row in 0..4 {
-                col[row] = col[row].ct_mul(&norm_8);
+                col[row] = col[row].ct_mul(&norm_w);
             }
         }
-        let o_n_denom_8 = order_denom_8;
+        let o_n_denom_w = order_denom_w;
 
-        // Use [`Lattice::sum_mod`] at `BigInt<8>` to avoid
+        // Use [`Lattice::sum_mod`] at `BigInt<12>` to avoid
         // coefficient blow-up inside the XGCD pivot reduction of
-        // classical HNF. At `BigInt<4>` (256-bit storage) the xgcd
-        // bezout coefficients for two column entries of magnitude
-        // near `p ≈ 2^250` can reach `p² ≈ 2^500` — far outside
-        // `BigInt<4>` — and silently truncate, collapsing the HNF
-        // to a denser lattice unrelated to the intended ideal. The
-        // wide variant [`LeftIdeal::random_prime_norm_wide`] was
-        // upgraded to `Lattice::sum_mod::<44>` for this exact
-        // reason; the narrow `LeftIdeal<4>::new` path needs the
-        // same treatment.
+        // classical HNF. The wider variant
+        // [`LeftIdeal::random_prime_norm_wide`] uses `sum_mod::<44>`
+        // at much larger ideal sizes; the narrow path needs only
+        // enough headroom to absorb the modulus and its squared
+        // products.
         //
         // `sum_mod` requires the two lattices to share a denom.
         // `o_alpha_denom = order.denom · alpha.denom` (may be
@@ -1664,43 +1669,41 @@ impl LeftIdeal<4> {
         // `o_n_denom = order.denom`. When they're equal (the
         // common case for alpha.denom = 1), sum directly. When
         // different, scale to a common denom.
-        let scale_cols_in_place_8 = |cols: &mut [Vector<8>; 4], s: &BigInt<8>| {
+        let scale_cols_in_place_w = |cols: &mut [Vector<12>; 4], s: &BigInt<12>| {
             for col in cols.iter_mut() {
                 for row in 0..4 {
                     col[row] = col[row].ct_mul(s);
                 }
             }
         };
-        let (common_denom_8, o_alpha_cols_8, o_n_cols_8) = if o_alpha_denom_8 == o_n_denom_8 {
-            (o_alpha_denom_8, o_alpha_cols_8, o_n_cols_8)
+        let (common_denom_w, o_alpha_cols_w, o_n_cols_w) = if o_alpha_denom_w == o_n_denom_w {
+            (o_alpha_denom_w, o_alpha_cols_w, o_n_cols_w)
         } else {
-            let mut o_a = o_alpha_cols_8;
-            let mut o_b = o_n_cols_8;
-            scale_cols_in_place_8(&mut o_a, &o_n_denom_8);
-            scale_cols_in_place_8(&mut o_b, &o_alpha_denom_8);
-            (o_alpha_denom_8.ct_mul(&o_n_denom_8), o_a, o_b)
+            let mut o_a = o_alpha_cols_w;
+            let mut o_b = o_n_cols_w;
+            scale_cols_in_place_w(&mut o_a, &o_n_denom_w);
+            scale_cols_in_place_w(&mut o_b, &o_alpha_denom_w);
+            (o_alpha_denom_w.ct_mul(&o_n_denom_w), o_a, o_b)
         };
-        let o_alpha_8 = Lattice::<8>::new(Matrix::from_columns(&o_alpha_cols_8), common_denom_8);
-        let o_n_8 = Lattice::<8>::new(Matrix::from_columns(&o_n_cols_8), common_denom_8);
-        // Use `Lattice::sum_mod` at `BigInt<8>` to avoid
-        // coefficient blow-up inside classical HNF's xgcd pivot
-        // reduction. Modulus `64 · N² · p · common_denom²` is a
-        // positive multiple of the integer column covolume,
-        // bounding all intermediate xgcd combinations within the
-        // working width.
-        let modulus_8: BigInt<8> = {
-            let n_8: BigInt<8> = norm.widen();
-            let n_sq = n_8.ct_mul(&n_8);
-            let p_8: BigInt<8> = crate::quaternions::precomputed::P_WIDE;
-            let denom_sq = common_denom_8.ct_mul(&common_denom_8);
-            BigInt::<8>::from_u64(64)
+        let o_alpha_w = Lattice::<12>::new(Matrix::from_columns(&o_alpha_cols_w), common_denom_w);
+        let o_n_w = Lattice::<12>::new(Matrix::from_columns(&o_n_cols_w), common_denom_w);
+        // Modulus `64 · N² · p · common_denom²` ≈ 2^538 for KAT-shaped
+        // α (norm ≈ 2^140, p ≈ 2^250, denom ≤ 2). Width 12 holds it
+        // with margin; sum_mod's working width 24 holds the squared
+        // intermediates xgcd produces during HNF reduction.
+        let modulus_w: BigInt<12> = {
+            let n_w: BigInt<12> = norm.widen();
+            let n_sq = n_w.ct_mul(&n_w);
+            let p_w: BigInt<12> = crate::quaternions::precomputed::P_WIDE.widen::<12>();
+            let denom_sq = common_denom_w.ct_mul(&common_denom_w);
+            BigInt::<12>::from_u64(64)
                 .ct_mul(&n_sq)
-                .ct_mul(&p_8)
+                .ct_mul(&p_w)
                 .ct_mul(&denom_sq)
         };
-        let lattice_8 = o_alpha_8
-            .sum_mod::<16>(&o_n_8, &modulus_8)
-            .expect("denoms share common_denom_8 by construction");
+        let lattice_w = o_alpha_w
+            .sum_mod::<24>(&o_n_w, &modulus_w)
+            .expect("denoms share common_denom_w by construction");
 
         // Canonicalize: compute the GCD of every basis entry and
         // the denom, then divide through. The common-denom
@@ -1713,10 +1716,10 @@ impl LeftIdeal<4> {
         // actual O_0 element) and the HNF diagonal encoding the
         // same lattice at a coarser grain. See the analogous step
         // in `smallest_equiv` (lattice.rs, shortly after `hnf_8`).
-        let basis_cols_8 = lattice_8.basis().columns();
-        let denom_8 = lattice_8.denom();
-        let mut g: BigInt<8> = denom_8.abs();
-        for col in &basis_cols_8 {
+        let basis_cols_w = lattice_w.basis().columns();
+        let denom_w = lattice_w.denom();
+        let mut g: BigInt<12> = denom_w.abs();
+        for col in &basis_cols_w {
             for row in 0..4 {
                 if !bool::from(col[row].is_zero()) {
                     g = g.gcd(&col[row].abs());
@@ -1725,13 +1728,12 @@ impl LeftIdeal<4> {
         }
         // Narrow back to `HnfLattice<4>`. The HNF entries of a
         // proper ideal with `nrd ≤ N^2` fit in `BigInt<4>` for
-        // `N < 2^127`; `narrow` returns `None` if this fails, which
-        // would indicate a miscomputation upstream. Preserved as
-        // `expect` because all narrow-path callers construct `alpha`
-        // with coordinates in `[0, N)`.
+        // `N < 2^128`; `narrow_to` returns `None` if this fails, which
+        // indicates either a miscomputation upstream or a caller
+        // passing α with coordinates outside `[−N, N)`.
         let basis_4 = {
             let mut m = Matrix::<4>::ZERO;
-            for (j, col) in basis_cols_8.iter().enumerate() {
+            for (j, col) in basis_cols_w.iter().enumerate() {
                 for row in 0..4 {
                     let (q, _) = col[row].div_rem(&g);
                     m[row][j] = q
@@ -1742,11 +1744,47 @@ impl LeftIdeal<4> {
             m
         };
         let denom_4 = {
-            let (q, _) = denom_8.div_rem(&g);
+            let (q, _) = denom_w.div_rem(&g);
             q.narrow_to::<4>()
                 .expect("LeftIdeal<4>::new denom does not fit in BigInt<4>")
         };
         let lattice = HnfLattice::from(Lattice::new(basis_4, denom_4));
+
+        #[cfg(test)]
+        if std::env::var("LEFTIDEAL_NEW_TRACE").is_ok() {
+            eprintln!(
+                "[LIN4] α coord bits: a={}, b={}, c={}, d={} | norm bits={}",
+                alpha.a.as_bigint().abs().bitsize(),
+                alpha.b.as_bigint().abs().bitsize(),
+                alpha.c.as_bigint().abs().bitsize(),
+                alpha.d.as_bigint().abs().bitsize(),
+                norm.bitsize(),
+            );
+            eprintln!(
+                "[LIN4] o_alpha col0 (Oα · 1) bits: a={}, b={}, c={}, d={}",
+                o_alpha_cols_w[0][0].abs().bitsize(),
+                o_alpha_cols_w[0][1].abs().bitsize(),
+                o_alpha_cols_w[0][2].abs().bitsize(),
+                o_alpha_cols_w[0][3].abs().bitsize(),
+            );
+            eprintln!(
+                "[LIN4] common_denom_w bits={}, modulus_w bits={}, sum_lattice denom_w bits={}",
+                common_denom_w.bitsize(),
+                modulus_w.bitsize(),
+                lattice_w.denom().bitsize(),
+            );
+            eprintln!("[LIN4] gcd g (final divisor) bits = {}", g.bitsize());
+            for (i, col) in lattice.basis().columns().iter().enumerate() {
+                eprintln!(
+                    "[LIN4] HNF col{i} bits: [{}, {}, {}, {}]",
+                    col[0].abs().bitsize(),
+                    col[1].abs().bitsize(),
+                    col[2].abs().bitsize(),
+                    col[3].abs().bitsize(),
+                );
+            }
+            eprintln!("[LIN4] HNF denom = {}", denom_4);
+        }
 
         Self {
             lattice,

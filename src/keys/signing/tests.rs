@@ -267,6 +267,281 @@ fn keygen_drbg_total_bytes_seed_0() {
     }
 }
 
+/// Reconstruct KAT[0]'s secret ideal directly from `(norm, gen)`
+/// and run `to_isogeny` on it; check whether the computed `e_pk`
+/// matches the standalone KAT pk.
+///
+/// This bypasses the seed→sample→reduce sampling chain entirely
+/// and isolates whether the post-sampling pipeline (to_isogeny,
+/// to_hint, M_sk encoding) reproduces the C reference's output for
+/// a known-correct ideal. If it passes:
+/// - `keygen_kat_all` divergence is in the sampling/reduction path
+///   (`random_prime_norm_wide`, `reduce_to_prime_norm`).
+/// - The to_isogeny-and-friends pipeline is interop-correct, which would also
+///   be a strong signal for the still-open sign+verify mystery (since signing
+///   reuses to_isogeny internally).
+///
+/// If it fails:
+/// - `to_isogeny` and/or its downstream consumers diverge from the C ref.
+///   Compare `e_pk` byte-for-byte to localize.
+///
+/// Run with:
+/// ```text
+/// cargo test --lib --release \
+///   keygen_target_to_isogeny_seed_0 -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn keygen_target_to_isogeny_seed_0() {
+    let (_, pk_hex, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[0];
+    let sk_bytes = hex::decode(sk_hex).expect("valid hex");
+    let pk_bytes = hex::decode(pk_hex).expect("valid hex");
+
+    // Parse the secret-ideal `(norm, gen)` from `sk_bytes` exactly
+    // as `SigningKey::from_bytes` does.
+    let mut pos = VERIFYING_KEY_BYTES;
+    let norm_bytes: &[u8; FP_ENCODED_BYTES] = sk_bytes[pos..pos + FP_ENCODED_BYTES]
+        .try_into()
+        .expect("32-byte norm");
+    let norm = IsogenyDegree::from_bytes_le(norm_bytes)
+        .expect("norm parses as positive odd IsogenyDegree");
+    pos += FP_ENCODED_BYTES;
+
+    let mut gen_coords = [BigInt::<4>::ZERO; 4];
+    for coord in &mut gen_coords {
+        *coord = BigInt::<4>::from_bytes_le_signed(
+            sk_bytes[pos..pos + FP_ENCODED_BYTES]
+                .try_into()
+                .expect("32-byte coord"),
+        );
+        pos += FP_ENCODED_BYTES;
+    }
+
+    let gen = Element {
+        a: Coordinate::from(gen_coords[0]),
+        b: Coordinate::from(gen_coords[1]),
+        c: Coordinate::from(gen_coords[2]),
+        d: Coordinate::from(gen_coords[3]),
+        denom: Denominator::ONE,
+    };
+    let norm_bigint = norm.to_bigint();
+    let ideal = LeftIdeal::<4>::new(&gen, &norm_bigint, EXTREMAL_ORDERS[0].order());
+
+    // Run `to_isogeny` and compare `e_pk` byte-for-byte against the
+    // standalone KAT pk's curve coefficient.
+    let (e_pk, _phi_p, _phi_q, _phi_pmq) = ideal
+        .to_isogeny()
+        .expect("to_isogeny on KAT[0] reconstructed ideal must succeed");
+
+    let computed_a = e_pk.coefficient().to_bytes();
+    let expected_a = &pk_bytes[..64];
+
+    eprintln!("[TI] computed e_pk.A = {}", hex::encode(computed_a));
+    eprintln!("[TI] expected   pk.A = {}", hex::encode(expected_a));
+
+    let (_, hint_pk) = TorsionBasis::to_hint(&e_pk);
+    eprintln!(
+        "[TI] computed hint_pk = {:08b}, expected = {:08b}",
+        hint_pk.to_byte(),
+        pk_bytes[64]
+    );
+
+    assert_eq!(
+        &computed_a[..],
+        expected_a,
+        "to_isogeny(KAT[0] secret ideal) must reproduce KAT[0] pk's A"
+    );
+    assert_eq!(
+        hint_pk.to_byte(),
+        pk_bytes[64],
+        "to_hint on the computed e_pk must produce KAT[0]'s hint byte"
+    );
+}
+
+/// Survey `to_isogeny` against the first 10 KAT vectors. For each
+/// vector, parse `(norm, gen)` from `sk_hex`, build the secret ideal
+/// the same way [`keygen_target_to_isogeny_seed_0`] does, run
+/// `to_isogeny`, and compare the resulting curve coefficient to the
+/// expected `pk_bytes[..64]`.
+///
+/// Prints a `[SURVEY]` line per vector plus a final summary so we can
+/// see at a glance whether divergences from the C reference are
+/// patterned (one fixed algorithmic mismatch) or differ in shape per
+/// vector (suggesting non-determinism / iteration-order dependence).
+///
+/// Run with:
+/// ```text
+/// cargo test --lib --release \
+///   survey_keygen_target_to_isogeny_first_10 -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn survey_keygen_target_to_isogeny_first_10() {
+    let mut total = 0u32;
+    let mut matched = 0u32;
+    let mut none_count = 0u32;
+
+    for i in 0..10 {
+        let (_, pk_hex, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[i];
+        let sk_bytes = hex::decode(sk_hex).expect("valid hex");
+        let pk_bytes = hex::decode(pk_hex).expect("valid hex");
+
+        // Parse `(norm, gen)` from `sk_bytes`, exactly as
+        // `keygen_target_to_isogeny_seed_0` does.
+        let mut pos = VERIFYING_KEY_BYTES;
+        let norm_bytes: &[u8; FP_ENCODED_BYTES] = sk_bytes[pos..pos + FP_ENCODED_BYTES]
+            .try_into()
+            .expect("32-byte norm");
+        let norm = IsogenyDegree::from_bytes_le(norm_bytes)
+            .expect("norm parses as positive odd IsogenyDegree");
+        pos += FP_ENCODED_BYTES;
+
+        let mut gen_coords = [BigInt::<4>::ZERO; 4];
+        for coord in &mut gen_coords {
+            *coord = BigInt::<4>::from_bytes_le_signed(
+                sk_bytes[pos..pos + FP_ENCODED_BYTES]
+                    .try_into()
+                    .expect("32-byte coord"),
+            );
+            pos += FP_ENCODED_BYTES;
+        }
+
+        let gen = Element {
+            a: Coordinate::from(gen_coords[0]),
+            b: Coordinate::from(gen_coords[1]),
+            c: Coordinate::from(gen_coords[2]),
+            d: Coordinate::from(gen_coords[3]),
+            denom: Denominator::ONE,
+        };
+        let norm_bigint = norm.to_bigint();
+        let ideal = LeftIdeal::<4>::new(&gen, &norm_bigint, EXTREMAL_ORDERS[0].order());
+
+        total += 1;
+
+        match ideal.to_isogeny() {
+            None => {
+                eprintln!("[SURVEY] vec={i} to_isogeny=None");
+                none_count += 1;
+            }
+            Some((e_pk, _phi_p, _phi_q, _phi_pmq)) => {
+                let computed_a = e_pk.coefficient().to_bytes();
+                let expected_a = &pk_bytes[..64];
+                let is_match = &computed_a[..] == expected_a;
+                if is_match {
+                    matched += 1;
+                }
+                let computed_hex = hex::encode(computed_a);
+                let expected_hex = hex::encode(expected_a);
+                eprintln!(
+                    "[SURVEY] vec={i} match={is_match} computed={}...  expected={}...",
+                    &computed_hex[..32],
+                    &expected_hex[..32]
+                );
+            }
+        }
+    }
+
+    eprintln!("[SURVEY] total={total} matched={matched} none={none_count}");
+}
+
+/// Decode KAT[0]'s SK and print the components our keygen must
+/// produce: secret-ideal norm, generator coordinates, and `M_sk`
+/// entries. Together with the public key bytes (already in
+/// `kat_sk_pk_match_all`), this is the canonical "what we're aiming
+/// at" for `keygen_kat_all`.
+///
+/// Run with:
+/// ```text
+/// cargo test --lib --release \
+///   keygen_target_seed_0 -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn keygen_target_seed_0() {
+    let (seed_hex, pk_hex, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[0];
+    eprintln!("[TARGET] seed_hex (first 32 chars) = {}", &seed_hex[..32]);
+    eprintln!("[TARGET] pk_hex (first 32 chars) = {}", &pk_hex[..32]);
+
+    let sk_bytes = hex::decode(sk_hex).expect("valid hex");
+    // Parse offsets must match `SigningKey::from_bytes`.
+    use crate::params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES, VERIFYING_KEY_BYTES};
+
+    let mut pos = VERIFYING_KEY_BYTES; // skip pk
+    let norm_hex: String = sk_bytes[pos..pos + FP_ENCODED_BYTES]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    pos += FP_ENCODED_BYTES;
+    eprintln!("[TARGET] norm (LE 32 B): 0x{norm_hex}");
+
+    for (i, label) in ["gen.a (1)", "gen.b (i)", "gen.c (j)", "gen.d (k=ij)"]
+        .iter()
+        .enumerate()
+    {
+        let coord_hex: String = sk_bytes[pos..pos + FP_ENCODED_BYTES]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        pos += FP_ENCODED_BYTES;
+        eprintln!("[TARGET] {label} (LE 32 B, signed): 0x{coord_hex}");
+        let _ = i;
+    }
+
+    for (r, c) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+        let entry_hex: String = sk_bytes[pos..pos + TORSION_2POWER_BYTES]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        pos += TORSION_2POWER_BYTES;
+        eprintln!("[TARGET] M_sk[{r}][{c}] (LE 32 B): 0x{entry_hex}");
+    }
+
+    assert_eq!(pos, sk_bytes.len(), "SK byte layout drift");
+}
+
+/// First sample dump for KAT seed 0.
+///
+/// Seeds the DRBG from KAT vector 0, draws the first three
+/// 65-byte rejection-sampled values that `random_prime_norm_wide`
+/// uses to build `(g₁, g₂, g₃)`, and prints them as hex. Pair
+/// against the same first three samples in the patched C reference
+/// to spot byte-order, masking, or rejection-criterion divergences
+/// before diving deeper.
+///
+/// Run with:
+/// ```text
+/// cargo test --lib --release \
+///   keygen_first_sample_seed_0 -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn keygen_first_sample_seed_0() {
+    let (seed_hex, ..) = crate::keys::kat_data::KAT_VECTORS[0];
+    let seed: [u8; 48] = hex::decode(seed_hex)
+        .expect("valid seed hex")
+        .as_slice()
+        .try_into()
+        .expect("seed is 48 bytes");
+
+    let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
+    // Match `random_prime_norm_wide`'s sample_mod_n exactly:
+    //   n_bits = 513, n_bytes = 65, mask top byte to keep bit 512 only.
+    let n_bytes: usize = 65;
+    let n_bits: usize = 513;
+
+    for label in ["g1", "g2", "g3"] {
+        let mut bytes = [0u8; 65];
+        rand_core::RngCore::fill_bytes(&mut drbg, &mut bytes[..n_bytes]);
+        let pre_mask: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        if n_bits % 8 != 0 {
+            bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
+        }
+        let post_mask: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        eprintln!("[FIRST_SAMPLE] {label}: pre_mask=0x{pre_mask}");
+        eprintln!("[FIRST_SAMPLE] {label}: post_mask=0x{post_mask}");
+    }
+}
+
 /// Per-phase DRBG-byte consumption probe for KAT seed 0.
 ///
 /// Replicates the body of [`SigningKey::generate_with_rng`] inline
@@ -433,4 +708,80 @@ fn kat_cref_cross_check_vector_0() {
         &sm[..sig_bytes.len()],
         "signature must match KAT `sm` prefix byte-for-byte"
     );
+}
+
+/// Survey the bit-magnitudes of every KAT secret-ideal `(norm, gen)`.
+///
+/// For each KAT vector index 0..99, decode `sk_bytes[65..97]` as the
+/// unsigned norm and the next four 32-byte chunks as signed generator
+/// coordinates `gen.{a, b, c, d}` (two's complement LE). Print the
+/// bit-size of the norm and of each `|coord|`, plus
+/// `max_coord_bits = max(|a|, |b|, |c|, |d|)`. Bucket the maxima
+/// against the `LeftIdeal::<4>::new` width-8 product safety bound
+/// (≤ 127 bits).
+///
+/// Run with:
+/// ```text
+/// cargo test --lib --release \
+///     survey_kat_secret_ideal_coord_magnitudes -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn survey_kat_secret_ideal_coord_magnitudes() {
+    let mut max_le_127 = 0usize;
+    let mut max_in_127_192 = 0usize;
+    let mut max_gt_192 = 0usize;
+    let mut min_observed: u32 = u32::MAX;
+    let mut max_observed: u32 = 0;
+    let mut safe_indices: Vec<usize> = Vec::new();
+
+    for (i, &(_, _, sk_hex, ..)) in crate::keys::kat_data::KAT_VECTORS.iter().enumerate() {
+        let sk_bytes = hex::decode(sk_hex).expect("valid hex");
+
+        let mut pos = VERIFYING_KEY_BYTES;
+        let norm_bytes: &[u8; FP_ENCODED_BYTES] = sk_bytes[pos..pos + FP_ENCODED_BYTES]
+            .try_into()
+            .expect("32-byte norm");
+        let norm_bigint = BigInt::<4>::from_bytes_le_unsigned(norm_bytes);
+        let norm_bits = norm_bigint.bitsize();
+        pos += FP_ENCODED_BYTES;
+
+        let mut coord_bits = [0u32; 4];
+        for slot in &mut coord_bits {
+            let coord = BigInt::<4>::from_bytes_le_signed(
+                sk_bytes[pos..pos + FP_ENCODED_BYTES]
+                    .try_into()
+                    .expect("32-byte coord"),
+            );
+            // `bitsize` works on the magnitude (limbs), independent of
+            // the sign bit, so |coord|.bitsize() == coord.bitsize().
+            *slot = coord.bitsize();
+            pos += FP_ENCODED_BYTES;
+        }
+
+        let max_coord_bits = *coord_bits.iter().max().expect("4 coords");
+        eprintln!(
+            "[SURVEY] vec={i:02} norm_bits={norm_bits:3} coord_bits=[{}, {}, {}, {}] max={max_coord_bits}",
+            coord_bits[0], coord_bits[1], coord_bits[2], coord_bits[3],
+        );
+
+        min_observed = min_observed.min(max_coord_bits);
+        max_observed = max_observed.max(max_coord_bits);
+
+        if max_coord_bits <= 127 {
+            max_le_127 += 1;
+            safe_indices.push(i);
+        } else if max_coord_bits <= 192 {
+            max_in_127_192 += 1;
+        } else {
+            max_gt_192 += 1;
+        }
+    }
+
+    eprintln!("[SURVEY] ----- histogram -----");
+    eprintln!("[SURVEY] max_coord_bits ≤ 127        : {max_le_127}");
+    eprintln!("[SURVEY] max_coord_bits ∈ (127, 192] : {max_in_127_192}");
+    eprintln!("[SURVEY] max_coord_bits > 192        : {max_gt_192}");
+    eprintln!("[SURVEY] observed range of max_coord_bits: [{min_observed}, {max_observed}]");
+    eprintln!("[SURVEY] SAFE indices (max ≤ 127): {safe_indices:?}");
 }

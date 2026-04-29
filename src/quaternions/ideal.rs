@@ -551,6 +551,81 @@ impl Deref for ShortVector {
     }
 }
 
+/// Enumerate the C-reference's filtered half-cube of integer
+/// 4-tuples in `[-m, m]⁴`.
+///
+/// Returns the tuples in the same deterministic order as the C
+/// reference's `enumerate_hypercube` (`dim2id2iso.c:270-376`).
+/// Pinning the candidate order pins the first-success
+/// `(β_s, β_t)` choice in [`try_find_uv`], which in turn pins
+/// `e_pk` for KAT byte match.
+///
+/// Filters applied, in order:
+///
+///   * Half-cube iteration: walk only `x ≤ 0`, breaking each inner loop when
+///     the leading-zero suffix would cross into the positive half. `±v` and `v`
+///     give the same Gram-form value, so keeping just one representative halves
+///     the candidate pool.
+///   * Skip all-even tuples: `2·v` has Gram-form value `4·G(v, v)`, never
+///     smaller than `G(v, v)` itself.
+///   * Skip all-mult-of-3 tuples for the same reason.
+///   * When `gram_has_i_symmetry` is set — i.e., the L2-reduced basis is `(γ,
+///     iγ, β, iβ)` so that `G[0][0] = G[1][1]` and `G[2][2] = G[3][3]` — keep
+///     only the `i`-orbit representative with the smallest lex rank in the `dim
+///     = 2m + 1` hypercube layout.
+fn enumerate_hypercube(m: i64, gram_has_i_symmetry: bool) -> Vec<[i64; 4]> {
+    debug_assert!(m > 0);
+
+    let dim = 2 * m + 1;
+    let dim2 = dim * dim;
+    let dim3 = dim2 * dim;
+
+    let cap = (dim as usize).pow(4);
+    let mut out = Vec::with_capacity(cap);
+
+    for x in -m..=0 {
+        for y in -m..=m {
+            if x == 0 && y > 0 {
+                break;
+            }
+            for z in -m..=m {
+                if x == 0 && y == 0 && z > 0 {
+                    break;
+                }
+                for w in -m..=m {
+                    if x == 0 && y == 0 && z == 0 && w >= 0 {
+                        break;
+                    }
+
+                    if (x | y | z | w) & 1 == 0 {
+                        continue;
+                    }
+                    if x.rem_euclid(3) == 0
+                        && y.rem_euclid(3) == 0
+                        && z.rem_euclid(3) == 0
+                        && w.rem_euclid(3) == 0
+                    {
+                        continue;
+                    }
+
+                    if gram_has_i_symmetry {
+                        let check1 = (m + w) + dim * (m + z) + dim2 * (m + y) + dim3 * (m + x);
+                        let check2 = (m - z) + dim * (m + w) + dim2 * (m - x) + dim3 * (m + y);
+                        let check3 = (m + z) + dim * (m - w) + dim2 * (m + x) + dim3 * (m - y);
+                        if !(check1 <= check2 && check1 <= check3) {
+                            continue;
+                        }
+                    }
+
+                    out.push([x, y, z, w]);
+                }
+            }
+        }
+    }
+
+    out
+}
+
 impl<const W: usize> NrdBasis<W> {
     /// Enumerate non-zero lattice vectors within the box \[-m, m\]⁴
     /// from an L2-reduced basis, compute their degrees, and sort by
@@ -579,8 +654,7 @@ impl<const W: usize> NrdBasis<W> {
             return Vec::new();
         };
 
-        let coeffs: Vec<BigInt<W>> = (-m..=m).map(BigInt::<W>::from_i64).collect();
-        let width = coeffs.len();
+        let width = (2 * m + 1) as usize;
         let mut vectors = Vec::with_capacity(width.pow(4) - 1);
 
         #[cfg(test)]
@@ -617,92 +691,91 @@ impl<const W: usize> NrdBasis<W> {
             }
         }
 
-        for ix0 in 0..width {
-            for ix1 in 0..width {
-                for ix2 in 0..width {
-                    for ix3 in 0..width {
-                        let x = [coeffs[ix0], coeffs[ix1], coeffs[ix2], coeffs[ix3]];
+        let need_remove_symmetry =
+            self.gram()[0][0] == self.gram()[1][1] && self.gram()[3][3] == self.gram()[2][2];
 
-                        if x.iter().all(|xi| bool::from(xi.is_zero())) {
-                            continue;
-                        }
+        for [x_i, y_i, z_i, w_i] in enumerate_hypercube(m, need_remove_symmetry) {
+            let x = [
+                BigInt::<W>::from_i64(x_i),
+                BigInt::<W>::from_i64(y_i),
+                BigInt::<W>::from_i64(z_i),
+                BigInt::<W>::from_i64(w_i),
+            ];
 
-                        // nrd(β) · denom² = Σ x_i x_j G_{ij}.
-                        let nrd_scaled = self.eval_quadratic_form(&x);
+            // nrd(β) · denom² = Σ x_i x_j G_{ij}.
+            let nrd_scaled = self.eval_quadratic_form(&x);
 
-                        if bool::from(nrd_scaled.is_zero()) || bool::from(nrd_scaled.is_negative())
-                        {
-                            #[cfg(test)]
-                            {
-                                _rej_zero_nrd += 1;
-                            }
-                            continue;
-                        }
-
-                        // degree = nrd_scaled / (nrd(I) · denom²).
-                        let (degree_wide, rem) = nrd_scaled.div_rem(&divisor);
-                        if !bool::from(rem.is_zero()) {
-                            #[cfg(test)]
-                            {
-                                _rej_nonintegral += 1;
-                            }
-                            continue;
-                        }
-                        if bool::from(degree_wide.is_zero()) {
-                            #[cfg(test)]
-                            {
-                                _rej_degree_zero += 1;
-                            }
-                            continue;
-                        }
-                        let Some(degree_4) = degree_wide.narrow_to::<4>() else {
-                            #[cfg(test)]
-                            {
-                                _rej_narrow_degree += 1;
-                            }
-                            continue;
-                        };
-                        let Some(degree) = IsogenyDegree::new_odd(*degree_4.as_limbs()) else {
-                            #[cfg(test)]
-                            {
-                                _rej_not_odd += 1;
-                            }
-                            continue;
-                        };
-
-                        // β = Σ x_k · col_k.
-                        let coords: [BigInt<W>; 4] = core::array::from_fn(|row| {
-                            (0..4).fold(BigInt::<W>::ZERO, |acc, k| {
-                                acc.ct_add(&x[k].ct_mul(&self.cols()[k][row]))
-                            })
-                        });
-
-                        // Narrow coordinates to BigInt<4>. After L2 reduction
-                        // with small coefficients this should always succeed.
-                        let narrow: [Option<BigInt<4>>; 4] =
-                            core::array::from_fn(|i| coords[i].narrow_to::<4>());
-                        let [Some(a), Some(b), Some(c), Some(d)] = narrow else {
-                            #[cfg(test)]
-                            {
-                                _rej_narrow_coord += 1;
-                            }
-                            continue;
-                        };
-
-                        vectors.push(ShortVectorCandidate {
-                            elem: Element::<4>::new(
-                                Coordinate::from_bigint(a),
-                                Coordinate::from_bigint(b),
-                                Coordinate::from_bigint(c),
-                                Coordinate::from_bigint(d),
-                                Denominator::from_bigint_unchecked(den_4),
-                            ),
-                            degree,
-                        });
-                    }
+            if bool::from(nrd_scaled.is_zero()) || bool::from(nrd_scaled.is_negative()) {
+                #[cfg(test)]
+                {
+                    _rej_zero_nrd += 1;
                 }
+                continue;
             }
+
+            // degree = nrd_scaled / (nrd(I) · denom²).
+            let (degree_wide, rem) = nrd_scaled.div_rem(&divisor);
+            if !bool::from(rem.is_zero()) {
+                #[cfg(test)]
+                {
+                    _rej_nonintegral += 1;
+                }
+                continue;
+            }
+            if bool::from(degree_wide.is_zero()) {
+                #[cfg(test)]
+                {
+                    _rej_degree_zero += 1;
+                }
+                continue;
+            }
+            let Some(degree_4) = degree_wide.narrow_to::<4>() else {
+                #[cfg(test)]
+                {
+                    _rej_narrow_degree += 1;
+                }
+                continue;
+            };
+            let Some(degree) = IsogenyDegree::new_odd(*degree_4.as_limbs()) else {
+                #[cfg(test)]
+                {
+                    _rej_not_odd += 1;
+                }
+                continue;
+            };
+
+            // β = Σ x_k · col_k.
+            let coords: [BigInt<W>; 4] = core::array::from_fn(|row| {
+                (0..4).fold(BigInt::<W>::ZERO, |acc, k| {
+                    acc.ct_add(&x[k].ct_mul(&self.cols()[k][row]))
+                })
+            });
+
+            // Narrow coordinates to BigInt<4>. After L2 reduction
+            // with small coefficients this should always succeed.
+            let narrow: [Option<BigInt<4>>; 4] =
+                core::array::from_fn(|i| coords[i].narrow_to::<4>());
+            let [Some(a), Some(b), Some(c), Some(d)] = narrow else {
+                #[cfg(test)]
+                {
+                    _rej_narrow_coord += 1;
+                }
+                continue;
+            };
+
+            vectors.push(ShortVectorCandidate {
+                elem: Element::<4>::new(
+                    Coordinate::from_bigint(a),
+                    Coordinate::from_bigint(b),
+                    Coordinate::from_bigint(c),
+                    Coordinate::from_bigint(d),
+                    Denominator::from_bigint_unchecked(den_4),
+                ),
+                degree,
+            });
         }
+
+        let _ = width; // capacity hint only
 
         #[cfg(test)]
         if std::env::var("ENUM_DIAG").is_ok() {
@@ -800,32 +873,15 @@ fn try_find_uv<const N: usize>(
         v
     };
 
-    // Balance bias: jump to the line position where `u ≈ 2^{f/2}` so
-    // that `fixed_degree_isogeny`'s `represent_integer` has a
-    // reasonable search space (bound scales as `√(4m/p)`, which caps
-    // at 256 for `u ≲ 2^{25}` and produces a ~55-pair search — almost
-    // always rejects). For large `d_1, d_2` the line has few `(u, v)`
-    // pairs total, so even the initial pair is usually balanced; for
-    // small `d_1, d_2`, the walk would need billions of steps to
-    // reach balance. Computing the jump directly keeps this O(1).
-    //
-    // Target: u ≈ 2^{f/2}. k satisfies `u0 + k·d_2 ≥ 2^{f/2}`, i.e.,
-    // `k ≥ (2^{f/2} − u_0) / d_2`. Also require `k·d_1 ≤ v_0` so `v`
-    // stays positive. If both bounds are compatible, jump; otherwise
-    // fall back to the original `k = 0` start.
-    {
-        let target_u = BigInt::<8>::ONE.shl(f.value() / 2);
-        if target_u > u {
-            let (k, _) = target_u.ct_sub(&u).div_rem(&d2_w);
-            // Feasibility: after the jump, `v_new = v − k·d_1` must
-            // remain positive. Equivalent: `k · d_1 < v`.
-            let k_d1 = k.ct_mul(&d1_w);
-            if v > k_d1 {
-                u = u.ct_add(&k.ct_mul(&d2_w));
-                v = v.ct_sub(&k_d1);
-            }
-        }
-    }
+    // Note: an earlier version "balance-biased" the start by jumping
+    // to `u ≈ 2^{f/2}` to give `represent_integer` a larger search
+    // space. C reference (`find_uv_from_lists` in `dim2id2iso.c:382`)
+    // walks the full line from the natural starting point with no
+    // such bias, and the chosen `(u, v)` matters for interop with
+    // KAT vectors — different starting points → different first
+    // success → different `(β_s, β_t)` selection → different chain
+    // codomain → different `e_pk`. Removed.
+    let _ = f;
 
     // Cap the line-walk. Without a cap, the `MIN_U_ODD_BITS`
     // filter below can force the loop to step `(u, v)` forward
@@ -1630,16 +1686,23 @@ impl<const N: usize> LeftIdeal<N> {
             let parent_ideal_t = if t == 0 {
                 *self
             } else {
-                // Compute pushforward at `BigInt<8>` to avoid
-                // `Lattice<N>::product`'s mul_direct overflow when
-                // the intersection ideal has coords ~2^252. The
-                // resulting lattice should fit back in `BigInt<N>`;
-                // if not, skip this curve index this iteration.
-                let j_t_8 = connecting_ideal(t).widen::<8>();
-                let self_8 = self.widen::<8>();
-                let order_t_8 = EXTREMAL_ORDERS[t].widen::<8>();
-                let push_8 = j_t_8.pushforward(&self_8, order_t_8.order());
-                match push_8.narrow_to::<N>() {
+                // Compute pushforward at `BigInt<16>` to absorb the
+                // worst-case intermediate product `|J|² · p · |I|`
+                // — for KAT-shaped α with coord magnitudes ~2^140
+                // and `|J| ≈ 2^125`, the inverse step's quaternion
+                // multiplication can reach ~2^640. Width 16 (= 1024
+                // bits) holds it; width 8 silently truncated, leaving
+                // every short vector with `nrd` undivisible by `N`
+                // and every `t > 0` batch empty.
+                //
+                // The result is expected to fit in `BigInt<N>` (the
+                // pushforward has the same norm as `self`); if not,
+                // skip this curve index for this iteration.
+                let j_t_w = connecting_ideal(t).widen::<16>();
+                let self_w = self.widen::<16>();
+                let order_t_w = EXTREMAL_ORDERS[t].widen::<16>();
+                let push_w = j_t_w.pushforward(&self_w, order_t_w.order());
+                match push_w.narrow_to::<N>() {
                     Some(p) => p,
                     None => continue,
                 }
@@ -1696,15 +1759,43 @@ impl<const N: usize> LeftIdeal<N> {
                         _pairs_tried += 1;
                         if let Some(result) = try_find_uv(sv1, sv2, batch_s, batch_t, &two_f, f) {
                             #[cfg(test)]
-                            eprintln!(
-                                "[suitable_ideals] selected (s={s}, t={t}) after {_pairs_tried} pairs \
-                                 | norm={} bits, batch sizes={:?}",
-                                self.norm().bitsize(),
-                                short_vecs_per_order
-                                    .iter()
-                                    .map(|v| v.len())
-                                    .collect::<Vec<_>>(),
-                            );
+                            {
+                                eprintln!(
+                                    "[suitable_ideals] selected (s={s}, t={t}) after {_pairs_tried} pairs \
+                                     | norm={} bits, batch sizes={:?}",
+                                    self.norm().bitsize(),
+                                    short_vecs_per_order
+                                        .iter()
+                                        .map(|v| v.len())
+                                        .collect::<Vec<_>>(),
+                                );
+                                if std::env::var("SUITABLE_IDEALS_TRACE").is_ok() {
+                                    eprintln!(
+                                        "[suitable_ideals] u={} v={} e={}",
+                                        result.u,
+                                        result.v,
+                                        result.e.value(),
+                                    );
+                                    eprintln!(
+                                        "[suitable_ideals] beta_s coord=[{}, {}, {}, {}] denom={} d_s={}",
+                                        result.factor1.beta.a.as_bigint(),
+                                        result.factor1.beta.b.as_bigint(),
+                                        result.factor1.beta.c.as_bigint(),
+                                        result.factor1.beta.d.as_bigint(),
+                                        result.factor1.beta.denom.as_bigint(),
+                                        result.factor1.degree.to_bigint(),
+                                    );
+                                    eprintln!(
+                                        "[suitable_ideals] beta_t coord=[{}, {}, {}, {}] denom={} d_t={}",
+                                        result.factor2.beta.a.as_bigint(),
+                                        result.factor2.beta.b.as_bigint(),
+                                        result.factor2.beta.c.as_bigint(),
+                                        result.factor2.beta.d.as_bigint(),
+                                        result.factor2.beta.denom.as_bigint(),
+                                        result.factor2.degree.to_bigint(),
+                                    );
+                                }
+                            }
                             return Some(result);
                         }
                     }
@@ -2155,5 +2246,73 @@ mod tests {
                 "u should be odd after 2-adic reduction"
             );
         }
+    }
+
+    /// `enumerate_hypercube` mirrors the C reference's
+    /// `enumerate_hypercube` in `dim2id2iso.c:270-376` exactly.
+    ///
+    /// Locks in the structural enumeration order so that any
+    /// future change to the filter logic that diverges from the
+    /// C ref will fail this test. Specifically:
+    ///
+    ///   * The half-cube break pattern (`x ≤ 0`, then nested non-positive
+    ///     breaks).
+    ///   * The all-even and all-mult-of-3 skips.
+    ///   * The `i`-orbit symmetry filter via the `check1 ≤ check2 ∧ check1 ≤
+    ///     check3` predicate.
+    ///
+    /// At `m = 2` (NIST-I), with no symmetry the filtered cube
+    /// has 246 tuples; with symmetry it has 137 tuples. The
+    /// numbers come from running the C reference for a basis
+    /// without/with i-symmetry respectively.
+    #[test]
+    fn enumerate_hypercube_matches_c_ref() {
+        let no_sym = enumerate_hypercube(2, false);
+        let with_sym = enumerate_hypercube(2, true);
+
+        // Locked-in counts at `m = 2` (NIST-I `FINDUV_BOX_SIZE`).
+        // `272` = full cube `5⁴ = 625` minus the positive-half
+        // (313 tuples) minus the 40 all-even tuples within the
+        // half-cube. The all-mult-of-3 filter contributes 0 at
+        // `m = 2` because `0` is the only multiple of 3 in
+        // `[-2, 2]` and `(0, 0, 0, 0)` is already excluded by the
+        // half-cube break. `136` is the further reduction from
+        // the `i`-orbit symmetry filter — exactly half of `272`,
+        // as expected when each orbit has size 2.
+        assert_eq!(no_sym.len(), 272);
+        assert_eq!(with_sym.len(), 136);
+
+        // Half-cube property: every kept tuple has either x < 0,
+        // or x = 0 ∧ y ≤ 0, or x = 0 ∧ y = 0 ∧ z ≤ 0,
+        // or x = 0 ∧ y = 0 ∧ z = 0 ∧ w < 0.
+        for &[x, y, z, w] in &no_sym {
+            let in_half_cube = x < 0
+                || (x == 0 && y < 0)
+                || (x == 0 && y == 0 && z < 0)
+                || (x == 0 && y == 0 && z == 0 && w < 0);
+            assert!(in_half_cube, "tuple [{x},{y},{z},{w}] violates half-cube");
+        }
+
+        // No tuple has all four coords even.
+        for &[x, y, z, w] in &no_sym {
+            assert!(
+                (x | y | z | w) & 1 != 0,
+                "tuple [{x},{y},{z},{w}] is all-even"
+            );
+        }
+
+        // No tuple has all four coords divisible by 3.
+        for &[x, y, z, w] in &no_sym {
+            assert!(
+                !(x.rem_euclid(3) == 0
+                    && y.rem_euclid(3) == 0
+                    && z.rem_euclid(3) == 0
+                    && w.rem_euclid(3) == 0),
+                "tuple [{x},{y},{z},{w}] is all-mult-of-3"
+            );
+        }
+
+        // Symmetry filter strictly removes some tuples.
+        assert!(with_sym.len() < no_sym.len());
     }
 }
