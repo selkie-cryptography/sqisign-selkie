@@ -1906,7 +1906,11 @@ impl LeftIdeal<4> {
     /// TODO(ct): Make constant-time before production use.
     ///
     /// [Alg. 3.10]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.10
-    pub fn random_norm(n: &BigInt<4>, order: &ExtremalOrder<4>) -> Option<Self> {
+    pub fn random_norm<R: RngCore>(
+        n: &BigInt<4>,
+        order: &ExtremalOrder<4>,
+        rng: &mut R,
+    ) -> Option<Self> {
         // m = QUAT_prime_cofactor (precomputed prime ≈ p)
         let m4 = crate::params::QUAT_PRIME_COFACTOR;
         let m = BigInt::<8>::from_limbs({
@@ -1923,7 +1927,7 @@ impl LeftIdeal<4> {
         });
         let mn = m.ct_mul(&n_wide);
         let order_wide = ExtremalOrder::<8>::from(*order);
-        let gamma = order_wide.represent_integer(&mn, false)?;
+        let gamma = order_wide.represent_integer(&mn, false, rng)?;
 
         // Lines 11-14: sample β = x + yi + zj + wij with gcd(nrd(β), N) = 1
         let n_bits = n.bitsize() as usize;
@@ -2230,27 +2234,21 @@ impl LeftIdeal<30> {
             limbs[..8].copy_from_slice(p8.as_limbs());
             BigInt::from_sign_and_limbs(0, limbs)
         };
-        let n_bits = n.bitsize() as usize;
-        let n_bytes = n_bits.div_ceil(8);
 
-        let sample_mod_n = |rng: &mut R| -> BigInt<30> {
-            loop {
-                let mut bytes = [0u8; 240]; // 30 × 8
-                rng.fill_bytes(&mut bytes[..n_bytes]);
-                if n_bits % 8 != 0 {
-                    bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
-                }
-                let val = BigInt::<30>::from_bytes_le_unsigned(&bytes[..n_bytes]);
-                if val.ct_mod(n) == val {
-                    return val;
-                }
-            }
-        };
+        let zero_big = BigInt::<30>::ZERO;
+        let one_big = BigInt::<30>::ONE;
+        let n_minus_one = n.ct_sub(&one_big);
 
         for _ in 0..10_000 {
-            let g1 = sample_mod_n(rng);
-            let g2 = sample_mod_n(rng);
-            let g3 = sample_mod_n(rng);
+            // Phase A: trace-zero quaternion γ = a + g₁·i + g₂·j +
+            // g₃·k with nrd(γ) ≡ 0 (mod N). Sample (g₁, g₂, g₃) ∈
+            // [0, N − 1] via [`BigInt::rand_interval`] (matches
+            // C ref's `ibz_rand_interval(0, n−1)` byte-for-byte),
+            // compute disc = −nrd mod N, and recover a via
+            // `sqrt mod N` after a Legendre check.
+            let g1 = BigInt::<30>::rand_interval(rng, &zero_big, &n_minus_one);
+            let g2 = BigInt::<30>::rand_interval(rng, &zero_big, &n_minus_one);
+            let g3 = BigInt::<30>::rand_interval(rng, &zero_big, &n_minus_one);
 
             // nrd(γ) = g₁² + p(g₂² + g₃²) for γ = g₁i + g₂j + g₃ij
             // in the quaternion algebra B_{p,∞} = (-1, -p). With
@@ -2276,6 +2274,83 @@ impl LeftIdeal<30> {
                 Some(s) => s,
                 None => continue,
             };
+
+            #[cfg(test)]
+            if std::env::var("SAMPID_TRACE").is_ok() {
+                eprintln!("[SAMPID] phaseA gen.coord=[{}, {}, {}, {}]", a, g1, g2, g3);
+            }
+
+            // Phase B: rerandomize the principal ideal class by
+            // sampling δ = (d₀, d₁, d₂, d₃) with gcd(nrd(δ), N) = 1
+            // and replacing γ ← γ · δ. Mirrors C ref's
+            // `quat_sampling_random_ideal_O0_given_norm`
+            // (`normeq.c:297-384`). Without this step the resulting
+            // ideal lattice differs from C ref's by a multiplicative
+            // δ-twist, so the downstream `reduce_to_prime_norm`
+            // basis (and every byte after it) diverges.
+            let delta_coords: Option<[BigInt<30>; 4]> = (0..1000).find_map(|_| {
+                let d0 = BigInt::<30>::rand_interval(rng, &one_big, n);
+                let d1 = BigInt::<30>::rand_interval(rng, &one_big, n);
+                let d2 = BigInt::<30>::rand_interval(rng, &one_big, n);
+                let d3 = BigInt::<30>::rand_interval(rng, &one_big, n);
+                let nrd_d = d0
+                    .ct_mul(&d0)
+                    .ct_add(&d1.ct_mul(&d1))
+                    .ct_add(&p_wide.ct_mul(&d2.ct_mul(&d2).ct_add(&d3.ct_mul(&d3))));
+                let nrd_d_mod = nrd_d.ct_mod(n);
+                if nrd_d_mod.gcd(n) == BigInt::<30>::ONE {
+                    Some([d0, d1, d2, d3])
+                } else {
+                    None
+                }
+            });
+            let Some([d0, d1, d2, d3]) = delta_coords else {
+                continue;
+            };
+
+            #[cfg(test)]
+            if std::env::var("SAMPID_TRACE").is_ok() {
+                eprintln!(
+                    "[SAMPID] phaseB rerand.coord=[{}, {}, {}, {}]",
+                    d0, d1, d2, d3
+                );
+            }
+
+            // γ · δ via [`Element::mul_direct`] at width 30.
+            // Inputs use ≤ 9 limbs (513 bits); products fit the
+            // N/2 = 15-limb precondition. Output coords reach
+            // ~2^1285 (still well within 30 limbs).
+            let gamma_elem = Element::<30>::new(
+                Coordinate::from_bigint(a),
+                Coordinate::from_bigint(g1),
+                Coordinate::from_bigint(g2),
+                Coordinate::from_bigint(g3),
+                Denominator::from_bigint_unchecked(one_big),
+            );
+            let delta_elem = Element::<30>::new(
+                Coordinate::from_bigint(d0),
+                Coordinate::from_bigint(d1),
+                Coordinate::from_bigint(d2),
+                Coordinate::from_bigint(d3),
+                Denominator::from_bigint_unchecked(one_big),
+            );
+            let new_gen = gamma_elem.mul_direct(&delta_elem);
+            let a = *new_gen.a.as_bigint();
+            let g1 = *new_gen.b.as_bigint();
+            let g2 = *new_gen.c.as_bigint();
+            let g3 = *new_gen.d.as_bigint();
+
+            #[cfg(test)]
+            if std::env::var("SAMPID_TRACE").is_ok() {
+                eprintln!(
+                    "[SAMPID] mult.coord=[{}, {}, {}, {}] denom={}",
+                    a,
+                    g1,
+                    g2,
+                    g3,
+                    new_gen.denom.as_bigint()
+                );
+            }
 
             // Construct I = O₀⟨γ, N⟩ as a lattice.
             //
@@ -2739,20 +2814,27 @@ where
         false
     }
 
-    /// Sample a uniform random integer in \[−m, m\] via rejection sampling.
+    /// Sample a uniform random integer in \[−m, m\] via rejection
+    /// sampling, mirroring C ref's `ibz_rand_interval_minm_m`
+    /// byte-for-byte (`intbig.c:475-552`).
     ///
-    /// WARNING: Not constant-time (rejection loop). The bound `m` is
-    /// public, so this is acceptable for SQIsign.
+    /// C ref calls `ibz_rand_interval(rand, 0, 2m)` then subtracts
+    /// `m`. With `m = 64` (the only caller's choice), `bmina = 128`
+    /// has `len_bits = 8`, so each try draws **1 byte** and rejects
+    /// when `val > 128` (~50% rejection, ~2 bytes amortized). An
+    /// earlier version used `next_u32()` (4 bytes/call, lower
+    /// rejection) which doubled per-iteration byte consumption and
+    /// desynced from C ref's DRBG byte stream.
+    ///
+    /// WARNING: Not constant-time (rejection loop). The bound `m`
+    /// is public, so this is acceptable for SQIsign.
     fn rand_interval<R: RngCore>(rng: &mut R, m: i32) -> i64 {
         assert!(m >= 0);
-        let range = 2 * (m as u32) + 1;
-        let threshold = u32::MAX - (u32::MAX % range);
-        loop {
-            let val = rng.next_u32();
-            if val < threshold {
-                return (val % range) as i64 - m as i64;
-            }
-        }
+        let zero = BigInt::<4>::ZERO;
+        let bound = BigInt::<4>::from_u64(2 * (m as u64));
+        let val = BigInt::<4>::rand_interval(rng, &zero, &bound);
+        // `val ∈ [0, 2m]`, subtract `m` to get `[−m, m]`.
+        (val.as_limbs()[0] as i64) - (m as i64)
     }
 }
 

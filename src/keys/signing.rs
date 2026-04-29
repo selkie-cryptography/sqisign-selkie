@@ -260,7 +260,7 @@ impl SigningKey {
             };
 
             // Line 5: E_pk, φ_sk(P₀), φ_sk(Q₀) ← IdealToIsogeny(I_sk).
-            let (e_pk, phi_p, phi_q, phi_pmq) = match i_sk_narrow.to_isogeny() {
+            let (e_pk, phi_p, phi_q, phi_pmq) = match i_sk_narrow.to_isogeny(rng) {
                 Some(r) => r,
                 None => continue,
             };
@@ -602,7 +602,7 @@ impl SigningKey {
             // `P_com` and `Q_com`.
             #[cfg(test)]
             eprintln!("[sign {_iter}] commitment to_isogeny...");
-            let (e_com, p_com, q_com, pmq_com) = match i_com_narrow.to_isogeny() {
+            let (e_com, p_com, q_com, pmq_com) = match i_com_narrow.to_isogeny(rng) {
                 Some(r) => {
                     #[cfg(test)]
                     eprintln!("[sign {_iter}] commitment OK ({:?})", _iter_start.elapsed());
@@ -1002,7 +1002,7 @@ impl SigningKey {
                     aux_norm.bitsize(),
                     _iter_start.elapsed()
                 );
-                let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0]) {
+                let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0], rng) {
                     Some(i) => i,
                     None => {
                         #[cfg(test)]
@@ -1104,7 +1104,7 @@ impl SigningKey {
                 // kernel-isotropy condition then fails with
                 // `count_splitting_indices = 0`.
                 let (e_aux_prime, p_aux_prime, q_aux_prime, pmq_aux_prime) =
-                    match i_inter_w.to_isogeny() {
+                    match i_inter_w.to_isogeny(rng) {
                         Some(r) => {
                             #[cfg(test)]
                             eprintln!(
@@ -1177,7 +1177,7 @@ impl SigningKey {
                 }
             } else {
                 // Lines 28–31: direct path
-                let (ec, pc, qc, pc_pmq) = match i_com_narrow.to_isogeny() {
+                let (ec, pc, qc, pc_pmq) = match i_com_narrow.to_isogeny(rng) {
                     Some(r) => r,
                     None => {
                         #[cfg(test)]

@@ -327,9 +327,10 @@ fn action_matrix(
 /// IdealToIsogeny).
 ///
 /// [Alg. 3.15]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
-fn fixed_degree_isogeny(
+fn fixed_degree_isogeny<R: rand_core::RngCore>(
     order: &'static ExtremalOrder<4>,
     u: &IsogenyDegree,
+    rng: &mut R,
 ) -> Option<(
     Curve,
     ProjectiveXOnlyPoint,
@@ -385,7 +386,7 @@ fn fixed_degree_isogeny(
     }
     let m = u_wide.ct_mul(&two_e_fdi.ct_sub(&u_wide));
     let order_wide = ExtremalOrder::<8>::from(*order);
-    let theta = match order_wide.represent_integer(&m, true) {
+    let theta = match order_wide.represent_integer(&m, true, rng) {
         Some(t) => {
             #[cfg(test)]
             eprintln!("[FDI] represent_integer OK, e_fdi={e_fdi}");
@@ -578,8 +579,9 @@ impl<const N: usize> LeftIdeal<N> {
     /// a build that fails interoperability against C-reference KAT
     /// vectors at the response phase even when every other invariant
     /// matches.
-    pub fn to_isogeny(
+    pub fn to_isogeny<R: rand_core::RngCore>(
         self,
+        rng: &mut R,
     ) -> Option<(
         Curve,
         ProjectiveXOnlyPoint,
@@ -587,7 +589,7 @@ impl<const N: usize> LeftIdeal<N> {
         ProjectiveXOnlyPoint,
     )> {
         let norm = *self.norm();
-        self.to_isogeny_with_norm(&norm)
+        self.to_isogeny_with_norm(&norm, rng)
     }
 
     /// [`to_isogeny`](Self::to_isogeny) with an explicit norm override
@@ -607,9 +609,10 @@ impl<const N: usize> LeftIdeal<N> {
     ///
     /// This entry point lets the caller supply the original norm
     /// while still passing the pre-reduced ideal as `self`.
-    pub fn to_isogeny_with_norm(
+    pub fn to_isogeny_with_norm<R: rand_core::RngCore>(
         self,
         original_norm: &BigInt<N>,
+        rng: &mut R,
     ) -> Option<(
         Curve,
         ProjectiveXOnlyPoint,
@@ -634,7 +637,8 @@ impl<const N: usize> LeftIdeal<N> {
         #[cfg(test)]
         let _t1 = std::time::Instant::now();
         let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
-        let (e_u, phi_u_p, phi_u_q, phi_u_pmq) = fixed_degree_isogeny(sui.factor1.order, &u_deg)?;
+        let (e_u, phi_u_p, phi_u_q, phi_u_pmq) =
+            fixed_degree_isogeny(sui.factor1.order, &u_deg, rng)?;
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(u): {:?}", _t1.elapsed());
 
@@ -642,7 +646,8 @@ impl<const N: usize> LeftIdeal<N> {
         #[cfg(test)]
         let _t2 = std::time::Instant::now();
         let v_deg = IsogenyDegree::new_odd(*sui.v.as_limbs())?;
-        let (e_v, phi_v_p, phi_v_q, phi_v_pmq) = fixed_degree_isogeny(sui.factor2.order, &v_deg)?;
+        let (e_v, phi_v_p, phi_v_q, phi_v_pmq) =
+            fixed_degree_isogeny(sui.factor2.order, &v_deg, rng)?;
         #[cfg(test)]
         eprintln!("[to_isogeny] FDI(v): {:?}", _t2.elapsed());
 

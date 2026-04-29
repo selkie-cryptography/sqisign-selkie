@@ -16,7 +16,9 @@
 
 use core::ops::Deref;
 
-use rand_core::{OsRng, RngCore};
+#[cfg(test)]
+use rand_core::OsRng;
+use rand_core::RngCore;
 
 use super::{
     algebra::{Coordinate, Denominator, Element},
@@ -44,10 +46,10 @@ impl ExtremalOrder<8> {
     /// TODO(ct): Make constant-time before production use. Called on
     /// secret-derived norms during signing (via FixedDegreeIsogeny,
     /// Algorithm 4.2 lines 21–24).
-    pub fn represent_integer_any(m: &BigInt<8>) -> Option<Element<4>> {
+    pub fn represent_integer_any<R: RngCore>(m: &BigInt<8>, rng: &mut R) -> Option<Element<4>> {
         for order in &EXTREMAL_ORDERS {
             let order_wide = ExtremalOrder::<8>::from(*order);
-            if let Some(gamma) = order_wide.represent_integer(m, false) {
+            if let Some(gamma) = order_wide.represent_integer(m, false, rng) {
                 return Some(gamma);
             }
         }
@@ -90,7 +92,12 @@ impl ExtremalOrder<8> {
     /// Algorithm 4.2 (FixedDegreeIsogeny calls this on secret norms).
     ///
     /// [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
-    pub fn represent_integer(&self, m: &BigInt<8>, isogeny_cond: bool) -> Option<Element<4>> {
+    pub fn represent_integer<R: RngCore>(
+        &self,
+        m: &BigInt<8>,
+        isogeny_cond: bool,
+        rng: &mut R,
+    ) -> Option<Element<4>> {
         let p: BigInt<8> = P_WIDE;
         let q_val = self.q();
         let q = BigInt::<8>::from_u64(q_val as u64);
@@ -105,65 +112,57 @@ impl ExtremalOrder<8> {
             return None;
         }
 
-        // Spec line 1: bound = ceil(sqrt(4M / (p·sqrt(q)))).
+        // Bounds matching C ref `quat_represent_integer`
+        // (`normeq.c:127-138`):
         //
-        // The spec's bound is an *upper* bound on the search range
-        // for `z`; it grows like `sqrt(M/p)`. For aux-path
-        // magnitudes (`M = m·N ≈ 2^378`), the spec bound is
-        // ≈ 2^64 — far beyond any reasonable iteration budget.
-        // The algorithm is probabilistic: by the prime number
-        // theorem, `O(log M) ≈ 400` attempts suffice in expectation.
-        // Cap at `MAX_ITER = 10_000` to retain the spec's
-        // mathematical structure (z cycles through a non-trivial
-        // range) while bounding wall-clock time to ~5s in release
-        // builds. A caller seeing `None` after this many iterations
-        // should retry with a different seed rather than wait for
-        // `2^64` evaluations. By PNT, ~`log M ≈ 400` z values
-        // suffice in expectation, so 10K is comfortably above the
-        // expected count.
-        const MAX_ITER: u32 = 10_000;
-        let bound: u32 = {
-            let q_sqrt = (q_val as f64).sqrt();
-            let ratio = four_m.to_f64() / (p.to_f64() * q_sqrt);
-            if ratio <= 0.0 {
+        //   sq_bound = floor(4M / p) − q
+        //   z_max    = floor(sqrt(sq_bound))
+        //   counter  = 4M / floor(sqrt(q · p²))
+        //
+        // All exact integer math (no f64) so byte-stream parity
+        // with C ref is preserved when the same DRBG state drives
+        // sampling. Counter is essentially unbounded for typical
+        // FDI inputs (~2^27); the loop exits early on first
+        // success per PNT (`O(log M) ≈ 400` expected iterations).
+        // We additionally cap at `MAX_ITER = 10_000` for
+        // wall-clock safety; a caller seeing `None` should retry
+        // with different randomness.
+        const MAX_ITER: u64 = 10_000;
+        let z_max_big = {
+            let (q_quot, _) = four_m.div_rem(&p);
+            if q_quot <= q {
                 return None;
             }
-            let raw = ratio.sqrt().ceil();
-            // f64 → u32 saturates at u32::MAX; cap explicitly.
-            let raw_u32 = if raw > u32::MAX as f64 {
-                u32::MAX
-            } else {
-                raw as u32
-            };
-            raw_u32.clamp(256, MAX_ITER)
+            q_quot.ct_sub(&q).sqrt_floor()
         };
-        // z_max also overflows for aux-path `M ≈ 2^378`: the
-        // unbounded value would be `√(4M/p) ≈ 2^64`. `f64 as i64`
-        // saturates non-deterministically near `i64::MAX`, leaving
-        // `z_max` huge. Cap to `MAX_ITER` so the cyclic `z` walk
-        // covers every distinct `z` within the iteration budget.
-        let z_max = {
-            let approx = (four_m.to_f64() / p.to_f64() - q_val as f64)
-                .max(0.0)
-                .sqrt();
-            let raw = if approx >= MAX_ITER as f64 {
-                MAX_ITER as i64
-            } else {
-                approx as i64
-            };
-            raw.max(1)
+        if bool::from(z_max_big.is_zero()) {
+            return None;
+        }
+        let counter_big = {
+            let qp2 = q.ct_mul(&p).ct_mul(&p);
+            let qp2_sqrt = qp2.sqrt_floor();
+            if bool::from(qp2_sqrt.is_zero()) {
+                return None;
+            }
+            let (cnt, _) = four_m.div_rem(&qp2_sqrt);
+            cnt
         };
-
-        // Random sampler for `[lo, hi]` with rejection sampling
-        // (matches the C reference's `ibz_rand_interval`).
-        let rand_in_range = |lo: i64, hi: i64| -> i64 {
-            let range = (hi - lo + 1) as u64;
-            let threshold = u64::MAX - (u64::MAX % range);
-            loop {
-                let val = ((OsRng.next_u32() as u64) << 32) | (OsRng.next_u32() as u64);
-                if val < threshold {
-                    return (val % range) as i64 + lo;
-                }
+        if bool::from(counter_big.is_zero()) {
+            return None;
+        }
+        // Project counter to a u64 budget capped at MAX_ITER. C
+        // ref's full counter walks `2^27`+ values without finding
+        // a solution only for inputs we wouldn't expect to succeed
+        // anyway; this cap matches the previous Rust behavior.
+        let bound: u64 = {
+            let limbs = counter_big.as_limbs();
+            // Counter spans at most a few limbs for any caller; if
+            // limb 1+ is non-zero the value vastly exceeds
+            // MAX_ITER.
+            if limbs[1..].iter().any(|&l| l != 0) || limbs[0] > MAX_ITER {
+                MAX_ITER
+            } else {
+                limbs[0]
             }
         };
 
@@ -175,40 +174,64 @@ impl ExtremalOrder<8> {
         // (`normeq.c` calls `ibz_rand_interval` for both `z` and
         // `t`). Each iteration picks one `(z, t)` pair uniformly
         // from the search box; expected hits per `O(log M)` ≈ 400
-        // attempts. Linear iteration biased toward small `z` and
-        // never explored larger ones within budget — slow and
-        // narrow.
-        let mut counter: u32 = 0;
-        while counter < bound {
-            counter += 1;
+        // attempts. Sampling uses [`BigInt::rand_interval`] to
+        // mirror C ref's byte-stream contract (top-bit-aligned
+        // mask + rejection on overflow).
+        //
+        // # Divergences (KAT byte-stream)
+        //
+        // The C reference samples `t` from `[1, t_max]` (positive
+        // only); we match that. An earlier version used
+        // `[-t_max, t_max]` (signed), which doubled the search
+        // domain at the cost of every byte-stream draw consuming
+        // a different number of bytes than C ref's
+        // `ibz_rand_interval(rand, 1, temp)` call.
+        #[cfg(test)]
+        if std::env::var("REPI_TRACE").is_ok() {
+            eprintln!(
+                "[REPI] init bound={} counter={} adjusted_n_gamma={}",
+                z_max_big, counter_big, four_m
+            );
+            eprintln!(
+                "[REPI] init q={} p={} non_diag={} standard_order={}",
+                q,
+                p,
+                if isogeny_cond { 1 } else { 0 },
+                if q_val == 1 { 1 } else { 0 }
+            );
+        }
+        let one_big = BigInt::<8>::ONE;
+        let mut iter: u64 = 0;
+        while iter < bound {
+            #[cfg(test)]
+            let _iter_idx = iter;
+            iter += 1;
 
-            let z_val = rand_in_range(1, z_max.max(1));
-            let z = BigInt::<8>::from_i64(z_val);
+            let z = BigInt::<8>::rand_interval(rng, &one_big, &z_max_big);
+            #[cfg(test)]
+            if std::env::var("REPI_TRACE").is_ok() {
+                eprintln!("[REPI] iter={} z={}", _iter_idx, z);
+            }
 
             let pz_sq = p.ct_mul(&z.ct_mul(&z));
             if four_m <= pz_sq {
                 continue;
             }
             let remaining = four_m.ct_sub(&pz_sq);
-            let t_max = {
-                let qp = q.ct_mul(&p);
-                if bool::from(qp.is_zero()) {
-                    0i64
-                } else {
-                    (remaining.to_f64() / qp.to_f64()).sqrt() as i64
-                }
-            };
-
-            // One random `t` per iteration (was: linear loop over
-            // `[-50, 50]`). Each (z, t) pair gets evaluated once;
-            // the outer counter bound governs total work.
-            let z_sq = z.ct_mul(&z);
-            if t_max <= 0 {
+            // `t_max = floor(sqrt((4M − p·z²) / (q·p)))`, exact
+            // integer (mirrors C ref `normeq.c:151-155`).
+            let qp = q.ct_mul(&p);
+            if bool::from(qp.is_zero()) {
                 continue;
             }
-            let t_val = rand_in_range(-t_max, t_max);
+            let (rem_div_qp, _) = remaining.div_rem(&qp);
+            let t_max_big = rem_div_qp.sqrt_floor();
+            let z_sq = z.ct_mul(&z);
+            if bool::from(t_max_big.is_zero()) {
+                continue;
+            }
+            let t = BigInt::<8>::rand_interval(rng, &one_big, &t_max_big);
             {
-                let t = BigInt::<8>::from_i64(t_val);
                 let t_sq = t.ct_mul(&t);
                 let inner = z_sq.ct_add(&q.ct_mul(&t_sq));
                 let m_prime = four_m.ct_sub(&p.ct_mul(&inner));
@@ -378,38 +401,43 @@ impl ExtremalOrder<8> {
                     content = content.gcd(&coeff.abs());
                 }
 
-                // d = content. Check d = 2.
-                if content != BigInt::TWO {
+                // C ref `normeq.c:225-228` accept condition:
+                //   content == 2 if `non_diag || standard_order`,
+                //   else content == 1.
+                // `non_diag` here is our `isogeny_cond` flag (the
+                // C ref reuses the same name); `standard_order`
+                // is `q == 1` (the order containing
+                // `(1+j)/2` rather than `(1+ωj)/2`).
+                let expected_content = if isogeny_cond || q_val == 1 {
+                    BigInt::TWO
+                } else {
+                    BigInt::ONE
+                };
+                if content != expected_content {
                     continue;
                 }
                 _parity_ok += 1;
 
-                // Return gamma / content by halving the order-basis
-                // coefficients and reconstructing the quaternion element.
-                //
-                // Dividing the {1,i,j,k} coords by 2 is NOT equivalent
-                // to halving the order-basis coefficients (unless the
-                // basis is diagonal). We must reconstruct from the halved
-                // coefficients: gamma/2 = Σ (c_k/2) · basis_col_k / denom.
-                let half = |c: &BigInt<4>| -> BigInt<4> {
-                    let (q, _) = c.div_rem(&BigInt::TWO);
+                // Return gamma / content by dividing the
+                // order-basis coefficients and reconstructing the
+                // quaternion element. Dividing the {1,i,j,k} coords
+                // by `content` is NOT equivalent to dividing the
+                // order-basis coefficients (unless the basis is
+                // diagonal); reconstruct from the divided
+                // coefficients: γ/d = Σ (c_k/d) · basis_col_k / denom.
+                let final_coeffs: [BigInt<4>; 4] = core::array::from_fn(|k| {
+                    let (q, _) = basis_coeffs[k].div_rem(&content);
                     q
-                };
-                let half_coeffs: [BigInt<4>; 4] = [
-                    half(&basis_coeffs[0]),
-                    half(&basis_coeffs[1]),
-                    half(&basis_coeffs[2]),
-                    half(&basis_coeffs[3]),
-                ];
+                });
 
-                // Reconstruct: gamma/2 = Σ (c_k/2) · basis_col_k / denom
+                // Reconstruct: γ/content = Σ (c_k/content) · basis_col_k / denom
                 let basis = order_lattice.basis();
                 let denom = *order_lattice.denom();
                 let mut result_coords = [BigInt::<4>::ZERO; 4];
                 for j in 0..4 {
                     for k in 0..4 {
                         result_coords[j] =
-                            result_coords[j].ct_add(&half_coeffs[k].ct_mul(&basis[j][k]));
+                            result_coords[j].ct_add(&final_coeffs[k].ct_mul(&basis[j][k]));
                     }
                 }
 
@@ -1892,7 +1920,7 @@ mod tests {
         });
         let mn = m_wide.ct_mul(&aux_norm);
         let t0 = std::time::Instant::now();
-        let gamma = order.represent_integer(&mn, false);
+        let gamma = order.represent_integer(&mn, false, &mut OsRng);
         let elapsed = t0.elapsed();
         eprintln!(
             "[aux-RI] mn.bits={} elapsed={elapsed:?} ok={}",
@@ -1961,7 +1989,7 @@ mod tests {
         let order = ExtremalOrder::<8>::from(EXTREMAL_ORDERS[0]);
         let m = p.ct_add(&BigInt::TWO);
 
-        let result = order.represent_integer(&m, false);
+        let result = order.represent_integer(&m, false, &mut OsRng);
         if let Some(gamma) = result {
             let (nrd_num, nrd_den) = gamma.norm();
             let (nrd, rem) = nrd_num.div_rem(&nrd_den);
@@ -1976,12 +2004,65 @@ mod tests {
         let p: BigInt<8> = P_WIDE;
         let m = p.ct_add(&BigInt::TWO);
 
-        let result = ExtremalOrder::<8>::represent_integer_any(&m);
+        let result = ExtremalOrder::<8>::represent_integer_any(&m, &mut OsRng);
         if let Some(gamma) = result {
             let (nrd_num, nrd_den) = gamma.norm();
             let (nrd, rem) = nrd_num.div_rem(&nrd_den);
             assert!(bool::from(rem.is_zero()), "nrd not integer");
             assert_eq!(nrd, m, "nrd(γ) should equal M");
+        }
+    }
+
+    /// Two DRBG instances seeded identically must drive
+    /// `represent_integer` to the *same* γ. Locks in determinism
+    /// of the search loop (no `OsRng` leak, no
+    /// implementation-specific iteration order beyond the
+    /// `(z, t)` byte stream).
+    ///
+    /// Required precondition for KAT byte-match: the C ref's
+    /// `quat_represent_integer` is deterministic given the DRBG
+    /// state, so ours must be too. Until our byte-stream is
+    /// validated against C ref ground truth, this test only
+    /// asserts self-consistency, not interop.
+    #[test]
+    fn represent_integer_deterministic_under_same_drbg_seed() {
+        use crate::drbg::Aes256CtrDrbg;
+
+        // Pick a target large enough that the search loop runs.
+        // M = p + 2 (smallest valid input ≥ p that's odd).
+        let p: BigInt<8> = P_WIDE;
+        let m = p.ct_add(&BigInt::TWO);
+        let order = ExtremalOrder::<8>::from(EXTREMAL_ORDERS[0]);
+
+        let seed = [0x42u8; 48];
+        let mut d1 = Aes256CtrDrbg::new(&seed);
+        let mut d2 = Aes256CtrDrbg::new(&seed);
+
+        let g1 = order.represent_integer(&m, false, &mut d1);
+        let g2 = order.represent_integer(&m, false, &mut d2);
+
+        // Both runs must agree on outcome (Some/None) and, when
+        // Some, on the actual quaternion element returned.
+        match (g1, g2) {
+            (None, None) => {
+                // Acceptable: search exhausted on both sides.
+            }
+            (Some(a), Some(b)) => {
+                assert_eq!(
+                    a.a.as_bigint(),
+                    b.a.as_bigint(),
+                    "γ.a divergence between same-seed runs"
+                );
+                assert_eq!(a.b.as_bigint(), b.b.as_bigint(), "γ.b divergence");
+                assert_eq!(a.c.as_bigint(), b.c.as_bigint(), "γ.c divergence");
+                assert_eq!(a.d.as_bigint(), b.d.as_bigint(), "γ.d divergence");
+                assert_eq!(
+                    a.denom.as_bigint(),
+                    b.denom.as_bigint(),
+                    "γ.denom divergence"
+                );
+            }
+            _ => panic!("same-seed DRBGs disagreed on Some/None outcome"),
         }
     }
 
@@ -2086,7 +2167,7 @@ mod tests {
         use super::super::lattice::LeftIdeal;
 
         let n = BigInt::<4>::from_u64(143);
-        let Some(ideal) = LeftIdeal::random_norm(&n, &EXTREMAL_ORDERS[0]) else {
+        let Some(ideal) = LeftIdeal::random_norm(&n, &EXTREMAL_ORDERS[0], &mut OsRng) else {
             return;
         };
 
@@ -2137,7 +2218,7 @@ mod tests {
         let mut ideal = None;
         for n_u64 in candidates {
             let n = BigInt::<4>::from_u64(n_u64);
-            if let Some(i) = LeftIdeal::random_norm(&n, &EXTREMAL_ORDERS[0]) {
+            if let Some(i) = LeftIdeal::random_norm(&n, &EXTREMAL_ORDERS[0], &mut OsRng) {
                 eprintln!("[composite-norm smoke] built ideal with norm {n_u64}");
                 ideal = Some(i);
                 break;
