@@ -11,9 +11,10 @@ fn ideal_to_isogeny(bencher: divan::Bencher) {
     let order = &EXTREMAL_ORDERS[0];
     let norm = BigInt::<4>::from_limbs([0xDEAD_BEEF_CAFE_BABE, 0, 0, 0]);
     if let Some(ideal) = LeftIdeal::<4>::random_prime_norm(&norm, order) {
-        bencher
-            .with_inputs(|| ideal)
-            .bench_values(|i| i.to_isogeny());
+        bencher.with_inputs(|| ideal).bench_values(|i| {
+            let mut rng = rand_core::OsRng;
+            i.to_isogeny(&mut rng)
+        });
     }
 }
 
@@ -21,7 +22,7 @@ fn ideal_to_isogeny(bencher: divan::Bencher) {
 fn reduce_to_prime_norm(bencher: divan::Bencher) {
     let order = &EXTREMAL_ORDERS[0];
     let norm = BigInt::<4>::from_limbs([0xCAFE_BABE_0000_0001, 0, 0, 0]);
-    if let Some(ideal) = LeftIdeal::<4>::random_norm(&norm, order) {
+    if let Some(ideal) = LeftIdeal::<4>::random_norm(&norm, order, &mut rand_core::OsRng) {
         bencher.with_inputs(|| ideal).bench_values(|mut i| {
             let mut rng = rand_core::OsRng;
             i.reduce_to_prime_norm::<4, _>(&mut rng);
@@ -43,5 +44,8 @@ fn represent_integer(bencher: divan::Bencher) {
         0,
         0,
     ]);
-    bencher.bench(|| order.represent_integer(divan::black_box(&m), false));
+    bencher.bench(|| {
+        let mut rng = rand_core::OsRng;
+        order.represent_integer(divan::black_box(&m), false, &mut rng)
+    });
 }
