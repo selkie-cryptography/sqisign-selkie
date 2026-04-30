@@ -170,16 +170,10 @@ jobs:
           echo '<meta http-equiv="refresh" content="0;url=sqisign_selkie/">' \
             > target/doc/index.html
           tar -czf /tmp/rustdoc.tar.gz -C target/doc .
-          flyctl apps restart sqisign-selkie-ci --skip-health-checks
-          # Wait for VM to start (auto-stop VMs can take 30-60s).
-          for i in $(seq 1 12); do
-            if flyctl ssh console -a sqisign-selkie-ci -C "true" 2>/dev/null; then
-              echo "VM ready (attempt $i)"
-              break
-            fi
-            echo "Waiting for VM to start (attempt $i/12)..."
-            sleep 10
-          done
+          # Wake the VM via ci-signal (handles restart + wait reliably).
+          rustc -O .github/scripts/ci-signal.rs -o /tmp/ci-signal
+          /tmp/ci-signal docs running "${{ github.sha }}"
+          # VM is now warm — upload and extract.
           flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/rustdoc"
           flyctl ssh console -a sqisign-selkie-ci -C "mkdir -p /data/rustdoc"
           echo "put /tmp/rustdoc.tar.gz /data/rustdoc/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
