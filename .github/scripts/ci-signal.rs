@@ -39,6 +39,23 @@ fn main() {
     // Upload.
     ssh_cmd(&format!("rm -f {dir}/status.json"));
     sftp_put(path, &format!("{dir}/status.json"));
+
+    // Also update /data/head.json so the dashboard can show the
+    // new commit immediately, before any data uploads finish.
+    if state == "running" {
+        let subject = commit_subject(sha);
+        let head = format!(
+            "{{\"sha\":{},\"subject\":{},\"updated_at\":{}}}",
+            json_str(sha),
+            json_str(&subject),
+            json_str(&iso8601_now())
+        );
+        let head_path = "/tmp/ci-head.json";
+        fs::write(head_path, &head).expect("failed to write head.json");
+        ssh_cmd("rm -f /data/head.json");
+        sftp_put(head_path, "/data/head.json");
+    }
+
     eprintln!("[ci-signal] {kind}: {state} ({sha})");
 }
 
@@ -84,6 +101,50 @@ fn sftp_put(local: &str, remote: &str) {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+}
+
+fn commit_subject(sha: &str) -> String {
+    let output = Command::new("git")
+        .args(["log", "-1", "--format=%s", sha])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok();
+    output
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn iso8601_now() -> String {
+    use std::time::SystemTime;
+    let dur = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    let secs = dur.as_secs();
+    let (h, m, s) = ((secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
+    let mut y = 1970i64;
+    let mut rem = (secs / 86400) as i64;
+    loop {
+        let yd = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if rem < yd { break; }
+        rem -= yd;
+        y += 1;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let md = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut mo = 0;
+    for &d in &md {
+        if rem < d { break; }
+        rem -= d;
+        mo += 1;
+    }
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo + 1, rem + 1, h, m, s)
 }
 
 fn json_str(s: &str) -> String {

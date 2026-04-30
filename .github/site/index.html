@@ -2576,12 +2576,34 @@
 
     // --- Commit nav ---
 
+    let headCommit = null; // from /head.json
+
     function buildCommitList() {
       // Merge coverage and bench indices into a unified commit list.
-      // A commit appears if it has coverage, benchmarks, or both.
       const map = new Map();
+
+      // Insert head commit first so the latest push appears immediately,
+      // even before any data uploads finish.
+      if (headCommit) {
+        map.set(headCommit.sha, {
+          sha: headCommit.sha,
+          updated_at: headCommit.updated_at,
+          hasCov: false, hasBench: false, hasMutants: false,
+          subject: headCommit.subject,
+          building: true,
+        });
+      }
+
       for (const e of covIndex) {
-        map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: true, hasBench: false, hasMutants: false, percent: e.percent, subject: e.subject });
+        const existing = map.get(e.sha);
+        if (existing) {
+          existing.hasCov = true;
+          existing.percent = e.percent;
+          if (e.subject) existing.subject = e.subject;
+          existing.building = false;
+        } else {
+          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: true, hasBench: false, hasMutants: false, percent: e.percent, subject: e.subject });
+        }
       }
       for (const e of benchIndex) {
         const existing = map.get(e.sha);
@@ -2614,6 +2636,7 @@
         const opt = document.createElement('option');
         opt.value = c.sha;
         let label = c.sha.slice(0, 7);
+        if (c.building) label += ' \u23f3';
         if (c.subject) label += ` ${c.subject.slice(0, 40)}`;
         opt.textContent = label;
         select.appendChild(opt);
@@ -2861,7 +2884,11 @@
       // Try the lightweight manifest first — one request instead of 20+.
       // Falls back to always-fetch if manifest doesn't exist yet (no
       // uploads since this feature was added).
-      const manifest = await fetchJson('/manifest.json');
+      const [manifest, head] = await Promise.all([
+        fetchJson('/manifest.json'),
+        fetchJson('/head.json'),
+      ]);
+      headCommit = head;
       const hasManifest = manifest != null;
       const newManifest = manifest || {};
       const manifestChanged = !hasManifest || JSON.stringify(newManifest) !== JSON.stringify(lastManifest);
