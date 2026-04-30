@@ -722,6 +722,22 @@ impl TorsionBasis {
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
     pub(crate) fn to_hint(curve: &Curve) -> (TorsionBasis, BasisHint) {
         let _e = TORSION_EVEN_POWER;
+        // Normalize the curve's A24/C24 constants so the Montgomery
+        // ladder produces the same projective representative as
+        // `from_hint` (which also calls `curve.normalize()`). Without
+        // this, `clear_cofactor`'s doubling formulae use unnormalized
+        // (A24:C24) and produce a projectively different (X:Z) for
+        // P and Q than `from_hint` recomputes — same affine x, but
+        // different (X:Z). `projective_difference` (which contains a
+        // square root) is sensitive to the projective representation
+        // and picks a different sqrt branch on each side, so the
+        // recovered P − Q is a *different abstract point* in sign vs
+        // verify. That breaks the verify-side chain kernel and
+        // surfaces as the (2,2)-chain `splitting=0` rejection on
+        // every signature.
+        let mut curve = *curve;
+        curve.normalize();
+        let curve = &curve;
         let A = *curve.coefficient().as_fp2();
 
         if A == Fp2::ZERO {
