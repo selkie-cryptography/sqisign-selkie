@@ -1302,7 +1302,7 @@
       <section class="section" id="fuzz-section">
         <div class="section__header">
           <h2 class="section__title">Fuzzing<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Coverage-guided fuzzing with <a href="https://github.com/rust-fuzz/cargo-fuzz" style="color:var(--fg)">cargo-fuzz</a> (libFuzzer). Each target receives random bytes and must not panic or crash.</p>
+            <p style="margin-bottom:8px">Coverage-guided fuzzing with <a href="https://github.com/rust-fuzz/cargo-fuzz" style="color:var(--fg)">cargo-fuzz</a> (libFuzzer). Each target runs for 10 minutes per push, receiving random bytes. Must not panic or crash.</p>
             <dl>
             <dt>Targets</dt><dd>signature_parse, verifying_key_parse, signing_key_parse, verify</dd>
             <dt>Runs</dt><dd>Total fuzzer executions across all targets.</dd>
@@ -2116,7 +2116,7 @@
       html += `<div class="audit-badge">
         <div class="badge-status" style="color:${color}">${anyFail ? data.total_crashes + ' CRASH' : 'CLEAN'}</div>
         <div class="badge-label">${esc(String(data.total_runs || 0))} runs</div>
-        <div class="badge-detail">${targets.length} targets, ${data.total_corpus || 0} corpus</div>
+        <div class="badge-detail">${targets.length} targets \u00b7 10 min each \u00b7 ${data.total_corpus || 0} corpus</div>
       </div>`;
       html += '</div>';
 
