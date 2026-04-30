@@ -841,7 +841,14 @@ impl SigningKey {
             // `n(I)` from the lattice covolume, so we do not need
             // primitivization to align the stored norm with the
             // actual ideal.
-            let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
+            let (alpha_rsp_w, n_bt) = match alpha_rsp_w.compute_backtracking() {
+                Some(v) => v,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: compute_backtracking failed");
+                    continue;
+                }
+            };
             let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
 
             // Lines 16–20: degree computations — C-ref formula.
@@ -916,7 +923,14 @@ impl SigningKey {
                     continue;
                 }
             };
-            let e_rsp_prime = e_rsp - r_rsp_val - n_bt;
+            let e_rsp_prime = match e_rsp.checked_sub(r_rsp_val).and_then(|v| v.checked_sub(n_bt)) {
+                Some(v) => v,
+                None => {
+                    #[cfg(test)]
+                    eprintln!("[sign {_iter}] DROP: e_rsp underflow (r_rsp_val={r_rsp_val}, n_bt={n_bt})");
+                    continue;
+                }
+            };
 
             let n_bt_te =
                 TorsionExponent::try_from(n_bt).map_err(|_| SignatureError::SigningFailed)?;

@@ -522,7 +522,7 @@ impl<const N: usize> Element<N> {
     /// Implements [ComputeBacktrackingAndNormalize][Alg. 4.4].
     ///
     /// [Alg. 4.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.4
-    pub fn compute_backtracking(&self) -> (Self, u32) {
+    pub fn compute_backtracking(&self) -> Option<(Self, u32)> {
         // Convert to O₀ basis: for O₀ = Z⟨1, i, (i+j)/2, (1+k)/2⟩,
         // if α = (a + bi + cj + dk)/r in {1,i,j,k}, then in O₀:
         //   α'₀ = a - d,  α'₁ = b - c,  α'₂ = c,  α'₃ = d
@@ -552,11 +552,11 @@ impl<const N: usize> Element<N> {
         if n > 0 {
             let divisor = BigInt::<N>::ONE.shl(n);
             let new_denom = elem.denom.0.ct_mul(&divisor);
-            elem.denom = Denominator::new(new_denom).expect("denom > 0");
+            elem.denom = Denominator::new(new_denom)?;
             elem.normalize();
         }
 
-        (elem, n)
+        Some((elem, n))
     }
 
     /// Divides α by the GCD of its `O₀`-basis coordinates, returning
@@ -579,7 +579,7 @@ impl<const N: usize> Element<N> {
     /// removed by `compute_backtracking`).
     ///
     /// [`compute_backtracking`]: Self::compute_backtracking
-    pub fn make_primitive_odd(&self) -> (Self, BigInt<N>) {
+    pub fn make_primitive_odd(&self) -> Option<(Self, BigInt<N>)> {
         let mut elem = self.normalized();
         let a = &elem.a.0;
         let b = &elem.b.0;
@@ -595,14 +595,14 @@ impl<const N: usize> Element<N> {
         let g = c0.abs().gcd(&c1.abs()).gcd(&c2.abs()).gcd(&c3.abs());
         let one = BigInt::<N>::ONE;
         if bool::from(g.is_zero()) || g == one {
-            return (elem, one);
+            return Some((elem, one));
         }
 
         let new_denom = elem.denom.0.ct_mul(&g);
-        elem.denom = Denominator::new(new_denom).expect("denom > 0");
+        elem.denom = Denominator::new(new_denom)?;
         elem.normalize();
 
-        (elem, g)
+        Some((elem, g))
     }
 
     /// Narrow all coordinates and denominator to `BigInt<M>`, returning
