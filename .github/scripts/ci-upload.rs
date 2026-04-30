@@ -33,8 +33,22 @@ fn main() {
     let dir = format!("/data/{kind}");
 
     // Read the JSON to extract fields for the index.
-    let json_contents = fs::read_to_string(json_path)
+    let mut json_contents = fs::read_to_string(json_path)
         .unwrap_or_else(|e| { eprintln!("cannot read {json_path}: {e}"); std::process::exit(1); });
+
+    // Inject run_id from GITHUB_RUN_ID so the dashboard can link
+    // directly to the Actions run. Inserted after the opening `{`.
+    if let Ok(run_id) = env::var("GITHUB_RUN_ID") {
+        if json_contents.starts_with('{') {
+            json_contents = format!(
+                "{{\"run_id\":{},{}",
+                json_str(&run_id),
+                &json_contents[1..]
+            );
+            // Rewrite the local file so the per-sha and latest copies include it.
+            let _ = fs::write(json_path, &json_contents);
+        }
+    }
 
     // The CI VM is configured with min_machines_running=1 and
     // auto_stop_machines=false, so we can ssh in directly without
@@ -125,33 +139,58 @@ fn update_manifest(kind: &str, sha: &str) {
     eprintln!("[ci-upload] updated manifest");
 }
 
+/// Gets the commit subject line via `git log`, or empty string if unavailable.
+fn commit_subject(sha: &str) -> String {
+    let output = Command::new("git")
+        .args(["log", "-1", "--format=%s", sha])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok();
+    output
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
 /// Build a new index JSON array by prepending this commit's entry
 /// and capping at MAX_INDEX entries.
 fn build_index(kind: &str, sha: &str, json: &str, existing: &str) -> String {
     let updated_at = extract_string(json, "updated_at");
+    let subject = commit_subject(sha);
+    let subject_field = if subject.is_empty() {
+        String::new()
+    } else {
+        format!(",\"subject\":{}", json_str(&subject))
+    };
 
     // Build the new entry based on kind.
     let entry = match kind {
         "coverage" => {
             let pct = extract_num_f64(json, "percent");
-            format!("{{\"sha\":{},\"percent\":{:.4},\"updated_at\":{}}}",
+            format!("{{\"sha\":{},\"percent\":{:.4},\"updated_at\":{}{subject_field}}}",
                 json_str(sha), pct, json_str(&updated_at))
         }
         "mutants" => {
             let caught = extract_num_in_section(json, "summary", "caught");
             let missed = extract_num_in_section(json, "summary", "missed");
             let timeout = extract_num_in_section(json, "summary", "timeout");
-            format!("{{\"sha\":{},\"caught\":{},\"missed\":{},\"timeout\":{},\"updated_at\":{}}}",
+            format!("{{\"sha\":{},\"caught\":{},\"missed\":{},\"timeout\":{},\"updated_at\":{}{subject_field}}}",
                 json_str(sha), caught, missed, timeout, json_str(&updated_at))
         }
         "dudect" => {
             let pass = extract_num_u64(json, "pass_count");
             let fail = extract_num_u64(json, "fail_count");
-            format!("{{\"sha\":{},\"pass_count\":{},\"fail_count\":{},\"updated_at\":{}}}",
+            format!("{{\"sha\":{},\"pass_count\":{},\"fail_count\":{},\"updated_at\":{}{subject_field}}}",
                 json_str(sha), pass, fail, json_str(&updated_at))
         }
         _ => {
-            format!("{{\"sha\":{},\"updated_at\":{}}}", json_str(sha), json_str(&updated_at))
+            format!("{{\"sha\":{},\"updated_at\":{}{subject_field}}}", json_str(sha), json_str(&updated_at))
         }
     };
 

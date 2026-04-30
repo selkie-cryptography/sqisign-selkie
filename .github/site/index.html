@@ -975,6 +975,25 @@
       border-bottom: 2px solid var(--fg);
     }
 
+    .status-ok {
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      background: rgba(63, 185, 80, 0.08);
+      color: var(--green);
+      border: 1px solid rgba(63, 185, 80, 0.15);
+    }
+    .status-warn {
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      background: rgba(248, 81, 73, 0.08);
+      color: var(--red);
+      border: 1px solid rgba(248, 81, 73, 0.15);
+    }
+
     .empty {
       padding: 24px 0;
       font-size: 13px;
@@ -1055,6 +1074,7 @@
             <div class="header__subtitle">CI</div>
           </div>
         </div>
+        <a class="header__org" href="/rustdoc/">Docs</a>
         <a class="header__org" href="https://github.com/selkie-cryptography/sqisign-selkie">GitHub</a>
       </div>
     </div>
@@ -1072,7 +1092,6 @@
 
     <nav class="section-nav" id="section-nav">
       <a href="#analysis-section">Risks</a>
-      <a href="#docs-section">Docs</a>
       <a href="#coverage-section">Coverage</a>
       <a href="#bench-section">Benchmarks</a>
       <a href="#mutants-section">Mutants</a>
@@ -1083,6 +1102,8 @@
       <a href="#audits-section">Audits</a>
       <a href="#fuzz-section">Fuzzing</a>
     </nav>
+
+    <div id="status-summary" style="padding:12px 0;display:none"></div>
 
     <div class="sections">
 
@@ -1105,19 +1126,6 @@
         </div>
       </section>
 
-      <section class="section" id="docs-section">
-        <div class="section__header">
-          <h2 class="section__title">Docs<span class="help-icon">?<span class="tooltip">
-            <p>Rendered API documentation built from source on every push to main. Includes public and private items.</p>
-            </span></span></h2>
-        </div>
-        <div id="docs-content">
-          <a href="/rustdoc/" target="_blank" rel="noopener" style="display:inline-block;padding:8px 16px;border:1px solid var(--border);border-radius:6px;color:var(--fg);text-decoration:none;font-weight:600;font-size:14px">
-            Rustdoc &rarr;
-          </a>
-          <span style="font-size:13px;color:var(--fg-dim);margin-left:12px">Full API documentation including private items</span>
-        </div>
-      </section>
 
       <section class="section" id="coverage-section">
         <div class="section__header">
@@ -1241,7 +1249,6 @@
             <dt>Alloc budget</dt><dd>Heap allocation counts for keygen, sign, verify (dhat). Budget assertions fail CI if allocations grow.</dd>
             <dt>Zeroize</dt><dd>Verifies SigningKey memory is zeroed after drop.</dd>
             <dt>Stack depth</dt><dd>Peak stack usage via Valgrind Massif. Tracks signing/verification stack footprint.</dd>
-            <dt>ctgrind</dt><dd>Valgrind memcheck on crabgrind-instrumented secret data. Detects branches or memory access on uninit-marked secrets.</dd>
             <dt>API surface</dt><dd>Public API item count by category (cargo-public-api). Tracks API growth.</dd>
             <dt>MSRV</dt><dd>Minimum Supported Rust Version compliance (1.81.0).</dd>
             </dl></span></span></h2>
@@ -1302,6 +1309,12 @@
     let renderedDudect = null; // SHA of rendered dudect data
     let renderedTacet = null;  // SHA of rendered tacet data
     let renderedForSha = null; // The selectedSha we last rendered for
+
+    function staleTag(data) {
+      if (!data || !data._stale) return '';
+      const sha = data.sha ? data.sha.slice(0, 7) : '?';
+      return `<span style="font-size:11px;color:var(--fg-dim);font-style:italic;margin-left:8px">from ${sha}</span>`;
+    }
 
     function esc(s) {
       const d = document.createElement('div');
@@ -1798,7 +1811,7 @@
       return html;
     }
 
-    function renderCtData(dudect, tacetData) {
+    function renderCtData(dudect, tacetData, ctgrindData) {
       const dResults = dudect ? (dudect.results || []) : [];
       const tResults = tacetData ? (tacetData.results || []) : [];
 
@@ -1911,6 +1924,24 @@
 
       html += '</tbody></table>';
 
+      // ctgrind: Valgrind-based secret taint tracking.
+      if (ctgrindData) {
+        const cColor = ctgrindData.status === 'pass' ? 'var(--green)' : 'var(--red)';
+        const cIcon = ctgrindData.status === 'pass' ? '\u2714' : '\u2718';
+        html += `<h4 style="margin:24px 0 8px">ctgrind (Valgrind taint tracking)</h4>`;
+        html += `<p style="font-size:12px;color:var(--fg-dim);margin:0 0 8px">Marks secret data as undefined via crabgrind, runs under Valgrind. Detects any branch or memory access that depends on secret values.</p>`;
+        html += `<div style="font-size:14px;font-weight:700;color:${cColor};margin-bottom:8px">${cIcon} ${ctgrindData.tests || 0} tests, ${ctgrindData.errors || 0} errors</div>`;
+        const tests = ctgrindData.tests_detail || ctgrindData.results || [];
+        if (tests.length > 0) {
+          html += '<table class="dudect-table"><thead><tr><th>Test</th><th>Result</th></tr></thead><tbody>';
+          for (const t of tests) {
+            const icon = t.status === 'pass' ? '\u2714' : '\u2718';
+            const cls = t.status === 'pass' ? 'dudect-pass' : 'dudect-fail';
+            html += `<tr><td class="fn-name">${esc(t.name)}</td><td class="${cls}">${icon}</td></tr>`;
+          }
+          html += '</tbody></table>';
+        }
+      }
 
       return html;
     }
@@ -2096,16 +2127,28 @@
     }
 
     function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData) {
-      const auditUrl = `https://github.com/${REPO}/actions/workflows/audit.yml`;
+      // Link each badge to its Actions run (if run_id is available).
+      const fallbackUrl = `https://github.com/${REPO}/actions/workflows/audit.yml`;
       let html = '<div class="audit-grid">';
 
-      function badge(status, label, detail, color, href) {
-        const url = href || auditUrl;
+      function runUrl(data) {
+        if (data && data.run_id) return `https://github.com/${REPO}/actions/runs/${data.run_id}`;
+        return fallbackUrl;
+      }
+
+      function badgeHtml(status, label, detail, color, data) {
+        const url = runUrl(data);
         return `<a class="audit-badge" href="${url}" target="_blank" rel="noopener">
           <div class="badge-status"${color ? ` style="color:${color}"` : ''}>${status}</div>
           <div class="badge-label">${label}</div>
           ${detail ? `<div class="badge-detail">${detail}</div>` : ''}
         </a>`;
+      }
+
+      // Collect badges with a severity for sorting (0=fail, 1=warn, 2=ok).
+      const badges = [];
+      function badge(status, label, detail, color, data, severity) {
+        badges.push({ html: badgeHtml(status, label, detail, color, data), severity: severity ?? 2 });
       }
 
       if (panicData) {
@@ -2117,55 +2160,52 @@
           panicData.unwrap > 0 ? `unwrap:${panicData.unwrap}` : '',
           panicData.panic_fmt > 0 ? `panic:${panicData.panic_fmt}` : '',
         ].filter(Boolean).join(', ');
-        html += badge(panicData.total, 'panic sites', breakdown || 'none', color);
+        badge(panicData.total, 'panic sites', breakdown || 'none', color, panicData, panicData.total > 10 ? 0 : panicData.total > 0 ? 1 : 2);
       }
 
       if (deny) {
         const color = deny.status === 'pass' ? 'var(--green)' : 'var(--red)';
         const icon = deny.status === 'pass' ? '\u2714' : '\u2718';
-        html += badge(icon, 'cargo deny', `${deny.warnings || 0} warnings, ${deny.errors || 0} errors`, color);
+        badge(icon, 'cargo deny', `${deny.warnings || 0} warnings, ${deny.errors || 0} errors`, color, deny, deny.status === 'pass' ? 2 : 0);
       }
 
       if (unsafeData) {
         const color = unsafeData.total === 0 ? 'var(--green)' : unsafeData.total <= 5 ? 'var(--yellow)' : 'var(--red)';
         const detail = (unsafeData.modules || []).filter(m => m.count > 0).map(m => esc(m.name) + ':' + m.count).join(', ') || 'none';
-        html += badge(unsafeData.total, 'unsafe', detail, color);
+        badge(unsafeData.total, 'unsafe', detail, color, unsafeData, unsafeData.total > 5 ? 0 : unsafeData.total > 0 ? 1 : 2);
       }
 
       if (sizeData && sizeData.binary) {
         const kb = (sizeData.binary.total_bytes / 1024).toFixed(0);
-        html += badge(`${esc(kb)} KB`, 'binary size', `text: ${sizeData.binary.text}, data: ${sizeData.binary.data}, bss: ${sizeData.binary.bss}`);
+        badge(`${esc(kb)} KB`, 'binary size', `text: ${sizeData.binary.text}, data: ${sizeData.binary.data}, bss: ${sizeData.binary.bss}`, null, sizeData);
       }
-
 
       if (msrvData) {
         const color = msrvData.status === 'pass' ? 'var(--green)' : 'var(--red)';
         const icon = msrvData.status === 'pass' ? '\u2714' : '\u2718';
-        html += badge(icon, `MSRV ${esc(msrvData.msrv || '')}`, msrvData.status === 'pass' ? 'compiles' : msrvData.errors + ' errors', color);
+        badge(icon, `MSRV ${esc(msrvData.msrv || '')}`, msrvData.status === 'pass' ? 'compiles' : msrvData.errors + ' errors', color, msrvData, msrvData.status === 'pass' ? 2 : 0);
       }
 
       if (allocData) {
         const ops = allocData.operations || [];
         const totalAllocs = ops.reduce((s, o) => s + (o.allocs || 0), 0);
         const color = allocData.status === 'pass' ? 'var(--green)' : 'var(--red)';
-        html += badge(totalAllocs, 'heap allocs', ops.map(o => esc(o.name) + ':' + o.allocs).join(', ') || 'none', color);
+        badge(totalAllocs, 'heap allocs', ops.map(o => esc(o.name) + ':' + o.allocs).join(', ') || 'none', color, allocData, allocData.status === 'pass' ? 2 : 0);
       }
 
       if (stackData) {
         const kb = (stackData.peak_stack_bytes / 1024).toFixed(1);
-        html += badge(`${esc(kb)} KB`, 'peak stack', 'via Valgrind Massif');
+        badge(`${esc(kb)} KB`, 'peak stack', 'via Valgrind Massif', null, stackData);
       }
 
-      if (ctgrindData) {
-        const color = ctgrindData.status === 'pass' ? 'var(--green)' : 'var(--red)';
-        const icon = ctgrindData.status === 'pass' ? '\u2714' : ctgrindData.errors;
-        html += badge(icon, 'memcheck', `${ctgrindData.tests || 0} tests, ${ctgrindData.errors || 0} errors`, color);
-      }
 
       if (apiData) {
-        html += badge(apiData.total || 0, 'public API', `fn:${apiData.functions||0} struct:${apiData.structs||0} enum:${apiData.enums||0}`);
+        badge(apiData.total || 0, 'public API', `fn:${apiData.functions||0} struct:${apiData.structs||0} enum:${apiData.enums||0}`, null, apiData);
       }
 
+      // Sort: failures first, then warnings, then passing.
+      badges.sort((a, b) => a.severity - b.severity);
+      for (const b of badges) html += b.html;
       html += '</div>';
       return html;
     }
@@ -2541,7 +2581,7 @@
       // A commit appears if it has coverage, benchmarks, or both.
       const map = new Map();
       for (const e of covIndex) {
-        map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: true, hasBench: false, hasMutants: false, percent: e.percent });
+        map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: true, hasBench: false, hasMutants: false, percent: e.percent, subject: e.subject });
       }
       for (const e of benchIndex) {
         const existing = map.get(e.sha);
@@ -2574,6 +2614,7 @@
         const opt = document.createElement('option');
         opt.value = c.sha;
         let label = c.sha.slice(0, 7);
+        if (c.subject) label += ` ${c.subject.slice(0, 40)}`;
         opt.textContent = label;
         select.appendChild(opt);
       }
@@ -2715,19 +2756,19 @@
       const dudectSha = dudect && dudect.sha;
       const tacetSha = tacetData && tacetData.sha;
       const ctChanged = shaChanged || dudectSha !== renderedDudect || tacetSha !== renderedTacet;
-      if ((dudect || tacetData) && ctChanged) {
+      if ((dudect || tacetData || ctgrindData) && ctChanged) {
         const dResults = dudect ? (dudect.results || []) : [];
         const tResults = tacetData ? (tacetData.results || []) : [];
         const fails = dResults.filter(x => x.status === 'fail').length
           + tResults.filter(x => x.status === 'fail').length;
         const total = new Set([...dResults.map(r => r.name), ...tResults.map(r => r.name)]).size;
-        dudectMeta.innerHTML = fails > 0
+        dudectMeta.innerHTML = (fails > 0
           ? `<span style="color:var(--red)">${fails} fail</span> / ${total} tested`
-          : `${total} pass`;
-        dudectEl.innerHTML = renderCtData(dudect, tacetData);
+          : `${total} pass`) + staleTag(dudect || tacetData);
+        dudectEl.innerHTML = renderCtData(dudect, tacetData, ctgrindData);
         renderedDudect = dudectSha;
         renderedTacet = tacetSha;
-      } else if (!dudect && !tacetData && (renderedDudect !== null || renderedTacet !== null)) {
+      } else if (!dudect && !tacetData && !ctgrindData && (renderedDudect !== null || renderedTacet !== null)) {
         dudectMeta.textContent = '';
         dudectEl.innerHTML = '<p class="empty">No data for this commit.</p>';
         renderedDudect = null;
@@ -2771,9 +2812,9 @@
         const suites = katData.suites || [];
         const totalVectors = suites.reduce((s, x) => s + (x.vectors || 0), 0);
         const totalFail = suites.reduce((s, x) => s + (x.fail || 0), 0);
-        katMeta.innerHTML = totalFail > 0
+        katMeta.innerHTML = (totalFail > 0
           ? `<span style="color:var(--red)">${totalFail} fail</span>`
-          : `${totalVectors} vectors`;
+          : `${totalVectors} vectors`) + staleTag(katData);
         katEl.innerHTML = renderKatData(katData);
       } else {
         katMeta.textContent = '';
@@ -2786,6 +2827,31 @@
         fuzzEl.innerHTML = renderFuzzData(fuzzData);
       } else {
         fuzzEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
+      }
+
+      // --- Status summary ---
+      const summary = document.getElementById('status-summary');
+      const issues = [];
+      if (dudect) {
+        const dFails = (dudect.results || []).filter(r => r.status === 'fail').length;
+        if (dFails > 0) issues.push(`${dFails} CT leak${dFails > 1 ? 's' : ''}`);
+      }
+      if (tacetData) {
+        const tFails = (tacetData.results || []).filter(r => r.status === 'fail').length;
+        if (tFails > 0) issues.push(`${tFails} tacet fail${tFails > 1 ? 's' : ''}`);
+      }
+      if (panicData && panicData.total > 0) issues.push(`${panicData.total} panic sites`);
+      if (fuzzData && fuzzData.total_crashes > 0) issues.push(`${fuzzData.total_crashes} fuzz crashes`);
+      if (deny && deny.status !== 'pass') issues.push('cargo deny failed');
+
+      if (issues.length > 0) {
+        summary.innerHTML = `<div class="status-warn">\u26a0 ${issues.join(' \u00b7 ')}</div>`;
+        summary.style.display = '';
+      } else if (cov || dudect || panicData) {
+        summary.innerHTML = '<div class="status-ok">\u2714 All checks pass</div>';
+        summary.style.display = '';
+      } else {
+        summary.style.display = 'none';
       }
     }
 

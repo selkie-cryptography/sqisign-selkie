@@ -1,4 +1,4 @@
-name: Constant-time testing
+name: Constant-Time
 
 on:
   push:
@@ -69,3 +69,27 @@ jobs:
           rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload
           /tmp/ci-upload dudect dudect.json "${{ github.sha }}"
           /tmp/ci-upload tacet tacet.json "${{ github.sha }}"
+
+  ctgrind:
+    name: ctgrind (Valgrind taint tracking)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Run ctgrind tests under Valgrind
+        run: |
+          rustc -O .github/scripts/ctgrind-report.rs -o /tmp/ctgrind-report
+          /tmp/ctgrind-report "${{ github.sha }}" > ctgrind.json
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload ctgrind ctgrind.json "${{ github.sha }}"
