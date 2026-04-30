@@ -547,10 +547,12 @@ impl SigningKey {
         let e_pk = self.verifying_key.curve();
 
         // Line 2: basis on E_pk
+        // The hint comes from our own keygen — always valid.
         let basis_pk = TorsionBasis::from_hint(
             e_pk,
             BasisHint::from_byte(u8::from(self.verifying_key.hint)),
-        );
+        )
+        .expect("own keygen hint must be valid");
 
         // Line 3: while true do
         for _iter in 0..1000 {
@@ -1431,6 +1433,80 @@ impl SigningKey {
                     dump(&m_chl.entries[1][0]),
                     dump(&m_chl.entries[1][1]),
                 );
+            }
+
+            #[cfg(test)]
+            {
+                // Dump sign's chain-output basis in the same
+                // `VERIFY_KER ...` format that the verify-side
+                // instrumentation emits, so a `diff` between
+                // `SIGN_ACTUAL_*` (sign's actual post-chain basis)
+                // and `VERIFY_KER ...` (verify's reconstructed basis)
+                // pinpoints whether the encoded (M_chl, hints,
+                // curve_aux) round-trip preserves the Kani structure.
+                //
+                // Three blocks:
+                //   SIGN_ACTUAL_*  — basis_chl / basis_aux (sign's
+                //                    actual chain-output basis,
+                //                    pre-m1).
+                //   SIGN_RECOV_*   — transformed (= m1 · basis_chl)
+                //                    on the chl side and det_aux
+                //                    (canonical from hint) on the
+                //                    aux side. This is exactly what
+                //                    verify reconstructs from
+                //                    (M_chl, hint_chl, hint_aux).
+                let dump_fp2 = |prefix: &str, label: &str, v: &Fp2| {
+                    let bytes = v.to_bytes();
+                    let re: String = bytes[..32]
+                        .iter()
+                        .rev()
+                        .map(|b| format!("{:02x}", b))
+                        .collect();
+                    let im: String = bytes[32..]
+                        .iter()
+                        .rev()
+                        .map(|b| format!("{:02x}", b))
+                        .collect();
+                    eprintln!("{prefix} {label}_re=0x{re}");
+                    eprintln!("{prefix} {label}_im=0x{im}");
+                };
+                let dump_pt = |prefix: &str, label: &str, p: &ProjectiveXOnlyPoint| {
+                    dump_fp2(prefix, &format!("{label}_X"), &p.X);
+                    dump_fp2(prefix, &format!("{label}_Z"), &p.Z);
+                    let aff = &p.X * &p.Z.invert();
+                    dump_fp2(prefix, &format!("{label}_aff"), &aff);
+                };
+
+                // Curves.
+                let e1_a = *e_chl_final.coefficient().as_fp2();
+                let e2_a = *curve_aux.coefficient().as_fp2();
+
+                // SIGN_ACTUAL = the basis sign actually had after
+                // split_aux + compute_even_response +
+                // compute_challenge_isogeny (the (R, S, RS) shuffle).
+                eprintln!("SIGN_ACTUAL: pow={e_rsp_prime}");
+                dump_fp2("SIGN_ACTUAL", "E1_A_aff", &e1_a);
+                dump_fp2("SIGN_ACTUAL", "E2_A_aff", &e2_a);
+                dump_pt("SIGN_ACTUAL", "T1_P1",   &basis_chl.R);   // = p_chl_final
+                dump_pt("SIGN_ACTUAL", "T1_P2",   &basis_aux.R);   // = p_aux
+                dump_pt("SIGN_ACTUAL", "T2_P1",   &basis_chl.S);   // = pmq_chl_final
+                dump_pt("SIGN_ACTUAL", "T2_P2",   &basis_aux.S);   // = pmq_aux
+                dump_pt("SIGN_ACTUAL", "T1m2_P1", &basis_chl.RS);  // = q_chl_final
+                dump_pt("SIGN_ACTUAL", "T1m2_P2", &basis_aux.RS);  // = q_aux
+
+                // SIGN_RECOV = exactly what verify will reconstruct
+                // from (M_chl, hint_chl, hint_aux): chl side =
+                // transformed (= m1 · basis_chl), aux side =
+                // det_aux (canonical from to_hint).
+                eprintln!("SIGN_RECOV: pow={e_rsp_prime}");
+                dump_fp2("SIGN_RECOV", "E1_A_aff", &e1_a);
+                dump_fp2("SIGN_RECOV", "E2_A_aff", &e2_a);
+                dump_pt("SIGN_RECOV", "T1_P1",   &transformed.R);
+                dump_pt("SIGN_RECOV", "T1_P2",   &det_aux.R);
+                dump_pt("SIGN_RECOV", "T2_P1",   &transformed.S);
+                dump_pt("SIGN_RECOV", "T2_P2",   &det_aux.S);
+                dump_pt("SIGN_RECOV", "T1m2_P1", &transformed.RS);
+                dump_pt("SIGN_RECOV", "T1m2_P2", &det_aux.RS);
             }
 
             #[cfg(test)]

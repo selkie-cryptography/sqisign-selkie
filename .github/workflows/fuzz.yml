@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -56,6 +57,56 @@ jobs:
           path: |
             fuzz/artifacts/
             fuzz-result.json
+
+      - name: Open PR on crash
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CRASHES=$(find fuzz/artifacts -type f 2>/dev/null | head -5)
+          if [ -z "$CRASHES" ]; then
+            echo "No crashes found."
+            exit 0
+          fi
+          TARGET="${{ matrix.target }}"
+          SHA="${{ github.sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          BRANCH="fuzz-crash/${TARGET}-${SHORT_SHA}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+
+          mkdir -p "fuzz/corpus/${TARGET}"
+          for f in $CRASHES; do
+            cp "$f" "fuzz/corpus/${TARGET}/"
+          done
+          git add -f "fuzz/corpus/${TARGET}/"
+          git commit -m "fuzz: add crash inputs for ${TARGET} (${SHORT_SHA})"
+          git push origin "$BRANCH"
+
+          # Build crash list for the PR body.
+          CRASH_LIST=""
+          for f in $CRASHES; do
+            FNAME=$(basename "$f")
+            HEX=$(xxd -p "$f" | tr -d '\n')
+            CRASH_LIST+='```'$'\n'"${FNAME}: ${HEX}"$'\n''```'$'\n\n'
+          done
+
+          # Fill in the PR template.
+          BODY=$(sed \
+            -e "s|__TARGET__|${TARGET}|g" \
+            -e "s|__SHA__|${SHA}|g" \
+            -e "s|__RUN_URL__|${RUN_URL}|g" \
+            .github/fuzz-crash-pr.md)
+          BODY="${BODY/__CRASH_LIST__/$CRASH_LIST}"
+
+          gh pr create \
+            --title "fuzz: crash in ${TARGET} (${SHORT_SHA})" \
+            --body "$BODY" \
+            --base main \
+            --head "$BRANCH"
 
   report:
     name: Upload fuzz report
