@@ -16,12 +16,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0b0d0f;
-      --bg-raised: #111315;
-      --fg: #ddd;
-      --fg-muted: #888;
-      --fg-dim: #555;
-      --border: rgba(255, 255, 255, 0.06);
+      --bg: #0a0a0b;
+      --bg-raised: #111112;
+      --fg: #ccc;
+      --fg-muted: #777;
+      --fg-dim: #3a3a3a;
+      --border: rgba(255, 255, 255, 0.08);
       --bar-bg: rgba(255, 255, 255, 0.04);
       --green: #3fb950;
       --yellow: #d29922;
@@ -30,11 +30,11 @@
 
     @media (prefers-color-scheme: light) {
       :root {
-        --bg: #f4f3f0;
-        --bg-raised: #eae9e5;
-        --fg: #1a1a1a;
-        --fg-muted: #6a6a6a;
-        --fg-dim: #aaa;
+        --bg: #f2f1ec;
+        --bg-raised: #e8e7e1;
+        --fg: #222;
+        --fg-muted: #777;
+        --fg-dim: #c0bdb5;
         --border: rgba(0, 0, 0, 0.08);
         --bar-bg: rgba(0, 0, 0, 0.04);
         --green: #1a7f37;
@@ -88,8 +88,13 @@
     }
 
     .logo {
-      height: 32px;
+      height: 38px;
       width: auto;
+      transition: filter 0.2s;
+    }
+
+    .logo:hover {
+      filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.12));
     }
 
     .logo--dark { display: block; }
@@ -142,13 +147,13 @@
       border-color: var(--fg-muted);
     }
 
-    .sections { padding: 48px 0; }
+    .sections { padding: 40px 0; }
     .section {
-      margin-bottom: 48px;
-      padding-top: 32px;
+      margin-top: 40px;
+      padding-top: 40px;
       border-top: 1px solid var(--border);
     }
-    .section:first-child { border-top: none; padding-top: 0; }
+    .section:first-child { border-top: none; margin-top: 0; padding-top: 0; }
     .section:last-child { margin-bottom: 0; }
 
     .section__header {
@@ -196,7 +201,6 @@
       font-weight: 900;
       letter-spacing: -1px;
       margin-bottom: 16px;
-      padding-left: 8px;
     }
 
     .cov-table {
@@ -218,9 +222,11 @@
 
     .cov-table > tbody > tr > td {
       padding: 8px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid rgba(255,255,255,0.03);
       font-weight: 500;
     }
+
+    .cov-table > tbody > tr:hover { background: var(--bar-bg); }
 
     .cov-table > thead > tr > th:nth-child(2),
     .cov-table > thead > tr > th:nth-child(3),
@@ -414,9 +420,11 @@
 
     .bench-table td {
       padding: 8px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid rgba(255,255,255,0.03);
       font-weight: 500;
     }
+
+    .bench-table tbody tr:hover { background: var(--bar-bg); }
 
     .bench-table td:nth-child(n+2) {
       text-align: right;
@@ -442,7 +450,6 @@
       display: flex;
       gap: 24px;
       margin-bottom: 16px;
-      padding-left: 8px;
     }
 
     .mutants-stat {
@@ -483,8 +490,10 @@
 
     .mutants-table td {
       padding: 8px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid rgba(255,255,255,0.03);
     }
+
+    .mutants-table tbody tr:hover { background: var(--bar-bg); }
 
     .mutants-table .mutant-name {
       font-family: 'Inter', monospace;
@@ -511,8 +520,8 @@
     /* Mutant insights */
     .mutants-insights {
       display: flex;
-      gap: 16px;
-      margin-bottom: 20px;
+      gap: 12px;
+      margin-bottom: 16px;
       flex-wrap: wrap;
     }
 
@@ -556,8 +565,8 @@
     /* Coverage insights */
     .cov-insights {
       display: flex;
-      gap: 16px;
-      margin-bottom: 20px;
+      gap: 12px;
+      margin-bottom: 16px;
       flex-wrap: wrap;
     }
 
@@ -684,9 +693,11 @@
 
     .dudect-table td {
       padding: 8px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid rgba(255,255,255,0.03);
       font-weight: 500;
     }
+
+    .dudect-table tbody tr:hover { background: var(--bar-bg); }
 
     .dudect-table td:nth-child(n+2) {
       text-align: right;
@@ -882,9 +893,11 @@
 
     .health-table td {
       padding: 8px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid rgba(255,255,255,0.03);
       font-weight: 500;
     }
+
+    .health-table tbody tr:hover { background: var(--bar-bg); }
 
     .health-table td:nth-child(n+2) {
       text-align: right;
@@ -939,7 +952,8 @@
       font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 13px;
       font-weight: 500;
-      padding: 5px 28px 5px 10px;
+      min-width: 320px;
+      padding: 6px 28px 6px 10px;
       border: 1px solid var(--border);
       border-radius: 6px;
       background: var(--bg-raised);
@@ -949,28 +963,41 @@
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right 8px center;
+      transition: border-color 0.15s;
+    }
+
+    .commit-nav select:focus {
+      outline: none;
+      border-color: var(--fg-muted);
     }
 
     .commit-nav .commit-time {
-      font-size: 12px;
+      font-size: 11px;
       color: var(--fg-dim);
     }
 
     .section-nav {
       display: flex;
-      gap: 4px;
-      padding: 12px 0;
-      border-bottom: 1px solid var(--border);
+      gap: 6px;
+      padding: 10px 0;
       position: sticky;
       top: 0;
-      background: var(--bg);
+      background: rgba(10, 10, 11, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       z-index: 5;
+    }
+
+    @media (prefers-color-scheme: light) {
+      .section-nav {
+        background: rgba(242, 241, 236, 0.85);
+      }
     }
 
     .section-nav a {
       font-size: 12px;
       font-weight: 600;
-      padding: 4px 10px;
+      padding: 5px 10px;
       border-radius: 4px;
       color: var(--fg-muted);
       white-space: nowrap;
@@ -988,19 +1015,18 @@
     }
 
     .status-ok {
-      padding: 10px 14px;
+      padding: 10px 16px;
       border-radius: 6px;
-      font-size: 13px;
-      font-weight: 600;
-      background: rgba(63, 185, 80, 0.08);
+      font-size: 12px;
+      font-weight: 500;
+      background: rgba(63, 185, 80, 0.06);
       color: var(--green);
-      border: 1px solid rgba(63, 185, 80, 0.15);
     }
     .status-warn {
-      padding: 10px 14px;
+      padding: 10px 16px;
       border-radius: 6px;
-      font-size: 13px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 700;
       background: rgba(248, 81, 73, 0.08);
       color: var(--red);
       border: 1px solid rgba(248, 81, 73, 0.15);
@@ -1014,7 +1040,7 @@
     }
 
     .footer {
-      padding: 48px 0;
+      padding: 24px 0;
       border-top: 1px solid var(--border);
     }
 
