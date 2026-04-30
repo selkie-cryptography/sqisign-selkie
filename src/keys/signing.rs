@@ -1151,6 +1151,24 @@ impl SigningKey {
 
                 #[cfg(test)]
                 {
+                    let fp2_hex = |fp2val: &Fp2| -> String {
+                        let bytes = fp2val.to_bytes();
+                        let re: String = bytes[..32]
+                            .iter()
+                            .rev()
+                            .map(|b| format!("{:02x}", b))
+                            .collect();
+                        format!("0x{re}")
+                    };
+                    eprintln!(
+                        "[sign {_iter}] post-split-aux: j(E_chl_2)={} j(E_aux_2)={}",
+                        fp2_hex(&e_chl.j_invariant()),
+                        fp2_hex(&curve_aux.j_invariant()),
+                    );
+                }
+
+                #[cfg(test)]
+                {
                     let fp2_short = |v: &Fp2| -> String {
                         let bytes = v.to_bytes();
                         let r: String = bytes[..8]
@@ -1244,9 +1262,28 @@ impl SigningKey {
                 p_chl = pc;
                 q_chl = qc;
                 pmq_chl = pc_pmq;
+
+                #[cfg(test)]
+                {
+                    let fp2_hex = |fp2val: &Fp2| -> String {
+                        let bytes = fp2val.to_bytes();
+                        let re: String = bytes[..32]
+                            .iter()
+                            .rev()
+                            .map(|b| format!("{:02x}", b))
+                            .collect();
+                        format!("0x{re}")
+                    };
+                    eprintln!(
+                        "[sign {_iter}] post-even-response: j(E_chl_3)={}",
+                        fp2_hex(&e_chl.j_invariant()),
+                    );
+                }
             }
 
             // Line 36: ComputeChallengeIsogeny
+            #[cfg(test)]
+            eprintln!("[sign {_iter}] entering compute_challenge_isogeny (n_bt={})", n_bt_te.value());
             let (e_chl_final, p_chl_final, q_chl_final, pmq_chl_final) =
                 match compute_challenge_isogeny(
                     &basis_pk, &chl, &e_chl, &p_chl, &q_chl, &pmq_chl, n_bt_te,
@@ -1258,6 +1295,22 @@ impl SigningKey {
                         continue;
                     }
                 };
+            #[cfg(test)]
+            {
+                let fp2_hex = |fp2val: &Fp2| -> String {
+                    let bytes = fp2val.to_bytes();
+                    let re: String = bytes[..32]
+                        .iter()
+                        .rev()
+                        .map(|b| format!("{:02x}", b))
+                        .collect();
+                    format!("0x{re}")
+                };
+                eprintln!(
+                    "[sign {_iter}] post-challenge-isogeny: j(e_chl_final)={}",
+                    fp2_hex(&e_chl_final.j_invariant()),
+                );
+            }
 
             // Line 37: SetChangeOfBasisMatrix (Algorithm 4.8, inlined).
             // TODO: refactor into ChallengeMatrix::from_response_endpoints()
@@ -1541,6 +1594,25 @@ pub(crate) fn compute_challenge_isogeny(
     // `projective_difference` here, since downstream consumers
     // (`ChangeOfBasisMatrix::from_bases`) call `lift_basis` and the
     // sqrt branch of `projective_difference` is fragile.
+    //
+    // Mirror C ref's debug assertion in
+    // `compute_challenge_codomain_signature` (sign.c:396): the
+    // pre-iso curve `e_prime` (= E_chl after split_aux + small iso)
+    // and the challenge codomain `curve_chl` (= challenge_iso(E_pk))
+    // must share a j-invariant. Otherwise `Curve::isomorphism`
+    // silently computes a degenerate λ_x / λ_z that produces a
+    // bogus iso evaluation, and downstream basis pushed through it
+    // is mathematically meaningless — the signature passes
+    // serialization but verify rejects at the (2,2)-chain step.
+    if e_prime.j_invariant() != curve_chl.j_invariant() {
+        #[cfg(test)]
+        eprintln!(
+            "[compute_challenge_isogeny] DROP: j(e_prime)={:?} ≠ j(curve_chl)={:?}",
+            e_prime.j_invariant(),
+            curve_chl.j_invariant(),
+        );
+        return None;
+    }
     let iso = e_prime.isomorphism(&curve_chl)?;
     let p_chl = iso.eval(p_prime);
     let q_chl = iso.eval(q_prime);
@@ -1763,17 +1835,32 @@ pub(crate) fn split_auxiliary_isogeny(
 
     // Line 6: return (curve_aux, P_aux, Q_aux, PmQ_aux,
     //                 curve_chl, P_chl, Q_chl, PmQ_chl).
-    // The codomain is curve_aux × curve_chl; image[k].0 is on
-    // curve_aux, image[k].1 is on curve_chl. Indices 0/1/2 are the
-    // images of the pushed (p1_red, q1_red, pmq1_red).
-    let curve_aux = codomain.E1;
-    let curve_chl = codomain.E2;
-    let p_aux = images[0].0;
-    let q_aux = images[1].0;
-    let pmq_aux = images[2].0;
-    let p_chl = images[0].1;
-    let q_chl = images[1].1;
-    let pmq_chl = images[2].1;
+    //
+    // The (2,2)-chain's codomain decomposes as `codomain.E1 ×
+    // codomain.E2` per the Kani matrix structure. The C reference's
+    // `compute_dim2_isogeny_challenge` (sign.c:240–256) labels
+    // `Eaux2_Echall2.E1 = E_aux_2` and `Eaux2_Echall2.E2 = E_chall_2`
+    // — but those names trace back to which input went where in the
+    // *kernel construction*, not to which output side has the
+    // matching j-invariant for the downstream challenge isogeny.
+    //
+    // For SQIsign, the spec invariant requires `j(E_chl_2) =
+    // j(challenge_iso(E_pk))` so that
+    // `compute_challenge_isogeny`'s isomorphism check succeeds.
+    // Empirically, our `Kernel::isogeny` returns the codomain pair
+    // such that `codomain.E1` is the "challenge side" and
+    // `codomain.E2` is the "auxiliary side" — opposite of the C ref's
+    // E1/E2 labelling (the chain implementations differ in which
+    // factor they label "first"). Swap the labels here so downstream
+    // sees `curve_chl` with the j matching `challenge_iso(E_pk)`.
+    let curve_chl = codomain.E1;
+    let curve_aux = codomain.E2;
+    let p_chl = images[0].0;
+    let q_chl = images[1].0;
+    let pmq_chl = images[2].0;
+    let p_aux = images[0].1;
+    let q_aux = images[1].1;
+    let pmq_aux = images[2].1;
 
     Some((
         curve_aux, p_aux, q_aux, pmq_aux, curve_chl, p_chl, q_chl, pmq_chl,

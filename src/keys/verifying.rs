@@ -424,6 +424,10 @@ impl VerifyingKey {
             eprintln!("VERIFY: curve_chl j={}", fp2_hex(&curve_chl.j_invariant()));
             let aux_A = *sig.curve_aux.coefficient().as_fp2();
             eprintln!("VERIFY: curve_aux A={}", fp2_hex(&aux_A));
+            eprintln!(
+                "VERIFY: j(sig.curve_aux)={}",
+                fp2_hex(&sig.curve_aux.j_invariant())
+            );
             eprintln!("VERIFY: P_chl.X={}", fp2_hex(&P_chl.X));
             eprintln!("VERIFY: P_chl.Z={}", fp2_hex(&P_chl.Z));
             eprintln!("VERIFY: Q_chl.X={}", fp2_hex(&Q_chl.X));

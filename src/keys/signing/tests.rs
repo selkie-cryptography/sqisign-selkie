@@ -195,6 +195,68 @@ fn sign_kat_zero_only() {
     eprintln!("sign_kat_zero_only: verify OK in {:?}", t1.elapsed());
 }
 
+/// Verify the *C reference's* KAT[0] signature with our verifier.
+///
+/// Isolates `verify` bugs from `sign` bugs: if our verifier rejects the
+/// C ref's known-good signature, the bug is on the verify side. If it
+/// accepts, sign is the source of `sign_kat_zero_only`'s
+/// `VerificationFailed`.
+///
+/// Run with: `cargo test --lib --release verify_kat_zero_cref_sig -- --ignored`.
+#[test]
+#[ignore]
+fn verify_kat_zero_cref_sig() {
+    let (_, pk_hex, _, msg_hex, sm_hex) = crate::keys::kat_data::KAT_VECTORS[0];
+    let pk_bytes = hex::decode(pk_hex).expect("valid hex");
+    let msg = hex::decode(msg_hex).expect("valid hex");
+    let sm = hex::decode(sm_hex).expect("valid hex");
+
+    // NIST signed-message format: sm = sig || msg. Our SIGNATURE_BYTES
+    // is 148, so sig = sm[..148].
+    let sig_bytes: [u8; crate::keys::SIGNATURE_BYTES] = sm
+        [..crate::keys::SIGNATURE_BYTES]
+        .try_into()
+        .expect("sig prefix is SIGNATURE_BYTES");
+
+    // Round-trip the message bytes match too (cheap sanity).
+    assert_eq!(
+        &sm[crate::keys::SIGNATURE_BYTES..],
+        msg.as_slice(),
+        "sm tail must equal msg"
+    );
+
+    let vk =
+        VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).expect("pk parses");
+    let sig = Signature::from_bytes(&sig_bytes).expect("C ref sig parses");
+
+    // Dump C ref's signature fields for cross-comparison with our
+    // sign-side `[SIGN_FINAL]` output. Same KAT, different sig
+    // (different randomness) — but `n_bt`, `r_rsp`, and the
+    // `hint_chl` / `hint_aux` should be `KAT[0]`-deterministic
+    // because they're derived from the public `chl` and the
+    // canonical-basis `to_hint` outputs of curves the deterministic
+    // commitment phase hits. M_chl and curve_aux vary with the
+    // randomness.
+    eprintln!("[CREF_SIG] curve_aux.A={:?}", sig.curve_aux.coefficient());
+    eprintln!(
+        "[CREF_SIG] n_bt={} r_rsp={}",
+        sig.n_bt.value(),
+        sig.r_rsp.value()
+    );
+    eprintln!(
+        "[CREF_SIG] hint_aux={} hint_chl={}",
+        u8::from(sig.hint_aux),
+        u8::from(sig.hint_chl)
+    );
+    eprintln!("[CREF_SIG] M_chl[0][0]={:?}", sig.M_chl.entries[0][0]);
+    eprintln!("[CREF_SIG] M_chl[0][1]={:?}", sig.M_chl.entries[0][1]);
+    eprintln!("[CREF_SIG] M_chl[1][0]={:?}", sig.M_chl.entries[1][0]);
+    eprintln!("[CREF_SIG] M_chl[1][1]={:?}", sig.M_chl.entries[1][1]);
+
+    vk.verify(&msg, &sig)
+        .expect("C ref's KAT[0] signature must verify against our verifier");
+}
+
 /// Generate a fresh key, sign a random message, verify.
 ///
 /// Run with: `cargo test --lib --release sign_fresh -- --ignored`.
