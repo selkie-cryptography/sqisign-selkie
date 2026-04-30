@@ -1,7 +1,7 @@
 {
   "algorithm": "SQIsign_248",
   "schema": "sqisign_verify_schema.json",
-  "numberOfTests": 39,
+  "numberOfTests": 49,
   "header": [
     "SQIsign_248: f=248, p = 5*2^248 - 1 (NIST security level I).",
     "Negative and vulnerability test vectors for SQIsign_248 verification.",
@@ -10,7 +10,8 @@
     "Spec version: SQIsign v2.0.1 (2025-07-07).",
     "Round 2: exponent overflow, non-canonical Fp, special j-invariants, degenerate matrix/challenge, field splicing.",
     "Round 3: singular curves, starting curve E_0, scalar/challenge overflow.",
-    "Round 4: malformed public keys (all-zero, all-FF, singular, non-canonical)."
+    "Round 4: malformed public keys (all-zero, all-FF, singular, non-canonical).",
+    "Round 5: panic regression vectors for hint overflow, exponent underflow, and fuzz crash inputs."
   ],
   "notes": {
     "Normal": "Unmodified KAT vector, expected to verify.",
@@ -74,6 +75,11 @@
     "MalformedPk": {
       "bugType": "BASIC",
       "description": "Public key with invalid or degenerate encoding. Must be rejected at parse time or cause verification to fail."
+    },
+    "HintOverflow": {
+      "bugType": "BASIC",
+      "description": "Hint byte causes x-coordinate search loop counter to overflow (u8 wrapping). Prior to fix, caused panic in debug mode. Must be rejected gracefully.",
+      "links": []
     }
   },
   "testGroups": [
@@ -402,6 +408,96 @@
           "flags": [
             "ChallengeOverflow"
           ]
+        },
+        {
+          "tcId": 40,
+          "comment": "hint_aux = 255 (u8 max, forces x-coord search near counter overflow)",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB3001FF02",
+          "result": "invalid",
+          "flags": [
+            "HintOverflow"
+          ]
+        },
+        {
+          "tcId": 41,
+          "comment": "hint_chl = 255 (u8 max, forces x-coord search near counter overflow)",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB300102FF",
+          "result": "invalid",
+          "flags": [
+            "HintOverflow"
+          ]
+        },
+        {
+          "tcId": 42,
+          "comment": "both hint_aux and hint_chl = 255",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB3001FFFF",
+          "result": "invalid",
+          "flags": [
+            "HintOverflow"
+          ]
+        },
+        {
+          "tcId": 43,
+          "comment": "n_bt = 248 (max TorsionExponent): e_rsp_prime underflows",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC01F801D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010202",
+          "result": "invalid",
+          "flags": [
+            "ExponentOverflow"
+          ]
+        },
+        {
+          "tcId": 44,
+          "comment": "r_rsp = 248 (max): chl loop bound underflows",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC0100F8D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010202",
+          "result": "invalid",
+          "flags": [
+            "ExponentOverflow"
+          ]
+        },
+        {
+          "tcId": 45,
+          "comment": "n_bt=100 + r_rsp=100 = 200 > e_rsp=126: e_rsp_prime underflow",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC016464D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010202",
+          "result": "invalid",
+          "flags": [
+            "ExponentOverflow"
+          ]
+        },
+        {
+          "tcId": 46,
+          "comment": "n_bt=126 + r_rsp=1 = 127 > e_rsp=126: underflow by exactly 1",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC017E01D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010202",
+          "result": "invalid",
+          "flags": [
+            "ExponentOverflow"
+          ]
+        },
+        {
+          "tcId": 47,
+          "comment": "hint_aux = 0 (h=0, h_A=0): fallback x-coord search from n=128",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010002",
+          "result": "invalid",
+          "flags": [
+            "HintOverflow"
+          ]
+        },
+        {
+          "tcId": 48,
+          "comment": "hint_aux = 1 (h=0, h_A=1): NQR fallback search from n=128",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010102",
+          "result": "invalid",
+          "flags": [
+            "HintOverflow"
+          ]
         }
       ]
     },
@@ -511,6 +607,24 @@
           "result": "invalid",
           "flags": [
             "NonCanonicalFp"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "SqisignVerify",
+      "publicKey": {
+        "pk": "0000000000000000000000000000000000000000000000000000000000000000131313131313131313131313131313131313131313131300000000000000131313"
+      },
+      "tests": [
+        {
+          "tcId": 49,
+          "comment": "fuzz crash: integer overflow in find_na_x_coord (crash-f13d2a...)",
+          "msg": "00000000002F",
+          "sig": "13131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313130000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "result": "invalid",
+          "flags": [
+            "HintOverflow"
           ]
         }
       ]
