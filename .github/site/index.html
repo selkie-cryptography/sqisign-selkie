@@ -1191,7 +1191,7 @@
             <dl>
             <dt>Modules</dt><dd>field, bigint, curves, surfaces, quaternions, deuring, sqisign (keygen/sign/verify).</dd>
             <dt>Units</dt><dd>Toggle between ns/&mu;s/ms. Sort by name or time.</dd>
-            <dt>Trend</dt><dd>Historical sparkline per benchmark when multiple commits are available.</dd>
+            <dt>Trend</dt><dd>Historical chart when multiple commits are available.</dd>
             </dl></span></span></h2>
           <span class="meta" id="bench-meta"></span>
         </div>
@@ -1369,16 +1369,55 @@
     }
 
     // Render a sparkline from an array of numbers using Unicode block chars.
-    function sparkline(vals) {
-      if (vals.length === 0) return '';
+    // Inline SVG mini-chart. vals = array of numbers (oldest first).
+    // opts: { width, height, color, labels, suffix, decimals }
+    // labels = parallel array of strings (e.g. commit SHAs) for tooltips.
+    function minichart(vals, opts) {
+      if (!vals || vals.length < 2) return '';
+      const w = (opts && opts.width) || 80;
+      const h = (opts && opts.height) || 24;
+      const color = (opts && opts.color) || 'var(--fg-muted)';
+      const labels = (opts && opts.labels) || null;
+      const suffix = (opts && opts.suffix) || '';
+      const dec = (opts && opts.decimals != null) ? opts.decimals : 1;
       const min = Math.min(...vals);
       const max = Math.max(...vals);
       const range = max - min || 1;
-      const blocks = '\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588';
-      return vals.map(v => {
-        const level = Math.min(7, Math.floor(((v - min) / range) * 7.99));
-        return blocks[level];
-      }).join('');
+      const coords = vals.map((v, i) => ({
+        x: (i / (vals.length - 1)) * w,
+        y: h - 2 - ((v - min) / range) * (h - 4),
+        v,
+      }));
+      const points = coords.map(c => `${c.x.toFixed(1)},${c.y.toFixed(1)}`);
+      const area = `M0,${h} L${points.join(' L')} L${w},${h} Z`;
+      const line = `M${points.join(' L')}`;
+      const last = coords[coords.length - 1];
+      // Hover targets with JS-driven tooltip.
+      let hovers = '';
+      for (let i = 0; i < coords.length; i++) {
+        const c = coords[i];
+        const val = c.v.toFixed(dec) + suffix;
+        const lbl = labels ? labels[i] : `#${i + 1}`;
+        const tip = `${lbl}: ${val}`.replace(/"/g, '&quot;');
+        hovers += `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="6" fill="transparent" style="cursor:crosshair" onmouseenter="showChartTip(event,'${tip}')" onmouseleave="hideChartTip()"/>`;
+      }
+      return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle;margin-left:6px"><path d="${area}" fill="${color}" opacity="0.1"/><path d="${line}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="2" fill="${color}"/>${hovers}</svg>`;
+    }
+
+    // Delta indicator: shows ↑N or ↓N with color.
+    function delta(current, previous, opts) {
+      if (previous == null || current == null) return '';
+      const diff = current - previous;
+      if (diff === 0) return '';
+      const invert = opts && opts.invert; // true = lower is better (panic count)
+      const isGood = invert ? diff < 0 : diff > 0;
+      const color = isGood ? 'var(--green)' : 'var(--red)';
+      const arrow = diff > 0 ? '\u2191' : '\u2193';
+      const abs = Math.abs(diff);
+      const decimals = (opts && opts.decimals != null) ? opts.decimals : (abs < 10 ? 1 : 0);
+      const num = Number.isInteger(abs) ? String(abs) : abs.toFixed(decimals);
+      const label = (opts && opts.suffix) ? `${num}${opts.suffix}` : num;
+      return ` <span style="font-size:11px;color:${color}">${arrow}${label}</span>`;
     }
 
     function covColor(pct) {
@@ -1419,13 +1458,15 @@
       const modules = data.modules || [];
 
       // Coverage trend sparkline from index history.
-      let covSparkline = '';
+      let covChart = '';
       if (covIndex.length >= 2) {
-        const vals = covIndex.slice(0, 15).reverse().map(e => e.percent || 0);
-        covSparkline = ` <span style="font-size:14px;color:var(--fg-dim)">${sparkline(vals)}</span>`;
+        const slice = covIndex.slice(0, 15).reverse();
+        const vals = slice.map(e => e.percent || 0);
+        const labels = slice.map(e => e.sha ? e.sha.slice(0, 7) : '?');
+        covChart = minichart(vals, { color: covColor(total.percent), width: 100, height: 28, labels, suffix: '%' });
       }
 
-      let html = `<div class="cov-summary" style="color:${covColor(total.percent)}">${totalPct}%${covSparkline}</div>`;
+      let html = `<div class="cov-summary" style="color:${covColor(total.percent)}">${totalPct}%${covChart}</div>`;
 
       // Analyze all files for insights.
       if (modules.length > 0) {
@@ -1689,29 +1730,23 @@
       // Kill rate trend from index history.
       let trendHtml = '';
       if (mutantsIndex.length > 1) {
-        const history = mutantsIndex
-          .filter(e => e.caught != null)
-          .map(e => {
+        const mutSlice = mutantsIndex.filter(e => e.caught != null).slice(0, 15);
+        const history = mutSlice.map(e => {
             const t = (e.caught || 0) + (e.missed || 0) + (e.timeout || 0);
-            return t > 0 ? (e.caught / t * 100) : null;
-          })
-          .filter(v => v !== null)
-          .slice(0, 10)
-          .reverse();
+            return t > 0 ? (e.caught / t * 100) : 0;
+          }).reverse();
+        const mutLabels = mutSlice.map(e => e.sha ? e.sha.slice(0, 7) : '?').reverse();
 
         if (history.length >= 2) {
           const latest = history[history.length - 1];
           const prev = history[history.length - 2];
-          const delta = latest - prev;
-          const arrow = delta > 0.5 ? '\u2197' : delta < -0.5 ? '\u2198' : '\u2192';
-          const dColor = delta > 0.5 ? 'var(--green)' : delta < -0.5 ? 'var(--red)' : 'var(--fg-dim)';
-          const sparkBlocks = history.map(v => {
-            const level = Math.min(7, Math.floor(v / 100 * 8));
-            return ['\u2581','\u2582','\u2583','\u2584','\u2585','\u2586','\u2587','\u2588'][level];
-          }).join('');
+          const d = latest - prev;
+          const dArrow = d > 0.5 ? '\u2191' : d < -0.5 ? '\u2193' : '';
+          const dColor = d > 0.5 ? 'var(--green)' : d < -0.5 ? 'var(--red)' : 'var(--fg-dim)';
+          const chart = minichart(history, { color: killColor, width: 100, height: 28, labels: mutLabels, suffix: '%' });
           trendHtml = `<div class="mutants-stat">
-            <span class="value" style="color:${dColor};font-size:20px">${arrow} ${delta > 0 ? '+' : ''}${delta.toFixed(1)}%</span>
-            <span class="label">trend <span style="letter-spacing:1px;font-size:13px">${sparkBlocks}</span></span>
+            <span class="value" style="color:${dColor};font-size:16px">${dArrow}${d > 0 ? '+' : ''}${d.toFixed(1)}%</span>
+            <span class="label">trend ${chart}</span>
           </div>`;
         }
       }
@@ -2788,7 +2823,9 @@
 
       const covSha = cov && cov.sha;
       if (cov && (shaChanged || covSha !== renderedCov)) {
-        covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines` + runLink(cov);
+        const covPrev = covIndex.length >= 2 ? covIndex[1].percent : null;
+        const covDelta = delta(cov.total.percent, covPrev, { suffix: '%' });
+        covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines${covDelta}` + runLink(cov);
         covEl.innerHTML = renderCoverageData(cov);
         renderedCov = covSha;
       } else if (!cov && renderedCov !== null) {
@@ -2812,7 +2849,10 @@
       if (mut && (shaChanged || mutSha !== renderedMut)) {
         const s = mut.summary || {};
         const tested = (s.caught || 0) + (s.missed || 0) + (s.timeout || 0);
-        mutMeta.innerHTML = `${esc(String(tested))} tested` + runLink(mut);
+        const mutPrevEntry = mutantsIndex.length >= 2 ? mutantsIndex[1] : null;
+        const mutPrevCaught = mutPrevEntry ? (mutPrevEntry.caught || 0) : null;
+        const mutDelta = delta(s.caught || 0, mutPrevCaught, {});
+        mutMeta.innerHTML = `${esc(String(tested))} tested${mutDelta}` + runLink(mut);
         mutEl.innerHTML = renderMutantsData(mut);
         renderedMut = mutSha;
       } else if (!mut && renderedMut !== null) {
@@ -3002,6 +3042,21 @@
     }, { rootMargin: '-40% 0px -55% 0px' });
 
     sections.forEach(s => observer.observe(s.el));
+
+    // --- Chart tooltip ---
+    const chartTipEl = document.createElement('div');
+    chartTipEl.style.cssText = 'position:fixed;pointer-events:none;padding:3px 8px;border-radius:4px;font-size:11px;font-family:SF Mono,Menlo,Consolas,monospace;background:var(--bg-raised);border:1px solid var(--border);color:var(--fg);z-index:20;display:none;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3)';
+    document.body.appendChild(chartTipEl);
+
+    function showChartTip(e, text) {
+      chartTipEl.textContent = text;
+      chartTipEl.style.display = '';
+      chartTipEl.style.left = (e.clientX + 10) + 'px';
+      chartTipEl.style.top = (e.clientY - 28) + 'px';
+    }
+    function hideChartTip() {
+      chartTipEl.style.display = 'none';
+    }
   </script>
 
 </body>
