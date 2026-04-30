@@ -120,15 +120,27 @@
       color: var(--fg-muted);
     }
 
-    .header__org {
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: var(--fg-muted);
+    .header__links {
+      display: flex;
+      gap: 8px;
     }
 
-    .header__org:hover { color: var(--fg); }
+    .header__org {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 12px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .header__org:hover {
+      color: var(--fg);
+      border-color: var(--fg-muted);
+    }
 
     .sections { padding: 48px 0; }
     .section {
@@ -1022,7 +1034,7 @@
       .container { padding: 0 12px; }
       .header { padding: 16px 0; }
       .header__title { font-size: 18px; }
-      .header__org { display: none; }
+      .header__links { display: none; }
       .sections { padding: 20px 0; }
       .section { margin-bottom: 28px; }
       .cov-summary { font-size: 24px; }
@@ -1074,8 +1086,9 @@
             <div class="header__subtitle">CI</div>
           </div>
         </div>
-        <a class="header__org" href="/rustdoc/">Docs</a>
-        <a class="header__org" href="https://github.com/selkie-cryptography/sqisign-selkie">GitHub</a>
+        <div class="header__links">
+          <a class="header__org" href="https://github.com/selkie-cryptography/sqisign-selkie">GitHub</a>
+        </div>
       </div>
     </div>
   </header>
@@ -1091,6 +1104,7 @@
     </div>
 
     <nav class="section-nav" id="section-nav">
+      <a href="/rustdoc/" target="_blank" rel="noopener">Docs</a>
       <a href="#analysis-section">Risks</a>
       <a href="#coverage-section">Coverage</a>
       <a href="#bench-section">Benchmarks</a>
@@ -1309,6 +1323,12 @@
     let renderedDudect = null; // SHA of rendered dudect data
     let renderedTacet = null;  // SHA of rendered tacet data
     let renderedForSha = null; // The selectedSha we last rendered for
+
+    function runLink(data) {
+      if (!data || !data.run_id) return '';
+      const url = `https://github.com/${REPO}/actions/runs/${data.run_id}`;
+      return ` <a href="${url}" target="_blank" rel="noopener" style="font-size:11px;color:var(--fg-dim);text-decoration:none;margin-left:6px">\u2197</a>`;
+    }
 
     function staleTag(data) {
       if (!data || !data._stale) return '';
@@ -1841,7 +1861,6 @@
       let html = `<div class="mutants-summary">
         <div class="mutants-stat"><span class="value" style="color:${summaryColor}">${summaryText}</span><span class="label">${funcs.size} functions tested</span></div>
       </div>`;
-
       // Collect tacet model names from data.
       const tacetModels = [...new Set(tResults.map(r => r.model))];
       const modelLabels = {
@@ -2743,7 +2762,7 @@
 
       const covSha = cov && cov.sha;
       if (cov && (shaChanged || covSha !== renderedCov)) {
-        covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines`;
+        covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines` + runLink(cov);
         covEl.innerHTML = renderCoverageData(cov);
         renderedCov = covSha;
       } else if (!cov && renderedCov !== null) {
@@ -2754,7 +2773,7 @@
 
       const benchSha = bench && bench.sha;
       if (bench && (shaChanged || benchSha !== renderedBench)) {
-        benchMeta.textContent = '';
+        benchMeta.innerHTML = runLink(bench);
         benchEl.innerHTML = renderBenchmarkData(bench);
         renderedBench = benchSha;
       } else if (!bench && renderedBench !== null) {
@@ -2767,7 +2786,7 @@
       if (mut && (shaChanged || mutSha !== renderedMut)) {
         const s = mut.summary || {};
         const tested = (s.caught || 0) + (s.missed || 0) + (s.timeout || 0);
-        mutMeta.innerHTML = `${esc(String(tested))} tested`;
+        mutMeta.innerHTML = `${esc(String(tested))} tested` + runLink(mut);
         mutEl.innerHTML = renderMutantsData(mut);
         renderedMut = mutSha;
       } else if (!mut && renderedMut !== null) {
@@ -2787,7 +2806,7 @@
         const total = new Set([...dResults.map(r => r.name), ...tResults.map(r => r.name)]).size;
         dudectMeta.innerHTML = (fails > 0
           ? `<span style="color:var(--red)">${fails} fail</span> / ${total} tested`
-          : `${total} pass`) + staleTag(dudect || tacetData);
+          : `${total} pass`) + runLink(dudect) + staleTag(dudect || tacetData);
         dudectEl.innerHTML = renderCtData(dudect, tacetData, ctgrindData);
         renderedDudect = dudectSha;
         renderedTacet = tacetSha;
@@ -2837,7 +2856,7 @@
         const totalFail = suites.reduce((s, x) => s + (x.fail || 0), 0);
         katMeta.innerHTML = (totalFail > 0
           ? `<span style="color:var(--red)">${totalFail} fail</span>`
-          : `${totalVectors} vectors`) + staleTag(katData);
+          : `${totalVectors} vectors`) + runLink(katData) + staleTag(katData);
         katEl.innerHTML = renderKatData(katData);
       } else {
         katMeta.textContent = '';
