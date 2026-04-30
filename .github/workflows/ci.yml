@@ -173,12 +173,12 @@ jobs:
           # Wake the VM via ci-signal (handles restart + wait reliably).
           rustc -O .github/scripts/ci-signal.rs -o /tmp/ci-signal
           /tmp/ci-signal docs running "${{ github.sha }}"
-          # VM is now warm — upload and extract.
-          flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/rustdoc"
-          flyctl ssh console -a sqisign-selkie-ci -C "mkdir -p /data/rustdoc"
-          echo "put /tmp/rustdoc.tar.gz /data/rustdoc/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
-          flyctl ssh console -a sqisign-selkie-ci -C "tar -xzf /data/rustdoc/rustdoc.tar.gz -C /data/rustdoc"
-          flyctl ssh console -a sqisign-selkie-ci -C "rm /data/rustdoc/rustdoc.tar.gz"
+          # Stage the tarball alongside /data/rustdoc, then atomically
+          # wipe-and-recreate the directory in a single ssh call.
+          # Each `flyctl ssh` is a fresh connection that does not trigger
+          # auto_start_machines, so minimize the number of calls.
+          echo "put /tmp/rustdoc.tar.gz /data/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
+          flyctl ssh console -a sqisign-selkie-ci -C "sh -c 'set -e; rm -rf /data/rustdoc && mkdir -p /data/rustdoc && tar -xzf /data/rustdoc.tar.gz -C /data/rustdoc && rm /data/rustdoc.tar.gz'"
 
   kat-report:
     name: KAT report

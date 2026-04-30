@@ -12,8 +12,6 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::thread;
-use std::time::Duration;
 
 const APP: &str = "sqisign-selkie-ci";
 
@@ -29,9 +27,9 @@ fn main() {
     let sha = &args[3];
     let dir = format!("/data/{kind}");
 
-    // Wake the app.
-    run("flyctl", &["apps", "restart", APP, "--skip-health-checks"]);
-    thread::sleep(Duration::from_secs(5));
+    // The CI VM is configured with min_machines_running=1 and
+    // auto_stop_machines=false, so we can ssh in directly without
+    // a wake-up dance.
 
     // Write status.
     let status = format!("{{\"state\":{},\"sha\":{}}}", json_str(state), json_str(sha));

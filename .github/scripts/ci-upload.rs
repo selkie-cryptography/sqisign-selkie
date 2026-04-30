@@ -14,8 +14,6 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::thread;
-use std::time::Duration;
 
 const APP: &str = "sqisign-selkie-ci";
 const SITE: &str = "https://sqisign-selkie-ci.fly.dev";
@@ -38,10 +36,9 @@ fn main() {
     let json_contents = fs::read_to_string(json_path)
         .unwrap_or_else(|e| { eprintln!("cannot read {json_path}: {e}"); std::process::exit(1); });
 
-    // Wake the app.
-    eprintln!("[ci-upload] restarting {APP}...");
-    run("flyctl", &["apps", "restart", APP, "--skip-health-checks"]);
-    thread::sleep(Duration::from_secs(5));
+    // The CI VM is configured with min_machines_running=1 and
+    // auto_stop_machines=false, so we can ssh in directly without
+    // a wake-up dance.
 
     // Signal "running".
     let status_running = format!("{{\"state\":\"running\",\"sha\":{}}}", json_str(sha));

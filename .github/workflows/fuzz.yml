@@ -15,7 +15,7 @@ jobs:
   fuzz:
     name: ${{ matrix.target }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -33,15 +33,15 @@ jobs:
         with:
           key: fuzz-${{ matrix.target }}
           workspaces: fuzz
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: cargo-fuzz
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz
-
-      - name: Run fuzzer (5 min)
+      - name: Run fuzzer (10 min)
         run: |
           cd fuzz
-          timeout 300 cargo +nightly fuzz run ${{ matrix.target }} -- \
-            -max_total_time=300 2>&1 | tee fuzz-output.txt || true
+          timeout 600 cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=600 2>&1 | tee fuzz-output.txt || true
 
       - name: Collect results
         run: |
@@ -60,7 +60,7 @@ jobs:
   report:
     name: Upload fuzz report
     needs: fuzz
-    if: always()
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
