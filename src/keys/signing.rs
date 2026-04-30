@@ -1267,28 +1267,9 @@ impl SigningKey {
             let (det_chl, hint_chl_raw) = TorsionBasis::to_hint(&e_chl_final);
 
             // Matrix exponent: e_rsp' + r_rsp + 2 (HD extra torsion).
-            //
-            // The scaled bases have order 2^(e_rsp' + r_rsp + 2).
-            // The dlog and matrix entries must use the same exponent so
-            // that the recovered scalars carry the full precision of
-            // the basis. With only e_rsp' + r_rsp bits, the matrix
-            // entries lose the top 2 bits and verification produces a
-            // basis off by a 2^(e_rsp' + r_rsp) multiple.
+            // The dlog and matrix entries are at this exponent.
             let e_cob = TorsionExponent::try_from(e_rsp_prime + r_rsp_val + 2)
                 .map_err(|_| SignatureError::SigningFailed)?;
-            let scale = f - e_cob.value();
-            let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
-
-            let det_aux_scaled = TorsionBasis::from_propagated(
-                &scale_scalar * &det_aux.R,
-                &scale_scalar * &det_aux.S,
-                &scale_scalar * &det_aux.RS,
-            );
-            let det_chl_scaled = TorsionBasis::from_propagated(
-                &scale_scalar * &det_chl.R,
-                &scale_scalar * &det_chl.S,
-                &scale_scalar * &det_chl.RS,
-            );
 
             // C-ref-shuffled basis convention: `(R, S, RS) = (P, P−Q,
             // Q)` — matches what `TorsionBasis::from_hint` returns
@@ -1296,11 +1277,21 @@ impl SigningKey {
             // the naive `(P, Q, P−Q)` here produces an `M_chl` that
             // verify rejects (post-application bases collapse).
             let basis_aux = TorsionBasis::from_propagated(p_aux, pmq_aux, q_aux);
-            let m1 = match ChangeOfBasisMatrix::from_bases(&basis_aux, &det_aux_scaled, e_cob) {
+            // m1 = "coords of det_aux in basis basis_aux at 2^e_cob".
+            // Compute via the inverse direction (from_bases_invert):
+            // the cubical Tate's asymmetric ladder requires the
+            // canonical / full-order side as the *first* arg, so we
+            // pass `det_aux` (full order from `to_hint`) as canonical
+            // and `basis_aux` (reduced order 2^e_cob) as reduced.
+            // The forward call returns "coords of basis_aux in
+            // det_aux"; we invert to get the direction `mul` consumes.
+            let m1 = match ChangeOfBasisMatrix::from_bases_invert(&det_aux, &basis_aux, e_cob) {
                 Some(m) => m,
                 None => {
                     #[cfg(test)]
-                    eprintln!("[sign {_iter}] DROP: ChangeOfBasisMatrix::from_bases (m1) None");
+                    eprintln!(
+                        "[sign {_iter}] DROP: ChangeOfBasisMatrix::from_bases_invert (m1) None"
+                    );
                     continue;
                 }
             };
@@ -1338,8 +1329,11 @@ impl SigningKey {
                     transformed.R == transformed.S,
                 );
             }
-            let m_chl = match ChangeOfBasisMatrix::from_bases(&det_chl_scaled, &transformed, e_cob)
-            {
+            // m_chl = "coords of transformed in det_chl at 2^e_cob".
+            // C ref's `change_of_basis_matrix_tate` (non-invert):
+            // canonical = det_chl (full order), reduced = transformed
+            // (order 2^e_cob from m1's matrix application).
+            let m_chl = match ChangeOfBasisMatrix::from_bases(&det_chl, &transformed, e_cob) {
                 Some(m) => m,
                 None => {
                     #[cfg(test)]
@@ -1371,10 +1365,10 @@ impl SigningKey {
                     hint_chl_raw.to_byte(),
                 );
                 eprintln!(
-                    "[sign {_iter}] det_chl_scaled: R={}, S={}, RS={}",
-                    aff(&det_chl_scaled.R),
-                    aff(&det_chl_scaled.S),
-                    aff(&det_chl_scaled.RS),
+                    "[sign {_iter}] det_chl: R={}, S={}, RS={}",
+                    aff(&det_chl.R),
+                    aff(&det_chl.S),
+                    aff(&det_chl.RS),
                 );
                 eprintln!(
                     "[sign {_iter}] m_chl e={} entries: [00]={} [01]={} [10]={} [11]={}",
@@ -1383,6 +1377,49 @@ impl SigningKey {
                     dump(&m_chl.entries[0][1]),
                     dump(&m_chl.entries[1][0]),
                     dump(&m_chl.entries[1][1]),
+                );
+            }
+
+            #[cfg(test)]
+            {
+                let fp2_hex = |v: &Fp2| -> String {
+                    let b = v.to_bytes();
+                    let r: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                    let i: String = b[32..].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                    format!("0x{r}+i*0x{i}")
+                };
+                eprintln!(
+                    "[SIGN_FINAL] curve_aux.A={}",
+                    fp2_hex(curve_aux.coefficient().as_fp2())
+                );
+                eprintln!(
+                    "[SIGN_FINAL] e_chl_final.j={}",
+                    fp2_hex(&e_chl_final.j_invariant())
+                );
+                eprintln!(
+                    "[SIGN_FINAL] e_rsp_prime={e_rsp_prime} r_rsp={} n_bt={}",
+                    r_rsp.value(),
+                    n_bt_te.value()
+                );
+                eprintln!("[SIGN_FINAL] P_chl.X={}", fp2_hex(&p_chl_final.X));
+                eprintln!("[SIGN_FINAL] P_chl.Z={}", fp2_hex(&p_chl_final.Z));
+                eprintln!("[SIGN_FINAL] Q_chl.X={}", fp2_hex(&q_chl_final.X));
+                eprintln!("[SIGN_FINAL] Q_chl.Z={}", fp2_hex(&q_chl_final.Z));
+                eprintln!("[SIGN_FINAL] P_aux.X={}", fp2_hex(&p_aux.X));
+                eprintln!("[SIGN_FINAL] P_aux.Z={}", fp2_hex(&p_aux.Z));
+                eprintln!("[SIGN_FINAL] Q_aux.X={}", fp2_hex(&q_aux.X));
+                eprintln!("[SIGN_FINAL] Q_aux.Z={}", fp2_hex(&q_aux.Z));
+                eprintln!(
+                    "[SIGN_FINAL] hint_aux={:08b} hint_chl={:08b}",
+                    hint_aux_raw.to_byte(),
+                    hint_chl_raw.to_byte()
+                );
+                eprintln!(
+                    "[SIGN_FINAL] m_chl entries: [00]={:?} [01]={:?} [10]={:?} [11]={:?}",
+                    m_chl.entries[0][0],
+                    m_chl.entries[0][1],
+                    m_chl.entries[1][0],
+                    m_chl.entries[1][1]
                 );
             }
 

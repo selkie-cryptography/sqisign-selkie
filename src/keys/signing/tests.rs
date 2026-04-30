@@ -168,7 +168,8 @@ fn kat_sk_roundtrip_all() {
 /// (`to_isogeny`, `split_aux`, `from_bases`, signature encoding,
 /// verification) is end-to-end functional.
 ///
-/// Run with: `cargo test --lib --release sign_kat_zero_only -- --ignored --nocapture`.
+/// Run with: `cargo test --lib --release sign_kat_zero_only -- --ignored
+/// --nocapture`.
 #[test]
 #[ignore]
 fn sign_kat_zero_only() {
@@ -177,10 +178,10 @@ fn sign_kat_zero_only() {
     let pk_bytes = hex::decode(pk_hex).expect("valid hex");
     let msg = hex::decode(msg_hex).expect("valid hex");
 
-    let sk = SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap())
-        .expect("sk should parse");
-    let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap())
-        .expect("pk should parse");
+    let sk =
+        SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap()).expect("sk should parse");
+    let vk =
+        VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).expect("pk should parse");
 
     let t0 = std::time::Instant::now();
     let sig = sk

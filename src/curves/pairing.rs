@@ -15,8 +15,8 @@ use core::ops::{Div, Mul};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::{
-    curves::{TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
-    fields::fp2::Fp2,
+    curves::{TorsionBasis, TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
+    fields::{fp::Fp, fp2::Fp2},
     quaternions::bigint::BigInt,
 };
 
@@ -317,8 +317,8 @@ pub(crate) fn tate_pairing(
 
     let curve = p.curve();
     let a = *curve.coefficient().as_fp2();
-    let two = Fp2::from_fp(crate::fields::fp::Fp::from_small(2));
-    let four = Fp2::from_fp(crate::fields::fp::Fp::from_small(4));
+    let two = Fp2::from_fp(Fp::from_small(2));
+    let four = Fp2::from_fp(Fp::from_small(4));
     let a24 = &(&a + &two) * &four.invert();
 
     // Normalize to affine x-coordinates for cubical arithmetic.
@@ -363,6 +363,185 @@ pub(crate) fn tate_pairing(
     }
 
     RootOfUnity(result)
+}
+
+impl TorsionBasis {
+    /// Five Tate cross-pairings of `self` (full-order canonical) and
+    /// `reduced` (order 2^e), batched per the C reference's
+    /// `tate_dlog_partial` (`ec/ref/lvlx/biextension.c:621`).
+    ///
+    /// Returns `[w0, w1, w2_inv, w3, w4_inv]` ∈ μ_{2^e}^5 where:
+    /// - `w0`     = `t(P, Q)`           (canonical reference)
+    /// - `w1`     = `t(R, P)`
+    /// - `w2_inv` = `1 / t(R, Q)`
+    /// - `w3`     = `t(S, P)`
+    /// - `w4_inv` = `1 / t(S, Q)`
+    ///
+    /// `(P, Q, P−Q) = self` must be at the curve's full
+    /// 2^TORSION_EVEN_POWER torsion; `(R, S, R−S) = reduced` at order
+    /// 2^e. The asymmetric ladder runs `TORSION_EVEN_POWER − 1`
+    /// doublings on the full-order side and `e − 1` on the reduced
+    /// side, so each side reaches its 2-torsion independently. With
+    /// both at 2-torsion the cubical translates and monodromy ratios
+    /// are well-defined and the post-Frobenius `clear_cofac` +
+    /// `2^e_diff` squarings produce primitive 2^e-th roots of unity.
+    ///
+    /// The X/Z swap on `w2_inv` and `w4_inv` is the C reference's
+    /// idiomatic free inversion: the final `(X/Z)^(p−1)` step picks
+    /// up the inverse without an explicit Fp2 division.
+    ///
+    /// Used by [`ChangeOfBasisMatrix::from_bases`] to build
+    /// `M_chl` / `M_sk` matrices that survive the dlog-precision
+    /// check; the symmetric reduced-input version of `tate_pairing`
+    /// produces ord(ζ) = 2^(2e − TORSION_EVEN_POWER) on bases
+    /// pre-doubled to order 2^e, which collapses any matrix at
+    /// 2e ≤ TORSION_EVEN_POWER.
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time. Used in change-of-basis recovery for
+    /// `M_chl` / `M_sk`. `TODO(ct)`: secret-derived in Algorithm 4.8 /
+    /// Algorithm 4.1 — leaks matrix entries through cubical-ladder
+    /// timing.
+    ///
+    /// # Errors
+    ///
+    /// Returns `None` if either basis fails to lift to Jacobian.
+    ///
+    /// [`ChangeOfBasisMatrix::from_bases`]:
+    ///     crate::curves::ChangeOfBasisMatrix::from_bases
+    pub(crate) fn cross_pairings(
+        &self,
+        reduced: &TorsionBasis,
+        e: TorsionExponent,
+    ) -> Option<[RootOfUnity; 5]> {
+        let curve = *self.R.curve();
+        debug_assert_eq!(
+            curve,
+            *reduced.R.curve(),
+            "self and `reduced` must share a curve"
+        );
+
+        // Lift to Jacobian for the four difference-x's needed to seed
+        // the cubical accumulators (mirrors `compute_difference_points`
+        // at `biextension.c:447`).
+        let (p_jac, q_jac) = self.lift(&curve)?;
+        let (r_jac, s_jac) = reduced.lift(&curve)?;
+        let (_, x_pmr) = p_jac.x_add_sub(&r_jac);
+        let (_, x_pms) = p_jac.x_add_sub(&s_jac);
+        let (_, x_rmq) = r_jac.x_add_sub(&q_jac);
+        let (_, x_smq) = s_jac.x_add_sub(&q_jac);
+
+        // a24 = (A + 2C) / (4C). Affine curve form (C = 1).
+        let a = *curve.coefficient().as_fp2();
+        let two = Fp2::from_fp(Fp::from_small(2));
+        let four = Fp2::from_fp(Fp::from_small(4));
+        let a24 = &(&a + &two) * &four.invert();
+
+        // Basis points → (x : 1). Diff points stay in raw projective
+        // (X : Z) form: their cubical structure depends on the
+        // post-jac representative, not the affine x alone.
+        let xp = *self.R.to_affine_x().as_fp2();
+        let xq = *self.S.to_affine_x().as_fp2();
+        let xpmq = *self.RS.to_affine_x().as_fp2();
+        let xr = *reduced.R.to_affine_x().as_fp2();
+        let xs = *reduced.S.to_affine_x().as_fp2();
+
+        let mut np = CubicalPoint::from_affine(xp);
+        let mut npq = CubicalPoint::from_affine(xpmq);
+        let mut nr = CubicalPoint::from_affine(xr);
+        let mut ns = CubicalPoint::from_affine(xs);
+        let mut pnr = CubicalPoint {
+            X: x_pmr.X,
+            Z: x_pmr.Z,
+        };
+        let mut pns = CubicalPoint {
+            X: x_pms.X,
+            Z: x_pms.Z,
+        };
+        let mut nrq = CubicalPoint {
+            X: x_rmq.X,
+            Z: x_rmq.Z,
+        };
+        let mut nsq = CubicalPoint {
+            X: x_smq.X,
+            Z: x_smq.Z,
+        };
+
+        let e_full = TorsionExponent::FULL.value();
+        let e_red = e.value();
+
+        // Loop 1: full-order ladder on (P, Q). Runs `e_full − 1` iters
+        // → np at 2-torsion of full order.
+        for _ in 0..(e_full - 1) {
+            npq = npq.differential_add(&np, &xq);
+            np = np.double(&a24);
+        }
+
+        // Loop 2: reduced-order accumulators for (R, S). Runs
+        // `e_red − 1` iters → nr, ns at their reduced 2-torsion.
+        // PnR/PnS/nRQ/nSQ accumulate the cross-pairing structure.
+        for _ in 0..(e_red - 1) {
+            pnr = pnr.differential_add(&nr, &xp);
+            nrq = nrq.differential_add(&nr, &xq);
+            nr = nr.double(&a24);
+
+            pns = pns.differential_add(&ns, &xp);
+            nsq = nsq.differential_add(&ns, &xq);
+            ns = ns.double(&a24);
+        }
+
+        // Cubical translates by 2-torsion.
+        let npq_t = npq.translate(&np);
+        let pnr_t = pnr.translate(&nr);
+        let nrq_t = nrq.translate(&nr);
+        let pns_t = pns.translate(&ns);
+        let nsq_t = nsq.translate(&ns);
+        let np_t = np.translate(&np);
+        let nr_t = nr.translate(&nr);
+        let ns_t = ns.translate(&ns);
+
+        // Five (X, Z) cubical monodromy ratios per `point_ratio`
+        // (`biextension.c:95`):
+        //   R.x = nQ_t.x · P_arg.x,   R.z = PnQ_t.x
+        // `w2_inv` and `w4_inv` swap (X, Z) — that's the C reference's
+        // free inversion: (X/Z)^(p−1) → (Z/X)^(p−1) = ((X/Z)^(p−1))^{−1}.
+        let raw_xz: [(Fp2, Fp2); 5] = [
+            (&np_t.X * &xq, npq_t.X),
+            (&nr_t.X * &xp, pnr_t.X),
+            (nrq_t.X, &nr_t.X * &xq),
+            (&ns_t.X * &xp, pns_t.X),
+            (nsq_t.X, &ns_t.X * &xq),
+        ];
+
+        // Final exponentiation:
+        //   1. (X/Z)^(p−1) via Frobenius (conjugation in Fp2 with p ≡ 3 mod 4, which
+        //      holds for p = 5·2^248 − 1).
+        //   2. clear_cofac → ^5 (since (p+1)/2^TORSION_EVEN_POWER = 5).
+        //   3. 2^e_diff squarings → land in μ_{2^e}.
+        let e_diff = e_full - e_red;
+        let mut out = [RootOfUnity::ONE; 5];
+        for (idx, (w_x, w_z)) in raw_xz.into_iter().enumerate() {
+            // (X/Z)^(p−1) = (X^p · Z) / (X · Z^p).
+            let x_p = w_x.conjugate();
+            let z_p = w_z.conjugate();
+            let num = &w_z * &x_p;
+            let den = &w_x * &z_p;
+            let frac = &num * &den.invert();
+
+            let f2 = frac.square();
+            let f4 = f2.square();
+            let f5 = &f4 * &frac;
+
+            let mut result = f5;
+            for _ in 0..e_diff {
+                result = result.square();
+            }
+            out[idx] = RootOfUnity(result);
+        }
+
+        Some(out)
+    }
 }
 
 /// Compute the Weil pairing e_{2^e}(P, Q).
@@ -426,6 +605,158 @@ mod tests {
         // ζ^{2^e} = 1 (it's a 2^e-th root of unity).
         let should_be_one = zeta.square_n(e.value());
         assert_eq!(should_be_one, RootOfUnity::ONE, "ζ^(2^e) should equal 1");
+    }
+
+    /// On the full E_0 basis (order 2^TORSION_EVEN_POWER), ord(ζ) is
+    /// the full 2^e exponent — i.e., ζ is primitive. Sister test to
+    /// [`tate_pairing_primitive_on_reduced_basis`] documenting the
+    /// contract our existing test only loosely checks.
+    #[test]
+    fn tate_pairing_primitive_on_full_basis() {
+        let basis = e0_basis();
+        let e = TorsionExponent::FULL;
+        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+
+        let ord = (0..=e.value() + 4).find(|&k| zeta.square_n(k) == RootOfUnity::ONE);
+        assert_eq!(ord, Some(e.value()), "ord(ζ) must equal 2^{}", e.value());
+    }
+
+    /// `TorsionBasis::cross_pairings`'s canonical reference `w[0]`
+    /// must be a primitive 2^e-th root of unity. The other four
+    /// outputs only have full order if all four basis-coefficient
+    /// dlogs are odd, which conflicts with the `(R, S)` basis
+    /// constraint `det = ad − bc` being odd — so at least one of
+    /// `w[1..4]` will land in a proper subgroup of μ_{2^e}. The
+    /// `cross_pairings_dlog_roundtrip` test below verifies the
+    /// reduced-precision dlogs still reconstruct the input matrix
+    /// correctly.
+    #[test]
+    fn cross_pairings_canonical_primitive() {
+        let pq_full = e0_basis();
+        let e_red: u32 = 128;
+        let scale = TorsionExponent::FULL.value() - e_red;
+        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
+
+        let one = Scalar::from_u64(1);
+        let two = Scalar::from_u64(2);
+        let r_full = pq_full.biscalar_mul(&two, &one, TorsionExponent::FULL);
+        let s_full = pq_full.biscalar_mul(&one, &one, TorsionExponent::FULL);
+        // R − S = (2P + Q) − (P + Q) = P.
+        let reduced = TorsionBasis::from_propagated(
+            &scale_scalar * &r_full,
+            &scale_scalar * &s_full,
+            &scale_scalar * &pq_full.R,
+        );
+
+        let e = TorsionExponent::try_from(e_red).expect("128 valid");
+        let ws = pq_full
+            .cross_pairings(&reduced, e)
+            .expect("cross_pairings must succeed on E_0 bases");
+
+        assert_ne!(ws[0], RootOfUnity::ONE, "w[0] must not be trivial");
+        let ord = (0..=e.value() + 4).find(|&k| ws[0].square_n(k) == RootOfUnity::ONE);
+        assert_eq!(
+            ord,
+            Some(e.value()),
+            "w[0] must be primitive 2^{}",
+            e.value()
+        );
+    }
+
+    /// `cross_pairings` followed by `RootOfUnity::dlog` must reconstruct
+    /// the original matrix coefficients of the reduced basis when
+    /// expressed in the full-order canonical basis.
+    ///
+    /// Setup: `R = 3P + 5Q`, `S = 3P + 4Q` at full order, then doubled
+    /// `e_diff` times to land at order 2^e. `R − S = Q` falls out by
+    /// construction. Expected dlogs (per the C ref's `r1·P + r2·Q = R`
+    /// contract): `(r1, r2) = (3, 5)`, `(s1, s2) = (3, 4)`.
+    #[test]
+    fn cross_pairings_dlog_roundtrip() {
+        let pq_full = e0_basis();
+        let e_red: u32 = 128;
+        let scale = TorsionExponent::FULL.value() - e_red;
+        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
+
+        let alpha = Scalar::from_u64(3);
+        let beta = Scalar::from_u64(5);
+        let gamma = Scalar::from_u64(3);
+        let delta = Scalar::from_u64(4);
+        let r_full = pq_full.biscalar_mul(&alpha, &beta, TorsionExponent::FULL);
+        let s_full = pq_full.biscalar_mul(&gamma, &delta, TorsionExponent::FULL);
+        // R − S = (3P + 5Q) − (3P + 4Q) = Q.
+        let reduced = TorsionBasis::from_propagated(
+            &scale_scalar * &r_full,
+            &scale_scalar * &s_full,
+            &scale_scalar * &pq_full.S,
+        );
+
+        let e = TorsionExponent::try_from(e_red).expect("128 valid");
+        let ws = pq_full
+            .cross_pairings(&reduced, e)
+            .expect("cross_pairings must succeed on E_0 bases");
+
+        // Per C ref's `tate_dlog_partial` (biextension.c:720):
+        //   r2 = dlog_w0(w[1]),  r1 = dlog_w0(w[2]),
+        //   s2 = dlog_w0(w[3]),  s1 = dlog_w0(w[4]).
+        let r2 = ws[0].dlog(&ws[1], e);
+        let r1 = ws[0].dlog(&ws[2], e);
+        let s2 = ws[0].dlog(&ws[3], e);
+        let s1 = ws[0].dlog(&ws[4], e);
+
+        assert_eq!(r1, alpha, "r1 must equal α = 3");
+        assert_eq!(r2, beta, "r2 must equal β = 5");
+        assert_eq!(s1, gamma, "s1 must equal γ = 3");
+        assert_eq!(s2, delta, "s2 must equal δ = 4");
+    }
+
+    /// Documents a known limitation of [`tate_pairing`]: its symmetric
+    /// cubical-ladder formulation produces ord(ζ) =
+    /// 2^(2·e − TORSION_EVEN_POWER) when both inputs are pre-reduced
+    /// to order 2^e (rather than primitively used at the curve's
+    /// 2^TORSION_EVEN_POWER torsion). For e=128, e_full=248 this is
+    /// 2^8, which collapses any change-of-basis matrix at e_cob ≤ 124.
+    ///
+    /// Sign and verify route around this by using
+    /// [`TorsionBasis::cross_pairings`] (asymmetric ladder, full-order
+    /// canonical × reduced-order target) which produces a primitive
+    /// 2^e-th root. See [`from_bases`] for the change-of-basis call
+    /// site.
+    ///
+    /// Fixing the symmetric path would require restructuring the
+    /// cubical ladder to track the path-dependent `xq^k` factor that
+    /// differential_add accumulates — an open task tracked separately.
+    /// This test asserts the *current* (broken) behavior so a
+    /// downstream fix to [`tate_pairing`] flags as a regression.
+    ///
+    /// [`from_bases`]: crate::curves::ChangeOfBasisMatrix::from_bases
+    #[test]
+    fn tate_pairing_subprimitive_on_reduced_basis() {
+        let basis = e0_basis();
+        let e_full = TorsionExponent::FULL.value();
+        let e_red: u32 = 128;
+        let scale = e_full - e_red;
+        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
+
+        let r = &scale_scalar * &basis.R;
+        let s = &scale_scalar * &basis.S;
+        let rs = &scale_scalar * &basis.RS;
+        let reduced = TorsionBasis::from_propagated(r, s, rs);
+
+        let e = TorsionExponent::try_from(e_red).expect("128 is a valid TorsionExponent");
+        let zeta = tate_pairing(&reduced.R, &reduced.S, &reduced.RS, e);
+        assert_ne!(zeta, RootOfUnity::ONE);
+
+        let ord = (0..=e.value() + 4).find(|&k| zeta.square_n(k) == RootOfUnity::ONE);
+        let expected = 2 * e_red - e_full;
+        assert_eq!(
+            ord,
+            Some(expected),
+            "current symmetric tate_pairing on reduced bases gives \
+             ord(ζ) = 2^(2·e − e_full) = 2^{expected}; if this assertion \
+             fires, the symmetric path was fixed and `cross_pairings` may \
+             no longer be necessary"
+        );
     }
 
     #[test]
@@ -981,6 +1312,87 @@ mod tests {
         assert_eq!(
             applied.S, target.S,
             "from_bases + mul round-trip with k > u32 must reproduce target.S"
+        );
+    }
+
+    /// Exercise the exact `from_bases_invert → mul → from_bases` chain
+    /// `keys::signing` uses to build `m1` and `m_chl`. Catches breakage
+    /// in the inverse-direction matrix or in the `transformed = m1·b`
+    /// → `from_bases(canonical, transformed)` second hop, both of
+    /// which the simpler `from_bases_mul_roundtrip` test misses.
+    ///
+    /// Setup mirrors signing:
+    /// 1. `canonical_a` = E_0 basis at full order (proxy for `det_aux`).
+    /// 2. `reduced_a` = M_known applied to `canonical_a` via biscalar at
+    ///    `e_cob` (proxy for `basis_aux`). Order 2^e_cob.
+    /// 3. `m1 = from_bases_invert(canonical_a, reduced_a, e_cob)` — expects
+    ///    `m1·reduced_a = canonical_a` at 2^e_cob precision.
+    /// 4. Apply `m1` to a different "shared" reduced basis via `mul`; the
+    ///    result is `transformed`.
+    /// 5. `m_chl = from_bases(canonical_a, transformed, e_cob)` should succeed
+    ///    (all lifts work) and reproduce a known relationship.
+    ///
+    /// Step 5 is the load-bearing assertion: if `transformed` (= the
+    /// mul output) has lift-incompatible (R, S, RS), the second
+    /// `from_bases` returns `None` and signing drops. This is the
+    /// failure mode observed when running `sign_kat_zero_only`.
+    #[test]
+    fn from_bases_invert_mul_then_from_bases_chain() {
+        let canonical = e0_basis();
+        let e_red: u32 = 128;
+        let scale = TorsionExponent::FULL.value() - e_red;
+        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
+        let e = TorsionExponent::try_from(e_red).expect("128 valid");
+
+        // m_known: det = 3·5 − 4·1 = 11 (odd) → invertible mod 2^128.
+        let m_known = [
+            [Scalar::from_u64(3), Scalar::from_u64(4)],
+            [Scalar::from_u64(1), Scalar::from_u64(5)],
+        ];
+        // Build reduced basis at order 2^e_cob: biscalar at FULL order,
+        // then scale down by 2^scale.
+        let p_full = canonical.biscalar_mul(&m_known[0][0], &m_known[1][0], TorsionExponent::FULL);
+        let q_full = canonical.biscalar_mul(&m_known[0][1], &m_known[1][1], TorsionExponent::FULL);
+        let k = TorsionExponent::FULL.value();
+        let pmq_a = m_known[0][0].sub_mod2k(&m_known[0][1], k);
+        let pmq_c = m_known[1][0].sub_mod2k(&m_known[1][1], k);
+        let pmq_full = canonical.biscalar_mul(&pmq_a, &pmq_c, TorsionExponent::FULL);
+        let reduced = TorsionBasis::from_propagated(
+            &scale_scalar * &p_full,
+            &scale_scalar * &q_full,
+            &scale_scalar * &pmq_full,
+        );
+
+        // Step 3: m1 = inverse direction. m1·reduced ≡ canonical (at 2^e_cob).
+        let m1 = ChangeOfBasisMatrix::from_bases_invert(&canonical, &reduced, e)
+            .expect("from_bases_invert must succeed on full + reduced E_0 bases");
+
+        // Step 4: apply m1 to a reduced-order basis. Sign uses
+        // `basis_chl` here (response-phase output, at order 2^e_cob).
+        // We proxy with `reduced` (also order 2^e_cob) — the matrix
+        // application then yields `transformed` at order 2^e_cob,
+        // matching the sign-side call shape that m_chl consumes.
+        let transformed = m1.mul(&reduced);
+
+        // Step 5: second from_bases. This is the call sign currently
+        // sees fail with `m_chl None`. transformed ≡ m1·reduced
+        // ≡ m1·M·canonical = M^(-1)·M·canonical = canonical (mod 2^e).
+        // So m_chl reconstructs the identity matrix at 2^e.
+        let m_chl = ChangeOfBasisMatrix::from_bases(&canonical, &transformed, e)
+            .expect("from_bases on transformed must succeed (lift consistency)");
+
+        // m_chl·canonical = transformed = canonical → m_chl == identity.
+        assert_eq!(
+            m_chl.entries[0][0],
+            Scalar::from_u64(1),
+            "m_chl[0][0] must be 1"
+        );
+        assert_eq!(m_chl.entries[0][1], Scalar::ZERO, "m_chl[0][1] must be 0");
+        assert_eq!(m_chl.entries[1][0], Scalar::ZERO, "m_chl[1][0] must be 0");
+        assert_eq!(
+            m_chl.entries[1][1],
+            Scalar::from_u64(1),
+            "m_chl[1][1] must be 1"
         );
     }
 }

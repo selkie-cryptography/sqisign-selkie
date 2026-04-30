@@ -33,11 +33,8 @@ pub use scalar::Scalar;
 use subtle::ConditionallySelectable;
 
 use crate::{
-    curves::{
-        montgomery::{
-            AffineX, Curve, JacobianPoint, ProjectiveXOnlyPoint, differential_add_and_double,
-        },
-        pairing::{RootOfUnity, tate_pairing},
+    curves::montgomery::{
+        AffineX, Curve, JacobianPoint, ProjectiveXOnlyPoint, differential_add_and_double,
     },
     deuring::precomputed::ACTION_MATRICES,
     fields::{fp::Fp, fp2::Fp2},
@@ -804,27 +801,40 @@ pub struct ChangeOfBasisMatrix {
 }
 
 impl ChangeOfBasisMatrix {
-    /// Compute the change-of-basis matrix from a full basis (P₁, P₂) of
-    /// E[2^f] to a target basis (Q₁, Q₂) of E[2^e].
+    /// Compute the change-of-basis matrix expressing `reduced` (a basis
+    /// of E[2^e]) in terms of `canonical` (a basis at the curve's full
+    /// 2^TORSION_EVEN_POWER torsion).
     ///
     /// The relationship encoded is:
-    ///   Q₁ = [x₁]P₁ + [x₂]P₂
-    ///   Q₂ = [x₃]P₁ + [x₄]P₂
+    ///   reduced.P = [r1]canonical.P + [r2]canonical.Q
+    ///   reduced.Q = [s1]canonical.P + [s2]canonical.Q
+    /// where (r1, r2, s1, s2) are the matrix entries reduced mod 2^e.
     ///
     /// # Storage
     ///
     /// Entries are stored **column-major**, matching the C reference:
-    ///   `entries[i][j]` = coefficient of `source.basis[i]` in
-    ///   `target.basis[j]`.
+    ///   `entries[i][j]` = coefficient of `canonical.basis[i]` in
+    ///   `reduced.basis[j]`.
     ///
-    /// Concretely, with the (x₁, x₂, x₃, x₄) above:
-    /// - `entries[0][0] = x₁`, `entries[1][0] = x₂` (column 0 = coeffs of Q₁)
-    /// - `entries[0][1] = x₃`, `entries[1][1] = x₄` (column 1 = coeffs of Q₂)
+    /// Concretely:
+    /// - `entries[0][0] = r1`, `entries[1][0] = r2` (column 0 = coeffs of
+    ///   reduced.P)
+    /// - `entries[0][1] = s1`, `entries[1][1] = s2` (column 1 = coeffs of
+    ///   reduced.Q)
     ///
     /// `mul` consumes this layout by applying columns: column 0 yields
     /// the new first basis element, column 1 yields the new second.
     ///
-    /// Implements [ChangeOfBasis][Alg. 2.5] ([Alg. 2.5][Alg. 2.5]).
+    /// Implements [ChangeOfBasis][Alg. 2.5] ([Alg. 2.5][Alg. 2.5]) via
+    /// the C reference's `_change_of_basis_matrix_tate` structure
+    /// (`id2iso/ref/lvlx/id2iso.c:330`), which delegates the five
+    /// cross-pairings to [`TorsionBasis::cross_pairings`].
+    ///
+    /// `canonical` must be at full 2^TORSION_EVEN_POWER torsion;
+    /// `reduced` at order 2^e. Pre-reducing both bases to 2^e produces
+    /// a non-primitive `ζ` and collapses the matrix to a sub-precision
+    /// rank-1 form (regression test
+    /// `tate_pairing_primitive_on_reduced_basis`).
     ///
     /// Returns `None` if either basis fails to lift to Jacobian
     /// coordinates (e.g. a recomputed `P − Q` whose sqrt branch is
@@ -832,62 +842,73 @@ impl ChangeOfBasisMatrix {
     ///
     /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
     pub(crate) fn from_bases(
-        full_basis: &TorsionBasis,
-        target_basis: &TorsionBasis,
+        canonical: &TorsionBasis,
+        reduced: &TorsionBasis,
         e: TorsionExponent,
     ) -> Option<Self> {
-        let curve = full_basis.R.curve();
+        let ws = canonical.cross_pairings(reduced, e)?;
 
-        // Lift both bases to Jacobian for deterministic cross-sum computation.
-        let (p1_jac, p2_jac) = full_basis.lift(curve)?;
-        let (q1_jac, q2_jac) = target_basis.lift(curve)?;
+        // Per the C reference (`tate_dlog_partial`, biextension.c:720):
+        //   r2 = dlog_w0(w[1]),  r1 = dlog_w0(w[2]),
+        //   s2 = dlog_w0(w[3]),  s1 = dlog_w0(w[4]).
+        // The X/Z swap on w[2] and w[4] folds in the inversion of
+        // t(R, Q) and t(S, Q) the matrix-entry derivation requires.
+        let r2 = ws[0].dlog(&ws[1], e);
+        let r1 = ws[0].dlog(&ws[2], e);
+        let s2 = ws[0].dlog(&ws[3], e);
+        let s1 = ws[0].dlog(&ws[4], e);
 
-        // Compute cross-sum x-coordinates via Jacobian arithmetic.
-        // We use SUM throughout: ζ pairs `(P₁, P₂)` with third arg
-        // `x(P₁ + P₂)`, and each cross pairing pairs
-        // `(target_i, full_j)` with third arg
-        // `x(target_i + full_j)`. Mixing SUM and DIFFERENCE conventions
-        // silently negates every recovered dlog.
-        let (q1_plus_p2, _) = q1_jac.x_add_sub(&p2_jac);
-        let (q1_plus_p1, _) = q1_jac.x_add_sub(&p1_jac);
-        let (q2_plus_p2, _) = q2_jac.x_add_sub(&p2_jac);
-        let (q2_plus_p1, _) = q2_jac.x_add_sub(&p1_jac);
-        let (p1_plus_p2, _) = p1_jac.x_add_sub(&p2_jac);
-
-        // Step 1: ζ ← t_{2^e}(P₁, P₂) — SUM third-arg convention.
-        let zeta = tate_pairing(&full_basis.R, &full_basis.S, &p1_plus_p2, e);
-
-        // Step 2: Compute the four cross-pairings — SUM form throughout.
-        let zeta1 = tate_pairing(&target_basis.R, &full_basis.S, &q1_plus_p2, e);
-        let zeta2 = RootOfUnity::ONE / tate_pairing(&target_basis.R, &full_basis.R, &q1_plus_p1, e);
-        let zeta3 = tate_pairing(&target_basis.S, &full_basis.S, &q2_plus_p2, e);
-        let zeta4 = RootOfUnity::ONE / tate_pairing(&target_basis.S, &full_basis.R, &q2_plus_p1, e);
-
-        // Steps 3-4 of Alg. 2.5: x_i ← log_ζ(ζ_i).
-        //
-        // # Divergence from spec
-        //
-        // The spec returns `2^{f-e} · log_ζ(ζ_i)`, scaled up to a
-        // 2^f-precision value, intended for application against a
-        // full-torsion basis. Our (and the C reference's) callers
-        // first reduce both bases to order 2^e via doublings, then
-        // apply this matrix to that reduced basis. The 2^{f-e} factor
-        // is wrong for that usage — it places the dlog bits above the
-        // 2^e window the wire encoding writes (16 bytes = 128 bits)
-        // and verify multiplies by zero. We follow the C reference's
-        // `_change_of_basis_matrix_tate`, which stores raw dlogs.
-        //
-        let k1 = zeta.dlog(&zeta1, e);
-        let k2 = zeta.dlog(&zeta2, e);
-        let k3 = zeta.dlog(&zeta3, e);
-        let k4 = zeta.dlog(&zeta4, e);
-
-        // Column-major storage matching the C reference:
-        // column 0 = coeffs of target.P, column 1 = coeffs of target.Q.
-        // This pairs with `mul`, which applies columns to produce
-        // (target.P, target.Q) = (col0 · source, col1 · source).
         Some(Self {
-            entries: [[k1, k3], [k2, k4]],
+            entries: [[r1, s1], [r2, s2]],
+            e,
+        })
+    }
+
+    /// Compute the change-of-basis matrix expressing `canonical` (a
+    /// basis at full 2^TORSION_EVEN_POWER torsion) in terms of
+    /// `reduced` (a basis of E[2^e]) — the inverse direction of
+    /// [`from_bases`].
+    ///
+    /// Mirrors the C reference's `change_of_basis_matrix_tate_invert`
+    /// (`id2iso/ref/lvlx/id2iso.c:392`): it computes
+    /// [`from_bases(canonical, reduced, e)`] (which gives "coords of
+    /// reduced in canonical") and inverts the resulting 2×2 matrix
+    /// modulo 2^e.
+    ///
+    /// Returns `None` if either basis fails to lift, or if the
+    /// underlying matrix is not invertible mod 2^e (det even, i.e.,
+    /// the input bases don't span E[2^e]).
+    ///
+    /// [`from_bases`]: ChangeOfBasisMatrix::from_bases
+    pub(crate) fn from_bases_invert(
+        canonical: &TorsionBasis,
+        reduced: &TorsionBasis,
+        e: TorsionExponent,
+    ) -> Option<Self> {
+        let forward = Self::from_bases(canonical, reduced, e)?;
+        let k = e.value();
+        let a = &forward.entries[0][0];
+        let b = &forward.entries[0][1];
+        let c = &forward.entries[1][0];
+        let d = &forward.entries[1][1];
+
+        // det = ad − bc (mod 2^e). For a basis pair, det must be odd.
+        let ad = a.mul_mod2k(d, k);
+        let bc = b.mul_mod2k(c, k);
+        let det = ad.sub_mod2k(&bc, k);
+        let det_inv = det.inv_mod2k(k)?;
+
+        // Adjugate / det. The signs flip via 0 − x mod 2^k.
+        let zero = Scalar::ZERO;
+        let neg_b = zero.sub_mod2k(b, k);
+        let neg_c = zero.sub_mod2k(c, k);
+        let inv_a = d.mul_mod2k(&det_inv, k);
+        let inv_b = neg_b.mul_mod2k(&det_inv, k);
+        let inv_c = neg_c.mul_mod2k(&det_inv, k);
+        let inv_d = a.mul_mod2k(&det_inv, k);
+
+        Some(Self {
+            entries: [[inv_a, inv_b], [inv_c, inv_d]],
             e,
         })
     }
