@@ -116,8 +116,8 @@ impl VerifyingKey {
             .ok_or(SignatureError::VerificationFailed)?;
 
         // --- Line 8: torsion basis on E_pk from hint_pk ---
-        let basis_pk = TorsionBasis::from_hint(&self.curve, BasisHint::from_byte(u8::from(self.hint)))
-            .ok_or(SignatureError::VerificationFailed)?;
+        let basis_pk =
+            TorsionBasis::from_hint(&self.curve, BasisHint::from_byte(u8::from(self.hint)));
 
         // --- Line 9: challenge isogeny ---
         // Compute kernel: P_pk + [chl]Q_pk, then [2^n_bt] of that.
@@ -204,10 +204,10 @@ impl VerifyingKey {
         }
 
         // --- Lines 10–11: torsion bases on E_aux and E_chl ---
-        let basis_aux = TorsionBasis::from_hint(&sig.curve_aux, BasisHint::from_byte(u8::from(sig.hint_aux)))
-            .ok_or(SignatureError::VerificationFailed)?;
-        let basis_chl = TorsionBasis::from_hint(&curve_chl, BasisHint::from_byte(u8::from(sig.hint_chl)))
-            .ok_or(SignatureError::VerificationFailed)?;
+        let basis_aux =
+            TorsionBasis::from_hint(&sig.curve_aux, BasisHint::from_byte(u8::from(sig.hint_aux)));
+        let basis_chl =
+            TorsionBasis::from_hint(&curve_chl, BasisHint::from_byte(u8::from(sig.hint_chl)));
 
         #[cfg(test)]
         {
@@ -234,14 +234,10 @@ impl VerifyingKey {
         // Algorithm 4.9 line 11:
         // Scale aux basis: double f − e'_rsp − 2 times.
         // Scale all three points to preserve PmQ (never recompute via sqrt).
-        let aux_doubles = f
-            .checked_sub(e_rsp_prime)
-            .and_then(|v| v.checked_sub(2))
-            .ok_or(SignatureError::VerificationFailed)?;
         let mut P_aux = basis_aux.R;
         let mut Q_aux = basis_aux.S;
         let mut PmQ_aux = basis_aux.RS;
-        for _ in 0..aux_doubles {
+        for _ in 0..(f - e_rsp_prime - 2) {
             P_aux = P_aux.double();
             Q_aux = Q_aux.double();
             PmQ_aux = PmQ_aux.double();
@@ -256,15 +252,10 @@ impl VerifyingKey {
         // together via `ec_dbl_iter_basis`. Recomputing PmQ via
         // `projective_difference` after scaling would give a
         // different point (the sqrt picks a different branch).
-        let chl_doubles = f
-            .checked_sub(e_rsp_prime)
-            .and_then(|v| v.checked_sub(sig.r_rsp.value()))
-            .and_then(|v| v.checked_sub(2))
-            .ok_or(SignatureError::VerificationFailed)?;
         let mut P_chl = basis_chl.R;
         let mut Q_chl = basis_chl.S;
         let mut PmQ_chl = basis_chl.RS;
-        for _ in 0..chl_doubles {
+        for _ in 0..(f - e_rsp_prime - sig.r_rsp.value() - 2) {
             P_chl = P_chl.double();
             Q_chl = Q_chl.double();
             PmQ_chl = PmQ_chl.double();
@@ -411,45 +402,38 @@ impl VerifyingKey {
 
         #[cfg(test)]
         {
-            // Match the C reference's `VERIFY_KER ...` format from
-            // `compute_commitment_curve_verify` (verify.c) so a
-            // line-by-line diff catches the first divergence between
-            // the two impls' chain inputs on KAT[0].
-            //
-            // C ref's `T1 = (B_chall_can.P, B_aux_can.P)`,
-            // `T2 = (..., .Q)`, `T1m2 = (..., .PmQ)`. After the
-            // common (P, P-Q, Q) shuffle in `to_hint`, our
-            // (P_chl, Q_chl, PmQ_chl) and (P_aux, Q_aux, PmQ_aux)
-            // line up with the C ref's basis fields directly.
-            let dump_fp2 = |label: &str, v: &Fp2| {
-                let bytes = v.to_bytes();
-                let re: String = bytes[..32].iter().rev().map(|b| format!("{:02x}", b)).collect();
-                let im: String = bytes[32..].iter().rev().map(|b| format!("{:02x}", b)).collect();
-                eprintln!("VERIFY_KER {label}_re=0x{re}");
-                eprintln!("VERIFY_KER {label}_im=0x{im}");
+            let fp2_hex = |fp2val: &Fp2| {
+                let bytes = fp2val.to_bytes();
+                let re: String = bytes[..32]
+                    .iter()
+                    .rev()
+                    .map(|b| format!("{:02x}", b))
+                    .collect();
+                let im: String = bytes[32..]
+                    .iter()
+                    .rev()
+                    .map(|b| format!("{:02x}", b))
+                    .collect();
+                format!("0x{re}+i*0x{im}")
             };
-            let dump_pt = |label: &str, p: &ProjectiveXOnlyPoint| {
-                dump_fp2(&format!("{label}_X"), &p.X);
-                dump_fp2(&format!("{label}_Z"), &p.Z);
-                let aff = &p.X * &p.Z.invert();
-                dump_fp2(&format!("{label}_aff"), &aff);
-            };
-
-            eprintln!("VERIFY_KER: pow={e_rsp_prime}");
-            // Curves: print affine A coefficient.
-            let e1_a = *curve_chl.coefficient().as_fp2();
-            let e2_a = *sig.curve_aux.coefficient().as_fp2();
-            dump_fp2("E1_A_aff", &e1_a);
-            dump_fp2("E2_A_aff", &e2_a);
-
-            // Six chain-input points: T1 = (P_chl, P_aux),
-            // T2 = (Q_chl, Q_aux), T1m2 = (PmQ_chl, PmQ_aux).
-            dump_pt("T1_P1",   &P_chl);
-            dump_pt("T1_P2",   &P_aux);
-            dump_pt("T2_P1",   &Q_chl);
-            dump_pt("T2_P2",   &Q_aux);
-            dump_pt("T1m2_P1", &PmQ_chl);
-            dump_pt("T1m2_P2", &PmQ_aux);
+            eprintln!(
+                "VERIFY: e_rsp_prime={e_rsp_prime} n_bt={} r_rsp={}",
+                sig.n_bt.value(),
+                sig.r_rsp.value()
+            );
+            eprintln!("VERIFY: curve_chl j={}", fp2_hex(&curve_chl.j_invariant()));
+            let aux_A = *sig.curve_aux.coefficient().as_fp2();
+            eprintln!("VERIFY: curve_aux A={}", fp2_hex(&aux_A));
+            eprintln!(
+                "VERIFY: j(sig.curve_aux)={}",
+                fp2_hex(&sig.curve_aux.j_invariant())
+            );
+            eprintln!("VERIFY: P_chl.X={}", fp2_hex(&P_chl.X));
+            eprintln!("VERIFY: P_chl.Z={}", fp2_hex(&P_chl.Z));
+            eprintln!("VERIFY: Q_chl.X={}", fp2_hex(&Q_chl.X));
+            eprintln!("VERIFY: Q_chl.Z={}", fp2_hex(&Q_chl.Z));
+            eprintln!("VERIFY: P_aux.X={}", fp2_hex(&P_aux.X));
+            eprintln!("VERIFY: P_aux.Z={}", fp2_hex(&P_aux.Z));
         }
 
         let kernel = surfaces::Kernel::from_montgomery(
@@ -466,8 +450,6 @@ impl VerifyingKey {
                 &[],
             )
             .ok_or(SignatureError::VerificationFailed)?;
-        #[cfg(test)]
-        eprintln!("VERIFY_KER chain_splits=1");
 
         // --- Lines 29–30: recompute challenge ---
         let j_com = codomain.E1.j_invariant();

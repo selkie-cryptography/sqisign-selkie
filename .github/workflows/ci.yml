@@ -183,7 +183,6 @@ jobs:
   kat-report:
     name: KAT report
     runs-on: ubuntu-24.04
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

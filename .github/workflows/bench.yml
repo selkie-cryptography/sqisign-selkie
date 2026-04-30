@@ -51,7 +51,7 @@ jobs:
             [ -x "$bin" ] || continue
             # Skip non-bench binaries (test harnesses, build scripts).
             case "$(basename "$bin")" in
-              dudect-*|tacet-*) continue ;; # CT benches, not perf
+              dudect-*|tacet-*|iai-*|iai_slow-*) continue ;; # CT/iai benches run separately
             esac
             echo "=== Running $(basename "$bin") ===" >&2
             timeout 300 "$bin" --color never 2>&1 >> bench-raw.txt || true

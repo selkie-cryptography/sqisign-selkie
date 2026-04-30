@@ -795,21 +795,17 @@ impl<const N: usize> Lattice<N> {
                 }
             }
 
-            // Narrow back to BigInt<N>. Returns None if the sample
-            // doesn't fit — caller retries with a new commitment.
-            let n0 = coords[0].narrow_to::<N>();
-            let n1 = coords[1].narrow_to::<N>();
-            let n2 = coords[2].narrow_to::<N>();
-            let n3 = coords[3].narrow_to::<N>();
-            let (Some(c0), Some(c1), Some(c2), Some(c3)) = (n0, n1, n2, n3) else {
-                return None;
+            // Narrow back to BigInt<N> (should fit after sampling).
+            let narrow = |v: BigInt<W>| -> BigInt<N> {
+                v.narrow_to::<N>()
+                    .expect("sampled element fits in BigInt<N>")
             };
 
             return Some(Element::<N>::new(
-                Coordinate::from(c0),
-                Coordinate::from(c1),
-                Coordinate::from(c2),
-                Coordinate::from(c3),
+                Coordinate::from(narrow(coords[0])),
+                Coordinate::from(narrow(coords[1])),
+                Coordinate::from(narrow(coords[2])),
+                Coordinate::from(narrow(coords[3])),
                 Denominator::from_bigint_unchecked(self.denom),
             ));
         }
@@ -2026,19 +2022,21 @@ impl LeftIdeal<4> {
             // half-integer residue for `denom = 2` and push α out
             // of O_0 entirely.
             let n_times_denom_8 = n.widen::<8>().ct_mul(gamma_beta_8.denom.as_bigint());
-            let reduce_coord = |c: &BigInt<8>| -> Option<BigInt<4>> {
+            let reduce_coord = |c: &BigInt<8>| -> BigInt<4> {
                 let r = c.ct_mod(&n_times_denom_8);
                 r.narrow_to::<4>()
+                    .expect("coord reduced mod N·denom fits in BigInt<4>")
             };
             let denom_4 = gamma_beta_8
                 .denom
                 .as_bigint()
-                .narrow_to::<4>()?;
+                .narrow_to::<4>()
+                .expect("product denom = γ.denom·β.denom fits in BigInt<4>");
             let gamma_beta = Element::<4>::new(
-                Coordinate::from_bigint(reduce_coord(gamma_beta_8.a.as_bigint())?),
-                Coordinate::from_bigint(reduce_coord(gamma_beta_8.b.as_bigint())?),
-                Coordinate::from_bigint(reduce_coord(gamma_beta_8.c.as_bigint())?),
-                Coordinate::from_bigint(reduce_coord(gamma_beta_8.d.as_bigint())?),
+                Coordinate::from_bigint(reduce_coord(gamma_beta_8.a.as_bigint())),
+                Coordinate::from_bigint(reduce_coord(gamma_beta_8.b.as_bigint())),
+                Coordinate::from_bigint(reduce_coord(gamma_beta_8.c.as_bigint())),
+                Coordinate::from_bigint(reduce_coord(gamma_beta_8.d.as_bigint())),
                 Denominator::from_bigint_unchecked(denom_4),
             );
 

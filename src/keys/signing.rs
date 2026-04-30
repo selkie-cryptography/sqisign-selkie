@@ -547,12 +547,10 @@ impl SigningKey {
         let e_pk = self.verifying_key.curve();
 
         // Line 2: basis on E_pk
-        // The hint comes from our own keygen — always valid.
         let basis_pk = TorsionBasis::from_hint(
             e_pk,
             BasisHint::from_byte(u8::from(self.verifying_key.hint)),
-        )
-        .expect("own keygen hint must be valid");
+        );
 
         // Line 3: while true do
         for _iter in 0..1000 {
@@ -841,14 +839,7 @@ impl SigningKey {
             // `n(I)` from the lattice covolume, so we do not need
             // primitivization to align the stored norm with the
             // actual ideal.
-            let (alpha_rsp_w, n_bt) = match alpha_rsp_w.compute_backtracking() {
-                Some(v) => v,
-                None => {
-                    #[cfg(test)]
-                    eprintln!("[sign {_iter}] DROP: compute_backtracking failed");
-                    continue;
-                }
-            };
+            let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
             let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
 
             // Lines 16–20: degree computations — C-ref formula.
@@ -923,14 +914,7 @@ impl SigningKey {
                     continue;
                 }
             };
-            let e_rsp_prime = match e_rsp.checked_sub(r_rsp_val).and_then(|v| v.checked_sub(n_bt)) {
-                Some(v) => v,
-                None => {
-                    #[cfg(test)]
-                    eprintln!("[sign {_iter}] DROP: e_rsp underflow (r_rsp_val={r_rsp_val}, n_bt={n_bt})");
-                    continue;
-                }
-            };
+            let e_rsp_prime = e_rsp - r_rsp_val - n_bt;
 
             let n_bt_te =
                 TorsionExponent::try_from(n_bt).map_err(|_| SignatureError::SigningFailed)?;
@@ -1447,80 +1431,6 @@ impl SigningKey {
                     dump(&m_chl.entries[1][0]),
                     dump(&m_chl.entries[1][1]),
                 );
-            }
-
-            #[cfg(test)]
-            {
-                // Dump sign's chain-output basis in the same
-                // `VERIFY_KER ...` format that the verify-side
-                // instrumentation emits, so a `diff` between
-                // `SIGN_ACTUAL_*` (sign's actual post-chain basis)
-                // and `VERIFY_KER ...` (verify's reconstructed basis)
-                // pinpoints whether the encoded (M_chl, hints,
-                // curve_aux) round-trip preserves the Kani structure.
-                //
-                // Three blocks:
-                //   SIGN_ACTUAL_*  — basis_chl / basis_aux (sign's
-                //                    actual chain-output basis,
-                //                    pre-m1).
-                //   SIGN_RECOV_*   — transformed (= m1 · basis_chl)
-                //                    on the chl side and det_aux
-                //                    (canonical from hint) on the
-                //                    aux side. This is exactly what
-                //                    verify reconstructs from
-                //                    (M_chl, hint_chl, hint_aux).
-                let dump_fp2 = |prefix: &str, label: &str, v: &Fp2| {
-                    let bytes = v.to_bytes();
-                    let re: String = bytes[..32]
-                        .iter()
-                        .rev()
-                        .map(|b| format!("{:02x}", b))
-                        .collect();
-                    let im: String = bytes[32..]
-                        .iter()
-                        .rev()
-                        .map(|b| format!("{:02x}", b))
-                        .collect();
-                    eprintln!("{prefix} {label}_re=0x{re}");
-                    eprintln!("{prefix} {label}_im=0x{im}");
-                };
-                let dump_pt = |prefix: &str, label: &str, p: &ProjectiveXOnlyPoint| {
-                    dump_fp2(prefix, &format!("{label}_X"), &p.X);
-                    dump_fp2(prefix, &format!("{label}_Z"), &p.Z);
-                    let aff = &p.X * &p.Z.invert();
-                    dump_fp2(prefix, &format!("{label}_aff"), &aff);
-                };
-
-                // Curves.
-                let e1_a = *e_chl_final.coefficient().as_fp2();
-                let e2_a = *curve_aux.coefficient().as_fp2();
-
-                // SIGN_ACTUAL = the basis sign actually had after
-                // split_aux + compute_even_response +
-                // compute_challenge_isogeny (the (R, S, RS) shuffle).
-                eprintln!("SIGN_ACTUAL: pow={e_rsp_prime}");
-                dump_fp2("SIGN_ACTUAL", "E1_A_aff", &e1_a);
-                dump_fp2("SIGN_ACTUAL", "E2_A_aff", &e2_a);
-                dump_pt("SIGN_ACTUAL", "T1_P1",   &basis_chl.R);   // = p_chl_final
-                dump_pt("SIGN_ACTUAL", "T1_P2",   &basis_aux.R);   // = p_aux
-                dump_pt("SIGN_ACTUAL", "T2_P1",   &basis_chl.S);   // = pmq_chl_final
-                dump_pt("SIGN_ACTUAL", "T2_P2",   &basis_aux.S);   // = pmq_aux
-                dump_pt("SIGN_ACTUAL", "T1m2_P1", &basis_chl.RS);  // = q_chl_final
-                dump_pt("SIGN_ACTUAL", "T1m2_P2", &basis_aux.RS);  // = q_aux
-
-                // SIGN_RECOV = exactly what verify will reconstruct
-                // from (M_chl, hint_chl, hint_aux): chl side =
-                // transformed (= m1 · basis_chl), aux side =
-                // det_aux (canonical from to_hint).
-                eprintln!("SIGN_RECOV: pow={e_rsp_prime}");
-                dump_fp2("SIGN_RECOV", "E1_A_aff", &e1_a);
-                dump_fp2("SIGN_RECOV", "E2_A_aff", &e2_a);
-                dump_pt("SIGN_RECOV", "T1_P1",   &transformed.R);
-                dump_pt("SIGN_RECOV", "T1_P2",   &det_aux.R);
-                dump_pt("SIGN_RECOV", "T2_P1",   &transformed.S);
-                dump_pt("SIGN_RECOV", "T2_P2",   &det_aux.S);
-                dump_pt("SIGN_RECOV", "T1m2_P1", &transformed.RS);
-                dump_pt("SIGN_RECOV", "T1m2_P2", &det_aux.RS);
             }
 
             #[cfg(test)]

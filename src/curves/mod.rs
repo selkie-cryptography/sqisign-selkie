@@ -631,7 +631,7 @@ impl TorsionBasis {
     ///
     /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
-    pub(crate) fn from_hint(curve: &Curve, hint: BasisHint) -> Option<TorsionBasis> {
+    pub(crate) fn from_hint(curve: &Curve, hint: BasisHint) -> TorsionBasis {
         let _e = TORSION_EVEN_POWER;
         // Normalize the curve's A24/C24 constants so the Montgomery
         // ladder produces the same projective representative as the
@@ -647,11 +647,11 @@ impl TorsionBasis {
             let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, curve);
             let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, curve);
             let PmQ = P.projective_difference(&Q);
-            return Some(TorsionBasis {
+            return TorsionBasis {
                 R: P,
                 S: PmQ,
                 RS: Q,
-            });
+            };
         }
 
         let h_A = hint.h_A();
@@ -662,9 +662,11 @@ impl TorsionBasis {
             // Rare fallback: hint didn't fit in 7 bits.
             // Must search from scratch (starting at 128).
             if h_A == 0 {
-                find_na_x_coord(&A, curve, 128)?
+                // A is NQR: search for n*A on the curve.
+                find_na_x_coord(&A, curve, 128)
             } else {
-                find_nqr_factor(&A, curve, 128)?
+                // A is QR: search for -A/(1+i*b) on the curve.
+                find_nqr_factor(&A, curve, 128)
             }
         } else if h_A == 0 {
             // A is NQR: x(P) = h * A
@@ -704,11 +706,11 @@ impl TorsionBasis {
         // ⟨[2^n_bt](P_pk + [chl]Q_pk)⟩, but with this convention the
         // ladder computes P + [chl](P−Q) = (1−chl)P + chl·Q, which
         // generates the same cyclic subgroup for any nonzero chl.
-        Some(TorsionBasis {
+        TorsionBasis {
             R: P,
             S: PmQ,
             RS: Q,
-        })
+        }
     }
 
     /// Generate a torsion basis for E_A\[2^e\] and its associated hint,
@@ -988,60 +990,42 @@ fn is_on_curve(x: &Fp2, A: &Fp2) -> bool {
 }
 
 /// Find n such that n*A is a valid x-coordinate on E_A. Returns x(P).
-/// Finds the first `n*A` (starting from `n = start`) that is a
-/// non-square point on E_A. Returns `None` if no valid coordinate
-/// is found before the counter wraps (malformed hint).
-fn find_na_x_coord(A: &Fp2, _curve: &Curve, start: u8) -> Option<Fp2> {
+fn find_na_x_coord(A: &Fp2, _curve: &Curve, start: u8) -> Fp2 {
     let mut x = &Fp2::from_fp(Fp::from_small(start as u32)) * A;
-    let mut n = start;
-    loop {
-        if is_on_curve(&x, A) && !bool::from(x.is_square()) {
-            return Some(x);
-        }
-        n = match n.checked_add(1) {
-            Some(next) => next,
-            None => return None,
-        };
+    let mut _n = start;
+    while !is_on_curve(&x, A) || bool::from(x.is_square()) {
         x = &x + A;
+        _n += 1;
     }
+    x
 }
 
-/// Finds `n*A` and returns `(x, hint)`.
+/// Find n*A and return (x, hint).
 fn find_na_x_coord_with_hint(A: &Fp2, _curve: &Curve) -> (Fp2, u8) {
     let mut x = *A;
     let mut n: u8 = 1;
-    loop {
-        if is_on_curve(&x, A) && !bool::from(x.is_square()) {
-            let hint = if n < 128 { n } else { 0 };
-            return (x, hint);
-        }
-        // Wrapping is fine here: this is keygen/signing, not
-        // attacker-controlled. The search always terminates
-        // within a few iterations for valid curves.
-        n = n.wrapping_add(1);
+    while !is_on_curve(&x, A) || bool::from(x.is_square()) {
         x = &x + A;
+        n += 1;
     }
+    let hint = if n < 128 { n } else { 0 };
+    (x, hint)
 }
 
-/// Finds `b` such that `-A/(1+i*b)` is a valid NQR x-coordinate
-/// on E_A. Returns `None` if no valid coordinate is found before
-/// the counter wraps (malformed hint).
-fn find_nqr_factor(A: &Fp2, _curve: &Curve, start: u8) -> Option<Fp2> {
+/// Find b such that -A/(1+i*b) is a valid NQR x-coordinate on E_A.
+fn find_nqr_factor(A: &Fp2, _curve: &Curve, start: u8) -> Fp2 {
     let mut n = start;
     loop {
         let z = Fp2::new(Fp::ONE, Fp::from_small(n as u32));
         let x = &(-A) * &z.invert();
         if is_on_curve(&x, A) && !bool::from(x.is_square()) {
-            return Some(x);
+            return x;
         }
-        n = match n.checked_add(1) {
-            Some(next) => next,
-            None => return None,
-        };
+        n += 1;
     }
 }
 
-/// Finds `-A/(1+i*b)` and returns `(x, hint)`.
+/// Find -A/(1+i*b) and return (x, hint).
 fn find_nqr_factor_with_hint(A: &Fp2, _curve: &Curve) -> (Fp2, u8) {
     let mut n: u8 = 1;
     loop {
@@ -1051,8 +1035,6 @@ fn find_nqr_factor_with_hint(A: &Fp2, _curve: &Curve) -> (Fp2, u8) {
             let hint = if n < 128 { n } else { 0 };
             return (x, hint);
         }
-        // Wrapping is fine here: keygen/signing path, not
-        // attacker-controlled.
-        n = n.wrapping_add(1);
+        n += 1;
     }
 }
