@@ -1350,6 +1350,20 @@
     let renderedTacet = null;  // SHA of rendered tacet data
     let renderedForSha = null; // The selectedSha we last rendered for
 
+    // Link a source path (e.g. "src/fields/fp.rs:42") to GitHub.
+    // If sha is available, links to the specific commit; otherwise HEAD.
+    function srcLink(path, sha) {
+      if (!path) return esc(path);
+      const ref = sha || 'main';
+      // Split "file:line" if present.
+      const parts = path.match(/^(.+?):(\d+)$/);
+      const file = parts ? parts[1] : path;
+      const line = parts ? parts[2] : null;
+      const url = `https://github.com/${REPO}/blob/${ref}/${file}${line ? '#L' + line : ''}`;
+      const display = path.replace(/^src\//, '');
+      return `<a href="${url}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:2px">${esc(display)}</a>`;
+    }
+
     function runLink(data) {
       if (!data || !data.run_id) return '';
       const url = `https://github.com/${REPO}/actions/runs/${data.run_id}`;
@@ -1553,7 +1567,7 @@
           const color = covColor(m.percent);
           const modId = `mod-${mi}`;
           html += `<tr class="expandable" onclick="toggleModule(${mi})">
-            <td class="module-name"><span class="chevron" id="chev-${modId}">&#9654;</span> ${esc(m.name)}</td>
+            <td class="module-name"><span class="chevron" id="chev-${modId}">&#9654;</span> ${srcLink('src/' + m.name, data.sha)}</td>
             <td>${esc(m.covered)}/${esc(m.total)}</td>
             <td style="color:${color}">${pct}%</td>
             <td class="cov-bar-cell">
@@ -1573,7 +1587,7 @@
             // File name: strip module prefix for display.
             const fname = f.name.includes('/') ? f.name.split('/').slice(1).join('/') : f.name;
             html += `<tr class="file-row expandable" id="frow-${fileId}" style="display:none" onclick="toggleFile(${mi},${fi},event)">
-              <td class="file-name"><span class="chevron" id="chev-${fileId}">&#9654;</span> ${esc(fname)}</td>
+              <td class="file-name"><span class="chevron" id="chev-${fileId}">&#9654;</span> ${srcLink('src/' + f.name, data.sha)}</td>
               <td>${esc(f.covered)}/${esc(f.total)}</td>
               <td style="color:${fcolor}">${fpct}%</td>
               <td class="cov-bar-cell">
@@ -1970,7 +1984,8 @@
       });
 
       for (const fn of sorted) {
-        html += `<tr><td class="fn-name">${esc(fn.name)}</td>`;
+        const searchUrl = `https://github.com/${REPO}/search?q=${encodeURIComponent(fn.name)}&type=code`;
+        html += `<tr><td class="fn-name"><a href="${searchUrl}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:2px">${esc(fn.name)}</a></td>`;
 
         // DudeCT columns (always shown).
         const d = fn.dudect;
@@ -2017,7 +2032,8 @@
           for (const t of tests) {
             const icon = t.status === 'pass' ? '\u2714' : '\u2718';
             const cls = t.status === 'pass' ? 'dudect-pass' : 'dudect-fail';
-            html += `<tr><td class="fn-name">${esc(t.name)}</td><td class="${cls}">${icon}</td></tr>`;
+            const ctgrindLink = `https://github.com/${REPO}/search?q=${encodeURIComponent(t.name)}&type=code`;
+            html += `<tr><td class="fn-name"><a href="${ctgrindLink}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:2px">${esc(t.name)}</a></td><td class="${cls}">${icon}</td></tr>`;
           }
           html += '</tbody></table>';
         }
@@ -2126,7 +2142,7 @@
           const icon = t.status === 'pass' ? '\u2714' : '\u2718';
           const cls = t.status === 'pass' ? 'dudect-pass' : 'dudect-fail';
           html += `<tr>
-            <td class="fn-name">${esc(t.target)}</td>
+            <td class="fn-name"><a href="https://github.com/${REPO}/blob/main/fuzz/fuzz_targets/${t.target.replace('fuzz_', '')}.rs" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:2px">${esc(t.target)}</a></td>
             <td>${esc(String(t.runs || 0))}</td>
             <td>${esc(String(t.corpus_size || 0))}</td>
             <td class="${t.crashes > 0 ? 'dudect-fail' : ''}">${t.crashes || 0}</td>
@@ -2251,7 +2267,7 @@
 
       if (unsafeData) {
         const color = unsafeData.total === 0 ? 'var(--green)' : unsafeData.total <= 5 ? 'var(--yellow)' : 'var(--red)';
-        const detail = (unsafeData.modules || []).filter(m => m.count > 0).map(m => esc(m.name) + ':' + m.count).join(', ') || 'none';
+        const detail = (unsafeData.modules || []).filter(m => m.count > 0).map(m => m.name + ':' + m.count).join(', ') || 'none';
         badge(unsafeData.total, 'unsafe', detail, color, unsafeData, unsafeData.total > 5 ? 0 : unsafeData.total > 0 ? 1 : 2);
       }
 
