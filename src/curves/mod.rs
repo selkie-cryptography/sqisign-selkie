@@ -22,6 +22,9 @@
 //! [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
 //! [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
 
+#[cfg(test)]
+mod tests;
+
 pub mod isogeny;
 pub mod montgomery;
 pub(crate) mod pairing;

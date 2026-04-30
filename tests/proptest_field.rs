@@ -4,6 +4,7 @@
 
 use proptest::prelude::*;
 use sqisign_selkie::fields::{fp::Fp, fp2::Fp2};
+use subtle::ConstantTimeEq;
 
 // --- Fp properties ---
 
@@ -97,6 +98,18 @@ proptest! {
         let s = a2.sqrt();
         // sqrt returns either a or -a.
         prop_assert!(s == a || s == -a);
+    }
+
+    #[test]
+    fn fp_non_square_detected(a in arb_fp()) {
+        // If a is a square, a * non_square should be a non-square
+        // (product of QR × QNR = QNR). Use -1 as the QNR since
+        // p ≡ 3 (mod 4) implies -1 is not a quadratic residue.
+        let neg_a = -(a.square());
+        // -a² is a non-square unless a = 0.
+        if !bool::from(a.ct_eq(&Fp::ZERO)) {
+            prop_assert!(!bool::from(neg_a.is_square()));
+        }
     }
 }
 

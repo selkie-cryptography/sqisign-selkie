@@ -1838,6 +1838,7 @@ impl<const N: usize> Neg for &BigInt<N> {
 // ---------------------------------------------------------------------------
 
 impl<const N: usize> fmt::Debug for BigInt<N> {
+    #[cfg_attr(test, mutants::skip)] // formatting, not correctness
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.sign == 1 && Self::mag_is_zero(&self.limbs) == 0 {
             write!(f, "-")?;

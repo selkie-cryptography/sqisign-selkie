@@ -342,4 +342,21 @@ proptest! {
             b.transpose().mat_mul(&a.transpose())
         );
     }
+
+    // --- Vector::PartialEq ---
+
+    #[test]
+    fn vector_eq_reflexive(a in arb_vector4()) {
+        prop_assert_eq!(a, a);
+    }
+
+    #[test]
+    fn vector_ne_different(a in arb_small_bigint4(), b in arb_small_bigint4()) {
+        // Two vectors that differ in one component must not be equal.
+        let v1 = Vector::new(a, BigInt::ZERO, BigInt::ZERO, BigInt::ZERO);
+        let v2 = Vector::new(b, BigInt::ZERO, BigInt::ZERO, BigInt::ZERO);
+        if a != b {
+            prop_assert_ne!(v1, v2);
+        }
+    }
 }

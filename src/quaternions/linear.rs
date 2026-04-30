@@ -128,6 +128,7 @@ impl From<Vector<4>> for Vector<8> {
 }
 
 impl<const N: usize> fmt::Debug for Vector<N> {
+    #[cfg_attr(test, mutants::skip)] // formatting, not correctness
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
