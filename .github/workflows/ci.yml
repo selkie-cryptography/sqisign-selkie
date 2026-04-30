@@ -253,6 +253,9 @@ jobs:
       - name: Run C ref basis cross-check
         run: cargo test c_ref_basis_cross_check -- --ignored
 
+      - name: Run C ref all-bases cross-check
+        run: cargo test c_ref_all_bases_cross_check -- --ignored
+
       - name: Run C ref KAT verification cross-check
         run: cargo test c_ref_kat_cross_check -- --ignored
 

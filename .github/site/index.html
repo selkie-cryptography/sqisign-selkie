@@ -2621,7 +2621,13 @@
     async function fetchKind(kind, sha) {
       const cacheKey = `${kind}:${sha}`;
       if (dataCache.has(cacheKey)) return dataCache.get(cacheKey);
-      const data = await fetchJson(`/${kind}/${sha}.json`);
+      let data = await fetchJson(`/${kind}/${sha}.json`);
+      // For infrequently-run data (fuzzing, CT, iai, etc.), fall back
+      // to latest.json so the dashboard isn't empty for most commits.
+      if (!data) {
+        data = await fetchJson(`/${kind}/latest.json`);
+        if (data) data._stale = true;
+      }
       if (data) {
         dataCache.set(cacheKey, data);
         if (dataCache.size > DATA_CACHE_MAX) {
