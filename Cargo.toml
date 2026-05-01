@@ -19,6 +19,28 @@ default = ["zeroize"]
 zeroize = ["dep:zeroize"]
 expose-internals = []
 
+# Hand-written aarch64 asm for radix-2⁵¹ Fp::add and Fp::mul.
+#
+# DO NOT ENABLE without re-benchmarking. On aarch64-apple-darwin the
+# asm is consistently slower than the Rust compiler's output for the
+# same algorithm: ~10-30% slower for fp2_mul / fp2_square / curve
+# doublings, ~30-46% slower for full ladder operations. The Apple
+# M-series core is wide and superscalar enough that the Rust path
+# already exploits the chip well, and the asm's larger live-register
+# footprint forces spills around inlined call sites that the pure
+# Rust path avoids. See ePrint 2026-394 ("SQIsign on ARM") for the
+# upstream measurement: only 1.22× speedup on M1 vs 1.49× on
+# Cortex-A76, and only via NEON 32-bit-lane vectorization with
+# 29-bit limbs (a different representation entirely from ours).
+#
+# The asm module is kept in-tree behind this flag so the cfg
+# dispatch, register-operand template, and property-test
+# infrastructure remain a working starting point if we ever revisit
+# asm for: (a) Cortex-A76-class targets where scalar asm may pay
+# off, (b) x86_64 baseline (separate ISA, separate analysis), or
+# (c) a NEON SIMD redesign with a different limb representation.
+aarch64-radix-51-asm-perf-regression = []
+
 [dependencies]
 # TODO: replace with our own SHAKE256 implementation to minimize trusted dependencies.
 libcrux-sha3 = "0.0.8"

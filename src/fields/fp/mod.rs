@@ -15,6 +15,9 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
+#[cfg(feature = "aarch64-radix-51-asm-perf-regression")]
+mod asm;
+
 #[cfg(test)]
 mod tests;
 
@@ -357,27 +360,55 @@ impl Fp {
 // Operator implementations
 // ---------------------------------------------------------------------------
 
+// The `aarch64-radix-51-asm-perf-regression` Cargo feature swaps in
+// hand-written aarch64 asm for `Fp::add` and `Fp::mul`. The feature is
+// **off by default** and the name is a load-bearing warning: on
+// aarch64-apple-darwin the asm is measurably slower than the Rust
+// fallback the compiler produces. See `Cargo.toml` for the full
+// rationale and downstream benchmark numbers.
+//
+// Operator impls below early-return into the asm only when the feature
+// is enabled; otherwise the Rust body runs unconditionally. If a future
+// bug ever forces side-by-side comparison of asm vs Rust output on the
+// same machine (e.g. asm output drifts in a way that mathematical
+// property tests can't pinpoint), pull the body after the cfg guard
+// out into a `pub(in crate::fields::fp) fn add_portable(...)` (and
+// similarly for mul/square). Then both backends become callable from
+// `tests` for bit-for-bit cross-check.
+
 impl<'b> Add<&'b Fp> for &Fp {
     type Output = Fp;
 
     /// Modular addition, reduced to less than 2p.
     fn add(self, rhs: &'b Fp) -> Fp {
-        let mut n = Fp([
-            self.0[0] + rhs.0[0],
-            self.0[1] + rhs.0[1],
-            self.0[2] + rhs.0[2],
-            self.0[3] + rhs.0[3],
-            self.0[4] + rhs.0[4],
-        ]);
-        // Subtract 2p
-        n.0[0] = n.0[0].wrapping_add(2);
-        n.0[4] = n.0[4].wrapping_sub(2 * P4);
-        let carry = n.prop();
-        // Add 2p back if underflow
-        n.0[0] = n.0[0].wrapping_sub(2u64 & carry);
-        n.0[4] = n.0[4].wrapping_add((2 * P4) & carry);
-        n.prop();
-        n
+        #[cfg(all(
+            target_arch = "aarch64",
+            feature = "aarch64-radix-51-asm-perf-regression"
+        ))]
+        return asm::aarch64::add(self, rhs);
+
+        #[cfg(not(all(
+            target_arch = "aarch64",
+            feature = "aarch64-radix-51-asm-perf-regression"
+        )))]
+        {
+            let mut n = Fp([
+                self.0[0] + rhs.0[0],
+                self.0[1] + rhs.0[1],
+                self.0[2] + rhs.0[2],
+                self.0[3] + rhs.0[3],
+                self.0[4] + rhs.0[4],
+            ]);
+            // Subtract 2p
+            n.0[0] = n.0[0].wrapping_add(2);
+            n.0[4] = n.0[4].wrapping_sub(2 * P4);
+            let carry = n.prop();
+            // Add 2p back if underflow
+            n.0[0] = n.0[0].wrapping_sub(2u64 & carry);
+            n.0[4] = n.0[4].wrapping_add((2 * P4) & carry);
+            n.prop();
+            n
+        }
     }
 }
 
@@ -418,6 +449,17 @@ impl<'b> Mul<&'b Fp> for &Fp {
     /// the special shape p = 5 · 2²⁴⁸ − 1.
     #[rustfmt::skip]
     fn mul(self, rhs: &'b Fp) -> Fp {
+        #[cfg(all(
+            target_arch = "aarch64",
+            feature = "aarch64-radix-51-asm-perf-regression"
+        ))]
+        return asm::aarch64::mul(self, rhs);
+
+        #[cfg(not(all(
+            target_arch = "aarch64",
+            feature = "aarch64-radix-51-asm-perf-regression"
+        )))]
+        {
         let (a, b) = (&self.0, &rhs.0);
         let mut t: u128 = 0;
 
@@ -479,6 +521,7 @@ impl<'b> Mul<&'b Fp> for &Fp {
         t >>= RADIX;
 
         Fp([c0, c1, c2, c3, t as u64])
+        }
     }
 }
 
