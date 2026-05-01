@@ -18,7 +18,12 @@ jobs:
   test:
     name: Test (${{ matrix.target }}, ${{ matrix.bits }}-bit)
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # GitHub Actions hard cap is 360 min (6h). The per-KAT
+    # `sign_kat_derand_NNN` tests take 30 s — 30 min each
+    # depending on how rejection-heavy the KAT seed's response
+    # phase is. With 8-way parallel + 100 sign tests, 6 h is
+    # comfortable for the long tail until the asm-Fp work lands.
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
