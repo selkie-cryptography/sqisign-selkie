@@ -1649,6 +1649,19 @@ pub(crate) fn compute_challenge_isogeny(
 ///
 /// [Alg. 4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.5
 /// [`LeftIdeal::to_isogeny`]: crate::quaternions::lattice::LeftIdeal::to_isogeny
+/// The two (curve, basis) pairs returned by [`split_auxiliary_isogeny`]:
+/// `(E_aux, P_aux, Q_aux, PmQ_aux, E_chl, P_chl, Q_chl, PmQ_chl)`.
+type SplitResult = (
+    Curve,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+    Curve,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+    ProjectiveXOnlyPoint,
+);
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn split_auxiliary_isogeny(
     e1: &Curve,
@@ -1662,16 +1675,7 @@ pub(crate) fn split_auxiliary_isogeny(
     q_rsp: BigInt<4>,
     e_prime: TorsionExponent,
     r_rsp: TorsionExponent,
-) -> Option<(
-    Curve,
-    ProjectiveXOnlyPoint,
-    ProjectiveXOnlyPoint,
-    ProjectiveXOnlyPoint,
-    Curve,
-    ProjectiveXOnlyPoint,
-    ProjectiveXOnlyPoint,
-    ProjectiveXOnlyPoint,
-)> {
+) -> Option<SplitResult> {
     let f = TORSION_EVEN_POWER;
     let e_prime_val = e_prime.value();
     let r_val = r_rsp.value();
@@ -1832,6 +1836,61 @@ pub(crate) fn split_auxiliary_isogeny(
                 "[split_aux] kernel.isogeny None: e_chain={}, reduced_order={reduced_order}",
                 e_chain.value()
             );
+            // When `DUMP_FAIL_KERNEL=<dir>` is set, write the input to
+            // a binary file so a C ref harness can run
+            // `theta_chain_compute_and_eval_randomized` on the same
+            // bytes and report whether C ref's chain accepts where
+            // ours rejects (or vice versa). Distinguishes a residual
+            // projective-rep / branch-selection bug from an
+            // inherent-rejection-sampling property.
+            //
+            // Format (little-endian, no padding):
+            //   u32 e_chain
+            //   u32 reduced_order
+            //   Fp2 e1.A_aff (64 B)        -- chl-side curve A coefficient (affine)
+            //   Fp2 e2.A_aff (64 B)        -- aux-side curve A coefficient
+            //   For each of T1.P1, T1.P2, T2.P1, T2.P2, T1m2.P1, T1m2.P2:
+            //     Fp2 X (64 B), Fp2 Z (64 B)
+            //   Total: 8 + 128 + 6*128 = 904 B.
+            //
+            // Note: kernel inputs `p{1,2}_ker`, `q{1,2}_ker`,
+            // `pmq{1,2}_ker` are the post-reduction, post-q_inv,
+            // post-`2^r` doubling points actually fed into
+            // `Kernel::from_montgomery`. Those are the same bytes
+            // C ref's `dim_two_ker.{T1,T2,T1m2}.P{1,2}` would carry.
+            #[cfg(test)]
+            if let Ok(dir) = std::env::var("DUMP_FAIL_KERNEL") {
+                let mut buf = Vec::with_capacity(904);
+                buf.extend_from_slice(&e_chain.value().to_le_bytes());
+                buf.extend_from_slice(&(reduced_order as u32).to_le_bytes());
+                buf.extend_from_slice(&e1.coefficient().as_fp2().to_bytes());
+                buf.extend_from_slice(&e2.coefficient().as_fp2().to_bytes());
+                let dump_pt = |buf: &mut Vec<u8>, p: &ProjectiveXOnlyPoint| {
+                    buf.extend_from_slice(&p.X.to_bytes());
+                    buf.extend_from_slice(&p.Z.to_bytes());
+                };
+                dump_pt(&mut buf, &p1_ker);
+                dump_pt(&mut buf, &p2_ker);
+                dump_pt(&mut buf, &q1_ker);
+                dump_pt(&mut buf, &q2_ker);
+                dump_pt(&mut buf, &pmq1_ker);
+                dump_pt(&mut buf, &pmq2_ker);
+                let _ = std::fs::create_dir_all(&dir);
+                let h = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                let path = format!("{dir}/split_aux_fail_{h}.bin");
+                if let Err(e) = std::fs::write(&path, &buf) {
+                    eprintln!("[split_aux] DUMP_FAIL_KERNEL write error: {e}");
+                } else {
+                    eprintln!(
+                        "[split_aux] DUMP_FAIL_KERNEL wrote {} ({} B)",
+                        path,
+                        buf.len()
+                    );
+                }
+            }
             return None;
         }
     };

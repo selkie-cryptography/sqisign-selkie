@@ -116,7 +116,8 @@ fn keygen_kat_idx_inner(idx: usize) {
 // `generate_derand(seed)` and asserts the resulting (pk, sk)
 // match the KAT vector. `#[ignore]`d because keygen is a
 // probabilistic retry loop that may take seconds; run via
-// `cargo nextest run --run-ignored=ignored-only --profile kat -E 'test(/keygen_kat_/)'`.
+// `cargo nextest run --run-ignored=ignored-only --profile kat -E
+// 'test(/keygen_kat_/)'`.
 
 #[test]
 #[ignore]
@@ -718,7 +719,6 @@ fn keygen_kat_099() {
     keygen_kat_idx_inner(99);
 }
 
-
 /// Deserialize every KAT signing key, sign the corresponding
 /// message, and verify with the paired public key.
 ///
@@ -863,7 +863,8 @@ fn sign_kat_idx_probe() {
 // Each runs `sign_derand(seed)` + `verify`. `#[ignore]`d
 // because sign goes through a long retry loop on certain
 // trajectories; run via
-// `cargo nextest run --run-ignored=ignored-only --profile kat -E 'test(/sign_kat_derand_/)'`
+// `cargo nextest run --run-ignored=ignored-only --profile kat -E
+// 'test(/sign_kat_derand_/)'`
 
 #[test]
 #[ignore]
@@ -1464,7 +1465,6 @@ fn sign_kat_derand_098() {
 fn sign_kat_derand_099() {
     sign_kat_idx_probe_inner(99);
 }
-
 
 /// Verify the *C reference's* KAT[0] signature with our verifier.
 ///

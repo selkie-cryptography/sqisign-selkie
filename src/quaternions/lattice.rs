@@ -639,15 +639,25 @@ impl<const N: usize> Lattice<N> {
         radius: &BigInt<N>,
         rng: &mut R,
     ) -> Option<Element<N>> {
-        // Widen columns to BigInt<W>, then LLL-reduce via
-        // `NrdBasis::l2_reduce`. Without reduction, `gram[i][i]`
-        // reflects the raw HNF basis whose diagonals can be as
-        // large as the covolume `n(I)²`, far above the shortest-
-        // vector norm — making `sqrt(rad / gram[i][i])` round to
-        // zero for any reasonable radius (the C-ref
-        // `(2^e_rsp − 1) · lattice_content` bound hits this
-        // pathology immediately). After `l2_reduce`, the basis
-        // vectors have `nrd ≈ n(I)` and the box is usable.
+        // Algorithm (matches C ref `quat_lattice_sample_from_ball` in
+        // `lat_ball.c`):
+        //
+        //   1. G  = primal Gram of the lattice basis.
+        //   2. dualG = adj(G); det_G = det(G); so G⁻¹ = dualG / det_G.
+        //   3. LLL-reduce dualG, tracking the unimodular transform U: after reduction,
+        //      `dualG_red = U^T · dualG · U` and U is integer with det(U) = ±1.
+        //   4. box[i] = √(dualG_red[i][i] · rad / det_G).
+        //   5. U_inv = inv(U) (= adj(U) · sign(det U), since |det U| = 1).
+        //   6. Repeat: sample y[i] uniform in [−box[i], box[i]]; x = U_inv^T · y; norm
+        //      = x^T · G · x; accept if 0 < norm ≤ rad.
+        //   7. α = Σ x[i] · basis_col[i].
+        //
+        // The dual-LLL bound is asymptotically tighter than the per-axis
+        // primal-Gram diagonals: the bounding parallelogram's volume
+        // shrinks toward the ellipsoid's, raising the acceptance rate
+        // closer to the Hermite-constant optimum and (importantly) into
+        // the regime where the ~10⁴-iter inner budget converges quickly
+        // for the typical signing radius.
         let cols_n = self.basis.columns();
         let cols_w: [Vector<W>; 4] = core::array::from_fn(|i| {
             Vector::new(
@@ -657,12 +667,12 @@ impl<const N: usize> Lattice<N> {
                 cols_n[i][3].widen::<W>(),
             )
         });
-        let nrd_basis = NrdBasis::new(cols_w).l2_reduce();
-        let gram = *nrd_basis.gram();
-        let cols_w: [Vector<W>; 4] = *nrd_basis.cols();
+        // Primal Gram (no LLL reduction here — we LLL the dual below).
+        let g_w = *NrdBasis::new(cols_w).gram();
 
-        // Adjust radius: rad = radius * denom² * 2
-        // (Gram matrix corresponds to twice the reduced norm)
+        // Adjust radius: rad = radius · denom² · 2.
+        // (Gram corresponds to twice the reduced norm; the radius
+        // squared by denom matches the field-reduced rep.)
         let denom_wide: BigInt<W> = self.denom.widen();
         let rad: BigInt<W> = radius
             .widen::<W>()
@@ -670,28 +680,40 @@ impl<const N: usize> Lattice<N> {
             .ct_mul(&denom_wide)
             .ct_mul(&BigInt::<W>::from_u64(2));
 
-        // Step 2: Compute per-axis bounding box.
-        //
-        // The C ref LLL-reduces the dual gram, tracks the
-        // transformation U, and maps samples through U⁻¹ᵀ. We
-        // don't track U yet, so instead we use a simpler bound:
-        //   box[i] = √(rad / G[i][i])
-        // This gives the maximum coefficient along axis i such
-        // that the i-th term alone doesn't exceed the radius.
-        // The rejection rate is higher than with LLL reduction,
-        // but the sampling is correct.
-        //
-        // TODO: track U during l2_reduce for tighter bounds and
-        // lower rejection rate.
+        // dualG = adj(G); det_g = det(G).
+        let det_g = g_w.det();
+        let dual_g = g_w.adjugate();
+
+        // LLL-reduce dualG with unimodular tracking. Trick: feed
+        // identity columns + the dual gram into `NrdBasis`. The
+        // existing `l2_reduce` updates both:
+        //   - cols (initially identity) → cols of U;
+        //   - gram (initially dualG) → reduced dualG = U^T · dualG · U.
+        // The algorithm only consults `gram` for GSO/decisions, so the
+        // mismatch between `cols` and `compute_gram(cols)` is harmless;
+        // we only need `from_cols_and_gram` to bypass the constructor's
+        // gram recomputation.
+        let identity_cols: [Vector<W>; 4] = [
+            Vector::new(BigInt::ONE, BigInt::ZERO, BigInt::ZERO, BigInt::ZERO),
+            Vector::new(BigInt::ZERO, BigInt::ONE, BigInt::ZERO, BigInt::ZERO),
+            Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ONE, BigInt::ZERO),
+            Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ZERO, BigInt::ONE),
+        ];
+        let nrd = NrdBasis::from_cols_and_gram(identity_cols, dual_g).l2_reduce();
+        let reduced_dual = *nrd.gram();
+        let u_lll = Matrix::from_columns(nrd.cols());
+
+        // box[i] = √(reduced_dual[i][i] · rad / det_g).
         let mut bounds = [BigInt::<W>::ZERO; 4];
         let mut all_zero = true;
         for (i, bound) in bounds.iter_mut().enumerate() {
-            let diag = gram[i][i];
-            if bool::from(diag.is_zero()) {
+            let diag = reduced_dual[i][i];
+            if bool::from(diag.is_zero()) || bool::from(det_g.is_zero()) {
                 continue;
             }
-            let (bound_sq, _) = rad.div_rem(&diag);
-            *bound = bound_sq.sqrt_floor();
+            let prod = diag.ct_mul(&rad);
+            let (quot, _) = prod.div_rem(&det_g);
+            *bound = quot.sqrt_floor();
             if !bool::from(bound.is_zero()) {
                 all_zero = false;
             }
@@ -699,18 +721,34 @@ impl<const N: usize> Lattice<N> {
         if all_zero {
             #[cfg(test)]
             eprintln!(
-                "[sample_from_ball] ball too small: rad bits={}, diag bits=[{}, {}, {}, {}]",
+                "[sample_from_ball] ball too small: rad bits={}, dualG_red diag bits=[{}, {}, {}, {}], det_G bits={}",
                 rad.bitsize(),
-                gram[0][0].bitsize(),
-                gram[1][1].bitsize(),
-                gram[2][2].bitsize(),
-                gram[3][3].bitsize(),
+                reduced_dual[0][0].bitsize(),
+                reduced_dual[1][1].bitsize(),
+                reduced_dual[2][2].bitsize(),
+                reduced_dual[3][3].bitsize(),
+                det_g.bitsize(),
             );
-            return None; // ball too small
+            return None;
         }
 
-        // Step 3: Rejection sampling.
-        // Byte buffer for random sampling — sized for BigInt<W>.
+        // U_inv = inv(U_lll) = adj(U_lll) · sign(det U_lll).
+        // Since U_lll is unimodular, det = ±1 and adj is integer.
+        let det_u = u_lll.det();
+        let adj_u = u_lll.adjugate();
+        let u_inv = if bool::from(det_u.is_negative()) {
+            let mut m = adj_u;
+            for i in 0..4 {
+                for j in 0..4 {
+                    m[i][j] = m[i][j].wrapping_neg();
+                }
+            }
+            m
+        } else {
+            adj_u
+        };
+
+        // Rejection sampling.
         let byte_cap = W * 8;
         #[cfg(test)]
         let mut _n_pos = 0u64;
@@ -718,48 +756,40 @@ impl<const N: usize> Lattice<N> {
         let mut _n_fit = 0u64;
         #[cfg(test)]
         let mut _best_nrd_over_rad_bits: i64 = 0;
-        // Without LLL-based box tightening (TODO above), our
-        // per-axis bound `sqrt(rad / G[i][i])` is loose enough
-        // that typical acceptance rates sit around 10^-4; 10,000
-        // tries then fails most of the time for signing. Bump to
-        // 200,000 until the LLL bound lands.
         for _ in 0..200_000 {
-            // Sample uniform x[i] in [-bounds[i], bounds[i]].
-            let mut x = [BigInt::<W>::ZERO; 4];
+            // y[i] uniform in [−bounds[i], bounds[i]].
+            let mut y = [BigInt::<W>::ZERO; 4];
             for i in 0..4 {
                 if bool::from(bounds[i].is_zero()) {
                     continue;
                 }
-                // Random in [0, 2*bounds[i]], then subtract bounds[i].
                 let two_b = bounds[i].ct_add(&bounds[i]);
-                // Simple rejection sampling for uniform in [0, 2b].
                 let bitlen = two_b.bitsize();
                 loop {
                     let mut bytes = vec![0u8; byte_cap];
                     let needed = (bitlen as usize).div_ceil(8);
                     rng.fill_bytes(&mut bytes[..needed]);
-                    let val = BigInt::<W>::from_bytes_le_unsigned(&bytes[..needed]);
-                    let val = val.abs(); // ensure positive
+                    let val = BigInt::<W>::from_bytes_le_unsigned(&bytes[..needed]).abs();
                     if val.bitsize() <= bitlen {
-                        // Check val <= 2*bounds[i]
                         let diff = val.ct_sub(&two_b);
                         if bool::from(diff.is_negative()) || bool::from(diff.is_zero()) {
-                            x[i] = val.ct_sub(&bounds[i]);
+                            y[i] = val.ct_sub(&bounds[i]);
                             break;
                         }
                     }
                 }
             }
 
-            // TODO: map x through U_inv^T (currently skipped — using
-            // original basis coords directly, which is less tight but
-            // still correct for rejection sampling).
+            // x = U_inv^T · y, i.e., coords in the original lattice basis.
+            let y_vec = Vector::new(y[0], y[1], y[2], y[3]);
+            let x_vec = u_inv.eval_left(&y_vec);
+            let x = [x_vec[0], x_vec[1], x_vec[2], x_vec[3]];
 
-            // Evaluate quadratic form: nrd = x^T · G · x.
+            // Evaluate primal quadratic form: nrd = x^T · G · x.
             let mut nrd = BigInt::<W>::ZERO;
             for i in 0..4 {
                 for j in 0..4 {
-                    nrd = nrd.ct_add(&x[i].ct_mul(&x[j]).ct_mul(&gram[i][j]));
+                    nrd = nrd.ct_add(&x[i].ct_mul(&x[j]).ct_mul(&g_w[i][j]));
                 }
             }
 
@@ -790,8 +820,9 @@ impl<const N: usize> Lattice<N> {
                 _n_fit += 1;
             }
 
-            // Step 4: Convert to quaternion element.
-            // result = Σ x[i] · col_i, with the lattice denominator.
+            // Convert to quaternion element:
+            //   α = Σ x[i] · col_i (using ORIGINAL basis cols, not the
+            //   LLL-reduced ones — `x` is already in original coords).
             let mut coords = [BigInt::<W>::ZERO; 4];
             for i in 0..4 {
                 for (k, coord) in coords.iter_mut().enumerate() {
@@ -799,7 +830,6 @@ impl<const N: usize> Lattice<N> {
                 }
             }
 
-            // Narrow back to BigInt<N> (should fit after sampling).
             let narrow = |v: BigInt<W>| -> BigInt<N> {
                 v.narrow_to::<N>()
                     .expect("sampled element fits in BigInt<N>")
@@ -815,12 +845,12 @@ impl<const N: usize> Lattice<N> {
         }
         #[cfg(test)]
         eprintln!(
-            "[sample_from_ball] exhausted 200k attempts: rad bits={}, diag bits=[{}, {}, {}, {}], bounds bits=[{}, {}, {}, {}], n_pos={}, n_fit={}, best nrd-rad bits={}",
+            "[sample_from_ball] exhausted 200k attempts: rad bits={}, dualG_red diag bits=[{}, {}, {}, {}], bounds bits=[{}, {}, {}, {}], n_pos={}, n_fit={}, best nrd-rad bits={}",
             rad.bitsize(),
-            gram[0][0].bitsize(),
-            gram[1][1].bitsize(),
-            gram[2][2].bitsize(),
-            gram[3][3].bitsize(),
+            reduced_dual[0][0].bitsize(),
+            reduced_dual[1][1].bitsize(),
+            reduced_dual[2][2].bitsize(),
+            reduced_dual[3][3].bitsize(),
             bounds[0].bitsize(),
             bounds[1].bitsize(),
             bounds[2].bitsize(),
@@ -829,7 +859,7 @@ impl<const N: usize> Lattice<N> {
             _n_fit,
             _best_nrd_over_rad_bits,
         );
-        None // sampling failed after max attempts
+        None
     }
 }
 
