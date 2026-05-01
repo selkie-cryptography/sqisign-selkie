@@ -859,6 +859,58 @@ fn sign_kat_idx_probe() {
     sign_kat_idx_probe_inner(kat_idx);
 }
 
+/// `KAT_IDX=N`-parametrized sign + verify that **also writes**
+/// `pk.bin / msg.bin / our_sig.bin` to `$DUMP_DIR` (default
+/// `/tmp/cross_verify/`). Pair with C ref's
+/// `sqisign_verify_external_lvl1` to confirm C ref accepts our
+/// signature byte-for-byte. Required by
+/// `/tmp/cross_verify/cross_verify_our_sigs.sh`.
+#[test]
+#[ignore]
+fn sign_kat_zero_dump_for_xverify() {
+    use std::fs;
+
+    let kat_idx: usize = std::env::var("KAT_IDX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let dir = std::env::var("DUMP_DIR").unwrap_or_else(|_| "/tmp/cross_verify".to_string());
+
+    let (seed_hex, pk_hex, sk_hex, msg_hex, _) =
+        crate::keys::kat_data::KAT_VECTORS[kat_idx];
+    let seed_bytes = hex::decode(seed_hex).expect("valid hex");
+    let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
+    let sk_bytes = hex::decode(sk_hex).expect("valid hex");
+    let pk_bytes = hex::decode(pk_hex).expect("valid hex");
+    let msg = hex::decode(msg_hex).expect("valid hex");
+
+    let sk = SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap())
+        .expect("sk parses");
+    let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap())
+        .expect("pk parses");
+
+    let t0 = std::time::Instant::now();
+    let sig = sk
+        .sign_derand(&msg, &seed)
+        .expect("sign_derand within retry budget");
+    let sign_elapsed = t0.elapsed();
+
+    fs::create_dir_all(&dir).expect("mkdir dump dir");
+    fs::write(format!("{dir}/pk.bin"), &pk_bytes).expect("write pk.bin");
+    fs::write(format!("{dir}/msg.bin"), &msg).expect("write msg.bin");
+    fs::write(format!("{dir}/our_sig.bin"), sig.to_bytes()).expect("write our_sig.bin");
+    eprintln!(
+        "sign_kat_zero_dump_for_xverify: KAT[{kat_idx}] sign={sign_elapsed:?} dumped to {dir}"
+    );
+
+    let t1 = std::time::Instant::now();
+    let r = vk.verify(&msg, &sig);
+    eprintln!(
+        "sign_kat_zero_dump_for_xverify: KAT[{kat_idx}] verify result={r:?} in {:?}",
+        t1.elapsed()
+    );
+}
+
 // Per-KAT deterministic sign+verify tests (one per `KAT_VECTORS`
 // Each runs `sign_derand(seed)` + `verify`. `#[ignore]`d
 // because sign goes through a long retry loop on certain
