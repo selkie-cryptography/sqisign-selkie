@@ -14,133 +14,12 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# Tier 1 — Gate
+#
+# Fast checks that catch the most common problems. Required for merge.
+# All run in parallel, no dependencies. Target: <5 min wall time.
+
 jobs:
-  test:
-    name: Test (${{ matrix.target }}, ${{ matrix.bits }}-bit${{ matrix.variant && format(', {0}', matrix.variant) || '' }})
-    runs-on: ${{ matrix.os }}
-    # GitHub Actions hard cap is 360 min (6h). The per-KAT
-    # `sign_kat_derand_NNN` tests take 30 s — 30 min each
-    # depending on how rejection-heavy the KAT seed's response
-    # phase is. With 8-way parallel + 100 sign tests, 6 h is
-    # comfortable for the long tail until the asm-Fp work lands.
-    timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Rust Tier 1 targets, default features. 64-bit targets run
-          # on native runners; 32-bit targets cross-compile on 64-bit
-          # runners (the test binaries run natively since x86_64 CPUs
-          # support i686).
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            bits: 64
-          - os: ubuntu-24.04
-            target: i686-unknown-linux-gnu
-            bits: 32
-            multilib: true
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            bits: 64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bits: 64
-          - os: windows-latest
-            target: i686-pc-windows-msvc
-            bits: 32
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            bits: 64
-          # Minimum-config coverage: build and test with no default
-          # features (zeroize off). Catches accidental dependencies
-          # on default-only features. One runner is enough — the
-          # zeroize gate is arch-independent.
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            bits: 64
-            variant: no-default-features
-            flags: --no-default-features
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - name: Install 32-bit multilib (Linux i686)
-        if: matrix.multilib
-        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
-      # dtolnay/rust-toolchain uses branch refs (stable/nightly) by
-      # design so the Rust version tracks upstream releases.
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          # Variant-keyed cache so default and feature-variant builds
-          # don't clobber each other.
-          key: ${{ matrix.target }}-${{ matrix.variant || 'default' }}
-      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
-        with:
-          tool: cargo-nextest
-      # `--run-ignored=all` picks up the per-KAT keygen + sign tests.
-      # They're marked `#[ignore]` so plain `cargo test` skips them
-      # (each can take minutes), but nextest runs them in parallel
-      # with per-test timeouts via the `kat` profile.
-      - run: cargo nextest run --profile kat --run-ignored=all --target ${{ matrix.target }} ${{ matrix.flags || '' }}
-      - run: cargo test --doc --target ${{ matrix.target }} ${{ matrix.flags || '' }}
-
-  proptest:
-    name: Property tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - name: Run property tests
-        run: cargo test --lib -- proptest
-
-  platform-report:
-    name: Platform coverage
-    needs: test
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - name: Generate platform report
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          rustc -O .github/scripts/platform-report.rs -o /tmp/platform-report
-          /tmp/platform-report "${{ github.run_id }}" "${{ github.sha }}" > platform.json
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-      - name: Upload
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload platform platform.json "${{ github.sha }}"
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - name: Run clippy
-        run: |
-          echo '## Clippy' >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cargo +nightly clippy --all-targets --all-features --message-format=short -- -W warnings 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
   fmt:
     name: Format
     runs-on: ubuntu-24.04
@@ -162,6 +41,56 @@ jobs:
         run: |
           cargo +nightly fmt --all -- --check 2>&1 |
             reviewdog -f=diff -reporter=github-check -fail-level=any
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Run clippy
+        run: |
+          echo '## Clippy' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cargo +nightly clippy --all-targets --all-features --message-format=short -- -W warnings 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  gate:
+    name: lib + doc tests (x86_64-linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: cargo-nextest
+      # Run lib + integration tests (no --run-ignored, so KAT
+      # sign/keygen tests are skipped). Fast gate: ~2 min.
+      - run: cargo nextest run
+      - run: cargo test --doc
+
+  proptest:
+    name: Property tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Run property tests
+        run: cargo test --lib -- proptest
 
   doc:
     name: Documentation
@@ -187,43 +116,84 @@ jobs:
           echo '<meta http-equiv="refresh" content="0;url=sqisign_selkie/">' \
             > target/doc/index.html
           tar -czf /tmp/rustdoc.tar.gz -C target/doc .
-          # Wake the VM via ci-signal (handles restart + wait reliably).
           rustc -O .github/scripts/ci-signal.rs -o /tmp/ci-signal
           /tmp/ci-signal docs running "${{ github.sha }}"
-          # Stage the tarball alongside /data/rustdoc, then atomically
-          # wipe-and-recreate the directory in a single ssh call.
-          # Each `flyctl ssh` is a fresh connection that does not trigger
-          # auto_start_machines, so minimize the number of calls.
           echo "put /tmp/rustdoc.tar.gz /data/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
           flyctl ssh console -a sqisign-selkie-ci -C "sh -c 'set -e; rm -rf /data/rustdoc && mkdir -p /data/rustdoc && tar -xzf /data/rustdoc.tar.gz -C /data/rustdoc && rm /data/rustdoc.tar.gz'"
 
-  kat-report:
-    name: KAT report
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
+  # Tier 2 — Platform matrix
+  #
+  # Full test suite (lib + doc + KAT) across all Rust Tier 1 targets.
+  # Required for merge. Only starts after the gate passes to avoid
+  # burning runner time on trivially broken code.
+
+  platform:
+    name: "lib + doc + KAT tests (${{ matrix.target }}, ${{ matrix.bits }}-bit${{ matrix.variant && format(', {0}', matrix.variant) || '' }})"
+    needs: [gate]
+    runs-on: ${{ matrix.os }}
+    # Per-KAT sign tests take 30 s – 30 min each depending on the
+    # seed's rejection rate. With nextest parallelism + per-test
+    # timeouts via the `kat` profile, 6 h covers the long tail.
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Rust Tier 1 targets, default features.
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            bits: 64
+          - os: ubuntu-24.04
+            target: i686-unknown-linux-gnu
+            bits: 32
+            multilib: true
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bits: 64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bits: 64
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            bits: 32
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            bits: 64
+          # Minimum config: no default features (zeroize off).
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            bits: 64
+            variant: no-default-features
+            flags: --no-default-features
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Install 32-bit multilib (Linux i686)
+        if: matrix.multilib
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: ${{ matrix.target }}-${{ matrix.variant || 'default' }}
+      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+        with:
+          tool: cargo-nextest
+      # --run-ignored=all picks up the per-KAT keygen + sign tests.
+      - run: cargo nextest run --profile kat --run-ignored=all --target ${{ matrix.target }} ${{ matrix.flags || '' }}
+      - run: cargo test --doc --target ${{ matrix.target }} ${{ matrix.flags || '' }}
 
-      - name: Generate KAT report
-        run: |
-          rustc -O .github/scripts/kat-report.rs -o /tmp/kat-report
-          /tmp/kat-report "${{ github.sha }}" > kat.json
-        continue-on-error: true
-
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: hashFiles('kat.json') != ''
-      - name: Upload to CI site
-        if: hashFiles('kat.json') != ''
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload kat kat.json "${{ github.sha }}"
+  # Tier 3 — Informational
+  #
+  # Deeper analysis that provides useful signal but does not block merge.
+  # Only starts after the gate passes. Failures show on the PR but are
+  # not required status checks.
 
   sage-precompute-check:
     name: Sage precompute cross-check
+    needs: [gate]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -257,6 +227,7 @@ jobs:
 
   c-ref-cross-check:
     name: C reference cross-check
+    needs: [gate]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -275,3 +246,51 @@ jobs:
       - name: Run C ref KAT verification cross-check
         run: cargo test c_ref_kat_cross_check -- --ignored
 
+  kat-report:
+    name: KAT report
+    needs: [gate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Generate KAT report
+        run: |
+          rustc -O .github/scripts/kat-report.rs -o /tmp/kat-report
+          /tmp/kat-report "${{ github.sha }}" > kat.json
+        continue-on-error: true
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: hashFiles('kat.json') != ''
+      - name: Upload to CI site
+        if: hashFiles('kat.json') != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload kat kat.json "${{ github.sha }}"
+
+  platform-report:
+    name: Platform coverage
+    needs: [platform]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Generate platform report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rustc -O .github/scripts/platform-report.rs -o /tmp/platform-report
+          /tmp/platform-report "${{ github.run_id }}" "${{ github.sha }}" > platform.json
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Upload
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload platform platform.json "${{ github.sha }}"
