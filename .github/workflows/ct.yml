@@ -47,13 +47,13 @@ jobs:
       # to the binary — find the sole executable instead.
       - name: Run DudeCT
         run: |
-          bin=$(find ./target/release/deps -maxdepth 1 -name 'dudect-*' -executable -type f)
+          bin=$(find ./target/release/deps -maxdepth 1 -name 'dudect-*' -executable -type f | head -1)
           timeout 120 "$bin" 2>&1 | tee dudect-output.txt || true
 
       # Tacet: runs to completion per function per model.
       - name: Run Tacet
         run: |
-          bin=$(find ./target/release/deps -maxdepth 1 -name 'tacet-*' -executable -type f)
+          bin=$(find ./target/release/deps -maxdepth 1 -name 'tacet-*' -executable -type f | head -1)
           timeout 300 "$bin" 2>&1 | tee tacet-output.txt || true
 
       # Convert both to JSON.
