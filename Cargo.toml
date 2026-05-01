@@ -41,6 +41,25 @@ expose-internals = []
 # (c) a NEON SIMD redesign with a different limb representation.
 aarch64-radix-51-asm-perf-regression = []
 
+# Hand-written x86_64 baseline asm for radix-2⁵¹ Fp::add and Fp::mul.
+#
+# Baseline x86_64 only — uses `mul reg/mem` (which destroys rax/rdx
+# and sets flags) plus a single `adc` carry chain. No `mulx`, `adcx`,
+# `adox` — that would require Broadwell+ (BMI2/ADX) and a separate
+# cfg path; we do not gate on microarch features at runtime.
+#
+# Outcome unknown until CI benches a real x86_64 machine. The aarch64
+# version regressed measurably on M-series (see flag above); x86_64
+# baseline is even more constrained — `mul` clobbers two specific
+# registers per multiply, the carry chain is strictly serial, and
+# only ~14 GPRs are usable vs 31 on aarch64. Absent benchmark data
+# arguing otherwise, expect a similar regression and treat this as a
+# scaffold for a future BMI2/ADX path that *would* have headroom.
+#
+# Rename this flag to `x86_64-radix-51-asm-perf-regression` if CI
+# numbers confirm the asm is slower than the Rust path.
+x86_64-radix-51-asm = []
+
 [dependencies]
 # TODO: replace with our own SHAKE256 implementation to minimize trusted dependencies.
 libcrux-sha3 = "0.0.8"

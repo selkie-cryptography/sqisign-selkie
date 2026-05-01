@@ -15,7 +15,10 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-#[cfg(feature = "aarch64-radix-51-asm-perf-regression")]
+#[cfg(any(
+    feature = "aarch64-radix-51-asm-perf-regression",
+    feature = "x86_64-radix-51-asm",
+))]
 mod asm;
 
 #[cfg(test)]
@@ -387,9 +390,21 @@ impl<'b> Add<&'b Fp> for &Fp {
         ))]
         return asm::aarch64::add(self, rhs);
 
-        #[cfg(not(all(
-            target_arch = "aarch64",
-            feature = "aarch64-radix-51-asm-perf-regression"
+        #[cfg(all(
+            target_arch = "x86_64",
+            feature = "x86_64-radix-51-asm"
+        ))]
+        return asm::x86_64::add(self, rhs);
+
+        #[cfg(not(any(
+            all(
+                target_arch = "aarch64",
+                feature = "aarch64-radix-51-asm-perf-regression"
+            ),
+            all(
+                target_arch = "x86_64",
+                feature = "x86_64-radix-51-asm"
+            ),
         )))]
         {
             let mut n = Fp([
@@ -455,9 +470,21 @@ impl<'b> Mul<&'b Fp> for &Fp {
         ))]
         return asm::aarch64::mul(self, rhs);
 
-        #[cfg(not(all(
-            target_arch = "aarch64",
-            feature = "aarch64-radix-51-asm-perf-regression"
+        #[cfg(all(
+            target_arch = "x86_64",
+            feature = "x86_64-radix-51-asm"
+        ))]
+        return asm::x86_64::mul(self, rhs);
+
+        #[cfg(not(any(
+            all(
+                target_arch = "aarch64",
+                feature = "aarch64-radix-51-asm-perf-regression"
+            ),
+            all(
+                target_arch = "x86_64",
+                feature = "x86_64-radix-51-asm"
+            ),
         )))]
         {
         let (a, b) = (&self.0, &rhs.0);
