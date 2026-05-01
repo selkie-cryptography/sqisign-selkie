@@ -161,9 +161,7 @@ fn two_isogeny_singular_structural() {
 
     // Use a curve built from a known affine coefficient so the
     // doubling constants are normalized.
-    let curve = Curve::from(Coefficient::from(Fp2::from_fp(
-        Fp::from_small(6),
-    )));
+    let curve = Curve::from(Coefficient::from(Fp2::from_fp(Fp::from_small(6))));
     let iso = TwoIsogenySingular::from_curve(&curve);
 
     // Invariant 1: c0^2 = c1^2 - 4 (from the definition).
