@@ -1465,6 +1465,18 @@
       }
     }
 
+    // Short display name: basename, but for mod.rs and tests.rs
+    // include the parent directory to disambiguate
+    // (e.g. "algebra/mod.rs" instead of "mod.rs").
+    function shortName(path) {
+      const parts = path.split('/');
+      const base = parts[parts.length - 1];
+      if ((base === 'mod.rs' || base === 'tests.rs') && parts.length >= 2) {
+        return parts[parts.length - 2] + '/' + base;
+      }
+      return base;
+    }
+
     function renderCoverageData(data) {
       covData = data;
       const total = data.total || {};
@@ -1522,7 +1534,7 @@
           if (hotFiles.length > 0) {
             html += '<div class="cov-insight"><h4>Hottest files</h4><ul class="cov-insight-list">';
             for (const f of hotFiles) {
-              const fname = f.name.replace(/^.*\//, '');
+              const fname = shortName(f.name);
               const link = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(f.name)}` : '#';
               html += `<li><a href="${link}">${esc(fname)}</a><span class="tag tag-hot">${esc(String(f.maxHit))}\u00d7 peak</span></li>`;
             }
@@ -1532,7 +1544,7 @@
           if (ctConcerns.length > 0) {
             html += '<div class="cov-insight"><h4>CT audit</h4><ul class="cov-insight-list">';
             for (const c of ctConcerns.slice(0, 5)) {
-              const fname = c.file.replace(/^.*\//, '');
+              const fname = shortName(c.file);
               const link = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/${esc(c.file)}#L${c.line}` : '#';
               html += `<li><a href="${link}">${esc(fname)}:${c.line}</a><span class="tag tag-ct">${esc(String(c.count))}\u00d7 hot</span></li>`;
             }
@@ -1542,7 +1554,7 @@
           if (coldFiles.length > 0) {
             html += '<div class="cov-insight"><h4>Fragile coverage</h4><ul class="cov-insight-list">';
             for (const f of coldFiles) {
-              const fname = f.name.replace(/^.*\//, '');
+              const fname = shortName(f.name);
               html += `<li><span>${esc(fname)}</span><span class="tag tag-cold">${esc(String(f.covered))} lines \u2264 2\u00d7</span></li>`;
             }
             html += '</ul></div>';
@@ -2401,7 +2413,7 @@
         if (hotUntested.length > 0) {
           html += '<div class="cov-insight"><h4>Untested hot paths</h4><ul class="cov-insight-list">';
           for (const h of hotUntested.slice(0, 5)) {
-            const fname = h.file.replace(/^.*\//, '');
+            const fname = shortName(h.file);
             const link = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(h.file)}` : '#';
             html += `<li>
               <a href="${link}">${esc(fname)}</a>
@@ -2438,7 +2450,7 @@
         if (ctMutantOverlap.length > 0) {
           html += '<div class="cov-insight"><h4>CT + mutant overlap</h4><ul class="cov-insight-list">';
           for (const c of ctMutantOverlap.slice(0, 5)) {
-            const fname = c.file.replace(/^.*\//, '');
+            const fname = shortName(c.file);
             const link = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(c.file)}#L${c.line}` : '#';
             html += `<li>
               <a href="${link}">${esc(fname)}:${c.line}</a>
@@ -2467,7 +2479,7 @@
         if (unbenchedHot.length > 0) {
           html += '<div class="cov-insight"><h4>Benchmark blind spots</h4><ul class="cov-insight-list">';
           for (const f of unbenchedHot.slice(0, 5)) {
-            const fname = f.name.replace(/^.*\//, '');
+            const fname = shortName(f.name);
             html += `<li>
               <span>${esc(fname)}</span>
               <span><span class="tag tag-hot">${esc(String(f.maxHit))}\u00d7</span> <span class="tag tag-cold">no bench</span></span>
