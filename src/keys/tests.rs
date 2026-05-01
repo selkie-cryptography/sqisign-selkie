@@ -780,7 +780,6 @@ fn verify_kat_099() {
     verify_kat(pk, sm);
 }
 
-
 /// Cross-check all KAT vectors against the C reference implementation
 /// at a pinned commit.
 ///

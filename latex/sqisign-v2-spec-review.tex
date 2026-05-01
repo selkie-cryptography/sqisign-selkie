@@ -660,6 +660,54 @@ Replace ``$I_{\mathrm{sk}} \cdot I_{\mathrm{chl}}$'' with explicit
 intersection uses the pre-pushforward challenge ideal.
 
 % =====================================================================
+\section{\textsc{LatticeSampling} algorithm is underspecified}
+\label{sec:lattice-sampling}
+
+\finding{Affects \algo{3.3}
+(\textsc{LatticeSampling}), used by \algo{4.3}
+(\textsc{RandomEquivalentQuaternion}) which is the inner sampling
+of \algo{4.2} (\textsc{SQIsign.Sign}) line~14.}{\medium}
+
+\algo{3.3} is described as ``sample uniformly from the lattice~$L$
+elements of reduced norm at most $\rho$'' without specifying the
+algorithm.  An implementor's natural reading--LLL-reduce the primal
+Gram of~$L$, set per-axis bounds
+$\mathrm{box}[i] = \sqrt{\rho / G_{\mathrm{red}}[i][i]}$, and reject
+sample--is correct but produces a bounding parallelogram much looser
+than the input ellipsoid, with a typical acceptance rate around
+$10^{-4}$ at the radii used in signing.
+
+The C reference's \texttt{quat\_lattice\_sample\_from\_ball}
+(\texttt{lat\_ball.c:58}) implements a different, tighter algorithm:
+LLL-reduce the \emph{dual} Gram $\mathrm{adj}(G)$ while tracking the
+unimodular transformation~$U$, set
+$\mathrm{box}[i] = \sqrt{\mathrm{dual}G_{\mathrm{red}}[i][i]
+\cdot \rho / \det G}$, sample $y$ in the box, map
+$x = U^{-\top} y$, and check $x^\top G x \le \rho$ on the original
+primal Gram.  This bound corresponds to the ellipsoid's inertia
+tensor (via the dual lattice's reduction) and gives an acceptance
+rate within a small Hermite-constant factor of optimal.
+
+The two algorithms produce different distributions of accepted~$\alpha$,
+and downstream Kani-kernel acceptance in
+\algo{4.5} (\textsc{SplitAuxiliaryIsogeny}) tracks the
+$\alpha$~distribution.  An implementor following the spec literally
+will produce a different per-iter retry profile than the C ref and
+may attribute the timing or convergence differences to other
+algorithms entirely.  We did, until cross-checking the C ref's
+sampling code revealed the gap.
+
+\paragraph{Recommendation.}
+Spell out the dual-LLL procedure (and the
+$\mathrm{box}[i] = \sqrt{\mathrm{dual}G_{\mathrm{red}}[i][i]
+\cdot \rho / \det G}$ bound, plus the $U^{-\top}$ map) in
+\algo{3.3}, or at least name it as the recommended algorithm
+with a citation to a standard reference.  As stated, the spec
+permits any sampling that meets the distribution, but the C
+reference's choice is the load-bearing one for matching its
+benchmark timings.
+
+% =====================================================================
 \section{\textsc{FixedDegreeIsogeny} missing $u^{-1}$ normalization}
 \label{sec:u-inv}
 

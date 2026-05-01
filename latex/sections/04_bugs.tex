@@ -678,6 +678,64 @@ inversions across ladder steps via a Montgomery-style trick that
 preserves the projective rep at each step; do not rewrite the
 algebra.
 
+\subsection{Lattice ball sampling needs the dual-LLL approach}
+\label{sec:bug-sample-from-ball-dual-lll}
+
+\algo{3.3} (\textsc{LatticeSampling}, used by Algorithm~4.3
+\textsc{RandomEquivalentQuaternion}) is described abstractly: ``sample
+a uniformly random element from the lattice~$L$ whose reduced norm is
+at most~$\rho$.'' The spec does not specify which sampling algorithm
+to use; the C reference's
+\texttt{quat\_lattice\_sample\_from\_ball} (\texttt{lat\_ball.c:58})
+implements a specific algorithm that we initially missed:
+\begin{enumerate}[nosep]
+  \item Compute the primal Gram $G$ of the lattice basis.
+  \item Compute the dual Gram $\mathrm{dual}G = \mathrm{adj}(G)$
+        and $\det G$.
+  \item LLL-reduce $\mathrm{dual}G$ \emph{in place}, tracking the
+        unimodular transformation~$U$:
+        $\mathrm{dual}G_{\mathrm{red}} = U^\top \cdot \mathrm{dual}G
+        \cdot U$.
+  \item Set per-axis bounds
+        $\mathrm{box}[i] = \sqrt{\mathrm{dual}G_{\mathrm{red}}[i][i]
+        \cdot \rho / \det G}$.
+  \item Compute $U^{-1} = \mathrm{adj}(U) \cdot \operatorname{sign}(\det U)$
+        (integer since~$U$ is unimodular).
+  \item Sample $y[i] \in [-\mathrm{box}[i], \mathrm{box}[i]]$,
+        compute $x = U^{-\top} \cdot y$, accept if
+        $0 < x^\top G x \le \rho$.
+\end{enumerate}
+Our initial port LLL-reduced the \emph{primal} Gram and used the
+naive bound $\mathrm{box}[i] = \sqrt{\rho / G_{\mathrm{red}}[i][i]}$,
+which is correct but produces a much looser bounding parallelogram.
+The acceptance rate sat around $10^{-4}$, requiring an inflated
+$200{,}000$-iter inner budget just to converge.
+
+The looseness was not subtle once we measured it: KAT~vector~3 (a
+deterministic seed where the sign retry loop is sampling-bound) ran
+to the 360\,s nextest budget and \emph{never} produced a valid
+signature in our build, while~C ref's signed in seconds.  The
+trajectory after switching to the dual-LLL approach matched the
+C~ref's per-iter behavior, and KAT~3 went from \textsc{TIMEOUT} to
+$\sim 43$\,s on the same seed.
+
+\noindent\textbf{Advice for implementers:} Algorithm~3.3 has more
+content than the spec text reveals.  Specifically, the
+``LLL'' step in the spec is on the \emph{dual} Gram (\textsc{LLL} of
+$\mathrm{adj}(G)$ tracking~$U$), and the box derived from
+$\mathrm{dual}G_{\mathrm{red}}[i][i]$ is what ties the bound to the
+ellipsoid's inertia tensor; the primal-Gram bound looks reasonable
+but is asymptotically off by the relevant Hermite-constant factor and
+makes a noticeable difference in the signing retry budget.  Read
+\texttt{lat\_ball.c} before implementing.
+
+The fix is essentially trivial in code (a $\sim$50\,LoC swap to
+\texttt{NrdBasis::from\_cols\_and\_gram(identity, dualG).l2\_reduce()}
++ a $U^{-\top}$ application after each sample), but expensive to
+identify without an external benchmark to compare against.  We had
+the existing primal-LLL path running for weeks before the per-iter
+trajectory analysis pointed at sampling efficiency.
+
 \section{Bugs from Fixed-Width Arithmetic}
 \label{sec:fixed-width-bugs}
 
