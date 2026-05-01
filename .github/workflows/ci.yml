@@ -77,7 +77,7 @@ jobs:
           # Variant-keyed cache so default and feature-variant builds
           # don't clobber each other.
           key: ${{ matrix.target }}-${{ matrix.variant || 'default' }}
-      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+      - uses: taiki-e/install-action@51cd0b8c0499559d9a4d75c0f5c67bec3a894ec8
         with:
           tool: cargo-nextest
       # `--run-ignored=all` picks up the per-KAT keygen + sign tests.

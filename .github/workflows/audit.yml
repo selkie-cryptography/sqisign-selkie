@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+      - uses: taiki-e/install-action@51cd0b8c0499559d9a4d75c0f5c67bec3a894ec8
         with:
           tool: cargo-deny
 
@@ -120,7 +120,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+      - uses: taiki-e/install-action@51cd0b8c0499559d9a4d75c0f5c67bec3a894ec8
         with:
           tool: cargo-bloat
 
@@ -249,7 +249,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
+      - uses: taiki-e/install-action@51cd0b8c0499559d9a4d75c0f5c67bec3a894ec8
         with:
           tool: cargo-public-api
       - name: Capture API surface
