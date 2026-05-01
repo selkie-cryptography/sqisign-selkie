@@ -43,14 +43,18 @@ jobs:
           cargo build --release --bench dudect --bench tacet --features expose-internals
 
       # DudeCT: runs continuously, timeout caps it.
+      # The glob must skip the .d dep-info file that cargo leaves next
+      # to the binary — find the sole executable instead.
       - name: Run DudeCT
         run: |
-          timeout 120 ./target/release/deps/dudect-* 2>&1 | tee dudect-output.txt || true
+          bin=$(find ./target/release/deps -maxdepth 1 -name 'dudect-*' -executable -type f)
+          timeout 120 "$bin" 2>&1 | tee dudect-output.txt || true
 
       # Tacet: runs to completion per function per model.
       - name: Run Tacet
         run: |
-          timeout 300 ./target/release/deps/tacet-* 2>&1 | tee tacet-output.txt || true
+          bin=$(find ./target/release/deps -maxdepth 1 -name 'tacet-*' -executable -type f)
+          timeout 300 "$bin" 2>&1 | tee tacet-output.txt || true
 
       # Convert both to JSON.
       - name: Generate JSON
