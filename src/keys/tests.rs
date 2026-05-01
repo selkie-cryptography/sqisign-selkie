@@ -174,6 +174,613 @@ fn kat_verify_all() {
     }
 }
 
+// Per-KAT verify tests (one per `KAT_VECTORS` entry). `cargo
+// nextest` runs each in its own process, so per-test isolation
+// catches a regression on a specific vector without dragging the
+// other 99 down with it. `kat_verify_all` above is the equivalent
+// loop test, kept for the default `cargo test` driver.
+
+#[test]
+fn verify_kat_000() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[0];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_001() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[1];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_002() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[2];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_003() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[3];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_004() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[4];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_005() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[5];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_006() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[6];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_007() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[7];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_008() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[8];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_009() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[9];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_010() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[10];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_011() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[11];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_012() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[12];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_013() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[13];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_014() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[14];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_015() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[15];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_016() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[16];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_017() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[17];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_018() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[18];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_019() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[19];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_020() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[20];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_021() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[21];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_022() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[22];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_023() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[23];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_024() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[24];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_025() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[25];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_026() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[26];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_027() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[27];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_028() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[28];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_029() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[29];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_030() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[30];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_031() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[31];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_032() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[32];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_033() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[33];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_034() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[34];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_035() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[35];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_036() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[36];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_037() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[37];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_038() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[38];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_039() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[39];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_040() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[40];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_041() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[41];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_042() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[42];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_043() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[43];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_044() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[44];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_045() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[45];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_046() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[46];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_047() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[47];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_048() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[48];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_049() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[49];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_050() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[50];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_051() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[51];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_052() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[52];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_053() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[53];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_054() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[54];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_055() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[55];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_056() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[56];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_057() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[57];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_058() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[58];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_059() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[59];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_060() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[60];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_061() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[61];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_062() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[62];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_063() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[63];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_064() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[64];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_065() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[65];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_066() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[66];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_067() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[67];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_068() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[68];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_069() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[69];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_070() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[70];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_071() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[71];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_072() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[72];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_073() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[73];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_074() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[74];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_075() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[75];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_076() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[76];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_077() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[77];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_078() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[78];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_079() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[79];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_080() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[80];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_081() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[81];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_082() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[82];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_083() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[83];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_084() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[84];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_085() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[85];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_086() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[86];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_087() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[87];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_088() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[88];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_089() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[89];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_090() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[90];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_091() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[91];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_092() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[92];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_093() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[93];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_094() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[94];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_095() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[95];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_096() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[96];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_097() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[97];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_098() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[98];
+    verify_kat(pk, sm);
+}
+
+#[test]
+fn verify_kat_099() {
+    let (_seed, pk, _sk, _msg, sm) = kat_data::KAT_VECTORS[99];
+    verify_kat(pk, sm);
+}
+
+
 /// Cross-check all KAT vectors against the C reference implementation
 /// at a pinned commit.
 ///

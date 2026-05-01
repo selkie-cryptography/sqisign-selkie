@@ -91,6 +91,634 @@ fn keygen_kat_all() {
     }
 }
 
+/// Deterministic keygen on `KAT_VECTORS[idx]`: must match the KAT pk and sk.
+fn keygen_kat_idx_inner(idx: usize) {
+    let (seed_hex, pk_hex, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[idx];
+    let seed_bytes = hex::decode(seed_hex).expect("valid hex");
+    let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
+    let sk = SigningKey::generate_derand(&seed)
+        .unwrap_or_else(|e| panic!("KAT[{idx}] keygen exhausted retries or errored: {e:?}"));
+    let pk_bytes = hex::decode(pk_hex).expect("valid hex");
+    assert_eq!(
+        &sk.verifying_key().to_bytes()[..],
+        pk_bytes.as_slice(),
+        "KAT[{idx}]: pk mismatch"
+    );
+    let sk_bytes = hex::decode(sk_hex).expect("valid hex");
+    assert_eq!(
+        &sk.to_bytes()[..],
+        sk_bytes.as_slice(),
+        "KAT[{idx}]: sk mismatch"
+    );
+}
+
+// Per-KAT keygen tests (one per `KAT_VECTORS` entry). Each runs
+// `generate_derand(seed)` and asserts the resulting (pk, sk)
+// match the KAT vector. `#[ignore]`d because keygen is a
+// probabilistic retry loop that may take seconds; run via
+// `cargo nextest run --run-ignored=ignored-only --profile kat -E 'test(/keygen_kat_/)'`.
+
+#[test]
+#[ignore]
+fn keygen_kat_000() {
+    keygen_kat_idx_inner(0);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_001() {
+    keygen_kat_idx_inner(1);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_002() {
+    keygen_kat_idx_inner(2);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_003() {
+    keygen_kat_idx_inner(3);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_004() {
+    keygen_kat_idx_inner(4);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_005() {
+    keygen_kat_idx_inner(5);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_006() {
+    keygen_kat_idx_inner(6);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_007() {
+    keygen_kat_idx_inner(7);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_008() {
+    keygen_kat_idx_inner(8);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_009() {
+    keygen_kat_idx_inner(9);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_010() {
+    keygen_kat_idx_inner(10);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_011() {
+    keygen_kat_idx_inner(11);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_012() {
+    keygen_kat_idx_inner(12);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_013() {
+    keygen_kat_idx_inner(13);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_014() {
+    keygen_kat_idx_inner(14);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_015() {
+    keygen_kat_idx_inner(15);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_016() {
+    keygen_kat_idx_inner(16);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_017() {
+    keygen_kat_idx_inner(17);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_018() {
+    keygen_kat_idx_inner(18);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_019() {
+    keygen_kat_idx_inner(19);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_020() {
+    keygen_kat_idx_inner(20);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_021() {
+    keygen_kat_idx_inner(21);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_022() {
+    keygen_kat_idx_inner(22);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_023() {
+    keygen_kat_idx_inner(23);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_024() {
+    keygen_kat_idx_inner(24);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_025() {
+    keygen_kat_idx_inner(25);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_026() {
+    keygen_kat_idx_inner(26);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_027() {
+    keygen_kat_idx_inner(27);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_028() {
+    keygen_kat_idx_inner(28);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_029() {
+    keygen_kat_idx_inner(29);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_030() {
+    keygen_kat_idx_inner(30);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_031() {
+    keygen_kat_idx_inner(31);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_032() {
+    keygen_kat_idx_inner(32);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_033() {
+    keygen_kat_idx_inner(33);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_034() {
+    keygen_kat_idx_inner(34);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_035() {
+    keygen_kat_idx_inner(35);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_036() {
+    keygen_kat_idx_inner(36);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_037() {
+    keygen_kat_idx_inner(37);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_038() {
+    keygen_kat_idx_inner(38);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_039() {
+    keygen_kat_idx_inner(39);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_040() {
+    keygen_kat_idx_inner(40);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_041() {
+    keygen_kat_idx_inner(41);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_042() {
+    keygen_kat_idx_inner(42);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_043() {
+    keygen_kat_idx_inner(43);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_044() {
+    keygen_kat_idx_inner(44);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_045() {
+    keygen_kat_idx_inner(45);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_046() {
+    keygen_kat_idx_inner(46);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_047() {
+    keygen_kat_idx_inner(47);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_048() {
+    keygen_kat_idx_inner(48);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_049() {
+    keygen_kat_idx_inner(49);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_050() {
+    keygen_kat_idx_inner(50);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_051() {
+    keygen_kat_idx_inner(51);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_052() {
+    keygen_kat_idx_inner(52);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_053() {
+    keygen_kat_idx_inner(53);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_054() {
+    keygen_kat_idx_inner(54);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_055() {
+    keygen_kat_idx_inner(55);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_056() {
+    keygen_kat_idx_inner(56);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_057() {
+    keygen_kat_idx_inner(57);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_058() {
+    keygen_kat_idx_inner(58);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_059() {
+    keygen_kat_idx_inner(59);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_060() {
+    keygen_kat_idx_inner(60);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_061() {
+    keygen_kat_idx_inner(61);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_062() {
+    keygen_kat_idx_inner(62);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_063() {
+    keygen_kat_idx_inner(63);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_064() {
+    keygen_kat_idx_inner(64);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_065() {
+    keygen_kat_idx_inner(65);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_066() {
+    keygen_kat_idx_inner(66);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_067() {
+    keygen_kat_idx_inner(67);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_068() {
+    keygen_kat_idx_inner(68);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_069() {
+    keygen_kat_idx_inner(69);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_070() {
+    keygen_kat_idx_inner(70);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_071() {
+    keygen_kat_idx_inner(71);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_072() {
+    keygen_kat_idx_inner(72);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_073() {
+    keygen_kat_idx_inner(73);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_074() {
+    keygen_kat_idx_inner(74);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_075() {
+    keygen_kat_idx_inner(75);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_076() {
+    keygen_kat_idx_inner(76);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_077() {
+    keygen_kat_idx_inner(77);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_078() {
+    keygen_kat_idx_inner(78);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_079() {
+    keygen_kat_idx_inner(79);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_080() {
+    keygen_kat_idx_inner(80);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_081() {
+    keygen_kat_idx_inner(81);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_082() {
+    keygen_kat_idx_inner(82);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_083() {
+    keygen_kat_idx_inner(83);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_084() {
+    keygen_kat_idx_inner(84);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_085() {
+    keygen_kat_idx_inner(85);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_086() {
+    keygen_kat_idx_inner(86);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_087() {
+    keygen_kat_idx_inner(87);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_088() {
+    keygen_kat_idx_inner(88);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_089() {
+    keygen_kat_idx_inner(89);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_090() {
+    keygen_kat_idx_inner(90);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_091() {
+    keygen_kat_idx_inner(91);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_092() {
+    keygen_kat_idx_inner(92);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_093() {
+    keygen_kat_idx_inner(93);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_094() {
+    keygen_kat_idx_inner(94);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_095() {
+    keygen_kat_idx_inner(95);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_096() {
+    keygen_kat_idx_inner(96);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_097() {
+    keygen_kat_idx_inner(97);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_098() {
+    keygen_kat_idx_inner(98);
+}
+
+#[test]
+#[ignore]
+fn keygen_kat_099() {
+    keygen_kat_idx_inner(99);
+}
+
+
 /// Deserialize every KAT signing key, sign the corresponding
 /// message, and verify with the paired public key.
 ///
@@ -195,17 +823,8 @@ fn sign_kat_zero_only() {
     eprintln!("sign_kat_zero_only: verify OK in {:?}", t1.elapsed());
 }
 
-/// `KAT_IDX=N`-parametrized deterministic sign-and-verify probe.
-/// Used to confirm `sign_derand` is genuinely deterministic and to
-/// localize response-phase hangs on specific trajectories.
-#[test]
-#[ignore]
-fn sign_kat_idx_probe() {
-    let kat_idx: usize = std::env::var("KAT_IDX")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    eprintln!("sign_kat_idx_probe: KAT_IDX={kat_idx}");
+/// Deterministic sign-and-verify probe for `KAT_VECTORS[kat_idx]`.
+fn sign_kat_idx_probe_inner(kat_idx: usize) {
     let (seed_hex, pk_hex, sk_hex, msg_hex, _) = crate::keys::kat_data::KAT_VECTORS[kat_idx];
     let seed_bytes = hex::decode(seed_hex).expect("valid hex");
     let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
@@ -219,14 +838,633 @@ fn sign_kat_idx_probe() {
     let t0 = std::time::Instant::now();
     let sig = sk
         .sign_derand(&msg, &seed)
-        .expect("sign_derand must succeed");
+        .expect("sign_derand must succeed within retry budget");
     let elapsed = t0.elapsed();
-    let r = vk.verify(&msg, &sig);
-    eprintln!(
-        "sign_kat_idx_probe: KAT[{kat_idx}] sign={:?} verify={:?}",
-        elapsed, r
-    );
+    vk.verify(&msg, &sig)
+        .unwrap_or_else(|e| panic!("KAT[{kat_idx}] verify failed: {e:?}"));
+    eprintln!("sign_kat_derand_{kat_idx:03}: sign={elapsed:?}");
 }
+
+/// `KAT_IDX=N`-parametrized deterministic sign-and-verify probe.
+/// Used to confirm `sign_derand` is genuinely deterministic and to
+/// localize response-phase hangs on specific trajectories.
+#[test]
+#[ignore]
+fn sign_kat_idx_probe() {
+    let kat_idx: usize = std::env::var("KAT_IDX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    eprintln!("sign_kat_idx_probe: KAT_IDX={kat_idx}");
+    sign_kat_idx_probe_inner(kat_idx);
+}
+
+// Per-KAT deterministic sign+verify tests (one per `KAT_VECTORS`
+// Each runs `sign_derand(seed)` + `verify`. `#[ignore]`d
+// because sign goes through a long retry loop on certain
+// trajectories; run via
+// `cargo nextest run --run-ignored=ignored-only --profile kat -E 'test(/sign_kat_derand_/)'`
+
+#[test]
+#[ignore]
+fn sign_kat_derand_000() {
+    sign_kat_idx_probe_inner(0);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_001() {
+    sign_kat_idx_probe_inner(1);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_002() {
+    sign_kat_idx_probe_inner(2);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_003() {
+    sign_kat_idx_probe_inner(3);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_004() {
+    sign_kat_idx_probe_inner(4);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_005() {
+    sign_kat_idx_probe_inner(5);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_006() {
+    sign_kat_idx_probe_inner(6);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_007() {
+    sign_kat_idx_probe_inner(7);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_008() {
+    sign_kat_idx_probe_inner(8);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_009() {
+    sign_kat_idx_probe_inner(9);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_010() {
+    sign_kat_idx_probe_inner(10);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_011() {
+    sign_kat_idx_probe_inner(11);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_012() {
+    sign_kat_idx_probe_inner(12);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_013() {
+    sign_kat_idx_probe_inner(13);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_014() {
+    sign_kat_idx_probe_inner(14);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_015() {
+    sign_kat_idx_probe_inner(15);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_016() {
+    sign_kat_idx_probe_inner(16);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_017() {
+    sign_kat_idx_probe_inner(17);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_018() {
+    sign_kat_idx_probe_inner(18);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_019() {
+    sign_kat_idx_probe_inner(19);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_020() {
+    sign_kat_idx_probe_inner(20);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_021() {
+    sign_kat_idx_probe_inner(21);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_022() {
+    sign_kat_idx_probe_inner(22);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_023() {
+    sign_kat_idx_probe_inner(23);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_024() {
+    sign_kat_idx_probe_inner(24);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_025() {
+    sign_kat_idx_probe_inner(25);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_026() {
+    sign_kat_idx_probe_inner(26);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_027() {
+    sign_kat_idx_probe_inner(27);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_028() {
+    sign_kat_idx_probe_inner(28);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_029() {
+    sign_kat_idx_probe_inner(29);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_030() {
+    sign_kat_idx_probe_inner(30);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_031() {
+    sign_kat_idx_probe_inner(31);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_032() {
+    sign_kat_idx_probe_inner(32);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_033() {
+    sign_kat_idx_probe_inner(33);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_034() {
+    sign_kat_idx_probe_inner(34);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_035() {
+    sign_kat_idx_probe_inner(35);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_036() {
+    sign_kat_idx_probe_inner(36);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_037() {
+    sign_kat_idx_probe_inner(37);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_038() {
+    sign_kat_idx_probe_inner(38);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_039() {
+    sign_kat_idx_probe_inner(39);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_040() {
+    sign_kat_idx_probe_inner(40);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_041() {
+    sign_kat_idx_probe_inner(41);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_042() {
+    sign_kat_idx_probe_inner(42);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_043() {
+    sign_kat_idx_probe_inner(43);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_044() {
+    sign_kat_idx_probe_inner(44);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_045() {
+    sign_kat_idx_probe_inner(45);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_046() {
+    sign_kat_idx_probe_inner(46);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_047() {
+    sign_kat_idx_probe_inner(47);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_048() {
+    sign_kat_idx_probe_inner(48);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_049() {
+    sign_kat_idx_probe_inner(49);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_050() {
+    sign_kat_idx_probe_inner(50);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_051() {
+    sign_kat_idx_probe_inner(51);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_052() {
+    sign_kat_idx_probe_inner(52);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_053() {
+    sign_kat_idx_probe_inner(53);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_054() {
+    sign_kat_idx_probe_inner(54);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_055() {
+    sign_kat_idx_probe_inner(55);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_056() {
+    sign_kat_idx_probe_inner(56);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_057() {
+    sign_kat_idx_probe_inner(57);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_058() {
+    sign_kat_idx_probe_inner(58);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_059() {
+    sign_kat_idx_probe_inner(59);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_060() {
+    sign_kat_idx_probe_inner(60);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_061() {
+    sign_kat_idx_probe_inner(61);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_062() {
+    sign_kat_idx_probe_inner(62);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_063() {
+    sign_kat_idx_probe_inner(63);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_064() {
+    sign_kat_idx_probe_inner(64);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_065() {
+    sign_kat_idx_probe_inner(65);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_066() {
+    sign_kat_idx_probe_inner(66);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_067() {
+    sign_kat_idx_probe_inner(67);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_068() {
+    sign_kat_idx_probe_inner(68);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_069() {
+    sign_kat_idx_probe_inner(69);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_070() {
+    sign_kat_idx_probe_inner(70);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_071() {
+    sign_kat_idx_probe_inner(71);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_072() {
+    sign_kat_idx_probe_inner(72);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_073() {
+    sign_kat_idx_probe_inner(73);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_074() {
+    sign_kat_idx_probe_inner(74);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_075() {
+    sign_kat_idx_probe_inner(75);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_076() {
+    sign_kat_idx_probe_inner(76);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_077() {
+    sign_kat_idx_probe_inner(77);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_078() {
+    sign_kat_idx_probe_inner(78);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_079() {
+    sign_kat_idx_probe_inner(79);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_080() {
+    sign_kat_idx_probe_inner(80);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_081() {
+    sign_kat_idx_probe_inner(81);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_082() {
+    sign_kat_idx_probe_inner(82);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_083() {
+    sign_kat_idx_probe_inner(83);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_084() {
+    sign_kat_idx_probe_inner(84);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_085() {
+    sign_kat_idx_probe_inner(85);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_086() {
+    sign_kat_idx_probe_inner(86);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_087() {
+    sign_kat_idx_probe_inner(87);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_088() {
+    sign_kat_idx_probe_inner(88);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_089() {
+    sign_kat_idx_probe_inner(89);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_090() {
+    sign_kat_idx_probe_inner(90);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_091() {
+    sign_kat_idx_probe_inner(91);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_092() {
+    sign_kat_idx_probe_inner(92);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_093() {
+    sign_kat_idx_probe_inner(93);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_094() {
+    sign_kat_idx_probe_inner(94);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_095() {
+    sign_kat_idx_probe_inner(95);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_096() {
+    sign_kat_idx_probe_inner(96);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_097() {
+    sign_kat_idx_probe_inner(97);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_098() {
+    sign_kat_idx_probe_inner(98);
+}
+
+#[test]
+#[ignore]
+fn sign_kat_derand_099() {
+    sign_kat_idx_probe_inner(99);
+}
+
 
 /// Verify the *C reference's* KAT[0] signature with our verifier.
 ///

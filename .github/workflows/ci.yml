@@ -63,7 +63,11 @@ jobs:
       - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
           tool: cargo-nextest
-      - run: cargo nextest run --target ${{ matrix.target }}
+      # `--run-ignored=all` picks up the per-KAT keygen + sign tests.
+      # They're marked `#[ignore]` so plain `cargo test` skips them
+      # (each can take minutes), but nextest runs them in parallel
+      # with per-test timeouts via the `kat` profile.
+      - run: cargo nextest run --profile kat --run-ignored=all --target ${{ matrix.target }}
       - run: cargo test --doc --target ${{ matrix.target }}
 
   proptest:
