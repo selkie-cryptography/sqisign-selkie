@@ -634,7 +634,11 @@ impl<const N: usize> Lattice<N> {
     ///
     /// [Alg. 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
     /// [Alg. 4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.3
-    pub fn sample_from_ball<const W: usize>(&self, radius: &BigInt<N>) -> Option<Element<N>> {
+    pub fn sample_from_ball<const W: usize, R: RngCore>(
+        &self,
+        radius: &BigInt<N>,
+        rng: &mut R,
+    ) -> Option<Element<N>> {
         // Widen columns to BigInt<W>, then LLL-reduce via
         // `NrdBasis::l2_reduce`. Without reduction, `gram[i][i]`
         // reflects the raw HNF basis whose diagonals can be as
@@ -733,7 +737,7 @@ impl<const N: usize> Lattice<N> {
                 loop {
                     let mut bytes = vec![0u8; byte_cap];
                     let needed = (bitlen as usize).div_ceil(8);
-                    OsRng.fill_bytes(&mut bytes[..needed]);
+                    rng.fill_bytes(&mut bytes[..needed]);
                     let val = BigInt::<W>::from_bytes_le_unsigned(&bytes[..needed]);
                     let val = val.abs(); // ensure positive
                     if val.bitsize() <= bitlen {
@@ -1933,10 +1937,10 @@ impl LeftIdeal<4> {
         let n_bits = n.bitsize() as usize;
         let n_bytes = n_bits.div_ceil(8);
 
-        let sample_in_range = || -> BigInt<4> {
+        let mut sample_in_range = || -> BigInt<4> {
             loop {
                 let mut bytes = [0u8; 32];
-                OsRng.fill_bytes(&mut bytes[..n_bytes]);
+                rng.fill_bytes(&mut bytes[..n_bytes]);
                 if n_bits % 8 != 0 {
                     bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
                 }

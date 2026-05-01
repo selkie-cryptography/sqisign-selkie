@@ -33,9 +33,6 @@
 
 pub(crate) mod isogeny;
 
-#[cfg(test)]
-mod tests;
-
 use core::ops::Mul;
 
 use crate::{
@@ -46,6 +43,9 @@ use crate::{
     fields::fp2::Fp2,
     surfaces::isogeny::{GluingKernel, SplittingKernel},
 };
+
+#[cfg(test)]
+mod tests;
 
 // ---------------------------------------------------------------------------
 // Theta internals (pub(crate))

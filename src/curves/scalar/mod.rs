@@ -9,6 +9,9 @@ use core::fmt;
 
 use crate::quaternions::bigint::BigInt;
 
+#[cfg(test)]
+mod tests;
+
 /// A scalar for elliptic curve point multiplication.
 ///
 /// Stored as four little-endian u64 limbs (256-bit unsigned integer).
@@ -246,95 +249,5 @@ impl fmt::Debug for Scalar {
             write!(f, "{:016x}", self.0[i])?;
         }
         write!(f, ")")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bits_be_small() {
-        let s = Scalar::from_u64(0b1011);
-        let bits: Vec<bool> = s.bits_be(4).collect();
-        assert_eq!(bits, vec![true, false, true, true]);
-    }
-
-    #[test]
-    fn bits_be_zero_padded() {
-        let s = Scalar::from_u64(3); // 0b11
-        let bits: Vec<bool> = s.bits_be(8).collect();
-        assert_eq!(
-            bits,
-            vec![false, false, false, false, false, false, true, true]
-        );
-    }
-
-    #[test]
-    fn bit_length() {
-        assert_eq!(Scalar::ZERO.bit_length(), 0);
-        assert_eq!(Scalar::ONE.bit_length(), 1);
-        assert_eq!(Scalar::from_u64(255).bit_length(), 8);
-        assert_eq!(Scalar::from_u64(256).bit_length(), 9);
-    }
-
-    #[test]
-    fn reduce_mod2k_masks_correctly() {
-        let s = Scalar::from_u64(0xFF);
-        assert_eq!(s.reduce_mod2k(4), Scalar::from_u64(0x0F));
-        assert_eq!(s.reduce_mod2k(8), Scalar::from_u64(0xFF));
-        assert_eq!(s.reduce_mod2k(1), Scalar::from_u64(1));
-    }
-
-    #[test]
-    fn add_mod2k_wraps() {
-        let a = Scalar::from_u64(250);
-        let b = Scalar::from_u64(10);
-        // 250 + 10 = 260 = 0x104, mod 2^8 = 4
-        assert_eq!(a.add_mod2k(&b, 8), Scalar::from_u64(4));
-    }
-
-    #[test]
-    fn sub_mod2k_wraps() {
-        let a = Scalar::from_u64(3);
-        let b = Scalar::from_u64(5);
-        // 3 - 5 mod 2^8 = 254
-        assert_eq!(a.sub_mod2k(&b, 8), Scalar::from_u64(254));
-    }
-
-    #[test]
-    fn mul_mod2k_truncates() {
-        let a = Scalar::from_u64(200);
-        let b = Scalar::from_u64(200);
-        // 200 * 200 = 40000 = 0x9C40, mod 2^8 = 0x40 = 64
-        assert_eq!(a.mul_mod2k(&b, 8), Scalar::from_u64(64));
-    }
-
-    #[test]
-    fn inv_mod2k_round_trip() {
-        let a = Scalar::from_u64(7); // odd
-        let inv = a.inv_mod2k(248).unwrap();
-        let product = a.mul_mod2k(&inv, 248);
-        assert_eq!(product, Scalar::ONE);
-    }
-
-    #[test]
-    fn inv_mod2k_even_returns_none() {
-        let a = Scalar::from_u64(6); // even
-        assert!(a.inv_mod2k(248).is_none());
-    }
-
-    #[test]
-    fn inv_mod2k_large_odd() {
-        // 2^248 - 1 is odd
-        let a = Scalar::from_limbs([
-            u64::MAX,
-            u64::MAX,
-            u64::MAX,
-            (1u64 << 56) - 1, // 248 bits
-        ]);
-        let inv = a.inv_mod2k(248).unwrap();
-        let product = a.mul_mod2k(&inv, 248);
-        assert_eq!(product, Scalar::ONE);
     }
 }

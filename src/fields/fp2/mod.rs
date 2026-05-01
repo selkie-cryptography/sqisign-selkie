@@ -14,6 +14,9 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 use crate::fields::fp::{FP_ENCODED_BYTES, Fp};
 
+#[cfg(test)]
+mod tests;
+
 /// Number of bytes in a canonical encoding of an element of F_{p²}.
 pub const FP2_ENCODED_BYTES: usize = 2 * FP_ENCODED_BYTES;
 
@@ -354,57 +357,5 @@ impl Eq for Fp2 {}
 impl PartialEq for Fp2 {
     fn eq(&self, other: &Fp2) -> bool {
         self.ct_eq(other).into()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn i_squared_is_minus_one() {
-        let i2 = Fp2::I.square();
-        assert_eq!(i2, -Fp2::ONE);
-    }
-
-    #[test]
-    fn conjugate_mul_is_norm() {
-        let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
-        let n = &a * &a.conjugate();
-        // Should be a real number equal to the norm
-        assert_eq!(n.b, Fp::ZERO);
-        assert_eq!(n.a, a.norm());
-    }
-
-    #[test]
-    fn inversion() {
-        let a = Fp2::new(Fp::from_small(5), Fp::from_small(13));
-        let a_inv = a.invert();
-        assert_eq!(&a * &a_inv, Fp2::ONE);
-    }
-
-    #[test]
-    fn karatsuba_matches_schoolbook() {
-        let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
-        let b = Fp2::new(Fp::from_small(11), Fp::from_small(5));
-        // (3 + 7i)(11 + 5i) = 33 + 15i + 77i + 35i² = 33 - 35 + (15+77)i = -2 + 92i
-        let c = &a * &b;
-        // Check via from_small arithmetic
-        let expected_real = &Fp::from_small(33) - &Fp::from_small(35);
-        let expected_imag = &Fp::from_small(15) + &Fp::from_small(77);
-        assert_eq!(c.a, expected_real);
-        assert_eq!(c.b, expected_imag);
-    }
-
-    #[test]
-    fn roundtrip_bytes() {
-        let a = Fp2::new(Fp::from_small(42), Fp::from_small(99));
-        let bytes = a.to_bytes();
-        let b = Fp2::from_bytes(&bytes);
-        assert_eq!(a, b);
     }
 }

@@ -806,7 +806,7 @@ impl SigningKey {
             // ~3840 bits ≈ 60 limbs. Use W=64 for margin.
             #[cfg(test)]
             let _t_sample = std::time::Instant::now();
-            let alpha_rsp_w = match intersection_lat.sample_from_ball::<64>(&radius) {
+            let alpha_rsp_w = match intersection_lat.sample_from_ball::<64, _>(&radius, rng) {
                 Some(a) => {
                     #[cfg(test)]
                     eprintln!(
@@ -1283,7 +1283,10 @@ impl SigningKey {
 
             // Line 36: ComputeChallengeIsogeny
             #[cfg(test)]
-            eprintln!("[sign {_iter}] entering compute_challenge_isogeny (n_bt={})", n_bt_te.value());
+            eprintln!(
+                "[sign {_iter}] entering compute_challenge_isogeny (n_bt={})",
+                n_bt_te.value()
+            );
             let (e_chl_final, p_chl_final, q_chl_final, pmq_chl_final) =
                 match compute_challenge_isogeny(
                     &basis_pk, &chl, &e_chl, &p_chl, &q_chl, &pmq_chl, n_bt_te,

@@ -15,6 +15,9 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
+#[cfg(test)]
+mod tests;
+
 /// Number of bytes in a canonical encoding of an element of F_p.
 pub const FP_ENCODED_BYTES: usize = 32;
 
@@ -572,91 +575,5 @@ impl Eq for Fp {}
 impl PartialEq for Fp {
     fn eq(&self, other: &Fp) -> bool {
         self.ct_eq(other).into()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zero_is_additive_identity() {
-        let a = Fp::from_small(42);
-        assert_eq!(a, &a + &Fp::ZERO);
-        assert_eq!(a, &Fp::ZERO + &a);
-    }
-
-    #[test]
-    fn one_is_multiplicative_identity() {
-        let a = Fp::from_small(42);
-        assert_eq!(a, &a * &Fp::ONE);
-        assert_eq!(a, &Fp::ONE * &a);
-    }
-
-    #[test]
-    fn subtraction_is_inverse_of_addition() {
-        let a = Fp::from_small(100);
-        let b = Fp::from_small(42);
-        let c = &a + &b;
-        assert_eq!(a, &c - &b);
-    }
-
-    #[test]
-    fn negation() {
-        let a = Fp::from_small(42);
-        let neg_a = -&a;
-        assert_eq!(Fp::ZERO, &a + &neg_a);
-    }
-
-    #[test]
-    fn multiplication_distributes() {
-        let a = Fp::from_small(3);
-        let b = Fp::from_small(7);
-        let c = Fp::from_small(11);
-        // a * (b + c) == a*b + a*c
-        let lhs = &a * &(&b + &c);
-        let rhs = &(&a * &b) + &(&a * &c);
-        assert_eq!(lhs, rhs);
-    }
-
-    #[test]
-    fn inversion() {
-        let a = Fp::from_small(42);
-        let a_inv = a.invert();
-        assert_eq!(Fp::ONE, &a * &a_inv);
-    }
-
-    #[test]
-    fn square_equals_mul() {
-        let a = Fp::from_small(17);
-        assert_eq!(a.square(), &a * &a);
-    }
-
-    #[test]
-    fn roundtrip_bytes() {
-        let a = Fp::from_small(12345);
-        let bytes = a.to_bytes();
-        let b = Fp::from_bytes(&bytes);
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn zero_encoding() {
-        let bytes = Fp::ZERO.to_bytes();
-        assert_eq!(bytes, [0u8; 32]);
-    }
-
-    #[test]
-    fn sqrt_of_square() {
-        let a = Fp::from_small(7);
-        let a2 = a.square();
-        assert!(bool::from(a2.is_square()));
-        let r = a2.sqrt();
-        // sqrt may return either root
-        assert!(r == a || r == -a);
     }
 }

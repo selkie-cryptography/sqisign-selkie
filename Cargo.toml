@@ -100,18 +100,6 @@ name = "alloc_budget"
 required-features = ["expose-internals"]
 
 [[test]]
-name = "proptest_field"
-required-features = ["expose-internals"]
-
-[[test]]
-name = "proptest_quaternion"
-required-features = ["expose-internals"]
-
-[[test]]
-name = "proptest_scalar"
-required-features = ["expose-internals"]
-
-[[test]]
 name = "zeroize"
 required-features = ["expose-internals"]
 

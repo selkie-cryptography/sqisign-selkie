@@ -195,6 +195,39 @@ fn sign_kat_zero_only() {
     eprintln!("sign_kat_zero_only: verify OK in {:?}", t1.elapsed());
 }
 
+/// `KAT_IDX=N`-parametrized deterministic sign-and-verify probe.
+/// Used to confirm `sign_derand` is genuinely deterministic and to
+/// localize response-phase hangs on specific trajectories.
+#[test]
+#[ignore]
+fn sign_kat_idx_probe() {
+    let kat_idx: usize = std::env::var("KAT_IDX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    eprintln!("sign_kat_idx_probe: KAT_IDX={kat_idx}");
+    let (seed_hex, pk_hex, sk_hex, msg_hex, _) = crate::keys::kat_data::KAT_VECTORS[kat_idx];
+    let seed_bytes = hex::decode(seed_hex).expect("valid hex");
+    let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
+    let sk_bytes = hex::decode(sk_hex).expect("valid hex");
+    let pk_bytes = hex::decode(pk_hex).expect("valid hex");
+    let msg = hex::decode(msg_hex).expect("valid hex");
+    let sk =
+        SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap()).expect("sk should parse");
+    let vk =
+        VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).expect("pk should parse");
+    let t0 = std::time::Instant::now();
+    let sig = sk
+        .sign_derand(&msg, &seed)
+        .expect("sign_derand must succeed");
+    let elapsed = t0.elapsed();
+    let r = vk.verify(&msg, &sig);
+    eprintln!(
+        "sign_kat_idx_probe: KAT[{kat_idx}] sign={:?} verify={:?}",
+        elapsed, r
+    );
+}
+
 /// Verify the *C reference's* KAT[0] signature with our verifier.
 ///
 /// Isolates `verify` bugs from `sign` bugs: if our verifier rejects the
@@ -202,7 +235,8 @@ fn sign_kat_zero_only() {
 /// accepts, sign is the source of `sign_kat_zero_only`'s
 /// `VerificationFailed`.
 ///
-/// Run with: `cargo test --lib --release verify_kat_zero_cref_sig -- --ignored`.
+/// Run with: `cargo test --lib --release verify_kat_zero_cref_sig --
+/// --ignored`.
 #[test]
 #[ignore]
 fn verify_kat_zero_cref_sig() {
@@ -213,8 +247,7 @@ fn verify_kat_zero_cref_sig() {
 
     // NIST signed-message format: sm = sig || msg. Our SIGNATURE_BYTES
     // is 148, so sig = sm[..148].
-    let sig_bytes: [u8; crate::keys::SIGNATURE_BYTES] = sm
-        [..crate::keys::SIGNATURE_BYTES]
+    let sig_bytes: [u8; crate::keys::SIGNATURE_BYTES] = sm[..crate::keys::SIGNATURE_BYTES]
         .try_into()
         .expect("sig prefix is SIGNATURE_BYTES");
 
@@ -225,8 +258,7 @@ fn verify_kat_zero_cref_sig() {
         "sm tail must equal msg"
     );
 
-    let vk =
-        VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).expect("pk parses");
+    let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).expect("pk parses");
     let sig = Signature::from_bytes(&sig_bytes).expect("C ref sig parses");
 
     // Dump C ref's signature fields for cross-comparison with our
