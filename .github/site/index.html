@@ -1910,8 +1910,11 @@
       const dResults = dudect ? (dudect.results || []) : [];
       const tResults = tacetData ? (tacetData.results || []) : [];
 
+      let html = '';
+
       if (dResults.length === 0 && tResults.length === 0) {
-        return '<p class="empty">No data for this commit.</p>';
+        html += '<h4 style="margin:0 0 8px">DudeCT + Tacet (statistical)</h4>';
+        html += '<p class="empty" style="margin:0 0 24px">Awaiting first run.</p>';
       }
 
       // Merge: build a per-function row with dudect + tacet columns.
@@ -1928,12 +1931,13 @@
         }
       }
 
+      if (funcs.size > 0) {
       const anyFail = dResults.some(r => r.status === 'fail') || tResults.some(r => r.status === 'fail');
       const summaryColor = anyFail ? 'var(--red)' : 'var(--green)';
       const failCount = dResults.filter(r => r.status === 'fail').length + tResults.filter(r => r.status === 'fail').length;
       const summaryText = anyFail ? failCount + ' FAIL' : 'PASS';
 
-      let html = `<div class="mutants-summary">
+      html += `<div class="mutants-summary">
         <div class="mutants-stat"><span class="value" style="color:${summaryColor}">${summaryText}</span><span class="label">${funcs.size} functions tested</span></div>
       </div>`;
       // Collect tacet model names from data.
@@ -2018,6 +2022,7 @@
       }
 
       html += '</tbody></table>';
+      } // end if (funcs.size > 0)
 
       // ctgrind: Valgrind-based secret taint tracking.
       if (ctgrindData) {
