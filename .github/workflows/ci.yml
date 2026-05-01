@@ -16,7 +16,7 @@ env:
 
 jobs:
   test:
-    name: Test (${{ matrix.target }}, ${{ matrix.bits }}-bit)
+    name: Test (${{ matrix.target }}, ${{ matrix.bits }}-bit${{ matrix.variant && format(', {0}', matrix.variant) || '' }})
     runs-on: ${{ matrix.os }}
     # GitHub Actions hard cap is 360 min (6h). The per-KAT
     # `sign_kat_derand_NNN` tests take 30 s — 30 min each
@@ -28,9 +28,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Rust Tier 1 targets. 64-bit targets run on native runners;
-          # 32-bit targets cross-compile on 64-bit runners (the test
-          # binaries run natively since x86_64 CPUs support i686).
+          # Rust Tier 1 targets, default features. 64-bit targets run
+          # on native runners; 32-bit targets cross-compile on 64-bit
+          # runners (the test binaries run natively since x86_64 CPUs
+          # support i686).
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             bits: 64
@@ -50,6 +51,15 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             bits: 64
+          # Minimum-config coverage: build and test with no default
+          # features (zeroize off). Catches accidental dependencies
+          # on default-only features. One runner is enough — the
+          # zeroize gate is arch-independent.
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            bits: 64
+            variant: no-default-features
+            flags: --no-default-features
     steps:
       - uses: actions/checkout@v6
         with:
@@ -64,7 +74,9 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
-          key: ${{ matrix.target }}
+          # Variant-keyed cache so default and feature-variant builds
+          # don't clobber each other.
+          key: ${{ matrix.target }}-${{ matrix.variant || 'default' }}
       - uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486
         with:
           tool: cargo-nextest
@@ -72,8 +84,8 @@ jobs:
       # They're marked `#[ignore]` so plain `cargo test` skips them
       # (each can take minutes), but nextest runs them in parallel
       # with per-test timeouts via the `kat` profile.
-      - run: cargo nextest run --profile kat --run-ignored=all --target ${{ matrix.target }}
-      - run: cargo test --doc --target ${{ matrix.target }}
+      - run: cargo nextest run --profile kat --run-ignored=all --target ${{ matrix.target }} ${{ matrix.flags || '' }}
+      - run: cargo test --doc --target ${{ matrix.target }} ${{ matrix.flags || '' }}
 
   proptest:
     name: Property tests
