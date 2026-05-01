@@ -27,18 +27,33 @@ fn main() -> io::Result<()> {
     let sha = &args[2];
 
     // Query GitHub API via gh CLI for job results.
+    // gh needs -R to identify the repo when persist-credentials: false
+    // is used in the checkout step (no .git/config remote).
+    let repo = env::var("GITHUB_REPOSITORY").unwrap_or_default();
+    let mut args = vec![
+        "run", "view", run_id,
+        "--json", "jobs",
+        "-q", ".jobs[] | select(.name | startswith(\"Test\")) | .name + \"|\" + .conclusion",
+    ];
+    if !repo.is_empty() {
+        args.push("-R");
+        args.push(&repo);
+    }
+
     let output = Command::new("gh")
-        .args([
-            "run", "view", run_id,
-            "--json", "jobs",
-            "-q", ".jobs[] | select(.name | startswith(\"Test\")) | .name + \"|\" + .conclusion",
-        ])
+        .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
         .expect("failed to run gh");
 
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("gh run view failed (status {}): {}", output.status, stderr);
+    }
+
     let text = String::from_utf8_lossy(&output.stdout);
+    eprintln!("gh returned {} lines", text.lines().count());
     let mut platforms = Vec::new();
 
     for line in text.lines() {
