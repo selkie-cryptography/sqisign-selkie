@@ -1171,6 +1171,56 @@ mod tests {
         );
     }
 
+    /// `to_hint` / `from_hint` round-trip on **every** alternate
+    /// extremal curve, asserting all three basis points (R, S, RS).
+    ///
+    /// Regression test for the Bug 3 fix: `to_hint` previously did not
+    /// call `curve.normalize()` while `from_hint` did. On an
+    /// unnormalized curve, `clear_cofactor`'s doublings produced a
+    /// projectively different `(X : Z)` for P and Q in `to_hint` than
+    /// `from_hint` recomputed for the same affine x. The downstream
+    /// `projective_difference(P, Q)` (which contains a square root) is
+    /// sensitive to the projective rep and picks different sqrt
+    /// branches, so `S = P − Q` ends up as a *different abstract
+    /// point* in `to_hint(c)` vs `from_hint(c, hint)` — same curve,
+    /// same hint.
+    ///
+    /// The pre-existing `to_hint_from_hint_roundtrip_alternate_curve`
+    /// test only exercised `ExtremalCurve::E1`, which happened to
+    /// land on the same sqrt branch on both sides. Iterating all
+    /// non-zero-A alternates raises the chance of hitting a
+    /// branch-divergent curve, and post-fix the round-trip must
+    /// agree on every component for every curve.
+    #[test]
+    fn to_hint_from_hint_roundtrip_all_alternate_curves() {
+        for ec in ExtremalCurve::ALL.iter().copied() {
+            if ec == ExtremalCurve::E0 {
+                // E0 (A = 0) is exercised by the dedicated E0 test.
+                continue;
+            }
+            let (_, _, _, a) = ec.basis();
+            assert_ne!(a, Fp2::ZERO, "alternate curve {ec:?} must have non-zero A");
+            let curve = Curve::from(Coefficient::from(a));
+
+            let (basis_via_to, hint) = TorsionBasis::to_hint(&curve);
+            let basis_via_from =
+                TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()));
+
+            assert_eq!(
+                basis_via_to.R, basis_via_from.R,
+                "{ec:?}: to_hint/from_hint round-trip — R differs"
+            );
+            assert_eq!(
+                basis_via_to.S, basis_via_from.S,
+                "{ec:?}: to_hint/from_hint round-trip — S (= P−Q) differs"
+            );
+            assert_eq!(
+                basis_via_to.RS, basis_via_from.RS,
+                "{ec:?}: to_hint/from_hint round-trip — RS differs"
+            );
+        }
+    }
+
     /// `from_bases` must recover the *exact* matrix entries used to
     /// build the target — not just an x-only-equivalent.
     ///
