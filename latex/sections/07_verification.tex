@@ -1,0 +1,206 @@
+\section{Verification Strategy and Threat Model}
+\label{sec:verification}
+
+We follow the libcrux\cite{libcrux} pattern: a portable Rust path
+serves as the source of truth for formal verification (via
+hax\cite{hax-toolchain} extracting to F$^*$), while a parallel
+\texttt{asm}-feature path provides performance.  The two are kept
+byte-equivalent through differential testing.  This section
+enumerates the verification scope, what each layer catches, and
+which residual trust assumptions remain.
+
+\subsection{Layered verification}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{l l l}
+\toprule
+\textbf{Layer} & \textbf{Tool} & \textbf{What it catches} \\
+\midrule
+Algorithmic CT       & hax + F$^*$ + \texttt{secret\_integers}
+                     & Branches, indexing, division on secrets in Rust \\
+Memory safety        & F$^*$ type-check                 & Panics, integer overflow, OOB access \\
+Spec equivalence     & F$^*$ refinement proofs         & Functional correctness vs.\ Algorithm~4.x \\
+Compiled-code CT     & LLVM CT-coverage runs           & Compiler not reintroducing branches \\
+Empirical CT         & \texttt{dudect}, \texttt{tacet} & Wall-clock timing variance under load \\
+Asm-vs-Rust          & Differential property tests     & Output equivalence on N random inputs \\
+KAT correctness      & 100 NIST PQC vectors            & End-to-end interop with C reference \\
+\bottomrule
+\end{tabular}
+\caption{Verification layers and the property each provides.}
+\label{tab:verification-layers}
+\end{table}
+
+\subsection{What hax verification provides}
+
+A successful hax extraction plus F$^*$ type-check on the portable
+Rust path proves:
+\begin{itemize}[nosep]
+  \item \textbf{Panic freedom.}  No path through the verified
+        modules can \texttt{unwrap}, panic on integer overflow,
+        index out of bounds, or trigger a \texttt{debug\_assert!}.
+  \item \textbf{Memory safety by construction.}  Hax refuses to
+        extract \texttt{unsafe}, raw pointers, FFI, or inline asm.
+        The verified path is structurally safe.
+  \item \textbf{No computation over secret data.}  With one
+        annotation per secret-bearing field
+        (\texttt{Coordinate}, \texttt{BigInt} representations of
+        secret keys, etc.), F$^*$ rejects any branch on, indexing
+        by, or division/modulo by a secret value.  Existing
+        \texttt{subtle::Choice} / \texttt{ConditionallySelectable}
+        usage flips from convention to proof.
+\end{itemize}
+
+The codebase's \texttt{TODO(ct)} markers (one per known
+variable-time path on secret data, see \S\ref{sec:ct}) become the
+exact set of locations where the \texttt{secret\_integers}
+annotation must succeed; if any remain after CT hardening, F$^*$
+extraction fails and surfaces the gap.
+
+\subsection{Limitations of hax-based verification}
+
+Hax verifies the Rust source as written; the property landscape
+\emph{below} that level is not in scope.  We list the limitations
+explicitly so users understand the residual trust:
+
+\begin{itemize}[nosep]
+  \item \textbf{Cache-timing channels} on data-cache or
+        instruction-cache patterns that depend on secret-derived
+        prior state.  Hax models direct indexing
+        ($\texttt{arr}[\texttt{secret\_idx}]$) but not prefetcher
+        behavior, code-cache occupancy of differently-sized
+        callees, or set-associative cache contention with
+        co-tenants.
+  \item \textbf{Variable-time hardware instructions} ($\texttt{DIV}$
+        on \texttt{x86\_64}, $\texttt{UDIV}$ on \texttt{aarch64},
+        \texttt{LZCNT} / \texttt{POPCNT} on some older parts).
+        F$^*$ rejects \emph{secret-dependent} division explicitly,
+        but a non-rejected ordinary integer divide still has data-dependent
+        latency on the underlying hardware.
+  \item \textbf{Speculative execution} (Spectre v1/v2/v4, RIDL,
+        ZenBleed, \dots).  Hax models architectural semantics, not
+        the speculative paths the CPU explores.  Mitigation is
+        out-of-scope for the verified path; users requiring
+        Spectre resistance must add platform-specific barriers.
+  \item \textbf{Power and EM side channels.}  Outside any
+        compiler-level analysis.
+  \item \textbf{Allocator timing.}  A first-time
+        \texttt{Vec::with\_capacity} that triggers a syscall is a
+        side channel hax does not see.  Hot-path allocations on
+        secret-derived sizes are addressed by code review and
+        by structural use of fixed-width \texttt{BigInt<N>}.
+  \item \textbf{Cross-process timing attacks.}  Hyperthreading,
+        SMT contention, scheduler-induced bandwidth.  Mitigations
+        are at the OS/sysadmin layer.
+  \item \textbf{Asm path.}  Anything inside an \texttt{asm!} block
+        or behind \texttt{cfg(feature = "asm")} is unverified by
+        hax.  The asm path is treated as
+        \emph{trusted-but-tested}: differential property tests
+        prove byte-equivalence against the (verified) portable
+        path, but not independent CT on the asm itself.
+\end{itemize}
+
+\subsection{Residual trust assumptions}
+
+A user of \texttt{sqisign-selkie} with both hax verification and
+the asm path enabled is trusting:
+\begin{enumerate}[nosep]
+  \item Correctness of \texttt{rustc}, LLVM, and the F$^*$ type
+        checker.
+  \item The hax extraction toolchain as a translation between
+        Rust and F$^*$.
+  \item The C reference implementation's algorithm choices, where
+        we follow them (e.g., dual-LLL ball sampling, the C ref's
+        kernel construction in
+        \texttt{compute\_dim2\_isogeny\_challenge}).
+  \item Hardware implementation of the chosen targets meeting the
+        side-channel claims (variable-time instructions absent on
+        the asm hot path; no Spectre exploitation in the
+        deployment context).
+  \item The asm path's correctness (byte-equivalent to the
+        verified Rust path for all encountered inputs, beyond the
+        $N$ random inputs covered by differential tests).
+\end{enumerate}
+
+\subsection{Roadmap and current status}
+
+The current state of each layer.  All items below are explicitly
+\textbf{not yet shipped} unless marked \textbf{done}; the roadmap is
+intentionally honest about what verification claims this codebase
+\emph{does} and \emph{does not} support today.
+
+\begin{itemize}[nosep]
+  \item KAT correctness (Layer~7): \textbf{partially done}.
+        \emph{Verify} accepts 100/100 C ref signatures; \emph{sign}
+        completes for ${\geq}~50$/100 KAT seeds within the current
+        CI per-test budget.  All completed signatures
+        cross-verify against the C ref harness.  The remaining
+        gap is sign throughput, not correctness.
+  \item Empirical CT (Layer~5): \textbf{infrastructure present, not
+        a verification claim}.  \texttt{dudect} and \texttt{tacet}
+        runs are wired into CI; baseline measurements exist but
+        the codebase is not yet constant-time on secret-derived
+        paths (see~\S\ref{sec:ct}).
+  \item Asm-vs-Rust differential testing (Layer~6):
+        \textbf{NOT STARTED}.  Activates when the asm path lands.
+  \item Algorithmic CT via hax + \texttt{secret\_integers}
+        (Layer~1): \textbf{NOT STARTED}.  Hax extraction is queued
+        behind asm-Fp to avoid re-verifying an evolving impl.
+  \item F$^*$ memory safety / panic freedom (Layer~2):
+        \textbf{NOT STARTED}.  Lands together with hax extraction.
+  \item Spec equivalence proofs (Layer~3): \textbf{NOT STARTED}.
+        Out of scope for the v0.1 tag; deferred indefinitely.
+  \item Asm formal verification: \textbf{NOT STARTED}.  See the
+        open work item below.
+\end{itemize}
+
+\paragraph{Open work item: formal verification of the asm path
+(\emph{TODO, not yet started}).}
+Hax does not see asm.  The trust gap above (item~5 in ``residual
+trust'') is the standard libcrux model: byte-equivalent diff tests
+against a verified Rust source.  For higher-assurance deployments,
+a separate effort using EverCrypt/Vale-style asm
+verification~\cite{vale-asm} would close that gap with a formal
+proof that the asm respects the same functional + CT specification
+F$^*$ verifies on the Rust path.  This is tracked here as a
+TODO for a post-tag milestone; shipping it requires writing Vale
+specifications for the Fp/Fp$^2$ hot paths and integrating an
+additional verification pipeline.  The plan, in order, is:
+
+\begin{enumerate}[nosep]
+  \item \textbf{(in progress)} Tag spec/C-ref correctness (current
+        milestone target).
+  \item \textbf{(not started, queued next)} Implement asm-Fp on
+        \texttt{aarch64} and \texttt{x86\_64}; diff-test against
+        portable Rust.
+  \item \textbf{(not started)} Hax-extract the portable Rust path
+        to F$^*$; verify memory safety, panic freedom, and
+        \texttt{secret\_integers} CT.
+  \item \textbf{(not started, future)} Vale verification of the
+        asm path against the same F$^*$ specification.
+\end{enumerate}
+
+Until each step lands, the corresponding verification claim
+\emph{does not apply} and should not be relied on.  Users should
+treat this section as a forward-looking roadmap, not a statement
+of current properties.
+
+\subsection{What hax cannot replace}
+
+Independent of the side-channel layers above, hax is not a
+substitute for:
+
+\begin{itemize}[nosep]
+  \item Algorithmic correctness review.  F$^*$ proves the code
+        matches a \emph{spec}; the spec itself can be wrong, and
+        SQIsign's specification has historically been ambiguous in
+        ways our bug catalog (\S\ref{sec:bugs}) documents.
+  \item KAT testing.  F$^*$ proves correctness up to the
+        specification's expressed properties; KAT vectors prove
+        interoperability with deployed implementations.  Both are
+        needed.
+  \item Negative testing.  Wycheproof-style adversarial vectors
+        catch failure modes (malleable signatures, parser
+        confusion) that functional verification often does not.
+\end{itemize}
