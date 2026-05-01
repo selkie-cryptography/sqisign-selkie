@@ -22,6 +22,12 @@ Cargo.lock
 # cargo-mutants
 /mutants.out*/
 
+# Fuzzer crash artifacts (triaged inputs go into fuzz/corpus/)
+/crash-*
+
+# Proptest regression files (tests are in-tree, regressions are local)
+**/proptest-regressions/
+
 # LaTeX
 **/*.toc
 
