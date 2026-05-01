@@ -123,9 +123,9 @@ jobs:
 
   # Tier 2 — Platform matrix
   #
-  # Full test suite (lib + doc + KAT) across all Rust Tier 1 targets.
-  # Required for merge. Only starts after the gate passes to avoid
-  # burning runner time on trivially broken code.
+  # Full test suite (lib + doc + KAT) across all Rust Tier 1 targets
+  # and asm feature variants. Required for merge. Only starts after
+  # the gate passes to avoid burning runner time on trivially broken code.
 
   platform:
     name: "lib + doc + KAT tests (${{ matrix.target }}, ${{ matrix.bits }}-bit${{ matrix.variant && format(', {0}', matrix.variant) || '' }})"
@@ -159,11 +159,35 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             bits: 64
+          # Asm feature variants — per-arch radix-51 asm enabled so
+          # its property tests run on real hardware. Off by default;
+          # CI is the source of truth for asm correctness.
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            bits: 64
+            variant: x86_64-asm
+            features: x86_64-radix-51-asm
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bits: 64
+            variant: x86_64-asm
+            features: x86_64-radix-51-asm
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bits: 64
+            variant: aarch64-asm
+            features: aarch64-radix-51-asm-perf-regression
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            bits: 64
+            variant: aarch64-asm
+            features: aarch64-radix-51-asm-perf-regression
           # Minimum config: no default features (zeroize off).
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             bits: 64
             variant: no-default-features
+            features: ""
             flags: --no-default-features
     steps:
       - uses: actions/checkout@v6
@@ -182,8 +206,8 @@ jobs:
         with:
           tool: cargo-nextest
       # --run-ignored=all picks up the per-KAT keygen + sign tests.
-      - run: cargo nextest run --profile kat --run-ignored=all --target ${{ matrix.target }} ${{ matrix.flags || '' }}
-      - run: cargo test --doc --target ${{ matrix.target }} ${{ matrix.flags || '' }}
+      - run: cargo nextest run --profile kat --run-ignored=all --target ${{ matrix.target }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }} ${{ matrix.flags || '' }}
+      - run: cargo test --doc --target ${{ matrix.target }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }} ${{ matrix.flags || '' }}
 
   # Tier 3 — Informational
   #
