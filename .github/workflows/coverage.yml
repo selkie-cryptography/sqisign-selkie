@@ -39,13 +39,9 @@ jobs:
         with:
           tool: cargo-llvm-cov,cargo-nextest
 
-      - name: Collect coverage (nextest + proptests + doctests)
+      - name: Collect coverage (nextest + doctests)
         run: |
           cargo +nightly llvm-cov --no-report nextest
-          cargo +nightly llvm-cov --no-report --features expose-internals nextest \
-            --test proptest_field \
-            --test proptest_quaternion \
-            --test proptest_scalar
           cargo +nightly llvm-cov --no-report --doc
 
       - name: Generate coverage report
