@@ -83,13 +83,20 @@ pub const QUAT_REPRES_BOUND_INPUT: u32 = 20;
 
 /// Sampling bound for `LeftIdeal::reduce_to_prime_norm` (Algorithm 3.9).
 ///
-/// Random coefficients are sampled from \[−bound, bound\]⁴. The C
-/// reference uses `equiv_bound_coeff = 20`.
-pub const EQUIV_BOUND_COEFF: i32 = 20;
+/// Random coefficients are sampled from \[−bound, bound\]⁴. Matches
+/// the C reference's `QUAT_equiv_bound_coeff` (`precomp/ref/lvl1/
+/// include/quaternion_constants.h:4`, value `64`). Must match the C
+/// ref byte-for-byte: a smaller bound changes the per-iteration
+/// rejection rate AND the integer values produced from a given DRBG
+/// byte stream, which desyncs every downstream sample and produces
+/// a different reduced ideal — and therefore a different `e_pk` —
+/// from the same KAT seed.
+pub const EQUIV_BOUND_COEFF: i32 = 64;
 
 /// Number of Miller-Rabin rounds for primality testing in ideal
-/// reduction (Algorithm 3.9). The C reference uses 20.
-pub const PRIMALITY_NUM_ITER: u32 = 20;
+/// reduction (Algorithm 3.9). Matches the C reference's
+/// `QUAT_primality_num_iter` (= 32).
+pub const PRIMALITY_NUM_ITER: u32 = 32;
 
 /// Precomputed prime cofactor for [`RandomIdealGivenNorm`][Alg. 3.10]
 /// (non-prime case).

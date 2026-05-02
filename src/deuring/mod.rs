@@ -622,12 +622,56 @@ impl<const N: usize> LeftIdeal<N> {
         const { assert!(N <= 8, "to_isogeny supports N ≤ 8") };
         let f = TorsionExponent::FULL;
 
+        #[cfg(test)]
+        eprintln!(
+            "[to_isogeny] before suitable_ideals: drbg_offset=0x{:x}",
+            crate::drbg::debug::offset()
+        );
+
         // Step 1: Decompose via SuitableIdeals.
         #[cfg(test)]
         let _t0 = std::time::Instant::now();
         let sui = self.suitable_ideals()?;
         #[cfg(test)]
-        eprintln!("[to_isogeny] suitable_ideals: {:?}", _t0.elapsed());
+        eprintln!(
+            "[to_isogeny] after suitable_ideals: drbg_offset=0x{:x} elapsed={:?}",
+            crate::drbg::debug::offset(),
+            _t0.elapsed()
+        );
+
+        // Cross-check dump against C ref's [KEYGEN_PROBE] in
+        // `id2iso/ref/lvlx/dim2id2iso.c:846`. Same format/order so a
+        // diff localizes whether `(s,t,u,v,β₁,β₂,d₁,d₂)` matches —
+        // i.e., whether `reduce_to_prime_norm` produced the same
+        // reduced ideal as the C ref despite same DRBG byte stream.
+        #[cfg(test)]
+        {
+            use crate::quaternions::precomputed::EXTREMAL_ORDERS;
+            let s_idx = EXTREMAL_ORDERS
+                .iter()
+                .position(|o| o.q() == sui.factor1.order.q())
+                .map_or(-1i32, |i| i as i32);
+            let t_idx = EXTREMAL_ORDERS
+                .iter()
+                .position(|o| o.q() == sui.factor2.order.q())
+                .map_or(-1i32, |i| i as i32);
+            let b1 = &*sui.factor1.beta;
+            let b2 = &*sui.factor2.beta;
+            eprintln!("[KEYGEN_PROBE] s={s_idx} t={t_idx}");
+            eprintln!(
+                "[KEYGEN_PROBE] beta_s coord=[{}, {}, {}, {}] denom={}",
+                b1.a, b1.b, b1.c, b1.d, b1.denom
+            );
+            eprintln!(
+                "[KEYGEN_PROBE] beta_t coord=[{}, {}, {}, {}] denom={}",
+                b2.a, b2.b, b2.c, b2.d, b2.denom
+            );
+            let d_s = BigInt::<4>::from(sui.factor1.degree);
+            let d_t = BigInt::<4>::from(sui.factor2.degree);
+            eprintln!("[KEYGEN_PROBE] d_s={d_s} d_t={d_t}");
+            eprintln!("[KEYGEN_PROBE] u_pre_gcd={} v_pre_gcd={}", sui.u, sui.v);
+            eprintln!("[KEYGEN_PROBE] lideal_norm={}", self.norm());
+        }
 
         // Steps 2–3: degrees (already in sui.factor1.degree, sui.factor2.degree).
         let d1 = &sui.factor1.degree;
@@ -636,20 +680,38 @@ impl<const N: usize> LeftIdeal<N> {
         // Step 4: E_u, φ_u(P_s), φ_u(Q_s) ← FixedDegreeIsogeny(s, u)
         #[cfg(test)]
         let _t1 = std::time::Instant::now();
+        #[cfg(test)]
+        eprintln!(
+            "[to_isogeny] before FDI(u): drbg_offset=0x{:x}",
+            crate::drbg::debug::offset()
+        );
         let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
         let (e_u, phi_u_p, phi_u_q, phi_u_pmq) =
             fixed_degree_isogeny(sui.factor1.order, &u_deg, rng)?;
         #[cfg(test)]
-        eprintln!("[to_isogeny] FDI(u): {:?}", _t1.elapsed());
+        eprintln!(
+            "[to_isogeny] after FDI(u): drbg_offset=0x{:x} elapsed={:?}",
+            crate::drbg::debug::offset(),
+            _t1.elapsed()
+        );
 
         // Step 5: E_v, φ_v(P_t), φ_v(Q_t) ← FixedDegreeIsogeny(t, v)
         #[cfg(test)]
         let _t2 = std::time::Instant::now();
+        #[cfg(test)]
+        eprintln!(
+            "[to_isogeny] before FDI(v): drbg_offset=0x{:x}",
+            crate::drbg::debug::offset()
+        );
         let v_deg = IsogenyDegree::new_odd(*sui.v.as_limbs())?;
         let (e_v, phi_v_p, phi_v_q, phi_v_pmq) =
             fixed_degree_isogeny(sui.factor2.order, &v_deg, rng)?;
         #[cfg(test)]
-        eprintln!("[to_isogeny] FDI(v): {:?}", _t2.elapsed());
+        eprintln!(
+            "[to_isogeny] after FDI(v): drbg_offset=0x{:x} elapsed={:?}",
+            crate::drbg::debug::offset(),
+            _t2.elapsed()
+        );
 
         // Step 6: second component of the outer kernel.
         //
@@ -854,7 +916,22 @@ impl<const N: usize> LeftIdeal<N> {
         // accept the malformed codomain silently, producing
         // wrong signing keys that fail only against KAT
         // vectors.
-        let scale = f.value() - sui.e.value() - 2;
+        //
+        // `checked_sub` defends against future callers that
+        // bypass the `try_find_uv` filter: in debug builds the
+        // raw subtraction `f − sui.e − 2` panicked with
+        // "attempt to subtract with overflow" for `sui.e > f −
+        // 2`, and in release builds it wrapped to ~`u32::MAX`
+        // and produced a 4-billion-iteration padding loop
+        // (observed during the byte-trace investigation).
+        // Returning `None` lets the caller retry with a fresh
+        // ideal — same effect as the filter, but failure
+        // surfaces here too if anything ever upstream changes.
+        // The proper fix is to implement the
+        // `extra_torsion = false` chain (see
+        // [`Kernel::isogeny_no_extra_torsion`]) and dispatch
+        // to it here when `sui.e ∈ {f-1, f}`.
+        let scale = f.value().checked_sub(sui.e.value())?.checked_sub(2)?;
         #[cfg(test)]
         eprintln!(
             "[to_isogeny] outer chain: sui.e={}, scale={scale}",

@@ -2259,3 +2259,129 @@ fn survey_kat_secret_ideal_coord_magnitudes() {
     eprintln!("[SURVEY] observed range of max_coord_bits: [{min_observed}, {max_observed}]");
     eprintln!("[SURVEY] SAFE indices (max ≤ 127): {safe_indices:?}");
 }
+
+// ----------------------------------------------------------------------
+// RNG byte-trace for keygen-from-seed divergence debug (Bug 2).
+//
+// Our DRBG is bit-correct against the C ref (verified by
+// `drbg::tests::matches_cref_seed_zero_first_128_bytes`). So if
+// `keygen_kat_all` produces a wrong `e_pk`, the divergence is in
+// *which* DRBG bytes are consumed at *which* algorithmic step — not
+// in DRBG output itself.
+//
+// `TracingDrbg` wraps an underlying RNG and logs every `fill_bytes`
+// call: cumulative byte offset before the call, length, and the
+// returned bytes. Run `keygen_kat_000_rng_trace` to dump our
+// consumption pattern for KAT[0]'s seed; instrument the C ref
+// equivalently and diff. The first divergent line (different length,
+// or different bytes for the same offset+length) localizes which
+// algorithmic step has a different RNG-consumption pattern.
+// ----------------------------------------------------------------------
+
+#[derive(Debug)]
+struct TracingDrbg<R: rand_core::RngCore> {
+    inner: R,
+    cumulative: usize,
+    /// Each entry: `(cumulative_offset_before_call, returned_bytes)`.
+    log: Vec<(usize, Vec<u8>)>,
+}
+
+impl<R: rand_core::RngCore> TracingDrbg<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            cumulative: 0,
+            log: Vec::new(),
+        }
+    }
+}
+
+impl<R: rand_core::RngCore> rand_core::RngCore for TracingDrbg<R> {
+    fn next_u32(&mut self) -> u32 {
+        let mut buf = [0u8; 4];
+        self.fill_bytes(&mut buf);
+        u32::from_le_bytes(buf)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut buf = [0u8; 8];
+        self.fill_bytes(&mut buf);
+        u64::from_le_bytes(buf)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.inner.fill_bytes(dest);
+        self.log.push((self.cumulative, dest.to_vec()));
+        self.cumulative += dest.len();
+        // Publish to the thread-local so checkpoint sites in keygen
+        // can read the cumulative offset without threading the
+        // wrapper through generic `R: CryptoRngCore` arguments.
+        crate::drbg::debug::set(self.cumulative);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl<R: rand_core::CryptoRng + rand_core::RngCore> rand_core::CryptoRng for TracingDrbg<R> {}
+
+/// Capture our DRBG byte-consumption pattern during keygen-from-seed
+/// for KAT vector 0. Writes the trace to
+/// `/tmp/drbg_trace_keygen_kat_0.txt` for diff against an
+/// instrumented C ref run.
+///
+/// Output format: one line per `fill_bytes` call:
+///
+///     [offset_hex] len=NNN bytes=hexhexhex...
+///
+/// where `offset_hex` is the cumulative byte offset before this call
+/// (i.e., the byte position into the DRBG output stream where this
+/// call's first byte landed).
+///
+/// `#[ignore]` because keygen takes minutes even in release mode. Run with:
+/// `cargo test --lib --release keygen_kat_000_rng_trace -- --include-ignored --nocapture`
+#[test]
+#[ignore]
+fn keygen_kat_000_rng_trace() {
+    let seed_hex = crate::keys::kat_data::KAT_VECTORS[0].0;
+    let seed_bytes = hex::decode(seed_hex).expect("valid hex");
+    let seed: [u8; 48] = seed_bytes
+        .as_slice()
+        .try_into()
+        .expect("seed is 48 bytes");
+
+    let inner = crate::drbg::Aes256CtrDrbg::new(&seed);
+    let mut tracing = TracingDrbg::new(inner);
+
+    // Reset the byte-offset thread-local so checkpoint sites in
+    // keygen log offsets relative to this run, not whatever was
+    // accumulated by previous tests on this thread.
+    crate::drbg::debug::reset();
+
+    // Run keygen; we don't care about success/failure, only the trace.
+    let _ = SigningKey::generate_with_rng(&mut tracing);
+
+    let total_calls = tracing.log.len();
+    let total_bytes = tracing.cumulative;
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# DRBG byte-trace for keygen_kat_000\n# {total_calls} fill_bytes calls, {total_bytes} total bytes\n"
+    ));
+    for (offset, bytes) in &tracing.log {
+        let mut hex_buf = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            hex_buf.push_str(&format!("{b:02x}"));
+        }
+        out.push_str(&format!(
+            "[{offset:08x}] len={:>4} bytes={hex_buf}\n",
+            bytes.len()
+        ));
+    }
+
+    let path = "/tmp/drbg_trace_keygen_kat_0.txt";
+    std::fs::write(path, &out).expect("write trace");
+    eprintln!("[trace] {total_calls} fill_bytes calls, {total_bytes} bytes total → {path}");
+}

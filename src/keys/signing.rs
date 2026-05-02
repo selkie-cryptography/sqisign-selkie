@@ -231,7 +231,13 @@ impl SigningKey {
     ) -> Result<SigningKey, SignatureError> {
         // Bound the retry loop. Each iteration may fail in
         // reduce_to_prime_norm, narrow, or to_isogeny.
-        for _ in 0..1000 {
+        for _iter in 0..1000 {
+            #[cfg(test)]
+            eprintln!(
+                "[keygen iter={_iter}] before random_prime_norm_wide: drbg_offset=0x{:x}",
+                crate::drbg::debug::offset()
+            );
+
             // Line 2: I_sk ← RandomIdealGivenNorm(D_mix, true).
             // D_MIX = 2^512 + 75. The ideal is stored at `BigInt<30>`
             // so that `p · g_i ≈ 2^769` entries and the downstream
@@ -246,6 +252,12 @@ impl SigningKey {
                 None => continue,
             };
 
+            #[cfg(test)]
+            eprintln!(
+                "[keygen iter={_iter}] before reduce_to_prime_norm: drbg_offset=0x{:x}",
+                crate::drbg::debug::offset()
+            );
+
             // Line 4: I_sk ← RandomEquivalentPrimeIdeal(I_sk).
             // `reduce_to_prime_norm` operates at the ideal's storage
             // width `N=30`; `PRIME_W=30` keeps the internal pow_mod
@@ -259,11 +271,23 @@ impl SigningKey {
                 None => continue,
             };
 
+            #[cfg(test)]
+            eprintln!(
+                "[keygen iter={_iter}] before to_isogeny: drbg_offset=0x{:x}",
+                crate::drbg::debug::offset()
+            );
+
             // Line 5: E_pk, φ_sk(P₀), φ_sk(Q₀) ← IdealToIsogeny(I_sk).
             let (e_pk, phi_p, phi_q, phi_pmq) = match i_sk_narrow.to_isogeny(rng) {
                 Some(r) => r,
                 None => continue,
             };
+
+            #[cfg(test)]
+            eprintln!(
+                "[keygen iter={_iter}] after to_isogeny: drbg_offset=0x{:x}",
+                crate::drbg::debug::offset()
+            );
 
             // Line 8: (P_pk, Q_pk), hint_pk ← TorsionBasisToHint(E_pk).
             let (basis_pk, basis_hint) = TorsionBasis::to_hint(&e_pk);
