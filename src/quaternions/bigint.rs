@@ -554,45 +554,60 @@ impl<const N: usize> BigInt<N> {
         r.is_zero()
     }
 
-    /// Greatest common divisor via the Euclidean algorithm.
+    /// Greatest common divisor via Stein's binary algorithm.
     ///
-    /// Returns a non-negative value. Based on the constant-time GCD
-    /// approach (Algorithm 9, §2.5) from [Kouider et al.][ct-bigint],
-    /// adapted here as a standard Euclidean GCD operating on magnitudes.
+    /// Returns a non-negative value. Replaces division with shifts and
+    /// subtractions: each iteration strips trailing zeros from the
+    /// smaller operand and subtracts. Total iterations are bounded by
+    /// `2·BITS` and each does O(N) limb work, so total cost is O(N²·64)
+    /// — versus O(BITS²·N) for Euclidean.
     ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
+    /// **Variable-time.** Iteration count, shift amounts, and the
+    /// swap-on-greater branch all leak information about the inputs.
+    /// Constant-time GCD will be reintroduced in a separate pass.
     pub fn gcd(&self, other: &Self) -> Self {
-        let mut a = self.abs();
-        let mut b = other.abs();
+        let mut a = self.abs().limbs;
+        let mut b = other.abs().limbs;
 
-        // Iterate a fixed number of times for constant-time behavior.
-        // Each iteration reduces the larger operand by at least 1 bit,
-        // so 2*BITS iterations is a safe upper bound.
-        let mut i = 0;
-        while i < 2 * Self::BITS {
-            let b_is_zero = bool::from(b.is_zero()) as u64;
-            // When b is zero, freeze both a and b (result is in a).
-            let zero_limbs = [0u64; N];
-            let (_, r) = if b_is_zero == 1 {
-                (zero_limbs, zero_limbs)
-            } else {
-                Self::mag_div_rem(&a.limbs, &b.limbs)
-            };
-            // new_a = b (if active), or a (if frozen)
-            let new_a_limbs = Self::mag_select(&b.limbs, &a.limbs, b_is_zero);
-            // new_b = r (if active), or zero (if frozen)
-            let new_b_limbs = Self::mag_select(&r, &b.limbs, b_is_zero);
-            a = Self {
-                sign: 0,
-                limbs: new_a_limbs,
-            };
-            b = Self {
-                sign: 0,
-                limbs: new_b_limbs,
-            };
-            i += 1;
+        // Special-case zero inputs: gcd(0, x) = x, gcd(0, 0) = 0.
+        if Self::mag_is_zero(&a) == 1 {
+            return Self { sign: 0, limbs: b };
         }
-        a
+        if Self::mag_is_zero(&b) == 1 {
+            return Self { sign: 0, limbs: a };
+        }
+
+        // Strip the largest power of 2 dividing both, applied at the end.
+        let shift = Self::mag_trailing_zeros(&a).min(Self::mag_trailing_zeros(&b));
+        a = Self::mag_shr(&a, shift);
+        b = Self::mag_shr(&b, shift);
+
+        // Make a odd. b may still be even on entry to the loop.
+        a = Self::mag_shr(&a, Self::mag_trailing_zeros(&a));
+
+        loop {
+            // Make b odd; both operands odd from here.
+            b = Self::mag_shr(&b, Self::mag_trailing_zeros(&b));
+
+            // Ensure a <= b so the subtraction below has no borrow.
+            if Self::mag_cmp(&a, &b) == Ordering::Greater {
+                core::mem::swap(&mut a, &mut b);
+            }
+
+            // b := b - a. Both odd, so result is even and the next
+            // iteration's shift makes progress.
+            let (new_b, _) = Self::mag_sub(&b, &a);
+            b = new_b;
+
+            if Self::mag_is_zero(&b) == 1 {
+                break;
+            }
+        }
+
+        Self {
+            sign: 0,
+            limbs: Self::mag_shl(&a, shift),
+        }
     }
 
     /// Extended GCD: returns `(gcd, x, y)` such that
@@ -1428,6 +1443,21 @@ impl<const N: usize> BigInt<N> {
         }
 
         (q, r)
+    }
+
+    /// Variable-time trailing-zero count of a magnitude array.
+    ///
+    /// Returns `N * 64` for an all-zero input. Used by the Stein binary
+    /// GCD where vartime is the design choice.
+    fn mag_trailing_zeros(a: &[u64; N]) -> u32 {
+        let mut i = 0;
+        while i < N {
+            if a[i] != 0 {
+                return (i as u32) * 64 + a[i].trailing_zeros();
+            }
+            i += 1;
+        }
+        (N as u32) * 64
     }
 
     /// Constant-time bitsize of a magnitude array.
