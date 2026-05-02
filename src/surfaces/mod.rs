@@ -655,10 +655,16 @@ impl Kernel {
             };
             let (ar, ai) = fp2_hex(&null.a);
             let (br, bi) = fp2_hex(&null.b);
-            eprintln!("GLUE null_a_re=0x{ar}");
-            eprintln!("GLUE null_a_im=0x{ai}");
-            eprintln!("GLUE null_b_re=0x{br}");
-            eprintln!("GLUE null_b_im=0x{bi}");
+            let (cr, ci) = fp2_hex(&null.c);
+            let (dr, di) = fp2_hex(&null.d);
+            eprintln!("[MODA] glue null.a.re=0x{ar}");
+            eprintln!("[MODA] glue null.a.im=0x{ai}");
+            eprintln!("[MODA] glue null.b.re=0x{br}");
+            eprintln!("[MODA] glue null.b.im=0x{bi}");
+            eprintln!("[MODA] glue null.c.re=0x{cr}");
+            eprintln!("[MODA] glue null.c.im=0x{ci}");
+            eprintln!("[MODA] glue null.d.re=0x{dr}");
+            eprintln!("[MODA] glue null.d.im=0x{di}");
         }
 
         // Push passenger points through the gluing.
@@ -920,6 +926,38 @@ impl Kernel {
                 );
             }
 
+            #[cfg(test)]
+            {
+                let n = &current_jacobian.null;
+                let fp2_hex = |v: &Fp2| {
+                    let bytes = v.to_bytes();
+                    let re: String =
+                        bytes[..32].iter().rev().map(|b| format!("{b:02x}")).collect();
+                    let im: String =
+                        bytes[32..].iter().rev().map(|b| format!("{b:02x}")).collect();
+                    (re, im)
+                };
+                let (ar, ai) = fp2_hex(&n.a);
+                let (br, bi) = fp2_hex(&n.b);
+                let (cr, ci) = fp2_hex(&n.c);
+                let (dr, di) = fp2_hex(&n.d);
+                let label = if steps_remaining == 1 {
+                    "ult"
+                } else if steps_remaining == 2 {
+                    "pen"
+                } else {
+                    "main"
+                };
+                eprintln!("[MODA] {label} {_step_index} null.a.re=0x{ar}");
+                eprintln!("[MODA] {label} {_step_index} null.a.im=0x{ai}");
+                eprintln!("[MODA] {label} {_step_index} null.b.re=0x{br}");
+                eprintln!("[MODA] {label} {_step_index} null.b.im=0x{bi}");
+                eprintln!("[MODA] {label} {_step_index} null.c.re=0x{cr}");
+                eprintln!("[MODA] {label} {_step_index} null.c.im=0x{ci}");
+                eprintln!("[MODA] {label} {_step_index} null.d.re=0x{dr}");
+                eprintln!("[MODA] {label} {_step_index} null.d.im=0x{di}");
+            }
+
             _step_index += 1;
             steps_remaining -= 1;
         }
@@ -993,6 +1031,17 @@ impl Kernel {
         e: crate::curves::TorsionExponent,
         pts: &[ProductPoint],
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
+        // Full-hex (re, im) pair for `[NOEX]` step dumps, matching the
+        // format the C ref uses in `[CHAIN_DUMP]` lines so per-step
+        // diffs are mechanical.
+        #[cfg(test)]
+        fn fp2_hex(v: &Fp2) -> (String, String) {
+            let bytes = v.to_bytes();
+            let re: String = bytes[..32].iter().rev().map(|b| format!("{b:02x}")).collect();
+            let im: String = bytes[32..].iter().rev().map(|b| format!("{b:02x}")).collect();
+            (re, im)
+        }
+
         let e = e.value();
         assert!(
             e >= 4,
@@ -1061,6 +1110,23 @@ impl Kernel {
 
         let mut current_jacobian = gluing_data.codomain.clone();
 
+        #[cfg(test)]
+        {
+            let n = &current_jacobian.null;
+            let (ar, ai) = fp2_hex(&n.a);
+            let (br, bi) = fp2_hex(&n.b);
+            let (cr, ci) = fp2_hex(&n.c);
+            let (dr, di) = fp2_hex(&n.d);
+            eprintln!("[NOEX] glue null.a.re=0x{ar}");
+            eprintln!("[NOEX] glue null.a.im=0x{ai}");
+            eprintln!("[NOEX] glue null.b.re=0x{br}");
+            eprintln!("[NOEX] glue null.b.im=0x{bi}");
+            eprintln!("[NOEX] glue null.c.re=0x{cr}");
+            eprintln!("[NOEX] glue null.c.im=0x{ci}");
+            eprintln!("[NOEX] glue null.d.re=0x{dr}");
+            eprintln!("[NOEX] glue null.d.im=0x{di}");
+        }
+
         // Phase 3: main loop — ALL steps use normal hadamard.
         // Track the last step's `(dual, codomain)` and the level-0
         // kernel point separately so we can push the level-0 point
@@ -1069,6 +1135,8 @@ impl Kernel {
         // thetaQ1[0]); }` at `theta_isogenies.c:1252`).
         let mut last_step: Option<(DualThetaNullPoint, Jacobian)> = None;
         let mut last_kernel: Option<(JacobianPoint, JacobianPoint)> = None;
+        #[cfg(test)]
+        let mut step_idx: u32 = 0;
 
         while !orders.is_empty() && (k > 0 || orders[0] != 0) {
             // Push down with ThetaDBL until order = 1.
@@ -1110,6 +1178,24 @@ impl Kernel {
             orders.truncate(k);
             k = k.saturating_sub(1);
             current_jacobian = new_jac;
+
+            #[cfg(test)]
+            {
+                step_idx += 1;
+                let n = &current_jacobian.null;
+                let (ar, ai) = fp2_hex(&n.a);
+                let (br, bi) = fp2_hex(&n.b);
+                let (cr, ci) = fp2_hex(&n.c);
+                let (dr, di) = fp2_hex(&n.d);
+                eprintln!("[NOEX] main {step_idx} null.a.re=0x{ar}");
+                eprintln!("[NOEX] main {step_idx} null.a.im=0x{ai}");
+                eprintln!("[NOEX] main {step_idx} null.b.re=0x{br}");
+                eprintln!("[NOEX] main {step_idx} null.b.im=0x{bi}");
+                eprintln!("[NOEX] main {step_idx} null.c.re=0x{cr}");
+                eprintln!("[NOEX] main {step_idx} null.c.im=0x{ci}");
+                eprintln!("[NOEX] main {step_idx} null.d.re=0x{dr}");
+                eprintln!("[NOEX] main {step_idx} null.d.im=0x{di}");
+            }
         }
 
         // Post-loop: push the level-0 kernel point through the last
@@ -1133,6 +1219,23 @@ impl Kernel {
         theta_pts = theta_pts_after_4iso;
         current_jacobian = codomain_after_4iso;
 
+        #[cfg(test)]
+        {
+            let n = &current_jacobian.null;
+            let (ar, ai) = fp2_hex(&n.a);
+            let (br, bi) = fp2_hex(&n.b);
+            let (cr, ci) = fp2_hex(&n.c);
+            let (dr, di) = fp2_hex(&n.d);
+            eprintln!("[NOEX] tail4 null.a.re=0x{ar}");
+            eprintln!("[NOEX] tail4 null.a.im=0x{ai}");
+            eprintln!("[NOEX] tail4 null.b.re=0x{br}");
+            eprintln!("[NOEX] tail4 null.b.im=0x{bi}");
+            eprintln!("[NOEX] tail4 null.c.re=0x{cr}");
+            eprintln!("[NOEX] tail4 null.c.im=0x{ci}");
+            eprintln!("[NOEX] tail4 null.d.re=0x{dr}");
+            eprintln!("[NOEX] tail4 null.d.im=0x{di}");
+        }
+
         // Dedicated ultimate: 2-isogeny.
         // C ref: `theta_isogeny_compute_2(step, theta, thetaQ1[0],
         // thetaQ2[0], 1, 0)` at `theta_isogenies.c:1266`. Algorithm
@@ -1144,6 +1247,23 @@ impl Kernel {
             isogeny::GenericKernel2::isogeny_ultimate(&current_jacobian, &theta_pts);
         theta_pts = theta_pts_after_2iso;
         current_jacobian = codomain_after_2iso;
+
+        #[cfg(test)]
+        {
+            let n = &current_jacobian.null;
+            let (ar, ai) = fp2_hex(&n.a);
+            let (br, bi) = fp2_hex(&n.b);
+            let (cr, ci) = fp2_hex(&n.c);
+            let (dr, di) = fp2_hex(&n.d);
+            eprintln!("[NOEX] tail2 null.a.re=0x{ar}");
+            eprintln!("[NOEX] tail2 null.a.im=0x{ai}");
+            eprintln!("[NOEX] tail2 null.b.re=0x{br}");
+            eprintln!("[NOEX] tail2 null.b.im=0x{bi}");
+            eprintln!("[NOEX] tail2 null.c.re=0x{cr}");
+            eprintln!("[NOEX] tail2 null.c.im=0x{ci}");
+            eprintln!("[NOEX] tail2 null.d.re=0x{dr}");
+            eprintln!("[NOEX] tail2 null.d.im=0x{di}");
+        }
 
         // Phase 4: splitting.
         let splitter = SplittingKernel {
