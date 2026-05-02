@@ -1156,7 +1156,7 @@
             <dt>CT failures</dt><dd>DudeCT or Tacet tests detecting timing leaks on secret-derived data.</dd>
             <dt>Panic sites</dt><dd>Panic symbols in the release binary — each is a potential DoS vector.</dd>
             <dt>Unsafe blocks</dt><dd>Unsafe code count per module. Should trend toward zero.</dd>
-            <dt>CT + mutant overlap</dt><dd>Secret-data paths (TODO(ct)) with surviving mutants — a side-channel fix here would be untested.</dd>
+            <dt>CT + mutant overlap</dt><dd>Files containing both a TODO(ct) marker and one or more surviving mutants. The TODO(ct) line and survivor lines may differ — the signal is that any CT fix landing in this file would touch code where some mutation already escapes the test suite.</dd>
             <dt>Benchmark blind spots</dt><dd>Hot functions without benchmarks, or benchmarked functions that aren't hot.</dd>
             <dt>Module health</dt><dd>Combined score from coverage, kill rate, CT status, and hot path density.</dd>
             </dl></span></span></h2>
@@ -2424,37 +2424,51 @@
         }
       }
 
-      // CT + mutant overlap: TODO(ct) functions with surviving mutants.
+      // CT + mutant overlap: files containing BOTH a TODO(ct) marker AND
+      // surviving mutants. The TODO(ct) line and survivor lines need not
+      // coincide — the signal is that any CT fix in this file lands in
+      // code where some mutation already escapes the test suite, so the
+      // fix would itself be untested.
       if (mut && survivors.length > 0) {
-        const survivorFns = new Set(survivors.map(s => s.function).filter(Boolean));
         const ctMutantOverlap = [];
         for (const f of allFiles) {
-          for (const l of (f.lines || [])) {
-            if (l.length > 2 && /TODO\(ct\)/.test(l[2])) {
-              // Check if any survivor is in this file.
-              const fileSurvivors = survivors.filter(s =>
-                (s.file === 'src/' + f.name || s.file === f.name));
-              if (fileSurvivors.length > 0) {
-                ctMutantOverlap.push({
-                  file: f.name,
-                  line: l[0],
-                  survivors: fileSurvivors.length,
-                  src: l[2].trim()
-                });
-                break; // one entry per file
-              }
-            }
-          }
+          const fileSurvivors = survivors.filter(s =>
+            s.file === 'src/' + f.name || s.file === f.name);
+          if (fileSurvivors.length === 0) continue;
+          const ctLines = (f.lines || [])
+            .filter(l => l.length > 2 && /TODO\(ct\)/.test(l[2]))
+            .map(l => l[0]);
+          if (ctLines.length === 0) continue;
+          ctMutantOverlap.push({
+            file: f.name,
+            ctLines,
+            survivorLines: fileSurvivors.map(s => s.line).sort((a, b) => a - b),
+          });
         }
+        // Most surviving mutants first; tiebreak on TODO(ct) count.
+        ctMutantOverlap.sort((a, b) =>
+          b.survivorLines.length - a.survivorLines.length ||
+          b.ctLines.length - a.ctLines.length);
 
         if (ctMutantOverlap.length > 0) {
           html += '<div class="cov-insight"><h4>CT + mutant overlap</h4><ul class="cov-insight-list">';
           for (const c of ctMutantOverlap.slice(0, 5)) {
             const fname = shortName(c.file);
-            const link = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(c.file)}#L${c.line}` : '#';
+            const ghBase = sha ? `https://github.com/${REPO}/blob/${esc(sha)}/src/${esc(c.file)}` : '#';
+            const ctSummary = c.ctLines.length === 1
+              ? `TODO(ct) L${c.ctLines[0]}`
+              : `TODO(ct) ×${c.ctLines.length} (L${c.ctLines[0]}…)`;
+            const survPreview = c.survivorLines.slice(0, 3).map(n => `L${n}`).join(', ');
+            const survSuffix = c.survivorLines.length > 3 ? '…' : '';
+            const survSummary = c.survivorLines.length === 1
+              ? `1 survivor ${survPreview}`
+              : `${c.survivorLines.length} survivors ${survPreview}${survSuffix}`;
+            // Anchor the link at the first TODO(ct) line — the help text
+            // points the reader there.
+            const link = sha ? `${ghBase}#L${c.ctLines[0]}` : '#';
             html += `<li>
-              <a href="${link}">${esc(fname)}:${c.line}</a>
-              <span class="tag tag-ct">${c.survivors} untested mutants</span>
+              <a href="${link}">${esc(fname)}</a>
+              <span><span class="tag tag-ct">${esc(ctSummary)}</span> <span class="tag tag-cold">${esc(survSummary)}</span></span>
             </li>`;
           }
           html += '</ul></div>';
