@@ -37,8 +37,9 @@ use core::ops::Mul;
 
 use crate::{
     curves::{
-        TorsionBasis,
+        TorsionBasis, TorsionExponent,
         montgomery::{Curve, JacobianPoint as CurveJacobianPoint, ProjectiveXOnlyPoint},
+        pairing::weil_pairing,
     },
     fields::fp2::Fp2,
     surfaces::isogeny::{GluingKernel, SplittingKernel},
@@ -418,6 +419,50 @@ impl Kernel {
         })
     }
 
+    /// Check that this kernel is isotropic for the product Weil
+    /// pairing at exponent `e_kernel` (i.e., that the generators
+    /// `(P, Q)` have order dividing `2^e_kernel` and span a
+    /// Lagrangian subgroup of `E_1[2^e_kernel] × E_2[2^e_kernel]`).
+    ///
+    /// The Lagrangian condition for the canonical product
+    /// polarization on `E_1 × E_2` is
+    ///     `e_{2^e_kernel}(P_1, Q_1) · e_{2^e_kernel}(P_2, Q_2) = 1`
+    /// in the group `μ_{2^e_kernel}` of `2^e_kernel`-th roots of
+    /// unity, where `e_n` is the `2^n`-Weil pairing on each
+    /// component curve (see [§2.4]). This method computes both
+    /// pairings and returns `true` iff their product is `1`.
+    ///
+    /// `e_kernel` is the order exponent of the *kernel generators*
+    /// (not the chain length): `e + 2` for [`Self::isogeny`]
+    /// (`extra_torsion=true`), `e` for
+    /// [`Self::isogeny_no_extra_torsion`] (`extra_torsion=false`).
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time. Used only behind `debug_assert!`, never in
+    /// release builds, so this is correct-by-construction.
+    ///
+    /// [§2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.4
+    pub(crate) fn is_isotropic(&self, e_kernel: TorsionExponent) -> bool {
+        // P + Q on each component side, derived from the Jacobian
+        // generators via differential addition.
+        let (ppq1, _) = self.P.0.x_add_sub(&self.Q.0);
+        let (ppq2, _) = self.P.1.x_add_sub(&self.Q.1);
+
+        let p1 = ProjectiveXOnlyPoint::from(&self.P.0);
+        let q1 = ProjectiveXOnlyPoint::from(&self.Q.0);
+        let p2 = ProjectiveXOnlyPoint::from(&self.P.1);
+        let q2 = ProjectiveXOnlyPoint::from(&self.Q.1);
+
+        let w1 = weil_pairing(&p1, &q1, &ppq1, e_kernel);
+        let w2 = weil_pairing(&p2, &q2, &ppq2, e_kernel);
+        // Product polarization on E_1 × E_2: the kernel is Lagrangian
+        // iff e_1(P_1, Q_1) · e_2(P_2, Q_2) = 1 in μ_{2^e_kernel},
+        // i.e. w1 = w2⁻¹.
+        let prod = w1.as_fp2() * w2.as_fp2();
+        prod == Fp2::ONE
+    }
+
     /// Compute the (2^e, 2^e)-isogeny defined by this kernel via a
     /// chain of (2,2)-isogenies, and push points through it.
     ///
@@ -457,9 +502,17 @@ impl Kernel {
     /// to produce dual-form output for the splitting step.
     pub fn isogeny(
         &self,
-        e: crate::curves::TorsionExponent,
+        e: TorsionExponent,
         pts: &[ProductPoint],
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
+        debug_assert!(
+            {
+                let kernel_e = TorsionExponent::try_from(e.value() + 2)
+                    .expect("e + 2 within TorsionExponent bounds");
+                self.is_isotropic(kernel_e)
+            },
+            "kernel must be isotropic for the 2^(e+2)-Weil pairing"
+        );
         self.isogeny_inner(e, pts, false)
     }
 
@@ -477,9 +530,17 @@ impl Kernel {
     /// hadamard_bool settings in the chain's final steps.
     pub fn isogeny_extra_torsion(
         &self,
-        e: crate::curves::TorsionExponent,
+        e: TorsionExponent,
         pts: &[ProductPoint],
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
+        debug_assert!(
+            {
+                let kernel_e = TorsionExponent::try_from(e.value() + 2)
+                    .expect("e + 2 within TorsionExponent bounds");
+                self.is_isotropic(kernel_e)
+            },
+            "kernel must be isotropic for the 2^(e+2)-Weil pairing"
+        );
         self.isogeny_inner(e, pts, true)
     }
 
@@ -502,15 +563,19 @@ impl Kernel {
     /// breakdown).
     pub fn isogeny_no_extra_torsion(
         &self,
-        e: crate::curves::TorsionExponent,
+        e: TorsionExponent,
         pts: &[ProductPoint],
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
+        debug_assert!(
+            self.is_isotropic(e),
+            "kernel must be isotropic for the 2^e-Weil pairing"
+        );
         self.isogeny_inner_no_extra_torsion(e, pts)
     }
 
     fn isogeny_inner(
         &self,
-        e: crate::curves::TorsionExponent,
+        e: TorsionExponent,
         pts: &[ProductPoint],
         _extra_torsion: bool,
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
@@ -1028,7 +1093,7 @@ impl Kernel {
     ///     handing off to the splitter.
     fn isogeny_inner_no_extra_torsion(
         &self,
-        e: crate::curves::TorsionExponent,
+        e: TorsionExponent,
         pts: &[ProductPoint],
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         // Full-hex (re, im) pair for `[NOEX]` step dumps, matching the
