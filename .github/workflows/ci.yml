@@ -57,9 +57,10 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - name: Run clippy
         run: |
+          set -o pipefail
           echo '## Clippy' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cargo +nightly clippy --all-targets --all-features --message-format=short -- -W warnings 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          cargo +nightly clippy --all-targets --all-features --message-format=short -- -D warnings 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   gate:

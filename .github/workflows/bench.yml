@@ -53,7 +53,7 @@ jobs:
               dudect-*|tacet-*|iai-*|iai_slow-*) continue ;; # CT/iai benches run separately
             esac
             echo "=== Running $(basename "$bin") ===" >&2
-            timeout 300 "$bin" --color never 2>&1 >> bench-raw.txt || true
+            timeout 300 "$bin" --color never >> bench-raw.txt 2>&1 || true
           done
           /tmp/divan-to-json < bench-raw.txt > bench-output.json
 

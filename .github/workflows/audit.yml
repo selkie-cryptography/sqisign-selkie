@@ -96,7 +96,7 @@ jobs:
 
       - name: Run zeroize test
         run: |
-          cargo test --test zeroize --features expose-internals 2>&1 || true
+          cargo test --test zeroize --features expose-internals
           rustc -O .github/scripts/zeroize-report.rs -o /tmp/zeroize-report
           /tmp/zeroize-report "${{ github.sha }}" > zeroize.json
 

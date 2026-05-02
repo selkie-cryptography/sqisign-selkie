@@ -44,6 +44,7 @@ jobs:
 
       - name: Generate coverage report
         run: |
+          set -o pipefail
           echo '## Code Coverage' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cargo +nightly llvm-cov report --doctests --fail-under-lines 50 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

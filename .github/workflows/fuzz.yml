@@ -30,6 +30,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           key: fuzz-${{ matrix.target }}
@@ -38,10 +40,14 @@ jobs:
         with:
           tool: cargo-fuzz
 
+      - name: Build fuzzer
+        run: cd fuzz && cargo +nightly fuzz build ${{ matrix.target }}
+
       - name: Run fuzzer (10 min)
         run: |
           cd fuzz
-          timeout 600 cargo +nightly fuzz run ${{ matrix.target }} -- \
+          set -o pipefail
+          timeout 600 cargo +nightly fuzz run ${{ matrix.target }} --no-build -- \
             -max_total_time=600 2>&1 | tee fuzz-output.txt || true
 
       - name: Collect results
