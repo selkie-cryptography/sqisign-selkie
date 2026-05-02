@@ -96,3 +96,105 @@ fn gluing_codomain_manual_check() {
         ThetaNullPoint::new(data.dual.alpha, data.dual.beta, data.dual.gamma, Fp2::ZERO);
     let _dual_count = isogeny::get_index_splitting_count(&dual_null);
 }
+
+/// `theta_to_product` (Algorithm 8.44) on a synthetic product null point
+/// must recover the two component Montgomery coefficients exactly.
+///
+/// For a product theta null point `(α₁α₂, α₁β₂, β₁α₂, β₁β₂)` the algorithm
+/// is expected to yield curves with affine coefficients
+/// `Aᵢ = -2(αᵢ⁴ + βᵢ⁴) / (αᵢ⁴ - βᵢ⁴)`. The shared factors cancel cleanly
+/// — the input components factor as `α₁⁴(α₂⁴ ± β₂⁴)` and
+/// `α₂⁴(α₁⁴ ± β₁⁴)` after raising to the 4th power.
+///
+/// Direct value-based assertion. Catches surviving mutations on the final
+/// projective-to-affine conversion (`A_num * C.invert()`), which the
+/// existing end-to-end KAT path does not guard.
+#[test]
+fn theta_to_product_recovers_component_coefficients() {
+    use crate::fields::fp::Fp;
+
+    let alpha1 = Fp2::new(Fp::from_small(3), Fp::from_small(7));
+    let beta1 = Fp2::new(Fp::from_small(5), Fp::from_small(11));
+    let alpha2 = Fp2::new(Fp::from_small(13), Fp::from_small(17));
+    let beta2 = Fp2::new(Fp::from_small(19), Fp::from_small(23));
+
+    let null = ThetaNullPoint::new(
+        &alpha1 * &alpha2,
+        &alpha1 * &beta2,
+        &beta1 * &alpha2,
+        &beta1 * &beta2,
+    );
+
+    let product = isogeny::theta_to_product(&null);
+
+    let four = |x: &Fp2| x.square().square();
+    let expected_a = |alpha: &Fp2, beta: &Fp2| {
+        let a4 = four(alpha);
+        let b4 = four(beta);
+        let num = -&(&(&a4 + &b4) + &(&a4 + &b4));
+        &num * &(&a4 - &b4).invert()
+    };
+
+    let a1 = expected_a(&alpha1, &beta1);
+    let a2 = expected_a(&alpha2, &beta2);
+
+    assert_eq!(Fp2::from(*product.E1.coefficient()), a1, "E1 coefficient");
+    assert_eq!(Fp2::from(*product.E2.coefficient()), a2, "E2 coefficient");
+}
+
+/// `theta_product_to_montgomery` (Algorithm 8.45) must compute the
+/// projective `(X : Z)` pairs exactly per the formula
+/// `X₁ = a·z + c·x, Z₁ = a·z − c·x, X₂ = a·y + b·x, Z₂ = a·y − b·x`.
+///
+/// Tests the formula in isolation by constructing a synthetic
+/// [`JacobianPoint`] over a synthetic surface — the function only reads
+/// the null-point components and the point's `(X, Y, Z, W)` coordinates,
+/// so the surface is structural ballast.
+///
+/// One of the surviving mutants flips `+` to `−` in `X₁`, which makes
+/// `X₁ = a·z − c·x = Z₁` and collapses `(X₁ : Z₁)` to `(1 : 1)` — the
+/// projective `PartialEq` cross-multiplication catches this iff
+/// `c·x ≠ 0`.
+#[test]
+fn theta_product_to_montgomery_matches_formula() {
+    use crate::{
+        curves::montgomery::{Curve, ProjectiveXOnlyPoint},
+        fields::fp::Fp,
+    };
+
+    let alpha1 = Fp2::new(Fp::from_small(3), Fp::from_small(7));
+    let beta1 = Fp2::new(Fp::from_small(5), Fp::from_small(11));
+    let alpha2 = Fp2::new(Fp::from_small(13), Fp::from_small(17));
+    let beta2 = Fp2::new(Fp::from_small(19), Fp::from_small(23));
+
+    let null = ThetaNullPoint::new(
+        &alpha1 * &alpha2,
+        &alpha1 * &beta2,
+        &beta1 * &alpha2,
+        &beta1 * &beta2,
+    );
+    let surface = Jacobian::new(null.clone());
+
+    let x = Fp2::new(Fp::from_small(2), Fp::from_small(29));
+    let y = Fp2::new(Fp::from_small(31), Fp::from_small(37));
+    let z = Fp2::new(Fp::from_small(41), Fp::from_small(43));
+    let w = Fp2::new(Fp::from_small(47), Fp::from_small(53));
+    let pt = JacobianPoint::new(x.clone(), y.clone(), z.clone(), w, surface);
+
+    // Curves are passed through to `ProjectiveXOnlyPoint::from_XZ` for
+    // storage only — the formula's output values do not depend on them.
+    let product = EllipticProduct::new(Curve::E0, Curve::E0);
+
+    let (out1, out2) = isogeny::theta_product_to_montgomery(&pt, &null, &product);
+
+    let (a, b, c, _d) = (&null.a, &null.b, &null.c, &null.d);
+    let exp_X1 = &(a * &z) + &(c * &x);
+    let exp_Z1 = &(a * &z) - &(c * &x);
+    let exp_X2 = &(a * &y) + &(b * &x);
+    let exp_Z2 = &(a * &y) - &(b * &x);
+    let exp1 = ProjectiveXOnlyPoint::from_XZ(exp_X1, exp_Z1, &Curve::E0);
+    let exp2 = ProjectiveXOnlyPoint::from_XZ(exp_X2, exp_Z2, &Curve::E0);
+
+    assert_eq!(out1, exp1, "(X₁ : Z₁) mismatch");
+    assert_eq!(out2, exp2, "(X₂ : Z₂) mismatch");
+}

@@ -1402,7 +1402,7 @@ fn splitting_isomorphism(null: &ThetaNullPoint) -> GluingMatrix {
 
 /// Recover Montgomery coefficients from a product theta null point
 /// (Algorithm 8.44).
-fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
+pub(crate) fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
     let (a, b, c, d) = (&null.a, &null.b, &null.c, &null.d);
 
     // Check product structure: ad == bc.
@@ -1435,7 +1435,7 @@ fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
 
 /// Convert a theta point with product structure to Montgomery
 /// coordinates on each component (Algorithm 8.45).
-fn theta_product_to_montgomery(
+pub(crate) fn theta_product_to_montgomery(
     P: &JacobianPoint,
     null: &ThetaNullPoint,
     product: &EllipticProduct,

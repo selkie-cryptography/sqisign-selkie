@@ -12,7 +12,7 @@
 use core::{
     cmp::Ordering,
     fmt,
-    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+    ops::{Add, Mul, Neg, Sub},
 };
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
@@ -1757,20 +1757,6 @@ impl<const N: usize> Add<&BigInt<N>> for &BigInt<N> {
     }
 }
 
-impl<const N: usize> AddAssign for BigInt<N> {
-    #[inline]
-    fn add_assign(&mut self, rhs: Self) {
-        *self = self.ct_add(&rhs);
-    }
-}
-
-impl<const N: usize> AddAssign<&BigInt<N>> for BigInt<N> {
-    #[inline]
-    fn add_assign(&mut self, rhs: &Self) {
-        *self = self.ct_add(rhs);
-    }
-}
-
 impl<const N: usize> Sub for BigInt<N> {
     type Output = Self;
     #[inline]
@@ -1795,20 +1781,6 @@ impl<const N: usize> Sub<&BigInt<N>> for &BigInt<N> {
     }
 }
 
-impl<const N: usize> SubAssign for BigInt<N> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: Self) {
-        *self = self.ct_sub(&rhs);
-    }
-}
-
-impl<const N: usize> SubAssign<&BigInt<N>> for BigInt<N> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: &Self) {
-        *self = self.ct_sub(rhs);
-    }
-}
-
 impl<const N: usize> Mul for BigInt<N> {
     type Output = Self;
     #[inline]
@@ -1830,20 +1802,6 @@ impl<const N: usize> Mul<&BigInt<N>> for &BigInt<N> {
     #[inline]
     fn mul(self, rhs: &BigInt<N>) -> BigInt<N> {
         self.ct_mul(rhs)
-    }
-}
-
-impl<const N: usize> MulAssign for BigInt<N> {
-    #[inline]
-    fn mul_assign(&mut self, rhs: Self) {
-        *self = self.ct_mul(&rhs);
-    }
-}
-
-impl<const N: usize> MulAssign<&BigInt<N>> for BigInt<N> {
-    #[inline]
-    fn mul_assign(&mut self, rhs: &Self) {
-        *self = self.ct_mul(rhs);
     }
 }
 
