@@ -613,49 +613,120 @@ impl<const N: usize> BigInt<N> {
     /// Extended GCD: returns `(gcd, x, y)` such that
     /// `self * x + other * y = gcd`, with `gcd >= 0`.
     ///
-    /// Uses the extended Euclidean algorithm. The Bezout coefficients
-    /// `x` and `y` are signed.
+    /// Stein's binary extended GCD (HAC algorithm 14.61). Same shape as
+    /// [`Self::gcd`] but tracks Bezout cofactors through the halving and
+    /// subtract steps; when the cofactor pair isn't both even, the
+    /// originals (post common-factor strip) are added/subtracted to make
+    /// them so before halving.
+    ///
+    /// **Variable-time**, same sources of leakage as [`Self::gcd`] plus
+    /// cofactor sign branches.
     pub fn xgcd(&self, other: &Self) -> (Self, Self, Self) {
-        let mut old_r = self.abs();
-        let mut r = other.abs();
-        let mut old_s = Self::ONE;
-        let mut s = Self::ZERO;
-        let mut old_t = Self::ZERO;
-        let mut t = Self::ONE;
+        let a_abs = self.abs();
+        let b_abs = other.abs();
 
-        let mut i = 0;
-        while i < 2 * Self::BITS {
-            let r_is_zero = bool::from(r.is_zero()) as u64;
-            if r_is_zero == 0 {
-                let (q, rem) = old_r.div_rem(&r);
+        // Edge cases: gcd(0, b) = b with cofactors (0, 1); symmetric.
+        if bool::from(a_abs.is_zero()) {
+            return (b_abs, Self::ZERO, Self::ONE);
+        }
+        if bool::from(b_abs.is_zero()) {
+            return (a_abs, Self::ONE, Self::ZERO);
+        }
 
-                let new_r = rem;
-                let new_s = old_s.ct_sub(&q.ct_mul(&s));
-                let new_t = old_t.ct_sub(&q.ct_mul(&t));
+        // Strip common factor of 2; reapplied to gcd at the end.
+        // Cofactors are computed against the stripped operands `(x, y)`,
+        // and that's also what satisfies `x_co · self + y_co · other == g`,
+        // since stripping a common factor doesn't change the cofactor
+        // identity.
+        let g_shift =
+            Self::mag_trailing_zeros(&a_abs.limbs).min(Self::mag_trailing_zeros(&b_abs.limbs));
+        let x_lim = Self::mag_shr(&a_abs.limbs, g_shift);
+        let y_lim = Self::mag_shr(&b_abs.limbs, g_shift);
+        let x = Self {
+            sign: 0,
+            limbs: x_lim,
+        };
+        let y = Self {
+            sign: 0,
+            limbs: y_lim,
+        };
 
-                old_r = r;
-                old_s = s;
-                old_t = t;
-                r = new_r;
-                s = new_s;
-                t = new_t;
+        // Invariant: `u = aa·x + bb·y` and `v = cc·x + dd·y`.
+        let mut u = x_lim;
+        let mut v = y_lim;
+        let mut aa = Self::ONE;
+        let mut bb = Self::ZERO;
+        let mut cc = Self::ZERO;
+        let mut dd = Self::ONE;
+
+        loop {
+            // Halve u while the invariant holds; adjust cofactors.
+            while u[0] & 1 == 0 {
+                u = Self::mag_shr(&u, 1);
+                if (aa.limbs[0] | bb.limbs[0]) & 1 == 0 {
+                    aa = Self::halve_even(&aa);
+                    bb = Self::halve_even(&bb);
+                } else {
+                    aa = Self::halve_even(&(aa + &y));
+                    bb = Self::halve_even(&(bb - &x));
+                }
             }
-            i += 1;
+            // Halve v likewise.
+            while v[0] & 1 == 0 {
+                v = Self::mag_shr(&v, 1);
+                if (cc.limbs[0] | dd.limbs[0]) & 1 == 0 {
+                    cc = Self::halve_even(&cc);
+                    dd = Self::halve_even(&dd);
+                } else {
+                    cc = Self::halve_even(&(cc + &y));
+                    dd = Self::halve_even(&(dd - &x));
+                }
+            }
+
+            // Both u, v odd. Subtract smaller from larger; result is
+            // even, picked up by the next iteration's halve loop.
+            if Self::mag_cmp(&u, &v) != Ordering::Less {
+                let (new_u, _) = Self::mag_sub(&u, &v);
+                u = new_u;
+                aa = aa - &cc;
+                bb = bb - &dd;
+            } else {
+                let (new_v, _) = Self::mag_sub(&v, &u);
+                v = new_v;
+                cc = cc - &aa;
+                dd = dd - &bb;
+            }
+
+            if Self::mag_is_zero(&u) == 1 {
+                break;
+            }
         }
 
-        // Adjust signs: we computed on |self| and |other|.
-        let mut x = old_s;
-        let mut y = old_t;
-        if self.sign == 1 {
-            x = x.wrapping_neg();
-        }
-        if other.sign == 1 {
-            y = y.wrapping_neg();
-        }
-        x.normalize();
-        y.normalize();
+        let g = Self {
+            sign: 0,
+            limbs: Self::mag_shl(&v, g_shift),
+        };
 
-        (old_r, x, y)
+        // Adjust signs to undo our `abs()` of the inputs.
+        let mut x_co = if self.sign == 1 { cc.wrapping_neg() } else { cc };
+        let mut y_co = if other.sign == 1 { dd.wrapping_neg() } else { dd };
+        x_co.normalize();
+        y_co.normalize();
+
+        (g, x_co, y_co)
+    }
+
+    /// Halve a value known to be even. Sign preserved (no floor-vs-trunc
+    /// issue since we only halve even values).
+    #[inline]
+    fn halve_even(a: &Self) -> Self {
+        debug_assert!(a.limbs[0] & 1 == 0, "halve_even on odd value");
+        let limbs = Self::mag_shr(&a.limbs, 1);
+        let zero = Self::mag_is_zero(&limbs) == 1;
+        Self {
+            sign: if zero { 0 } else { a.sign },
+            limbs,
+        }
     }
 
     /// Modular inverse: returns `self^{-1} mod modulus`, or `None` if
