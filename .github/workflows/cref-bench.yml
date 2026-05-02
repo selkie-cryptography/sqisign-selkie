@@ -8,7 +8,7 @@ name: C ref baseline (mini-gmp + ref GF)
 on:
   push:
     branches:
-      - worktree-cref-bench-baseline
+      - main
   workflow_dispatch:
 
 permissions:
