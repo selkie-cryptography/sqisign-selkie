@@ -433,6 +433,90 @@ in the C reference that avoids redundant Hadamard transforms at the
 boundary between the chain and the splitting step.  Check the loop
 structure, not just the per-step formula.
 
+\subsection{\texttt{extra\_torsion=false} chain tail: 4-iso / 2-iso
+formula transcription error}
+\label{sec:bug-no-extra-torsion-tail}
+
+The C reference exposes a second chain mode for when the input
+kernel has order exactly $2^e$ rather than the
+$2^{e+2}$ expected by §\ref{sec:bug-hadamard-bool}.  Selected by
+\texttt{extra\_torsion=false}, it replaces the 8-torsion penultimate
+and ultimate steps (\texttt{theta\_isogeny\_compute(\dots,0,0)} and
+\texttt{theta\_isogeny\_compute(\dots,1,0)}) with two dedicated
+lower-torsion isogenies:
+\begin{itemize}
+  \item \emph{Penultimate}: 4-isogeny via
+    \texttt{theta\_isogeny\_compute\_4(\dots,0,0)}, formulated for a
+    single 4-torsion kernel point with a square-root recovery for
+    the missing cross term.
+  \item \emph{Ultimate}: 2-isogeny via
+    \texttt{theta\_isogeny\_compute\_2(\dots,1,0)}, formulated from
+    the domain null point alone, with three square roots producing
+    the codomain components.
+\end{itemize}
+This tail is reached from
+\texttt{dim2id2iso\_ideal\_to\_isogeny\_clapotis} in the outer chain
+(\texttt{dim2id2iso.c:1183}), the only call site in the C reference
+that passes \texttt{extra\_torsion=false}.
+
+The spec (Algorithms~8.32, 8.33) and the C reference present
+these formulas in different projective representatives, and the
+two presentations differ in which of the two square roots
+multiplies which component.  The C reference computes
+\[
+  \mathrm{null}.x = \mathrm{TT1}.x \cdot \mathrm{TT2}.x \cdot \mathrm{sqaacc},
+\]
+while a literal reading of the spec leads to
+\[
+  \mathrm{null}.x = \mathrm{TT1}.x \cdot \mathrm{sqaabb} \cdot \mathrm{TT2}.x.
+\]
+The swap is not a projective scalar: it takes the null point into
+a different projective class, and the splitting step downstream
+finds zero vanishing $U_{i,j}(0)$ entries instead of one.  The
+2-isogeny formula has a parallel discrepancy.
+
+\paragraph{Diagnostic.}
+Pure inspection didn't reveal the swap.  Both formulas
+type-check, both produce non-zero output at every step, and the
+chain fails only at the final splitting check, far downstream of
+the actual mistake.  Instrumenting the C reference's chain to
+emit per-step theta null points, mirroring the same
+instrumentation in our chain, driving identical kernel bytes
+through both, and diffing the two streams localizes the bug to
+the first chain step that uses an affected codomain formula.
+After the formula fix, the two streams agree byte-for-byte from
+the gluing through the input to the splitting step.
+
+\paragraph{Splitting predicate strength.}
+The C reference's
+\texttt{splitting\_compute} accepts a final null point only when
+exactly one~$U_{i,j}(0)$ vanishes \emph{and}, on the
+\texttt{extra\_torsion=true} path, that zero appears at the
+specific index~8 corresponding to the canonical product structure
+of protocol-constructed kernels.  The two checks are independent:
+malformed inputs can produce a single zero at the wrong index, and
+a count-only predicate accepts where the index check rejects.  We
+restored the index-8 discriminator on the
+\texttt{extra\_torsion=true} path; the
+\texttt{extra\_torsion=false} tail keeps the count-only check
+(matching the C reference's \texttt{zero\_index} parameter
+of~$-1$ at this call site).
+
+\noindent
+\textbf{Advice for implementers:} When transcribing a formula that
+exists in two presentations (the spec and a reference
+implementation), pick one and follow it literally; do not blend.
+Cross-check with a byte-level diff against an instrumented
+reference rather than synthetic test kernels: not every isotropic
+subgroup of $E_1[2^e] \times E_2[2^e]$ is a valid chain input
+(§\ref{sec:bug-theta-tests}), and the chain can run cleanly on an
+invalid kernel and reject only at the splitting step, leaving no
+way to distinguish ``invalid input'' from ``buggy chain'' from the
+final null alone.  Make sure your splitting predicate is no weaker
+than the reference's: a count-only check that accepts where an
+index-discriminating check rejects will mask divergences exactly
+where they're hardest to chase down.
+
 \subsection{Outer chain needs two torsion bits the spec doesn't mention}
 \label{sec:bug-outer-chain-extra-torsion}
 

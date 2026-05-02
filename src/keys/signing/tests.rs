@@ -876,18 +876,15 @@ fn sign_kat_zero_dump_for_xverify() {
         .unwrap_or(0);
     let dir = std::env::var("DUMP_DIR").unwrap_or_else(|_| "/tmp/cross_verify".to_string());
 
-    let (seed_hex, pk_hex, sk_hex, msg_hex, _) =
-        crate::keys::kat_data::KAT_VECTORS[kat_idx];
+    let (seed_hex, pk_hex, sk_hex, msg_hex, _) = crate::keys::kat_data::KAT_VECTORS[kat_idx];
     let seed_bytes = hex::decode(seed_hex).expect("valid hex");
     let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
     let sk_bytes = hex::decode(sk_hex).expect("valid hex");
     let pk_bytes = hex::decode(pk_hex).expect("valid hex");
     let msg = hex::decode(msg_hex).expect("valid hex");
 
-    let sk = SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap())
-        .expect("sk parses");
-    let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap())
-        .expect("pk parses");
+    let sk = SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap()).expect("sk parses");
+    let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).expect("pk parses");
 
     let t0 = std::time::Instant::now();
     let sig = sk
@@ -2341,16 +2338,14 @@ impl<R: rand_core::CryptoRng + rand_core::RngCore> rand_core::CryptoRng for Trac
 /// call's first byte landed).
 ///
 /// `#[ignore]` because keygen takes minutes even in release mode. Run with:
-/// `cargo test --lib --release keygen_kat_000_rng_trace -- --include-ignored --nocapture`
+/// `cargo test --lib --release keygen_kat_000_rng_trace -- --include-ignored
+/// --nocapture`
 #[test]
 #[ignore]
 fn keygen_kat_000_rng_trace() {
     let seed_hex = crate::keys::kat_data::KAT_VECTORS[0].0;
     let seed_bytes = hex::decode(seed_hex).expect("valid hex");
-    let seed: [u8; 48] = seed_bytes
-        .as_slice()
-        .try_into()
-        .expect("seed is 48 bytes");
+    let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
 
     let inner = crate::drbg::Aes256CtrDrbg::new(&seed);
     let mut tracing = TracingDrbg::new(inner);

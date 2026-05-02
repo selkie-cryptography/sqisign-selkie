@@ -20,4 +20,13 @@ exclude_re = [
   # correctness property.  Mutating it to a no-op won't fail any
   # functional test — and that's expected, not a test gap.
   "impl Zeroize for",
+
+  # `Fp::is_square` returns `r.ct_eq(&Fp::ONE) | self.ct_eq(&Fp::ZERO)`.
+  # The two `Choice` operands are mutually exclusive: when `self == 0`
+  # the `pow_p3div4().square() * self` chain is 0, so `r.ct_eq(&Fp::ONE)`
+  # is 0; when `self != 0` the second operand is 0. With one side always
+  # zero, `|` and `^` produce identical results on every input — the
+  # `replace | with ^ in Fp::is_square` mutant is provably equivalent
+  # and cannot be killed by any test.
+  "Fp::is_square",
 ]

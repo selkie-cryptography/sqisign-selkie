@@ -2067,16 +2067,6 @@ mod tests {
     }
 
     #[test]
-    fn trailing_zeros_basic() {
-        assert_eq!(BigInt::<4>::from_u64(1).trailing_zeros(), 0);
-        assert_eq!(BigInt::<4>::from_u64(2).trailing_zeros(), 1);
-        assert_eq!(BigInt::<4>::from_u64(4).trailing_zeros(), 2);
-        assert_eq!(BigInt::<4>::from_u64(8).trailing_zeros(), 3);
-        assert_eq!(BigInt::<4>::from_u64(12).trailing_zeros(), 2); // 0b1100
-        assert_eq!(BigInt::<4>::ZERO.trailing_zeros(), 256); // 4 * 64
-    }
-
-    #[test]
     fn gram_matrix_nrd_identity_basis() {
         use super::super::{lattice::NrdBasis, linear::Vector};
 

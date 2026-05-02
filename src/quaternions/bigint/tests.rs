@@ -125,6 +125,73 @@ fn bitsize_bigint() {
 }
 
 #[test]
+fn trailing_zeros_single_limb() {
+    assert_eq!(trailing_zeros(0), 64);
+    assert_eq!(trailing_zeros(1), 0);
+    assert_eq!(trailing_zeros(2), 1);
+    assert_eq!(trailing_zeros(4), 2);
+    assert_eq!(trailing_zeros(8), 3);
+    assert_eq!(trailing_zeros(12), 2); // 0b1100
+    assert_eq!(trailing_zeros(1 << 63), 63);
+    assert_eq!(trailing_zeros(u64::MAX), 0);
+    assert_eq!(trailing_zeros(0xFFFF_FFFF_0000_0000), 32);
+}
+
+#[test]
+fn trailing_zeros_basic() {
+    assert_eq!(I256::from_u64(1).trailing_zeros(), 0);
+    assert_eq!(I256::from_u64(2).trailing_zeros(), 1);
+    assert_eq!(I256::from_u64(4).trailing_zeros(), 2);
+    assert_eq!(I256::from_u64(8).trailing_zeros(), 3);
+    assert_eq!(I256::from_u64(12).trailing_zeros(), 2); // 0b1100
+    assert_eq!(I256::ZERO.trailing_zeros(), 256); // 4 * 64
+}
+
+#[test]
+fn trailing_zeros_limb_boundaries() {
+    // 1 << 64: low limb zero, second limb has bit 0 set.
+    assert_eq!(I256::from_limbs([0, 1, 0, 0]).trailing_zeros(), 64);
+    // 1 << 127: highest bit of second limb.
+    assert_eq!(
+        I256::from_limbs([0, 1u64 << 63, 0, 0]).trailing_zeros(),
+        127
+    );
+    // 1 << 128: bit 0 of third limb.
+    assert_eq!(I256::from_limbs([0, 0, 1, 0]).trailing_zeros(), 128);
+    // 1 << 192: bit 0 of high limb.
+    assert_eq!(I256::from_limbs([0, 0, 0, 1]).trailing_zeros(), 192);
+    // 1 << 255: highest representable bit.
+    assert_eq!(
+        I256::from_limbs([0, 0, 0, 1u64 << 63]).trailing_zeros(),
+        255
+    );
+}
+
+#[test]
+fn trailing_zeros_only_lowest_set_bit_matters() {
+    // High limbs set must NOT mask the low-limb bit. Catches "for i in 0..1"
+    // truncation and "delete return" mutants on the old early-return impl.
+    assert_eq!(
+        I256::from_limbs([1, u64::MAX, u64::MAX, u64::MAX]).trailing_zeros(),
+        0
+    );
+    // Low limbs zero, mid limb has its lowest bit set, high limbs garbage.
+    assert_eq!(I256::from_limbs([0, 0, 1, u64::MAX]).trailing_zeros(), 128);
+    // Low limb zero, second limb's bit 5 set, third nonzero — answer is 64+5.
+    assert_eq!(
+        I256::from_limbs([0, 1u64 << 5, 0xDEAD_BEEF, 0]).trailing_zeros(),
+        64 + 5
+    );
+}
+
+#[test]
+fn trailing_zeros_negative_uses_magnitude() {
+    // Sign is irrelevant; v_2 reads from |x|.
+    assert_eq!(I256::from(-12i64).trailing_zeros(), 2);
+    assert_eq!(I256::from(-1i64).trailing_zeros(), 0);
+}
+
+#[test]
 fn even_odd() {
     assert!(bool::from(I256::ZERO.is_even()));
     assert!(bool::from(I256::from(2i64).is_even()));
@@ -197,6 +264,27 @@ fn narrow_overflow_fails() {
     wide.as_limbs_mut()[4] = 1;
     let ct: subtle::CtOption<BigInt<4>> = wide.into();
     assert!(!bool::from(ct.is_some()));
+}
+
+#[test]
+fn narrow_method_basic() {
+    // Production callers (signing.rs, ideal.rs) use the inherent
+    // `BigInt<8>::narrow()` method, not the `From<...>` trait. Exercise
+    // it directly so a `narrow -> None` mutation cannot survive.
+    let wide = BigInt::<8>::from(99i64);
+    let narrow = wide.narrow().expect("99 fits in BigInt<4>");
+    assert_eq!(narrow, BigInt::<4>::from(99i64));
+
+    let neg = BigInt::<8>::from(-12345i64);
+    let neg_narrow = neg.narrow().expect("-12345 fits in BigInt<4>");
+    assert_eq!(neg_narrow, BigInt::<4>::from(-12345i64));
+}
+
+#[test]
+fn narrow_method_overflow() {
+    let mut wide = BigInt::<8>::from(1i64);
+    wide.as_limbs_mut()[4] = 1;
+    assert!(wide.narrow().is_none());
 }
 
 #[test]

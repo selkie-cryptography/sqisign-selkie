@@ -1087,41 +1087,64 @@ pub(crate) fn codomain_4torsion_no_hadamard(
     T1: &JacobianPoint,
     domain: &Jacobian,
 ) -> (DualThetaNullPoint, Jacobian) {
-    let hs = T1.squared().hadamard();
+    // TT1 = H(S(T1_4)). For a dual-form 4-torsion point, only the X
+    // and Z components are nonzero (Y = W = 0), but we don't depend
+    // on that explicitly here.
+    let tt1 = T1.squared().hadamard();
+    // tt1.X, tt1.Y, tt1.Z, tt1.W ↔ C ref's TT1.x, TT1.y, TT1.z, TT1.t.
 
-    let (a2, b2, g2, d2) = hadamard4(
+    // TT2 = H(S(domain.null)). Maps to C ref's TT2.{x,y,z,t}.
+    let (tt2_x, tt2_y, tt2_z, tt2_t) = hadamard4(
         &domain.null.a.square(),
         &domain.null.b.square(),
         &domain.null.c.square(),
         &domain.null.d.square(),
     );
 
-    let ab = (&a2 * &b2).sqrt();
-    let ag = (&a2 * &g2).sqrt();
+    let sqaabb = (&tt2_x * &tt2_y).sqrt();
+    let sqaacc = (&tt2_x * &tt2_z).sqrt();
 
-    let beta = &(&ab * &ag) * &hs.Z;
-    let delta_inv = &beta * &hs.X;
-    let beta_mul = &beta * &hs.X;
-    let xgd_ab_a2 = &(&hs.Z * &ab) * &a2;
-    let _delta = &xgd_ab_a2 * &(&ab * &a2);
-    let alpha = &(&hs.X * &ab) * &a2;
-    let gamma = &alpha * &g2;
-    let delta_final = &alpha * &d2;
+    // Codomain null point — direct transcription of C ref's
+    // `theta_isogeny_compute_4(0, 0)` body
+    // (`theta_isogenies.c:789–802`):
+    //
+    //   null.x = TT1.x · TT2.x · sqaacc
+    //   null.y = TT1.x · sqaabb · sqaacc
+    //   null.z = TT1.x · TT2.x · TT2.z
+    //   null.t = TT1.z · sqaabb · TT2.x
+    let null_x = &(&tt1.X * &tt2_x) * &sqaacc;
+    let null_y = &(&tt1.X * &sqaabb) * &sqaacc;
+    let null_z = &(&tt1.X * &tt2_x) * &tt2_z;
+    let null_t = &(&tt1.Z * &sqaabb) * &tt2_x;
 
-    let alpha_inv = &hs.X * &d2;
-    let beta_inv = &alpha * &b2;
-    let gamma_inv_val = &delta_inv * &b2;
+    // Precomputation for evaluation
+    // (`theta_isogenies.c:790, 804–810`):
+    //
+    //   precomp.x = TT1.x · TT2.t · TT2.z · TT2.y
+    //   precomp.y = TT1.x · TT2.t · TT2.z · sqaabb
+    //   precomp.z = TT1.x · TT2.t · TT2.y · sqaacc
+    //   precomp.t = sqaabb · sqaacc · TT1.z · TT2.y
+    let xt = &tt1.X * &tt2_t;
+    let xtz = &xt * &tt2_z;
+    let xty = &xt * &tt2_y;
+    let precomp_x = &xtz * &tt2_y;
+    let precomp_y = &xtz * &sqaabb;
+    let precomp_z = &xty * &sqaacc;
+    let sab_sac_z = &(&sqaabb * &sqaacc) * &tt1.Z;
+    let precomp_t = &sab_sac_z * &tt2_y;
 
     let dual = DualThetaNullPoint {
-        alpha,
-        beta: beta_mul,
-        gamma,
-        delta: delta_final,
-        alpha_inv,
-        beta_inv,
-        gamma_inv: gamma_inv_val,
-        delta_inv,
+        alpha: null_x,
+        beta: null_y,
+        gamma: null_z,
+        delta: null_t,
+        alpha_inv: precomp_x,
+        beta_inv: precomp_y,
+        gamma_inv: precomp_z,
+        delta_inv: precomp_t,
     };
+    // hadamard_bool_2 = 0 → codomain stays in dual form (no final
+    // Hadamard on the null point).
     let null = ThetaNullPoint::new(dual.alpha, dual.beta, dual.gamma, dual.delta);
     (dual, Jacobian::new(null))
 }
@@ -1140,26 +1163,44 @@ pub(crate) fn codomain_4torsion_no_hadamard(
 ///
 /// Pair with [`eval_ultimate`] for the matching evaluator.
 pub(crate) fn codomain_2torsion_ultimate(domain: &Jacobian) -> (DualThetaNullPoint, Jacobian) {
-    // bool_1=1: Hadamard the null before squaring.
+    // bool_1 = 1: TT2 = H(S(H(domain.null))) = to_squared_theta of
+    // hadamarded null. Maps to C ref's TT2.{x,y,z,t} = AA, BB, CC, DD.
     let (na, nb, nc, nd) = hadamard4(
         &domain.null.a,
         &domain.null.b,
         &domain.null.c,
         &domain.null.d,
     );
-    let (a2, b2, g2, d2) = hadamard4(&na.square(), &nb.square(), &nc.square(), &nd.square());
+    let (tt2_x, tt2_y, tt2_z, tt2_t) =
+        hadamard4(&na.square(), &nb.square(), &nc.square(), &nd.square());
 
-    let alpha = a2;
-    let beta = (&a2 * &b2).sqrt();
-    let gamma = (&a2 * &g2).sqrt();
-    let delta = (&a2 * &d2).sqrt();
+    // Codomain null — direct from C ref's
+    // `theta_isogeny_compute_2(1, 0)` body
+    // (`theta_isogenies.c:860–867`):
+    //
+    //   null.x = TT2.x                        // AA
+    //   null.y = sqrt(TT2.x · TT2.y)          // sqrt(AA·BB)
+    //   null.z = sqrt(TT2.x · TT2.z)          // sqrt(AA·CC)
+    //   null.t = sqrt(TT2.x · TT2.t)          // sqrt(AA·DD)
+    let alpha = tt2_x;
+    let beta = (&tt2_x * &tt2_y).sqrt();
+    let gamma = (&tt2_x * &tt2_z).sqrt();
+    let delta = (&tt2_x * &tt2_t).sqrt();
 
-    let ab = &alpha * &beta;
-    let gd = &gamma * &delta;
-    let alpha_inv = &ab * &d2;
-    let beta_inv = &ab * &g2;
-    let gamma_inv = &gd * &b2;
-    let delta_inv = &gd * &a2;
+    // Precomputation (`theta_isogenies.c:869–877`):
+    //
+    //   precomp.x = TT2.y · TT2.z · TT2.t          // BB·CC·DD
+    //   precomp.y = TT2.z · TT2.t · null.y         // CC·DD·sqrt(AA·BB)
+    //   precomp.z = TT2.y · TT2.t · null.z         // BB·DD·sqrt(AA·CC)
+    //   precomp.t = TT2.y · TT2.z · null.t         // BB·CC·sqrt(AA·DD)
+    let zt = &tt2_z * &tt2_t;
+    let yt = &tt2_y * &tt2_t;
+    let yz = &tt2_y * &tt2_z;
+
+    let alpha_inv = &yz * &tt2_t; // BB·CC·DD
+    let beta_inv = &zt * &beta; // CC·DD·sqrt(AA·BB)
+    let gamma_inv = &yt * &gamma; // BB·DD·sqrt(AA·CC)
+    let delta_inv = &yz * &delta; // BB·CC·sqrt(AA·DD)
 
     let dual = DualThetaNullPoint {
         alpha,
@@ -1171,7 +1212,7 @@ pub(crate) fn codomain_2torsion_ultimate(domain: &Jacobian) -> (DualThetaNullPoi
         gamma_inv,
         delta_inv,
     };
-    // bool_2=0: NO final Hadamard — codomain stays in dual form.
+    // bool_2=0: codomain stays in dual form (no final Hadamard).
     let null = ThetaNullPoint::new(dual.alpha, dual.beta, dual.gamma, dual.delta);
     (dual, Jacobian::new(null))
 }
@@ -1402,7 +1443,7 @@ fn splitting_isomorphism(null: &ThetaNullPoint) -> GluingMatrix {
 
 /// Recover Montgomery coefficients from a product theta null point
 /// (Algorithm 8.44).
-fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
+pub(crate) fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
     let (a, b, c, d) = (&null.a, &null.b, &null.c, &null.d);
 
     // Check product structure: ad == bc.
@@ -1435,7 +1476,7 @@ fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
 
 /// Convert a theta point with product structure to Montgomery
 /// coordinates on each component (Algorithm 8.45).
-fn theta_product_to_montgomery(
+pub(crate) fn theta_product_to_montgomery(
     P: &JacobianPoint,
     null: &ThetaNullPoint,
     product: &EllipticProduct,

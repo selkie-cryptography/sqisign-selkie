@@ -12,7 +12,7 @@
 use core::{
     cmp::Ordering,
     fmt,
-    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+    ops::{Add, Mul, Neg, Sub},
 };
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
@@ -43,6 +43,29 @@ const fn nbits64(mut x: u64) -> u32 {
         i += 1;
     }
     n
+}
+
+/// Constant-time trailing-zero count of a single 64-bit word.
+///
+/// Returns the position of the lowest set bit (0-indexed), or `64` if
+/// `x == 0`. Iterates over all 64 bits unconditionally — does not call
+/// `u64::trailing_zeros`, whose CT status depends on target codegen.
+#[inline]
+const fn trailing_zeros(x: u64) -> u32 {
+    let mut tz: u32 = 0;
+    let mut found: u32 = 0;
+    let mut i: u32 = 0;
+    while i < 64 {
+        let bit = ((x >> i) & 1) as u32;
+        // `m == 1` exactly at the first set bit, `0` thereafter and before.
+        let m = bit & (1 - found);
+        // Latch position into `tz` on that single iteration; no-op otherwise.
+        tz += m * i;
+        found |= bit;
+        i += 1;
+    }
+    // If no bit was ever set, `found == 0` and we return 64.
+    tz + (1 - found) * 64
 }
 
 /// Constant-time conditional move: returns `a` if `choice == 0`, `b` if
@@ -332,25 +355,32 @@ impl<const N: usize> BigInt<N> {
         Choice::from((self.limbs[0] & 1) as u8)
     }
 
-    /// Returns the number of trailing zero bits (2-adic valuation).
+    /// Constant-time count of trailing zero bits (2-adic valuation).
     ///
-    /// For zero, returns `N * 64`.
+    /// For zero, returns `N * 64`. Iterates over all `N` limbs and all
+    /// 64 bits per limb unconditionally, with no data-dependent branches
+    /// or memory accesses. Called on secret-derived values in
+    /// `SuitableIdeals` (dyadic valuation of `gcd(u, v)`).
     ///
-    /// WARNING: Not constant-time (data-dependent branch on limb values).
-    ///
-    /// TODO(ct): Make constant-time before production use. Called on
-    /// secret-derived values in SuitableIdeals (dyadic valuation of u).
+    /// Counterpart to `ibz_two_adic` in the C reference, which delegates
+    /// to GMP's variable-time `mpz_scan1`.
     pub fn trailing_zeros(&self) -> u32 {
-        let mut count = 0u32;
-        for i in 0..N {
-            if self.limbs[i] == 0 {
-                count += 64;
-            } else {
-                count += self.limbs[i].trailing_zeros();
-                return count;
-            }
+        let mut k: u32 = 0;
+        let mut found: u32 = 0;
+        let mut i: usize = 0;
+        while i < N {
+            let limb = self.limbs[i];
+            let tz = trailing_zeros(limb);
+            // 1 if `limb != 0`, else 0.
+            let limb_nz = ((limb | limb.wrapping_neg()) >> 63) as u32;
+            // 1 only at the first nonzero limb encountered, low to high.
+            let m = limb_nz & (1 - found);
+            k += m * (64 * i as u32 + tz);
+            found |= limb_nz;
+            i += 1;
         }
-        count
+        // All-zero contract: return `N * 64`.
+        k + (1 - found) * (64 * N as u32)
     }
 
     /// Negation. Flips the sign bit.
@@ -1727,20 +1757,6 @@ impl<const N: usize> Add<&BigInt<N>> for &BigInt<N> {
     }
 }
 
-impl<const N: usize> AddAssign for BigInt<N> {
-    #[inline]
-    fn add_assign(&mut self, rhs: Self) {
-        *self = self.ct_add(&rhs);
-    }
-}
-
-impl<const N: usize> AddAssign<&BigInt<N>> for BigInt<N> {
-    #[inline]
-    fn add_assign(&mut self, rhs: &Self) {
-        *self = self.ct_add(rhs);
-    }
-}
-
 impl<const N: usize> Sub for BigInt<N> {
     type Output = Self;
     #[inline]
@@ -1765,20 +1781,6 @@ impl<const N: usize> Sub<&BigInt<N>> for &BigInt<N> {
     }
 }
 
-impl<const N: usize> SubAssign for BigInt<N> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: Self) {
-        *self = self.ct_sub(&rhs);
-    }
-}
-
-impl<const N: usize> SubAssign<&BigInt<N>> for BigInt<N> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: &Self) {
-        *self = self.ct_sub(rhs);
-    }
-}
-
 impl<const N: usize> Mul for BigInt<N> {
     type Output = Self;
     #[inline]
@@ -1800,20 +1802,6 @@ impl<const N: usize> Mul<&BigInt<N>> for &BigInt<N> {
     #[inline]
     fn mul(self, rhs: &BigInt<N>) -> BigInt<N> {
         self.ct_mul(rhs)
-    }
-}
-
-impl<const N: usize> MulAssign for BigInt<N> {
-    #[inline]
-    fn mul_assign(&mut self, rhs: Self) {
-        *self = self.ct_mul(&rhs);
-    }
-}
-
-impl<const N: usize> MulAssign<&BigInt<N>> for BigInt<N> {
-    #[inline]
-    fn mul_assign(&mut self, rhs: &Self) {
-        *self = self.ct_mul(rhs);
     }
 }
 
