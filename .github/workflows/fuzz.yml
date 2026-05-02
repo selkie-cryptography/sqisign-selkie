@@ -41,6 +41,11 @@ jobs:
           tool: cargo-fuzz
 
       - name: Build fuzzer
+        # Override musl's default static-libc linkage so ASan can link
+        # dynamically (sanitizers refuse static libc). cargo-fuzz appends
+        # its own sancov flags to whatever RUSTFLAGS we set here.
+        env:
+          RUSTFLAGS: "-C target-feature=-crt-static"
         run: cd fuzz && cargo +nightly fuzz build ${{ matrix.target }}
 
       - name: Run fuzzer (10 min)
