@@ -10,6 +10,18 @@
 timeout_multiplier = 5
 minimum_test_timeout = 60
 
+# NOTE: `sign_kat_derand_001` and `sign_kat_derand_009` are NOT
+# `#[ignore]`d (they keep the cross-product (n_bt>0, r_rsp>0) class
+# in the regular suite — see `keys::kat_data` doc). cargo-mutants
+# re-runs the test suite per mutant scenario (~290 mutants × 30 s
+# – several minutes each), so they may inflate full mutant runs
+# significantly. If full-shard mutants times out, gate them out of
+# the mutants run via nextest filter expression in the workflow:
+#     -E 'not test(/sign_kat_derand_/)'
+# (tied to the workflow rather than mutants.toml because the local
+# `cargo mutants -- --lib` invocation uses plain cargo-test, which
+# doesn't speak nextest's `-E` filter).
+
 # --- Exclusions ---
 #
 # Keep this list minimal.  A surviving mutant is a signal, not noise.

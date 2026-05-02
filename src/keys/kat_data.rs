@@ -2,6 +2,56 @@
 ///
 /// Each entry: (seed, pk, sk, msg, sm).
 /// Pinned to the C ref commit used throughout this crate.
+///
+/// # Branch coverage by signature parameters
+///
+/// Each signature carries `n_bt` (sig byte 64) and `r_rsp` (sig byte 65),
+/// which jointly select code paths in [`sign`] and [`verify`]:
+///
+/// - `r_rsp > 0`  triggers the **even-response isogeny** path (the
+///   `EvenResponse` branch and its scaling formulas).
+/// - `n_bt > 0`   triggers the **backtracking** path, shifting both
+///   the challenge isogeny degree and the effective response length
+///   `e'_rsp = e_rsp − r_rsp − n_bt`.
+/// - `(n_bt > 0, r_rsp > 0)` is the **cross product** — two scaling
+///   bugs in `verify` survived 30 unit tests because they only
+///   manifested when both branches ran together; KATs are the
+///   primary catch.
+///
+/// Distribution across the 100 vectors:
+///
+/// | `(n_bt, r_rsp)` class | count | branch exercised                  |
+/// |-----------------------|------:|-----------------------------------|
+/// | `(0, 0)`              |    36 | default — no even rsp, no bt      |
+/// | `(0, ≥1)`             |    41 | even-response isogeny             |
+/// | `(≥1, 0)`             |    12 | backtracking                      |
+/// | `(≥1, ≥1)`            |    11 | cross product (both branches)     |
+///
+/// ## Curated picks
+///
+/// Smallest message in each useful class, plus boundary vectors:
+///
+/// | idx | msg bytes | `n_bt` | `r_rsp` | rationale                        |
+/// |----:|----------:|-------:|--------:|----------------------------------|
+/// |   0 |        33 |      0 |       1 | smallest, even-response only     |
+/// |   1 |        66 |      1 |       2 | smallest in cross-product class  |
+/// |   2 |        99 |      0 |       6 | largest `r_rsp` overall          |
+/// |   7 |       264 |      0 |       0 | smallest default-only (sanity)   |
+/// |   8 |       297 |      1 |       0 | smallest backtracking-only       |
+/// |   9 |       330 |      2 |       1 | largest `n_bt` in cross product  |
+///
+/// `sign_kat_derand_001` and `sign_kat_derand_009` in
+/// `keys::signing::tests` are NOT `#[ignore]`d — they keep at least one
+/// representative of the cross-product class running in the regular
+/// `cargo test` suite. The other 98 `sign_kat_derand_NNN` tests stay
+/// `#[ignore]`d (each takes 30 s – 30 min depending on Cornacchia/LLL
+/// retries on its trajectory) and run via the `kat` nextest profile.
+///
+/// To re-derive the table, decode bytes 64–65 of each `sm[..148]` per
+/// the encoding in `keys::Signature::from_bytes`.
+///
+/// [`sign`]: crate::keys::SigningKey::sign
+/// [`verify`]: crate::keys::VerifyingKey::verify
 #[cfg(any(test, feature = "expose-internals"))]
 pub const KAT_VECTORS: &[(&str, &str, &str, &str, &str)] = &[
     (

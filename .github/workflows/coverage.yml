@@ -15,7 +15,10 @@ jobs:
   coverage:
     name: Code coverage
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Two un-`#[ignore]`d sign() KATs (`sign_kat_derand_001/009`) added
+    # to cover `keys/signing.rs`; each is several minutes under llvm-cov
+    # instrumentation. Bumped from 30 to 60 to absorb without flake.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:

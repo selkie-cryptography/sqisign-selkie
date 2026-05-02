@@ -921,8 +921,13 @@ fn sign_kat_derand_000() {
     sign_kat_idx_probe_inner(0);
 }
 
+// Not `#[ignore]`d: the only sign() KAT that runs in default `cargo test`,
+// chosen because KAT[1] is the smallest vector in the (n_bt > 0, r_rsp > 0)
+// cross-product class — the parameter combination that hides the verify-side
+// scaling-formula bugs called out in `kat_data` doc. Without one such test
+// in the regular suite, `keys/signing.rs` shows ~13% coverage and any sign
+// mutation lands in untested code. See `kat_data` for the parameter table.
 #[test]
-#[ignore]
 fn sign_kat_derand_001() {
     sign_kat_idx_probe_inner(1);
 }
@@ -969,8 +974,11 @@ fn sign_kat_derand_008() {
     sign_kat_idx_probe_inner(8);
 }
 
+// Not `#[ignore]`d: companion to `sign_kat_derand_001`. KAT[9] is the
+// largest-`n_bt` vector in the cross-product class (n_bt=2, r_rsp=1),
+// hedging against parameter-edge regressions that a single (n_bt=1)
+// sample misses. See `kat_data` for the parameter table.
 #[test]
-#[ignore]
 fn sign_kat_derand_009() {
     sign_kat_idx_probe_inner(9);
 }
