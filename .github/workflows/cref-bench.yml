@@ -1,0 +1,119 @@
+name: C ref baseline (mini-gmp + ref GF)
+
+# Apples-to-apples comparison: build the SQIsign C reference with the
+# bundled mini-gmp (no asm) and the portable ref GF backend (no asm
+# Fp), then run keypair/sign/verify against our Rust crate's
+# benches/sqisign.rs on the same runner.
+
+on:
+  push:
+    branches:
+      - worktree-cref-bench-baseline
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pin upstream so timing comparisons are reproducible.
+  CREF_REPO: SQIsign/the-sqisign
+  CREF_REF: dd133d7aca576c361a270c8e6434832535b42ecc
+  # Iteration counts. Sign + keygen are slow and rejection-sampled, so
+  # we run a handful of repetitions; verify is ~ms-scale, run more.
+  KEYGEN_REPS: "5"
+  SIGN_REPS: "5"
+  VERIFY_REPS: "100"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  baseline:
+    name: C ref vs Rust (NIST-I)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # ---------------- C reference ----------------
+      - name: Clone C reference at pinned commit
+        run: |
+          git clone --no-checkout https://github.com/${CREF_REPO}.git cref
+          git -C cref checkout "${CREF_REF}"
+
+      - name: Patch stray unconditional gmp.h include
+        # ibz_division.c includes <gmp.h> unconditionally, bypassing
+        # the MINI_GMP toggle that intbig.h uses. Mirror the toggle so
+        # the build can find the right type definitions when system
+        # libgmp is absent.
+        run: |
+          set -o pipefail
+          file=cref/src/quaternion/ref/generic/hnf/ibz_division.c
+          test -f "$file"
+          # Replace the line with the conditional block.
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("cref/src/quaternion/ref/generic/hnf/ibz_division.c")
+          src = p.read_text()
+          old = "#include <gmp.h>\n"
+          new = (
+              "#if defined(MINI_GMP)\n"
+              "#include <mini-gmp.h>\n"
+              "#include <mini-gmp-extra.h>\n"
+              "#else\n"
+              "#include <gmp.h>\n"
+              "#endif\n"
+          )
+          assert src.count(old) == 1, "expected exactly one unconditional include"
+          p.write_text(src.replace(old, new, 1))
+          PY
+          grep -A4 'MINI_GMP' "$file" | head -8
+
+      - name: Configure C ref (mini-gmp + ref GF, NIST-I, Release)
+        run: |
+          cmake -S cref -B cref/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGMP_LIBRARY=MINI \
+            -DSQISIGN_BUILD_TYPE=ref \
+            -DENABLE_TESTS=OFF \
+            -DENABLE_STRICT=OFF
+
+      - name: Build C ref benchmark
+        run: cmake --build cref/build -j --target benchmark_lvl1
+
+      - name: Run C ref benchmark
+        run: |
+          set -o pipefail
+          {
+            echo "## C reference (mini-gmp + ref GF, NIST-I)"
+            echo
+            echo '```'
+            ./cref/build/apps/benchmark_lvl1 -i "${VERIFY_REPS}" 2>&1 | tee cref-bench.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ---------------- Rust ----------------
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: cref-bench-baseline
+
+      - name: Run Rust benchmark
+        run: |
+          set -o pipefail
+          {
+            echo "## Rust crate (sqisign-selkie, NIST-I)"
+            echo
+            echo '```'
+            cargo bench --bench sqisign --features expose-internals 2>&1 | tee rust-bench.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw outputs
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cref-bench-baseline
+          path: |
+            cref-bench.txt
+            rust-bench.txt
