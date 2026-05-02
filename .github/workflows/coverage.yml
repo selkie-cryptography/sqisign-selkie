@@ -39,7 +39,7 @@ jobs:
 
       - name: Collect coverage (nextest + doctests)
         run: |
-          cargo +nightly llvm-cov --no-report nextest
+          cargo +nightly llvm-cov --no-report nextest --profile coverage
           cargo +nightly llvm-cov --no-report --doc
 
       - name: Generate coverage report
