@@ -16,27 +16,35 @@ fn signing_key_zeroed_on_drop() {
     let sk_bytes = hex::decode(KAT0_SK_HEX).unwrap();
     let sk_arr: &[u8; SIGNING_KEY_BYTES] = sk_bytes.as_slice().try_into().unwrap();
 
-    // Box the key so it lives on the heap at a stable address.
-    let sk = Box::new(SigningKey::from_bytes(sk_arr).unwrap());
-
-    // Grab a raw pointer to the key's memory before dropping.
-    let ptr = &*sk as *const SigningKey as *const u8;
+    // Heap-allocate, then leak the Box so the storage outlives the
+    // value. `drop_in_place` runs zeroize without deallocating, so
+    // we can read the same bytes afterward — avoiding the
+    // use-after-free that `drop(Box)` + reread caused. The latter
+    // tripped rustc's debug-mode `ptr::copy_nonoverlapping`
+    // precondition checks once the allocator handed the freed slot
+    // back to the snapshot Vec.
+    let sk_box = Box::new(SigningKey::from_bytes(sk_arr).unwrap());
+    let raw = Box::into_raw(sk_box);
+    let ptr = raw as *const u8;
     let len = std::mem::size_of::<SigningKey>();
 
-    // Snapshot: verify it's not all zeros before drop (sanity check).
-    let before: Vec<u8> = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
+    // Read byte-at-a-time via `read_volatile` so the compiler can't
+    // elide reads of "logically uninit" post-drop storage and we
+    // never materialize a typed reference to a destroyed value.
+    let before: Vec<u8> = (0..len)
+        .map(|i| unsafe { ptr.add(i).read_volatile() })
+        .collect();
     assert!(
         before.iter().any(|&b| b != 0),
         "signing key should not be all zeros before drop"
     );
 
-    // Drop the key — zeroize should fire.
-    drop(sk);
+    // Run Drop (and zeroize) without freeing the allocation.
+    unsafe { std::ptr::drop_in_place(raw) };
 
-    // Read the memory after drop. This is technically UB (reading
-    // freed memory), but it's the only way to verify zeroization.
-    // The allocator hasn't reused this memory yet in practice.
-    let after: Vec<u8> = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
+    let after: Vec<u8> = (0..len)
+        .map(|i| unsafe { ptr.add(i).read_volatile() })
+        .collect();
 
     // Count non-zero bytes. Ideally all should be zero.
     let nonzero = after.iter().filter(|&&b| b != 0).count();
