@@ -267,6 +267,27 @@ fn narrow_overflow_fails() {
 }
 
 #[test]
+fn narrow_method_basic() {
+    // Production callers (signing.rs, ideal.rs) use the inherent
+    // `BigInt<8>::narrow()` method, not the `From<...>` trait. Exercise
+    // it directly so a `narrow -> None` mutation cannot survive.
+    let wide = BigInt::<8>::from(99i64);
+    let narrow = wide.narrow().expect("99 fits in BigInt<4>");
+    assert_eq!(narrow, BigInt::<4>::from(99i64));
+
+    let neg = BigInt::<8>::from(-12345i64);
+    let neg_narrow = neg.narrow().expect("-12345 fits in BigInt<4>");
+    assert_eq!(neg_narrow, BigInt::<4>::from(-12345i64));
+}
+
+#[test]
+fn narrow_method_overflow() {
+    let mut wide = BigInt::<8>::from(1i64);
+    wide.as_limbs_mut()[4] = 1;
+    assert!(wide.narrow().is_none());
+}
+
+#[test]
 fn generic_widen_4_to_9() {
     let small = BigInt::<4>::from(-99i64);
     let wide: BigInt<9> = small.widen();
