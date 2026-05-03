@@ -1477,6 +1477,16 @@
       return base;
     }
 
+    // Shorten a fully-qualified Rust function path to "module::Type::fn".
+    // Strips the leading crate name and intermediate modules deeper than
+    // two segments — full path stays in the title attribute.
+    function shortFn(qual) {
+      const stripped = qual.replace(/^sqisign_selkie::/, '');
+      const segs = stripped.split('::');
+      if (segs.length <= 3) return stripped;
+      return segs[0] + '::…::' + segs.slice(-2).join('::');
+    }
+
     function renderCoverageData(data) {
       covData = data;
       const total = data.total || {};
@@ -2581,7 +2591,26 @@
         if (panicData.bounds_check > 0) html += `<li><span>Bounds checks</span><span>${panicData.bounds_check}</span></li>`;
         if (panicData.expect > 0) html += `<li><span>expect()</span><span>${panicData.expect}</span></li>`;
         if (panicData.panic_fmt > 0) html += `<li><span>panic!()</span><span>${panicData.panic_fmt}</span></li>`;
+        if (panicData.assert > 0) html += `<li><span>assert!()</span><span>${panicData.assert}</span></li>`;
+        if (panicData.unwrap > 0) html += `<li><span>unwrap()</span><span>${panicData.unwrap}</span></li>`;
         html += '</ul></div>';
+
+        // Per-function detail when `panic-count.rs` emits the `sites`
+        // array (added 2026-05-03). Older reports omit it; we just show
+        // aggregates above in that case.
+        const sites = Array.isArray(panicData.sites) ? panicData.sites : [];
+        if (sites.length > 0) {
+          html += '<div class="cov-insight"><h4>Top panic-prone functions</h4><ul class="cov-insight-list">';
+          for (const s of sites.slice(0, 8)) {
+            const fname = shortFn(s.function);
+            const kindTag = s.kind === 'bounds_check' ? 'tag-ct' : 'tag-cold';
+            html += `<li>
+              <span title="${esc(s.function)}">${esc(fname)}</span>
+              <span><span class="tag ${kindTag}">${esc(s.kind)}</span> <span class="tag tag-hot">${esc(String(s.count))}×</span></span>
+            </li>`;
+          }
+          html += '</ul></div>';
+        }
 
         if (unsafeData && unsafeData.total > 0) {
           html += '<div class="cov-insight"><h4>Unsafe code</h4><ul class="cov-insight-list">';
