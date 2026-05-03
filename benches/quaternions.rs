@@ -19,23 +19,40 @@ fn sample_element() -> Element<4> {
     )
 }
 
-fn sample_element_b() -> Element<4> {
+// --- Element operations ---
+
+// Wider samples for `mul_direct` benching. The narrow `Element<4>::mul`
+// requires `|coord| · p < 2^256` (i.e. coords < ~2^4), which is
+// uncharacteristic of real signing-side callers; they widen to
+// `Element<N>` with N large enough that `p · coord^2` fits in
+// `BigInt<N>` (W ≥ 7 for ~2^96 coords; production uses Element<18> on
+// the response phase). Use the same magnitude inputs as the narrow
+// samples, just zero-extended to 8 limbs.
+fn sample_element_wide() -> Element<8> {
     Element::new(
-        Coordinate::from_limbs([0xAAAA_BBBB, 0xCCCC_DDDD, 0, 0]),
-        Coordinate::from_limbs([0xEEEE_FFFF, 0x0000_1111, 0, 0]),
-        Coordinate::from_limbs([0x2222_3333, 0x4444_5555, 0, 0]),
-        Coordinate::from_limbs([0x6666_7777, 0x8888_9999, 0, 0]),
+        Coordinate::from_limbs([0xDEAD_BEEF, 0x1234_5678, 0, 0, 0, 0, 0, 0]),
+        Coordinate::from_limbs([0xCAFE_BABE, 0x9ABC_DEF0, 0, 0, 0, 0, 0, 0]),
+        Coordinate::from_limbs([0x1111_2222, 0x3333_4444, 0, 0, 0, 0, 0, 0]),
+        Coordinate::from_limbs([0x5555_6666, 0x7777_8888, 0, 0, 0, 0, 0, 0]),
         Denominator::ONE,
     )
 }
 
-// --- Element operations ---
+fn sample_element_b_wide() -> Element<8> {
+    Element::new(
+        Coordinate::from_limbs([0xAAAA_BBBB, 0xCCCC_DDDD, 0, 0, 0, 0, 0, 0]),
+        Coordinate::from_limbs([0xEEEE_FFFF, 0x0000_1111, 0, 0, 0, 0, 0, 0]),
+        Coordinate::from_limbs([0x2222_3333, 0x4444_5555, 0, 0, 0, 0, 0, 0]),
+        Coordinate::from_limbs([0x6666_7777, 0x8888_9999, 0, 0, 0, 0, 0, 0]),
+        Denominator::ONE,
+    )
+}
 
 #[divan::bench]
 fn element_mul(bencher: divan::Bencher) {
-    let a = sample_element();
-    let b = sample_element_b();
-    bencher.bench(|| divan::black_box(&a).mul(divan::black_box(&b)));
+    let a = sample_element_wide();
+    let b = sample_element_b_wide();
+    bencher.bench(|| divan::black_box(&a).mul_direct(divan::black_box(&b)));
 }
 
 #[divan::bench]
