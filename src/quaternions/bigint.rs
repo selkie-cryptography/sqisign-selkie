@@ -1826,6 +1826,18 @@ impl<const N: usize> BigInt<N> {
 /// is a data-dependent branch, and the modular inverse precomputation
 /// uses early-exit Newton iteration. Constant-time Montgomery will be
 /// reintroduced in a separate pass.
+///
+/// **CT note on caching.** The cached fields (`n_inv_neg`, `r2`) are
+/// derived purely from `n` and reveal nothing more than `n` does. Reusing
+/// a `MontCtx` across many ops on the *same* modulus is safe iff that
+/// modulus is public — for SQIsign the public-modulus call sites
+/// (challenge `D_mix`, `2^e` torsion, ramification primes) are the
+/// majority. For secret-modulus call sites (e.g. Miller-Rabin on a
+/// secret-derived prime candidate during `random_prime_norm`), cross-call
+/// reuse via a keyed cache would create a cache-occupancy timing channel
+/// on the modulus itself, even though the cached values are inert. Scope
+/// caching to within-operation lifetime in those cases when CT is
+/// reintroduced.
 pub struct MontCtx<const N: usize> {
     /// The modulus (odd, nonzero).
     n: [u64; N],
@@ -1916,34 +1928,83 @@ impl<const N: usize> MontCtx<N> {
     }
 
     /// Modular exponentiation: `base^exp mod n`. Computed in Montgomery
-    /// form: convert `base` in, square-and-multiply at width N with
-    /// `mont_mul`, convert out at the end.
+    /// form using a 4-bit fixed-window scheme: precompute table of
+    /// `base^i` for `i in 0..16`, then process the exponent four bits at
+    /// a time with 4 squarings + 1 multiply per window.
+    ///
+    /// **Variable-time on the exponent.** The window-indexed table
+    /// access is a cache-line side channel on the exponent bits — fine
+    /// for SQIsign's Miller-Rabin (witness exponents are public and
+    /// pre-determined small primes minus one) and for any other
+    /// public-exponent path. For a future secret-exponent CT path the
+    /// table read needs to be made oblivious (scan all 16 entries with
+    /// `subtle::ConditionallySelectable`).
     pub fn pow(&self, base: &BigInt<N>, exp: &BigInt<N>) -> BigInt<N> {
-        // Reduce base mod n first, then convert.
+        // Reduce base mod n then convert to Mont form.
         let base_red = BigInt::<N>::mag_div_rem(&base.limbs, &self.n).1;
         let base_m = self.to_mont(&base_red);
 
-        // result starts as 1 in Montgomery form: 1 · R mod n.
-        // 1 · R mod n = R mod n. Compute by mont_mul(R^2, 1) actually
-        // gives R, but the simpler closed form: since (a · b · R^-1)
-        // with a = R^2 and b = 1 yields R, we delegate to mont_mul.
+        // table[i] = base^i in Mont form, for i in 0..16. table[0] = 1·R = R mod n.
         let mut one = [0u64; N];
         one[0] = 1;
-        let one_m = self.mont_mul(&self.r2, &one);
+        let mut table: [[u64; N]; 16] = [[0u64; N]; 16];
+        table[0] = self.mont_mul(&self.r2, &one);
+        table[1] = base_m;
+        let mut i = 2;
+        while i < 16 {
+            table[i] = self.mont_mul(&table[i - 1], &base_m);
+            i += 1;
+        }
 
-        let mut result = one_m;
         let bs = exp.bitsize();
-        let mut i = bs;
-        while i > 0 {
-            i -= 1;
-            result = self.mont_mul(&result, &result);
-            let limb_idx = (i / 64) as usize;
-            let bit_idx = i % 64;
-            let bit = (exp.limbs[limb_idx] >> bit_idx) & 1;
-            if bit == 1 {
-                result = self.mont_mul(&result, &base_m);
+        if bs == 0 {
+            // base^0 = 1.
+            return BigInt {
+                sign: 0,
+                limbs: self.from_mont(&table[0]),
+            };
+        }
+
+        // Scan exponent in 4-bit windows from the most-significant
+        // nibble down. Initial state is `1` in Mont form (= table[0]),
+        // so the very first window doesn't need its 4 squarings — we
+        // can directly install table[w_top] (or leave result at 1 if
+        // w_top == 0).
+        let nibbles = bs.div_ceil(4);
+        let mut result = table[0];
+        let mut nib_rev = nibbles;
+        while nib_rev > 0 {
+            nib_rev -= 1;
+            let lo_bit = nib_rev * 4;
+
+            // Extract bits [lo_bit, lo_bit+4) into a 4-bit window.
+            let mut w: u64 = 0;
+            let mut b: u32 = 0;
+            while b < 4 {
+                let bit_idx = lo_bit + b;
+                if bit_idx < bs {
+                    let li = (bit_idx / 64) as usize;
+                    let bo = bit_idx % 64;
+                    w |= ((exp.limbs[li] >> bo) & 1) << b;
+                }
+                b += 1;
+            }
+            let w = w as usize;
+
+            // First-window optimization: result is still 1, so 4
+            // squarings are no-ops (1^2 = 1 each). Skip them.
+            if nib_rev != nibbles - 1 {
+                result = self.mont_mul(&result, &result);
+                result = self.mont_mul(&result, &result);
+                result = self.mont_mul(&result, &result);
+                result = self.mont_mul(&result, &result);
+            }
+            // Multiply by table[w] (skip if w == 0, since table[0] = 1).
+            if w != 0 {
+                result = self.mont_mul(&result, &table[w]);
             }
         }
+
         BigInt {
             sign: 0,
             limbs: self.from_mont(&result),
