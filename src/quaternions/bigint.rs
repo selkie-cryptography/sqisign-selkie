@@ -1119,16 +1119,31 @@ impl<const N: usize> BigInt<N> {
 
     /// Modular exponentiation: `base^exp mod modulus`.
     ///
-    /// Uses square-and-multiply. The exponent is scanned from MSB to LSB.
+    /// Uses Montgomery arithmetic when the modulus is odd (the common
+    /// case): conversion in/out plus square-and-multiply with CIOS
+    /// Montgomery multiplication, no per-step division. Falls back to
+    /// schoolbook square-and-multiply (`ct_mul` + `ct_mod`) for even
+    /// moduli, where Montgomery doesn't apply.
     ///
     /// # Width requirement
     ///
     /// The inner squaring `result * result` can reach `(modulus - 1)²`
-    /// before the `ct_mod` reduction. For the result to not silently
-    /// truncate, `BigInt<N>` must satisfy `64*N >= 2*bits(modulus)`.
-    /// If `modulus` is larger than that bound (bits-wise), use
-    /// [`pow_mod_w`](Self::pow_mod_w) with a wider working type.
+    /// before the reduction. For the result to not silently truncate,
+    /// `BigInt<N>` must satisfy `64*N >= 2*bits(modulus)`. If `modulus`
+    /// is larger than that bound, use [`pow_mod_w`](Self::pow_mod_w)
+    /// with a wider working type.
     pub fn pow_mod(base: &Self, exp: &Self, modulus: &Self) -> Self {
+        // Montgomery requires an odd modulus.
+        if let Some(ctx) = MontCtx::<N>::new(modulus) {
+            return ctx.pow(base, exp);
+        }
+        Self::pow_mod_schoolbook(base, exp, modulus)
+    }
+
+    /// Schoolbook square-and-multiply fallback for even moduli. Kept
+    /// public(crate) so MontCtx::pow can delegate when the exponent
+    /// loop trivially terminates.
+    fn pow_mod_schoolbook(base: &Self, exp: &Self, modulus: &Self) -> Self {
         let mut result = Self::ONE;
         let bs = exp.bitsize();
         let mut i = bs;
@@ -1790,6 +1805,187 @@ impl<const N: usize> BigInt<N> {
             limbs: result_limbs,
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// Montgomery arithmetic
+// ---------------------------------------------------------------------
+
+/// Precomputed context for Montgomery arithmetic modulo an odd value.
+///
+/// Montgomery form represents a value `x` as `x · R mod n`, where
+/// `R = 2^{64·N}`. Multiplication in Montgomery form costs one CIOS
+/// multiply-and-reduce per operation (no division), making it faster
+/// than schoolbook reduction for chains like `pow_mod`.
+///
+/// **Variable-time.** The reduction step's final conditional subtract
+/// is a data-dependent branch, and the modular inverse precomputation
+/// uses early-exit Newton iteration. Constant-time Montgomery will be
+/// reintroduced in a separate pass.
+pub struct MontCtx<const N: usize> {
+    /// The modulus (odd, nonzero).
+    n: [u64; N],
+    /// `-n^{-1} mod 2^64`, used to choose the per-iteration reduction
+    /// constant `m_i` so that `t[0] + m_i · n[0] ≡ 0 (mod 2^64)`.
+    n_inv_neg: u64,
+    /// `R^2 mod n`, used to convert into Montgomery form.
+    r2: [u64; N],
+}
+
+impl<const N: usize> MontCtx<N> {
+    /// Build a context for the given odd modulus. Returns `None` if
+    /// the modulus is even or zero.
+    pub fn new(modulus: &BigInt<N>) -> Option<Self> {
+        // Modulus must be odd (n_inv_neg only exists then) and nonzero.
+        if modulus.limbs[0] & 1 == 0 || bool::from(modulus.is_zero()) {
+            return None;
+        }
+        let n = modulus.limbs;
+        let n_inv_neg = neg_inv_mod_2_64(n[0]);
+        let r2 = compute_r2_mod_n::<N>(&n);
+        Some(Self { n, n_inv_neg, r2 })
+    }
+
+    /// Convert a magnitude in `[0, n)` into Montgomery form.
+    fn to_mont(&self, x: &[u64; N]) -> [u64; N] {
+        self.mont_mul(x, &self.r2)
+    }
+
+    /// Convert a Montgomery-form magnitude back to its natural value.
+    fn from_mont(&self, x: &[u64; N]) -> [u64; N] {
+        let mut one = [0u64; N];
+        one[0] = 1;
+        self.mont_mul(x, &one)
+    }
+
+    /// CIOS Montgomery multiplication: returns `a · b · R^{-1} mod n`.
+    /// Inputs must be in `[0, n)`. Output is in `[0, n)`.
+    ///
+    /// Acar 1996, "Analyzing and Comparing Montgomery Multiplication
+    /// Algorithms", §5.
+    fn mont_mul(&self, a: &[u64; N], b: &[u64; N]) -> [u64; N] {
+        let n = &self.n;
+        let n_inv = self.n_inv_neg;
+
+        // `t` holds N+2 limbs as (t[0..N], t_n, t_np1). t_np1 is local
+        // to each outer iteration since it's written in the multiply
+        // phase and consumed in the reduce phase, never carried across.
+        let mut t = [0u64; N];
+        let mut t_n: u64 = 0;
+
+        for i in 0..N {
+            // Multiply phase: t += a · b[i]
+            let mut c: u64 = 0;
+            for j in 0..N {
+                let prod = t[j] as u128 + a[j] as u128 * b[i] as u128 + c as u128;
+                t[j] = prod as u64;
+                c = (prod >> 64) as u64;
+            }
+            let sum = t_n as u128 + c as u128;
+            t_n = sum as u64;
+            let t_np1 = (sum >> 64) as u64;
+
+            // Reduce phase: m chosen so t[0] + m·n[0] ≡ 0 (mod 2^64);
+            // then add m·n and shift down by one limb.
+            let m = t[0].wrapping_mul(n_inv);
+            let prod = t[0] as u128 + m as u128 * n[0] as u128;
+            // The low 64 bits of this prod are zero by construction.
+            let mut c = (prod >> 64) as u64;
+            for j in 1..N {
+                let prod = t[j] as u128 + m as u128 * n[j] as u128 + c as u128;
+                t[j - 1] = prod as u64;
+                c = (prod >> 64) as u64;
+            }
+            let sum = t_n as u128 + c as u128;
+            t[N - 1] = sum as u64;
+            t_n = t_np1.wrapping_add((sum >> 64) as u64);
+        }
+
+        // After N iterations the result is in t[0..N] plus an at-most-1
+        // overflow bit in t_n. By Montgomery's bound the value is in
+        // `[0, 2n)`, so a single conditional subtract reduces.
+        if t_n != 0 || BigInt::<N>::mag_cmp(&t, n) != Ordering::Less {
+            let (sub, _) = BigInt::<N>::mag_sub(&t, n);
+            t = sub;
+        }
+        t
+    }
+
+    /// Modular exponentiation: `base^exp mod n`. Computed in Montgomery
+    /// form: convert `base` in, square-and-multiply at width N with
+    /// `mont_mul`, convert out at the end.
+    pub fn pow(&self, base: &BigInt<N>, exp: &BigInt<N>) -> BigInt<N> {
+        // Reduce base mod n first, then convert.
+        let base_red = BigInt::<N>::mag_div_rem(&base.limbs, &self.n).1;
+        let base_m = self.to_mont(&base_red);
+
+        // result starts as 1 in Montgomery form: 1 · R mod n.
+        // 1 · R mod n = R mod n. Compute by mont_mul(R^2, 1) actually
+        // gives R, but the simpler closed form: since (a · b · R^-1)
+        // with a = R^2 and b = 1 yields R, we delegate to mont_mul.
+        let mut one = [0u64; N];
+        one[0] = 1;
+        let one_m = self.mont_mul(&self.r2, &one);
+
+        let mut result = one_m;
+        let bs = exp.bitsize();
+        let mut i = bs;
+        while i > 0 {
+            i -= 1;
+            result = self.mont_mul(&result, &result);
+            let limb_idx = (i / 64) as usize;
+            let bit_idx = i % 64;
+            let bit = (exp.limbs[limb_idx] >> bit_idx) & 1;
+            if bit == 1 {
+                result = self.mont_mul(&result, &base_m);
+            }
+        }
+        BigInt {
+            sign: 0,
+            limbs: self.from_mont(&result),
+        }
+    }
+}
+
+/// Compute `-u^{-1} mod 2^64` for odd `u`. Newton iteration converges
+/// quadratically; 4 iterations from a 5-bit seed suffice for 64 bits.
+fn neg_inv_mod_2_64(u: u64) -> u64 {
+    debug_assert!(u & 1 == 1);
+    // 5-bit accurate seed (Hacker's Delight): 3·u XOR 2 ≡ u^{-1} (mod 32).
+    let mut x: u64 = u.wrapping_mul(3) ^ 2;
+    // Newton: x_{k+1} = x_k · (2 - u · x_k); precision doubles each iter.
+    x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 10 bits
+    x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 20 bits
+    x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 40 bits
+    x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 80 bits
+    x.wrapping_neg()
+}
+
+/// Compute `R^2 mod n` where `R = 2^{64N}`. Used by Montgomery
+/// conversion-in. Repeated doubling-and-reduce; O(N²) time, one-shot
+/// per modulus.
+fn compute_r2_mod_n<const N: usize>(n: &[u64; N]) -> [u64; N] {
+    let mut x = [0u64; N];
+    x[0] = 1;
+    let mut iter = 0;
+    let target = 128u32 * N as u32;
+    while iter < target {
+        // x := 2x; if x >= n or carried out, x -= n.
+        let mut carry: u64 = 0;
+        let mut i = 0;
+        while i < N {
+            let new = (x[i] << 1) | carry;
+            carry = x[i] >> 63;
+            x[i] = new;
+            i += 1;
+        }
+        if carry == 1 || BigInt::<N>::mag_cmp(&x, n) != Ordering::Less {
+            let (sub, _) = BigInt::<N>::mag_sub(&x, n);
+            x = sub;
+        }
+        iter += 1;
+    }
+    x
 }
 
 impl<const N: usize> Copy for BigInt<N> where [u64; N]: Copy {}
