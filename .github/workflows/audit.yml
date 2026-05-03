@@ -67,7 +67,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      # `llvm-tools-preview` provides `llvm-objdump`, which `panic-count.rs`
+      # uses to attribute each panic call site to its calling Rust
+      # function (via the `--reloc --demangle` disassembly).
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
       - name: Count panic sites

@@ -346,9 +346,10 @@ impl SigningKey {
 
         let mut gen_coords = [BigInt::<4>::ZERO; 4];
         for coord in &mut gen_coords {
-            *coord = BigInt::<4>::from_bytes_le_signed(
-                bytes[pos..pos + FP_ENCODED_BYTES].try_into().unwrap(),
-            );
+            let chunk: &[u8; FP_ENCODED_BYTES] = bytes[pos..pos + FP_ENCODED_BYTES]
+                .try_into()
+                .map_err(|_| SignatureError::NonCanonical)?;
+            *coord = BigInt::<4>::from_bytes_le_signed(chunk);
             pos += FP_ENCODED_BYTES;
         }
 
@@ -369,9 +370,11 @@ impl SigningKey {
         let mut entries = [[Scalar::ZERO; 2]; 2];
         for row in &mut entries {
             for entry in row.iter_mut() {
-                let b = BigInt::<4>::from_bytes_le_unsigned(
-                    bytes[pos..pos + TORSION_2POWER_BYTES].try_into().unwrap(),
-                );
+                let chunk: &[u8; TORSION_2POWER_BYTES] = bytes
+                    [pos..pos + TORSION_2POWER_BYTES]
+                    .try_into()
+                    .map_err(|_| SignatureError::NonCanonical)?;
+                let b = BigInt::<4>::from_bytes_le_unsigned(chunk);
                 *entry = Scalar::from(b);
                 pos += TORSION_2POWER_BYTES;
             }
