@@ -128,13 +128,27 @@ impl ConditionallySelectable for Coefficient {
 /// This is the general representation of a Montgomery curve. Isogeny
 /// codomains produce curves with `C ≠ 1`. The affine coefficient is
 /// `A/C` but computing it requires a field inversion.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug)]
 pub struct ProjectiveCoefficient {
     /// Numerator A.
     pub A: Fp2,
     /// Denominator C.
     pub C: Fp2,
 }
+
+impl PartialEq for ProjectiveCoefficient {
+    /// Projective equality via cross-multiplication: `(A₁ : C₁) ==
+    /// (A₂ : C₂)` iff `A₁·C₂ == A₂·C₁`. Same convention as
+    /// [`ProjectiveXOnlyPoint`]. Avoids the inversion that comparing
+    /// `A/C` directly would require, and recognizes `(A : C)` and
+    /// `(kA : kC)` as the same projective coordinate without
+    /// normalizing first.
+    fn eq(&self, other: &Self) -> bool {
+        &self.A * &other.C == &other.A * &self.C
+    }
+}
+
+impl Eq for ProjectiveCoefficient {}
 
 impl ProjectiveCoefficient {
     /// The underlying `(A, C)` pair.
@@ -158,7 +172,15 @@ impl From<Coefficient> for ProjectiveCoefficient {
 /// Isogeny codomain computations (`TwoIsogeny`, `FourIsogeny`)
 /// naturally produce these. They are consumed by the Montgomery
 /// ladder's doubling and differential addition formulas.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+// No `PartialEq`/`Eq` on `DoublingConstants`: nothing in the crate
+// compares two `DoublingConstants` values directly (only field reads
+// `.A24`/`.C24` for the Montgomery ladder), and `Curve::eq` is defined
+// in terms of `affine` rather than the cached `doubling` field. If a
+// future caller does want equality, the right semantic is cross-multiply
+// on `(A24 : C24)` (the type is a projective representative just like
+// `ProjectiveCoefficient`); add it then with a deliberate choice rather
+// than inheriting an untested derive.
+#[derive(Copy, Clone, Debug)]
 pub struct DoublingConstants {
     /// A₂₄ = A + 2C.
     pub A24: Fp2,
@@ -221,12 +243,42 @@ impl From<DoublingConstants> for ProjectiveCoefficient {
 /// - [`Coefficient`]: affine A (for serialization, j-invariant)
 /// - [`ProjectiveCoefficient`]: projective (A : C) (for isomorphisms)
 /// - [`DoublingConstants`]: (A₂₄, C₂₄) = (A+2C, 4C) (for point arithmetic)
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug)]
 pub struct Curve {
     affine: Coefficient,
     projective: ProjectiveCoefficient,
     pub(crate) doubling: DoublingConstants,
 }
+
+impl PartialEq for Curve {
+    /// Two curves are equal iff they share the same Montgomery
+    /// coefficient `A` (i.e. they describe the same elliptic curve
+    /// `y² = x³ + Ax² + x`). Differences in the cached `(A : C)`
+    /// projective representative or the `(A₂₄ : C₂₄)` doubling
+    /// constants don't make the underlying curves different — those
+    /// fields are alternate encodings of the same affine `A`.
+    ///
+    /// # Trusts the constructor invariant
+    ///
+    /// We compare only the affine field on the assumption that every
+    /// `Curve` is built via one of the `From<…>` constructors, which
+    /// derive all three fields from a single source and keep them
+    /// mutually consistent. The fields are private (and `pub(crate)`
+    /// for `doubling`), so no external code can produce a desynced
+    /// `Curve`. If a future internal refactor ever populates the
+    /// fields independently — e.g. via struct-literal syntax in a
+    /// crate-internal helper — this `eq` could return `true` for
+    /// curves that disagree at the projective/doubling level. Add a
+    /// stricter cross-multiply comparison on those fields here if
+    /// that risk ever materializes; the cost is ~8 extra `Fp²`
+    /// mults, fired only in the handful of asserts that compare
+    /// curves.
+    fn eq(&self, other: &Self) -> bool {
+        self.affine == other.affine
+    }
+}
+
+impl Eq for Curve {}
 
 impl From<Coefficient> for Curve {
     /// Construct from affine A (C = 1).
