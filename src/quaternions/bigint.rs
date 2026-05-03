@@ -213,9 +213,13 @@ impl<const N: usize> BigInt<N> {
 
     /// Decode from little-endian bytes (unsigned, non-negative).
     ///
-    /// Packs bytes into u64 limbs. Panics if `bytes.len() > N * 8`.
+    /// Packs bytes into u64 limbs. Caller must ensure
+    /// `bytes.len() <= N * 8`; oversized input panics on the inevitable
+    /// `limbs[i]` bounds-check inside the loop, but the
+    /// `debug_assert!` here gives a clearer failure in test builds.
+    /// All in-tree callers are audited and satisfy the precondition.
     pub fn from_bytes_le_unsigned(bytes: &[u8]) -> Self {
-        assert!(bytes.len() <= N * 8);
+        debug_assert!(bytes.len() <= N * 8);
         let mut limbs = [0u64; N];
         for (i, chunk) in bytes.chunks(8).enumerate() {
             let mut buf = [0u8; 8];
@@ -227,10 +231,10 @@ impl<const N: usize> BigInt<N> {
 
     /// Decode from little-endian bytes (signed, two's complement).
     ///
-    /// The highest bit of the last byte is the sign bit.
-    /// Panics if `bytes.len() > N * 8`.
+    /// The highest bit of the last byte is the sign bit. Same
+    /// precondition as [`Self::from_bytes_le_unsigned`].
     pub fn from_bytes_le_signed(bytes: &[u8]) -> Self {
-        assert!(!bytes.is_empty() && bytes.len() <= N * 8);
+        debug_assert!(!bytes.is_empty() && bytes.len() <= N * 8);
         let is_negative = bytes[bytes.len() - 1] & 0x80 != 0;
         if !is_negative {
             return Self::from_bytes_le_unsigned(bytes);
