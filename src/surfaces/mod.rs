@@ -996,10 +996,16 @@ impl Kernel {
                 let n = &current_jacobian.null;
                 let fp2_hex = |v: &Fp2| {
                     let bytes = v.to_bytes();
-                    let re: String =
-                        bytes[..32].iter().rev().map(|b| format!("{b:02x}")).collect();
-                    let im: String =
-                        bytes[32..].iter().rev().map(|b| format!("{b:02x}")).collect();
+                    let re: String = bytes[..32]
+                        .iter()
+                        .rev()
+                        .map(|b| format!("{b:02x}"))
+                        .collect();
+                    let im: String = bytes[32..]
+                        .iter()
+                        .rev()
+                        .map(|b| format!("{b:02x}"))
+                        .collect();
                     (re, im)
                 };
                 let (ar, ai) = fp2_hex(&n.a);
@@ -1102,8 +1108,16 @@ impl Kernel {
         #[cfg(test)]
         fn fp2_hex(v: &Fp2) -> (String, String) {
             let bytes = v.to_bytes();
-            let re: String = bytes[..32].iter().rev().map(|b| format!("{b:02x}")).collect();
-            let im: String = bytes[32..].iter().rev().map(|b| format!("{b:02x}")).collect();
+            let re: String = bytes[..32]
+                .iter()
+                .rev()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            let im: String = bytes[32..]
+                .iter()
+                .rev()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             (re, im)
         }
 

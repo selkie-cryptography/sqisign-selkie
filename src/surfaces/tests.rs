@@ -173,13 +173,13 @@ fn theta_product_to_montgomery_matches_formula() {
         &beta1 * &alpha2,
         &beta1 * &beta2,
     );
-    let surface = Jacobian::new(null.clone());
+    let surface = Jacobian::new(null);
 
     let x = Fp2::new(Fp::from_small(2), Fp::from_small(29));
     let y = Fp2::new(Fp::from_small(31), Fp::from_small(37));
     let z = Fp2::new(Fp::from_small(41), Fp::from_small(43));
     let w = Fp2::new(Fp::from_small(47), Fp::from_small(53));
-    let pt = JacobianPoint::new(x.clone(), y.clone(), z.clone(), w, surface);
+    let pt = JacobianPoint::new(x, y, z, w, surface);
 
     // Curves are passed through to `ProjectiveXOnlyPoint::from_XZ` for
     // storage only — the formula's output values do not depend on them.
@@ -235,8 +235,10 @@ fn theta_product_to_montgomery_matches_formula() {
 #[ignore = "test kernel ⟨(P, [3]P), (Q, [3]Q)⟩ is not isotropic — both impls correctly reject; \
             see docstring for the proper construction"]
 fn isogeny_no_extra_torsion_matches_extra_torsion() {
-    use crate::curves::TorsionExponent;
-    use crate::params::{BASIS_E0_P_X, BASIS_E0_Q_X, TORSION_EVEN_POWER};
+    use crate::{
+        curves::TorsionExponent,
+        params::{BASIS_E0_P_X, BASIS_E0_Q_X, TORSION_EVEN_POWER},
+    };
 
     // Small chain length for fast iteration. Mode B's
     // implementation requires `e >= 4` (gluing + 1 main + 4-iso +
@@ -298,20 +300,11 @@ fn isogeny_no_extra_torsion_matches_extra_torsion() {
     let product = EllipticProduct::new(curve, curve);
     let exp_e = TorsionExponent::try_from(E).expect("E within bounds");
 
-    let kernel_a = Kernel::from_montgomery(
-        product,
-        (p_e2, p3_e2),
-        (q_e2, q3_e2),
-        (pmq_e2, pmq3_e2),
-    );
+    let kernel_a =
+        Kernel::from_montgomery(product, (p_e2, p3_e2), (q_e2, q3_e2), (pmq_e2, pmq3_e2));
     let result_a = kernel_a.and_then(|k| k.isogeny(exp_e, &[]));
 
-    let kernel_b = Kernel::from_montgomery(
-        product,
-        (p_e, p3_e),
-        (q_e, q3_e),
-        (pmq_e, pmq3_e),
-    );
+    let kernel_b = Kernel::from_montgomery(product, (p_e, p3_e), (q_e, q3_e), (pmq_e, pmq3_e));
     let result_b = kernel_b.and_then(|k| k.isogeny_no_extra_torsion(exp_e, &[]));
 
     eprintln!(
@@ -329,8 +322,7 @@ fn isogeny_no_extra_torsion_matches_extra_torsion() {
             let j_a2 = cod_a.E2.j_invariant();
             let j_b1 = cod_b.E1.j_invariant();
             let j_b2 = cod_b.E2.j_invariant();
-            let same = (j_a1 == j_b1 && j_a2 == j_b2)
-                || (j_a1 == j_b2 && j_a2 == j_b1);
+            let same = (j_a1 == j_b1 && j_a2 == j_b2) || (j_a1 == j_b2 && j_a2 == j_b1);
             assert!(
                 same,
                 "codomain j-invariants disagree:\n  Mode A: ({j_a1:?}, {j_a2:?})\n  Mode B: ({j_b1:?}, {j_b2:?})"
@@ -392,8 +384,10 @@ fn isogeny_no_extra_torsion_matches_extra_torsion() {
 #[test]
 #[ignore = "writes a kernel binary for the C ref's theta_split_test diff"]
 fn dump_no_extra_torsion_kernel() {
-    use crate::curves::{Scalar, TorsionExponent};
-    use crate::params::{BASIS_E0_P_X, BASIS_E0_Q_X, TORSION_EVEN_POWER};
+    use crate::{
+        curves::{Scalar, TorsionExponent},
+        params::{BASIS_E0_P_X, BASIS_E0_Q_X, TORSION_EVEN_POWER},
+    };
 
     const E: u32 = 8;
     let f = TORSION_EVEN_POWER;
@@ -448,8 +442,8 @@ fn dump_no_extra_torsion_kernel() {
 
     assert_eq!(buf.len(), 904, "buffer must be exactly 904 bytes");
 
-    let path = std::env::var("DUMP_NOEX_KERNEL")
-        .unwrap_or_else(|_| "/tmp/noex_ker.bin".to_string());
+    let path =
+        std::env::var("DUMP_NOEX_KERNEL").unwrap_or_else(|_| "/tmp/noex_ker.bin".to_string());
     std::fs::write(&path, &buf).expect("write kernel binary");
     eprintln!(
         "[dump_no_extra_torsion_kernel] wrote {} ({} bytes, e_chain={E})",
@@ -487,8 +481,8 @@ fn dump_no_extra_torsion_kernel() {
     dump_pt(&mut buf_a, &q3_e2);
     dump_pt(&mut buf_a, &pmq_e2);
     dump_pt(&mut buf_a, &pmq3_e2);
-    let path_a = std::env::var("DUMP_EXTRA_KERNEL")
-        .unwrap_or_else(|_| "/tmp/extra_ker.bin".to_string());
+    let path_a =
+        std::env::var("DUMP_EXTRA_KERNEL").unwrap_or_else(|_| "/tmp/extra_ker.bin".to_string());
     std::fs::write(&path_a, &buf_a).expect("write extra kernel binary");
     eprintln!(
         "[dump_no_extra_torsion_kernel] wrote {} ({} bytes, e_chain={E}, kernel at 2^{})",

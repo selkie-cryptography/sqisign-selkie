@@ -10,13 +10,12 @@
 ///
 /// - `r_rsp > 0`  triggers the **even-response isogeny** path (the
 ///   `EvenResponse` branch and its scaling formulas).
-/// - `n_bt > 0`   triggers the **backtracking** path, shifting both
-///   the challenge isogeny degree and the effective response length
-///   `e'_rsp = e_rsp − r_rsp − n_bt`.
-/// - `(n_bt > 0, r_rsp > 0)` is the **cross product** — two scaling
-///   bugs in `verify` survived 30 unit tests because they only
-///   manifested when both branches ran together; KATs are the
-///   primary catch.
+/// - `n_bt > 0`   triggers the **backtracking** path, shifting both the
+///   challenge isogeny degree and the effective response length `e'_rsp = e_rsp
+///   − r_rsp − n_bt`.
+/// - `(n_bt > 0, r_rsp > 0)` is the **cross product** — two scaling bugs in
+///   `verify` survived 30 unit tests because they only manifested when both
+///   branches ran together; KATs are the primary catch.
 ///
 /// Distribution across the 100 vectors:
 ///
