@@ -367,8 +367,14 @@ impl SigningKey {
         let ideal = LeftIdeal::new(&gen, &norm_bigint, EXTREMAL_ORDERS[0].order());
 
         // Parse M_sk: 4 × 32 bytes unsigned, row-major [[m00, m01], [m10, m11]].
-        let mut entries = [[Scalar::ZERO; 2]; 2];
-        for row in &mut entries {
+        // Wire format encodes C ref's M_sk (basis_pk in NORMAL `(P, Q, P−Q)`
+        // slot semantics on the eval side). Our internal `M_sk` uses the
+        // SWAPPED convention from `from_propagated`/`from_hint` (matches our
+        // 3-pt ladder semantics; see `from_hint` and `scalar_mul_add` docs).
+        // The two are related by `internal = T · wire` where
+        // `T = [[1, 1], [0, −1]]`, `T = T⁻¹`. Apply T at the byte boundary.
+        let mut wire = [[Scalar::ZERO; 2]; 2];
+        for row in &mut wire {
             for entry in row.iter_mut() {
                 let chunk: &[u8; TORSION_2POWER_BYTES] = bytes[pos..pos + TORSION_2POWER_BYTES]
                     .try_into()
@@ -378,6 +384,17 @@ impl SigningKey {
                 pos += TORSION_2POWER_BYTES;
             }
         }
+        let f = TORSION_EVEN_POWER;
+        let entries = [
+            [
+                wire[0][0].add_mod2k(&wire[1][0], f),
+                wire[0][1].add_mod2k(&wire[1][1], f),
+            ],
+            [
+                Scalar::ZERO.sub_mod2k(&wire[1][0], f),
+                Scalar::ZERO.sub_mod2k(&wire[1][1], f),
+            ],
+        ];
         let mat_sk = SecretKeyMatrix::new(entries);
         debug_assert_eq!(pos, SIGNING_KEY_BYTES);
 
@@ -447,8 +464,23 @@ impl SigningKey {
             }
         }
 
-        // M_sk (4 × 32 bytes, unsigned LE, row-major).
-        for row in &self.mat_sk.entries {
+        // M_sk (4 × 32 bytes, unsigned LE, row-major). Convert internal
+        // (swapped-slot convention, see `from_bytes`) to wire format
+        // (C ref's normal-slot convention) via `wire = T · internal`,
+        // `T = [[1, 1], [0, −1]]`.
+        let f = TORSION_EVEN_POWER;
+        let m = &self.mat_sk.entries;
+        let wire = [
+            [
+                m[0][0].add_mod2k(&m[1][0], f),
+                m[0][1].add_mod2k(&m[1][1], f),
+            ],
+            [
+                Scalar::ZERO.sub_mod2k(&m[1][0], f),
+                Scalar::ZERO.sub_mod2k(&m[1][1], f),
+            ],
+        ];
+        for row in &wire {
             for entry in row {
                 out[pos..pos + TORSION_2POWER_BYTES].copy_from_slice(&entry.to_le_bytes());
                 pos += TORSION_2POWER_BYTES;

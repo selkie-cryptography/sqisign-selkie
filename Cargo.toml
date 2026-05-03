@@ -18,6 +18,17 @@ exclude = [
 default = ["zeroize"]
 zeroize = ["dep:zeroize"]
 expose-internals = []
+# Test-only: link the C reference's mini-GMP + DPE primitives via FFI
+# for bit-equality property tests of the pure-Rust `quaternions::lll`
+# port. The `build.rs` script reads `CARGO_FEATURE_FFI_CREF_LLL` and
+# only invokes `cc` when this feature is enabled, so the C deps are
+# never built into production. Requires the SQIsign C reference at
+# `~/src/github.com/SQISign/the-sqisign` (override with
+# `SQISIGN_C_REF_PATH`).
+ffi-cref-lll = []
+
+[build-dependencies]
+cc = "1"
 
 [dependencies]
 # TODO: replace with our own SHAKE256 implementation to minimize trusted dependencies.
@@ -107,3 +118,7 @@ required-features = ["expose-internals"]
 name = "iai"
 harness = false
 required-features = ["expose-internals"]
+
+[[test]]
+name = "ffi_cref_lll"
+required-features = ["ffi-cref-lll", "expose-internals"]

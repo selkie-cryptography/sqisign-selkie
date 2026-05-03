@@ -36,8 +36,11 @@ use super::{
     linear::{Matrix, Vector},
 };
 
-mod dpe;
-use dpe::Dpe;
+#[cfg(not(feature = "expose-internals"))]
+pub(crate) mod dpe;
+#[cfg(feature = "expose-internals")]
+pub mod dpe;
+use dpe::DoublePlusExponent;
 
 #[cfg(test)]
 mod tests;
@@ -2836,9 +2839,39 @@ where
                 // harmless.
                 let hnf_basis = Matrix::<N>::from_hnf_columns_mod::<44>(&all_cols, &modulus);
 
+                // Canonicalize: divide out gcd(basis_entries, denom),
+                // mirroring C ref's `quat_lattice_reduce_denom`. The
+                // construction above gives `denom = order.denom · alpha.denom`
+                // (typically 4), with every HNF basis entry sharing a factor
+                // of 2 — leaving the lattice at twice its minimal denom.
+                // Without this step, [`LeftIdeal::generator`] returns an
+                // [`Element`] with denom 4 (not 2), and serialized `gen.coord`
+                // come out at 2× C ref's KAT secret-key generator bytes
+                // (since both impls write `coord` directly without dividing
+                // by `denom`). Same pattern as [`LeftIdeal::new`] (just
+                // above), kept inline here to avoid widening the basis to
+                // a temporary lattice.
+                let mut g_denom = o_alpha_denom.abs();
+                for row in 0..4 {
+                    for col in 0..4 {
+                        let entry = hnf_basis[row][col];
+                        if !bool::from(entry.is_zero()) {
+                            g_denom = g_denom.gcd(&entry.abs());
+                        }
+                    }
+                }
+                let mut canonical_basis = hnf_basis;
+                for row in 0..4 {
+                    for col in 0..4 {
+                        let (q, _) = canonical_basis[row][col].div_rem(&g_denom);
+                        canonical_basis[row][col] = q;
+                    }
+                }
+                let (canonical_denom, _) = o_alpha_denom.div_rem(&g_denom);
+
                 self.lattice = HnfLattice {
-                    basis: hnf_basis,
-                    denom: o_alpha_denom,
+                    basis: canonical_basis,
+                    denom: canonical_denom,
                 };
                 self.norm = new_norm;
 
@@ -3192,11 +3225,11 @@ impl<const N: usize> NrdBasis<N> {
     /// L² reduction with DPE-based GSO ([Alg. 3.3]).
     ///
     /// Reduces the basis in place, keeping the Gram matrix in sync.
-    /// Uses [`Dpe`](dpe::Dpe) (double-precision with extended
+    /// Uses [`DoublePlusExponent`](dpe::DoublePlusExponent) (double-precision with extended
     /// exponent) for the Gram-Schmidt coefficients, matching the C
     /// reference's approach. The basis and Gram updates remain exact
     /// (integer). Size-reduction rounding uses
-    /// [`Dpe::to_bigint`](dpe::Dpe::to_bigint) to convert the float
+    /// [`DoublePlusExponent::to_bigint`](dpe::DoublePlusExponent::to_bigint) to convert the float
     /// μ back to an integer coefficient, which handles values that
     /// exceed `i64` range (e.g., μ[3][0] ≈ 2^260 before first
     /// reduction).
@@ -3233,11 +3266,11 @@ impl<const N: usize> NrdBasis<N> {
         fn extend_gso_family<const N: usize>(
             gram: &Matrix<N>,
             k: usize,
-            r: &mut [[Dpe; D]; D],
-            mu: &mut [[Dpe; D]; D],
+            r: &mut [[DoublePlusExponent; D]; D],
+            mu: &mut [[DoublePlusExponent; D]; D],
         ) {
             for j in 0..=k {
-                r[k][j] = Dpe::from_bigint(&gram[k][j]);
+                r[k][j] = DoublePlusExponent::from_bigint(&gram[k][j]);
                 for l in 0..j {
                     r[k][j] -= r[k][l] * mu[j][l];
                 }
@@ -3251,8 +3284,8 @@ impl<const N: usize> NrdBasis<N> {
             basis: &mut [Vector<N>; D],
             gram: &mut Matrix<N>,
             k: usize,
-            r: &mut [[Dpe; D]; D],
-            mu: &mut [[Dpe; D]; D],
+            r: &mut [[DoublePlusExponent; D]; D],
+            mu: &mut [[DoublePlusExponent; D]; D],
             eta_bar: f64,
         ) {
             loop {
@@ -3287,7 +3320,7 @@ impl<const N: usize> NrdBasis<N> {
                         }
 
                         // Update μ incrementally.
-                        let x_dpe = Dpe::from_bigint(&x_big);
+                        let x_dpe = DoublePlusExponent::from_bigint(&x_big);
                         let mu_ii = mu[ii];
                         for l in 0..ii {
                             mu[k][l] -= x_dpe * mu_ii[l];
@@ -3295,7 +3328,7 @@ impl<const N: usize> NrdBasis<N> {
                         mu[k][ii] -= x_dpe;
 
                         // Update r[k][ii] from the updated Gram.
-                        r[k][ii] = Dpe::from_bigint(&gram[k][ii]);
+                        r[k][ii] = DoublePlusExponent::from_bigint(&gram[k][ii]);
                         for l in 0..ii {
                             r[k][ii] -= r[k][l] * mu[ii][l];
                         }
@@ -3313,8 +3346,8 @@ impl<const N: usize> NrdBasis<N> {
             gram: &mut Matrix<N>,
             k: usize,
             s: usize,
-            r: &mut [[Dpe; D]; D],
-            mu: &mut [[Dpe; D]; D],
+            r: &mut [[DoublePlusExponent; D]; D],
+            mu: &mut [[DoublePlusExponent; D]; D],
         ) {
             let mut j = k;
             while j > s {
@@ -3334,7 +3367,7 @@ impl<const N: usize> NrdBasis<N> {
                 j -= 1;
             }
 
-            r[s][s] = Dpe::from_bigint(&gram[s][s]);
+            r[s][s] = DoublePlusExponent::from_bigint(&gram[s][s]);
             for i in 0..s {
                 mu[s][i] = mu[k][i];
                 r[s][i] = r[k][i];
@@ -3342,26 +3375,26 @@ impl<const N: usize> NrdBasis<N> {
             }
         }
 
-        let mut r = [[Dpe::ZERO; D]; D];
-        let mut mu = [[Dpe::ZERO; D]; D];
+        let mut r = [[DoublePlusExponent::ZERO; D]; D];
+        let mut mu = [[DoublePlusExponent::ZERO; D]; D];
 
-        r[0][0] = Dpe::from_bigint(&self.gram[0][0]);
-        mu[0][0] = Dpe::from_f64(1.0);
+        r[0][0] = DoublePlusExponent::from_bigint(&self.gram[0][0]);
+        mu[0][0] = DoublePlusExponent::from_f64(1.0);
 
-        let mut t = [Dpe::ZERO; D];
+        let mut t = [DoublePlusExponent::ZERO; D];
 
         let mut k = 1usize;
         while k < D {
             size_reduce(&mut self.cols, &mut self.gram, k, &mut r, &mut mu, eta_bar);
 
-            t[0] = Dpe::from_bigint(&self.gram[k][k]);
+            t[0] = DoublePlusExponent::from_bigint(&self.gram[k][k]);
             for i in 1..=k {
                 t[i] = t[i - 1] - mu[k][i - 1] * r[k][i - 1];
             }
 
             // Deep insertion: find earliest s where
             // t[s] < δ̄ · r[s][s].
-            let delta_bar_dpe = Dpe::from_f64(delta_bar);
+            let delta_bar_dpe = DoublePlusExponent::from_f64(delta_bar);
             let mut s = k;
             for j in 0..k {
                 if t[j] < delta_bar_dpe * r[j][j] {

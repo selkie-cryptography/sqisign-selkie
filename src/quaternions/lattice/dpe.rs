@@ -19,6 +19,9 @@
 //! condition and size-reduction rounding. The integer basis and Gram
 //! updates remain exact; only the GSO coefficients are approximate.
 
+use core::cmp::Ordering;
+use core::ops::{Add, Div, Mul, Sub, SubAssign};
+
 use crate::quaternions::bigint::BigInt;
 
 /// A double-precision float with an explicit base-2 exponent.
@@ -26,11 +29,11 @@ use crate::quaternions::bigint::BigInt;
 /// Represents the value `m * 2^e`. The mantissa is kept in
 /// `[0.5, 1.0)` (or zero) after every operation.
 #[derive(Clone, Copy)]
-pub(crate) struct Dpe {
+pub struct DoublePlusExponent {
     /// Mantissa in `[0.5, 1.0)` or zero.
-    pub(super) m: f64,
+    pub m: f64,
     /// Base-2 exponent.
-    pub(super) e: i64,
+    pub e: i64,
 }
 
 /// Decompose `x` into `(frac, exp)` such that `x = frac * 2^exp`
@@ -61,9 +64,11 @@ fn ldexp(x: f64, exp: i32) -> f64 {
     x * a * b
 }
 
-impl Dpe {
+impl DoublePlusExponent {
+    /// The zero `DoublePlusExponent` value.
     pub const ZERO: Self = Self { m: 0.0, e: 0 };
 
+    /// Convert from an `f64` (matches `dpe_set_d`).
     pub fn from_f64(v: f64) -> Self {
         if v == 0.0 {
             return Self::ZERO;
@@ -75,24 +80,52 @@ impl Dpe {
         }
     }
 
-    /// Convert from a [`BigInt<N>`].
+    /// Convert from a [`BigInt<N>`], byte-for-byte matching mini-GMP's
+    /// `mini_mpz_get_d_2exp`
+    /// (`the-sqisign/src/mini-gmp/mini-gmp-extra.c:41-65`), which is
+    /// the function the C ref's `dpe_set_z` calls.
     ///
-    /// Extracts the top ~53 bits of the absolute value as the
-    /// mantissa, recording the remaining magnitude in the exponent.
+    /// Algorithm (from C ref):
+    /// 1. If `v == 0`: return `(0.0, 0)`.
+    /// 2. Set `e = bitsize(|v|)` (= `mpz_sizeinbase(op, 2)`).
+    /// 3. If `e > DBL_MAX_EXP` (= 1024): shift `|v|` right by
+    ///    `(e − 1024)` so the truncated value fits in `f64`'s normal
+    ///    range when converted.
+    /// 4. Convert the (possibly shifted) magnitude to `f64` using
+    ///    mini-GMP's `mpz_get_d` (truncation at bit 53,
+    ///    round-toward-zero — NOT round-to-nearest).
+    /// 5. Apply `frexp` to canonicalize the mantissa to `[1/2, 1)`;
+    ///    discard `frexp`'s exponent (the bit length is what we
+    ///    return).
+    /// 6. Negate the mantissa if `v < 0`.
+    ///
+    /// # Bit-exactness
+    ///
+    /// Byte-for-byte equal to `mini_mpz_get_d_2exp` on every input.
+    /// Property-tested against the C reference by
+    /// `tests/ffi_cref_lll.rs::to_dpe_*` under the `ffi-cref-lll`
+    /// feature.
     pub fn from_bigint<const N: usize>(v: &BigInt<N>) -> Self {
-        let bits = v.bitsize();
-        if bits == 0 {
+        if bool::from(v.is_zero()) {
             return Self::ZERO;
         }
-        // Shift right to bring the top bits into f64 range,
-        // then combine with the shift as exponent.
-        let shift = bits.saturating_sub(53);
-        let truncated = v.shr(shift);
-        let f = truncated.to_f64();
-        let (frac, exp) = frexp(f);
+        let bits = v.bitsize() as i64;
+        let abs = v.abs();
+        let shifted = if bits > f64::MAX_EXP as i64 {
+            abs.shr((bits - f64::MAX_EXP as i64) as u32)
+        } else {
+            abs
+        };
+        let raw = shifted.to_f64_trunc();
+        let mantissa = frexp(raw).0;
+        let signed = if bool::from(v.is_negative()) {
+            -mantissa
+        } else {
+            mantissa
+        };
         Self {
-            m: frac,
-            e: exp as i64 + shift as i64,
+            m: signed,
+            e: bits,
         }
     }
 
@@ -151,6 +184,7 @@ impl Dpe {
         ldexp(self.m, self.e as i32)
     }
 
+    /// Absolute value (matches `dpe_abs`).
     pub fn abs(self) -> Self {
         Self {
             m: self.m.abs(),
@@ -176,7 +210,27 @@ impl Dpe {
     }
 }
 
-impl core::ops::Add for Dpe {
+impl<const N: usize> From<&BigInt<N>> for DoublePlusExponent {
+    /// Convert via [`DoublePlusExponent::from_bigint`] — bit-exact
+    /// with mini-GMP's `mini_mpz_get_d_2exp`. Total conversion (no
+    /// `TryFrom` needed) since every [`BigInt`] has a finite
+    /// `DoublePlusExponent` representation.
+    #[inline]
+    fn from(v: &BigInt<N>) -> Self {
+        Self::from_bigint(v)
+    }
+}
+
+impl<const N: usize> From<BigInt<N>> for DoublePlusExponent {
+    /// Convert by reference (the value is small and `Copy`, but
+    /// `from_bigint`'s only access pattern is read-only).
+    #[inline]
+    fn from(v: BigInt<N>) -> Self {
+        Self::from_bigint(&v)
+    }
+}
+
+impl Add for DoublePlusExponent {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         if self.m == 0.0 {
@@ -203,7 +257,7 @@ impl core::ops::Add for Dpe {
     }
 }
 
-impl core::ops::Sub for Dpe {
+impl Sub for DoublePlusExponent {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
         self + Self {
@@ -213,13 +267,13 @@ impl core::ops::Sub for Dpe {
     }
 }
 
-impl core::ops::SubAssign for Dpe {
+impl SubAssign for DoublePlusExponent {
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
     }
 }
 
-impl core::ops::Mul for Dpe {
+impl Mul for DoublePlusExponent {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self {
         Self {
@@ -230,7 +284,7 @@ impl core::ops::Mul for Dpe {
     }
 }
 
-impl core::ops::Div for Dpe {
+impl Div for DoublePlusExponent {
     type Output = Self;
     fn div(self, rhs: Self) -> Self {
         Self {
@@ -241,14 +295,14 @@ impl core::ops::Div for Dpe {
     }
 }
 
-impl PartialEq for Dpe {
+impl PartialEq for DoublePlusExponent {
     fn eq(&self, other: &Self) -> bool {
         self.m == other.m && self.e == other.e
     }
 }
 
-impl PartialOrd for Dpe {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+impl PartialOrd for DoublePlusExponent {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let diff = *self - *other;
         diff.m.partial_cmp(&0.0)
     }
