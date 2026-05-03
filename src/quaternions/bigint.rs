@@ -1029,13 +1029,36 @@ impl<const N: usize> BigInt<N> {
             return Some(Self::ZERO);
         }
 
+        // Build Montgomery context once for this modulus and share
+        // across all pow_mod calls. The general Tonelli-Shanks branch
+        // below issues 4+ pow_mods per call plus more inside the
+        // Newton-style adjustment loop; without caching, each would
+        // rebuild Newton iteration for n_inv and the 128·N doublings
+        // for R². Fall back to the schoolbook path if `m` is even
+        // (Montgomery requires an odd modulus).
+        //
+        // CT note: see `MontCtx`'s doc. Within-function caching is
+        // safe even when `m` is secret-derived (e.g. via
+        // `cornacchia` from `random_prime_norm`) because the context
+        // is dropped before this function returns — no cross-call
+        // cache-occupancy channel.
+        let ctx = MontCtx::<N>::new(m);
+
+        // Helper: mod-pow either via cached ctx or schoolbook fallback.
+        let pow = |b: &Self, e: &Self| -> Self {
+            match &ctx {
+                Some(c) => c.pow(b, e),
+                None => Self::pow_mod(b, e, m),
+            }
+        };
+
         let m_mod4 = m.as_limbs()[0] & 3;
         let m_mod8 = m.as_limbs()[0] & 7;
 
         // m ≡ 3 (mod 4): return n^((m+1)/4) mod m.
         if m_mod4 == 3 {
             let exp = m.ct_add(&Self::ONE).shr(2);
-            let r = Self::pow_mod(&n_mod, &exp, m);
+            let r = pow(&n_mod, &exp);
             let check = r.ct_mul(&r).ct_mod(m);
             return if check == n_mod { Some(r) } else { None };
         }
@@ -1044,16 +1067,16 @@ impl<const N: usize> BigInt<N> {
         if m_mod8 == 5 {
             // Check if n^((m-1)/4) ≡ 1 mod m.
             let exp_check = m.ct_sub(&Self::ONE).shr(2);
-            let test = Self::pow_mod(&n_mod, &exp_check, m);
+            let test = pow(&n_mod, &exp_check);
             if test == Self::ONE {
                 // return n^((m+3)/8) mod m
                 let exp = m.ct_add(&Self::THREE).shr(3);
-                return Some(Self::pow_mod(&n_mod, &exp, m));
+                return Some(pow(&n_mod, &exp));
             } else {
                 // return 2n(4n)^((m-5)/8) mod m
                 let four_n = n_mod.ct_mul(&Self::from_u64(4)).ct_mod(m);
                 let exp = m.ct_sub(&Self::from_u64(5)).shr(3);
-                let base = Self::pow_mod(&four_n, &exp, m);
+                let base = pow(&four_n, &exp);
                 let r = Self::TWO.ct_mul(&n_mod).ct_mul(&base).ct_mod(m);
                 let check = r.ct_mul(&r).ct_mod(m);
                 return if check == n_mod { Some(r) } else { None };
@@ -1068,7 +1091,7 @@ impl<const N: usize> BigInt<N> {
         let mut w = Self::TWO;
         loop {
             let exp = m.ct_sub(&Self::ONE).shr(1);
-            let ls = Self::pow_mod(&w, &exp, m);
+            let ls = pow(&w, &exp);
             // Legendre symbol: if ls == m - 1, then w is a non-residue.
             if ls == m.ct_sub(&Self::ONE) {
                 break;
@@ -1080,13 +1103,13 @@ impl<const N: usize> BigInt<N> {
             }
         }
 
-        let mut z = Self::pow_mod(&w, &q, m);
-        let mut y = Self::pow_mod(&n_mod, &q, m);
-        let mut x = Self::pow_mod(&n_mod, &q.ct_add(&Self::ONE).shr(1), m);
+        let mut z = pow(&w, &q);
+        let mut y = pow(&n_mod, &q);
+        let mut x = pow(&n_mod, &q.ct_add(&Self::ONE).shr(1));
         let mut f = Self::from_u64(1u64 << (e - 2));
 
         for _i in 0..e.saturating_sub(1) {
-            let b = Self::pow_mod(&y, &f, m);
+            let b = pow(&y, &f);
             if b == m.ct_sub(&Self::ONE) {
                 // b ≡ -1 mod m
                 x = x.ct_mul(&z).ct_mod(m);
@@ -1244,6 +1267,14 @@ impl<const N: usize> BigInt<N> {
         let s = n_minus_1.two_adic_val();
         let d = n_minus_1.shr(s);
 
+        // Build the Montgomery context once and reuse across all
+        // witness rounds (each pow_mod would otherwise re-run Newton
+        // iteration for n_inv plus 128·N doublings for R²). See the
+        // CT note on `MontCtx`: this is a within-function cache, safe
+        // even when `self` is a secret-derived prime candidate because
+        // the context is dropped at the end of this primality test.
+        let ctx = MontCtx::<N>::new(self).expect("self is odd > 1 by the early returns above");
+
         // Deterministic witnesses sufficient for values up to 3.3×10²⁴.
         let witnesses: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
         let num_rounds = (rounds as usize).min(witnesses.len());
@@ -1254,7 +1285,7 @@ impl<const N: usize> BigInt<N> {
                 continue;
             }
 
-            let mut x = Self::pow_mod(&a, &d, self);
+            let mut x = ctx.pow(&a, &d);
             if x == Self::ONE || x == n_minus_1 {
                 continue;
             }
