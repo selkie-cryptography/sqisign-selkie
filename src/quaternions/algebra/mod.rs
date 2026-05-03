@@ -840,8 +840,7 @@ impl Element<4> {
         //
         // Previously this was a `debug_assert!` + release-truncate,
         // which let silent numerical corruption escape into
-        // downstream ideals and action matrices (see Task #28 for
-        // one concrete instance).
+        // downstream ideals and action matrices.
         let narrow = |v: BigInt<8>| -> BigInt<4> {
             let ct: subtle::CtOption<BigInt<4>> = v.into();
             assert!(

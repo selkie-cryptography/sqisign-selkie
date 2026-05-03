@@ -2685,7 +2685,7 @@ where
         // After LLL on the class gram, `c^T · G_class · c`
         // directly equals `m = nrd(α_elt) / N(I)` — the
         // equivalent-ideal norm. No further division needed.
-        let limit = (2 * bound as i64 + 1).pow(4);
+        let limit = (2 * i64::from(bound) + 1).pow(4);
         for _ in 0..limit {
             let c: [BigInt<N>; 4] = [
                 BigInt::from_i64(Self::rand_interval(rng, bound)),
@@ -2862,13 +2862,12 @@ where
     ///
     /// WARNING: Not constant-time (rejection loop). The bound `m`
     /// is public, so this is acceptable for SQIsign.
-    fn rand_interval<R: RngCore>(rng: &mut R, m: i32) -> i64 {
-        assert!(m >= 0);
+    fn rand_interval<R: RngCore>(rng: &mut R, m: u32) -> i64 {
         let zero = BigInt::<4>::ZERO;
-        let bound = BigInt::<4>::from_u64(2 * (m as u64));
+        let bound = BigInt::<4>::from_u64(2 * u64::from(m));
         let val = BigInt::<4>::rand_interval(rng, &zero, &bound);
         // `val ∈ [0, 2m]`, subtract `m` to get `[−m, m]`.
-        (val.as_limbs()[0] as i64) - (m as i64)
+        (val.as_limbs()[0] as i64) - i64::from(m)
     }
 }
 

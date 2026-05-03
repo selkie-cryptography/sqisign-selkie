@@ -91,7 +91,7 @@ pub const QUAT_REPRES_BOUND_INPUT: u32 = 20;
 /// byte stream, which desyncs every downstream sample and produces
 /// a different reduced ideal — and therefore a different `e_pk` —
 /// from the same KAT seed.
-pub const EQUIV_BOUND_COEFF: i32 = 64;
+pub const EQUIV_BOUND_COEFF: u32 = 64;
 
 /// Number of Miller-Rabin rounds for primality testing in ideal
 /// reduction (Algorithm 3.9). Matches the C reference's
