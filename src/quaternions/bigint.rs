@@ -288,6 +288,71 @@ impl<const N: usize> BigInt<N> {
         if neg { -val } else { val }
     }
 
+    /// Convert the **magnitude** to `f64` byte-for-byte matching
+    /// mini-GMP's `mpz_get_d`
+    /// (`the-sqisign/src/mini-gmp/mini-gmp.c:1773-1808`).
+    ///
+    /// Mini-GMP processes limbs from most-significant down, masking
+    /// off bits below the 53-bit mantissa boundary
+    /// (round-toward-zero truncation, **not** round-to-nearest).
+    /// This is the rounding semantics the C ref's `dpe_set_z` →
+    /// `mini_mpz_get_d_2exp` chain relies on; matching it bit-exact
+    /// is the load-bearing part of byte-equal LLL.
+    ///
+    /// Returns `0.0` for zero input. **Sign is ignored** — this
+    /// returns the magnitude only, mirroring `mpz_get_d`'s "magnitude
+    /// then negate" structure (callers apply the sign separately;
+    /// see [`DoublePlusExponent::from_bigint`]).
+    ///
+    /// Distinct from [`to_f64`](Self::to_f64), which does
+    /// signed conversion via repeated `val * 2^64 + limb`
+    /// accumulation — bit-different at the rounding boundary.
+    pub fn to_f64_trunc(&self) -> f64 {
+        let limbs = &self.limbs;
+        let mut un = N;
+        while un > 0 && limbs[un - 1] == 0 {
+            un -= 1;
+        }
+        if un == 0 {
+            return 0.0;
+        }
+
+        let mut l = limbs[un - 1];
+        un -= 1;
+
+        // m = clz(top_limb) + 53 - 64 = clz - 11. Range: m ∈ [-11, 52].
+        // Negative ⇒ top limb already exceeds 53 mantissa bits; mask
+        // off the low (-m) bits before converting.
+        let mut m: i32 = (l.leading_zeros() as i32) + 53 - 64;
+        if m < 0 {
+            // (-m) ∈ [1, 11]; well-defined u64 shift.
+            l &= u64::MAX.wrapping_shl((-m) as u32);
+        }
+
+        // B = 2^64 as f64 (exact: mantissa 1.0, exp 64).
+        let b: f64 = (1u128 << 64) as f64;
+        let mut x_d: f64 = l as f64;
+
+        while un > 0 {
+            un -= 1;
+            x_d *= b;
+            if m > 0 {
+                let mut l2 = limbs[un];
+                m -= 64;
+                if m < 0 {
+                    // (-m) ∈ [1, 63] in this branch (entry m ∈ [1, 52]).
+                    l2 &= u64::MAX.wrapping_shl((-m) as u32);
+                }
+                x_d += l2 as f64;
+            }
+            // If m ≤ 0 from the outset (top limb already saturated),
+            // we still apply `x *= B` but contribute nothing from
+            // this limb — matches mini-GMP exactly.
+        }
+
+        x_d
+    }
+
     /// Returns `true` (as `Choice`) if this value is zero.
     #[inline]
     pub fn is_zero(&self) -> Choice {

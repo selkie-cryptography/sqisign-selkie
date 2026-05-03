@@ -91,6 +91,47 @@ fn keygen_kat_all() {
     }
 }
 
+/// One-shot debug helper: dump our `sk.to_bytes()` and the KAT's sk
+/// to `/tmp/keygen_kat_<idx>_{ours,cref}.hex` for byte-diff inspection.
+/// Used to localize sk encoding divergence on pk-equal-but-sk-different
+/// KAT seeds (e.g. KAT[3]). `KAT_IDX=N cargo test --release --lib
+/// dump_keygen_kat_sk -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn dump_keygen_kat_sk() {
+    use std::fs;
+    let kat_idx: usize = std::env::var("KAT_IDX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
+    let (seed_hex, _pk, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[kat_idx];
+    let seed_bytes = hex::decode(seed_hex).expect("valid hex");
+    let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
+    let sk = SigningKey::generate_derand(&seed)
+        .unwrap_or_else(|e| panic!("KAT[{kat_idx}] keygen errored: {e:?}"));
+    let ours = sk.to_bytes();
+    let cref = hex::decode(sk_hex).expect("valid hex");
+    eprintln!(
+        "KAT[{kat_idx}] our ideal lattice denom = {:?}",
+        sk.ideal.lattice().denom()
+    );
+    eprintln!("KAT[{kat_idx}] our gen denom = {:?}", sk.ideal_gen.denom);
+    fs::write(
+        format!("/tmp/keygen_kat_{kat_idx:03}_ours.hex"),
+        hex::encode(ours),
+    )
+    .unwrap();
+    fs::write(
+        format!("/tmp/keygen_kat_{kat_idx:03}_cref.hex"),
+        hex::encode(&cref),
+    )
+    .unwrap();
+    eprintln!(
+        "dump_keygen_kat_sk: KAT[{kat_idx}] wrote /tmp/keygen_kat_{kat_idx:03}_{{ours,cref}}.hex (sk len={})",
+        ours.len()
+    );
+}
+
 /// Deterministic keygen on `KAT_VECTORS[idx]`: must match the KAT pk and sk.
 fn keygen_kat_idx_inner(idx: usize) {
     let (seed_hex, pk_hex, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[idx];
