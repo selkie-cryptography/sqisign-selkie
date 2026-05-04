@@ -1908,7 +1908,7 @@ impl<const N: usize> MontCtx<N> {
     }
 
     /// Convert a Montgomery-form magnitude back to its natural value.
-    fn from_mont(&self, x: &[u64; N]) -> [u64; N] {
+    fn unmont(&self, x: &[u64; N]) -> [u64; N] {
         let mut one = [0u64; N];
         one[0] = 1;
         self.mont_mul(x, &one)
@@ -1929,11 +1929,11 @@ impl<const N: usize> MontCtx<N> {
         let mut t = [0u64; N];
         let mut t_n: u64 = 0;
 
-        for i in 0..N {
-            // Multiply phase: t += a · b[i]
+        for &b_i in b {
+            // Multiply phase: t += a · b_i
             let mut c: u64 = 0;
             for j in 0..N {
-                let prod = t[j] as u128 + a[j] as u128 * b[i] as u128 + c as u128;
+                let prod = t[j] as u128 + a[j] as u128 * b_i as u128 + c as u128;
                 t[j] = prod as u64;
                 c = (prod >> 64) as u64;
             }
@@ -2001,7 +2001,7 @@ impl<const N: usize> MontCtx<N> {
             // base^0 = 1.
             return BigInt {
                 sign: 0,
-                limbs: self.from_mont(&table[0]),
+                limbs: self.unmont(&table[0]),
             };
         }
 
@@ -2047,7 +2047,7 @@ impl<const N: usize> MontCtx<N> {
 
         BigInt {
             sign: 0,
-            limbs: self.from_mont(&result),
+            limbs: self.unmont(&result),
         }
     }
 }
