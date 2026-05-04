@@ -293,7 +293,14 @@ impl ExtremalOrder<8> {
                 // coordinates), and check that normalization divided
                 // by exactly 2.
                 let omega = self.z();
-                let omega_j = omega.mul(&Element::<4>::J);
+                // C ref `normeq.c:71-74` builds the t-coordinate basis
+                // element as `t · order->t · order->z` = `t · j · ω`
+                // (left-to-right). For O₀ on E0 with q=1 this gives
+                // `j · i = -k`, so `coord3 = -t`. The reverse order
+                // `ω · j = i · j = +k` flips the k-coefficient's sign,
+                // breaking byte-equality with C ref's RepresentInteger
+                // for any input where `ω` has an `i`-component.
+                let omega_j = Element::<4>::J.mul(&omega);
 
                 let omega_coords = [
                     omega.a.wide(),
@@ -601,6 +608,107 @@ impl Deref for ShortVector {
 ///     iγ, β, iβ)` so that `G[0][0] = G[1][1]` and `G[2][2] = G[3][3]` — keep
 ///     only the `i`-orbit representative with the smallest lex rank in the `dim
 ///     = 2m + 1` hypercube layout.
+/// Canonicalize the L2-reduced basis of an ideal in the **special
+/// order** O₀ (the t=0 case in `suitable_ideals`'s multi-order loop).
+///
+/// Mirrors C ref's `post_LLL_basis_treatment(_, _, _, is_special_order=true)`
+/// in `the-sqisign/src/id2iso/ref/lvlx/dim2id2iso.c:213-268`.
+///
+/// L2 reduction returns *some* reduced basis; the choice between
+/// equivalent reduced bases (related by signed column permutations)
+/// is implementation-defined. C ref imposes a deterministic
+/// canonicalization on the special order so its enumerated short
+/// vectors and the eventual `(β_s, β_t)` pair are reproducible. Two
+/// independent L2 implementations agree on the abstract reduced
+/// basis but may differ in the L2-output column order; without this
+/// canonicalization step, Selkie's downstream `enumerate_short_vectors`
+/// + `try_find_uv` produces a *different* (β_s, β_t) than C ref does
+/// for the same input ideal — even when L2 is bit-exact.
+///
+/// The canonicalization has two phases:
+///
+/// 1. **Column swap.** If `gram[0][0] == gram[2][2]`, swap col 1 ↔
+///    col 2. Else if `gram[0][0] == gram[3][3]`, swap col 1 ↔ col 3.
+///    Else if `gram[1][1] == gram[3][3]`, swap col 1 ↔ col 2 (same
+///    swap as the first case). The Gram is updated correspondingly
+///    via the symmetric permutation `P^T G P`.
+/// 2. **Sign flip.** If `basis[0][0] != basis[1][1]`, negate col 1.
+///    If `basis[0][2] != basis[1][3]`, negate col 3. Each negation
+///    flips the sign of the corresponding row + column of Gram.
+///
+/// The non-special-order branch (`is_special_order=false`) of the
+/// C ref is empty, so this function is only called for `t = 0`.
+fn post_lll_basis_treatment_special<const W: usize>(
+    cols: &mut [Vector<W>; 4],
+    gram: &mut Matrix<W>,
+) {
+    use crate::quaternions::linear::Vector;
+
+    // Helper: swap columns `a` and `b` in the basis (cols are stored
+    // column-major, so swapping `cols[a]` ↔ `cols[b]` swaps the cols).
+    let swap_cols = |cols: &mut [Vector<W>; 4], a: usize, b: usize| {
+        cols.swap(a, b);
+    };
+    // Helper: apply the symmetric permutation `P^T G P` for swapping
+    // cols `a` ↔ `b` to the Gram matrix in place. This swaps row a ↔
+    // row b AND col a ↔ col b. Equivalent to swapping `gram[a][k]` ↔
+    // `gram[b][k]` for each k, then `gram[k][a]` ↔ `gram[k][b]` for
+    // each k. The combined effect: every off-diagonal entry indexed
+    // by (a, k) or (k, a) flips with its counterpart at (b, k) or
+    // (k, b); the diagonal entries `gram[a][a]` and `gram[b][b]` swap.
+    let swap_gram_rows_cols = |gram: &mut Matrix<W>, a: usize, b: usize| {
+        for k in 0..4 {
+            let tmp = gram[a][k];
+            gram[a][k] = gram[b][k];
+            gram[b][k] = tmp;
+        }
+        for k in 0..4 {
+            let tmp = gram[k][a];
+            gram[k][a] = gram[k][b];
+            gram[k][b] = tmp;
+        }
+    };
+    // Helper: negate column `j` of basis + corresponding row/col of
+    // Gram (sign change is equivalent to multiplying both sides by
+    // -1, which leaves diagonal entries unchanged but flips signs of
+    // off-diagonal entries).
+    let negate_col = |cols: &mut [Vector<W>; 4], gram: &mut Matrix<W>, j: usize| {
+        let v = cols[j];
+        cols[j] = Vector::new(
+            v[0].wrapping_neg(),
+            v[1].wrapping_neg(),
+            v[2].wrapping_neg(),
+            v[3].wrapping_neg(),
+        );
+        for k in 0..4 {
+            gram[j][k] = gram[j][k].wrapping_neg();
+        }
+        for k in 0..4 {
+            gram[k][j] = gram[k][j].wrapping_neg();
+        }
+    };
+
+    // Phase 1: column reorder based on Gram diagonal patterns.
+    if gram[0][0] == gram[2][2] {
+        swap_cols(cols, 1, 2);
+        swap_gram_rows_cols(gram, 1, 2);
+    } else if gram[0][0] == gram[3][3] {
+        swap_cols(cols, 1, 3);
+        swap_gram_rows_cols(gram, 1, 3);
+    } else if gram[1][1] == gram[3][3] {
+        swap_cols(cols, 1, 2);
+        swap_gram_rows_cols(gram, 1, 2);
+    }
+
+    // Phase 2: sign-flip cols based on basis-entry equality checks.
+    if cols[0][0] != cols[1][1] {
+        negate_col(cols, gram, 1);
+    }
+    if cols[2][0] != cols[3][1] {
+        negate_col(cols, gram, 3);
+    }
+}
+
 fn enumerate_hypercube(m: i64, gram_has_i_symmetry: bool) -> Vec<[i64; 4]> {
     debug_assert!(m > 0);
 
@@ -805,6 +913,47 @@ impl<const W: usize> NrdBasis<W> {
 
         let _ = width; // capacity hint only
 
+        // Sort enumerated vectors by `degree` (= norm) ascending,
+        // matching C ref's `qsort(small_vecs_and_norms, ...,
+        // compare_vec_by_norm)` in `dim2id2iso.c:634`. Ties broken
+        // by original enumeration order (Rust's `sort_by` is stable,
+        // matching C ref's explicit `idx` tiebreaker).
+        //
+        // Without this sort, both impls produce the same set of
+        // short vectors but in different orders → `try_find_uv`
+        // selects a different first valid `(β_s, β_t)` pair → the
+        // entire downstream Deuring correspondence diverges → keygen
+        // pk bytes don't match C ref.
+        vectors.sort_by(|a, b| {
+            let al = a.degree.limbs();
+            let bl = b.degree.limbs();
+            // Compare from MSB to LSB (limbs are little-endian).
+            for i in (0..al.len()).rev() {
+                match al[i].cmp(&bl[i]) {
+                    core::cmp::Ordering::Equal => continue,
+                    other => return other,
+                }
+            }
+            core::cmp::Ordering::Equal
+        });
+
+        #[cfg(test)]
+        if std::env::var("SELKIE_DUMP_SORTED").is_ok() {
+            for (i, v) in vectors.iter().enumerate().take(10) {
+                let limbs = v.degree.limbs();
+                let mut last_nz = 0;
+                for (k, &l) in limbs.iter().enumerate() {
+                    if l != 0 { last_nz = k; }
+                }
+                let mut s = String::new();
+                for k in (0..=last_nz).rev() {
+                    s.push_str(&format!("{:016x}", limbs[k]));
+                }
+                let s = s.trim_start_matches('0').to_string();
+                eprintln!("[SELKIE_SORTED] idx={i} degree=0x{s}");
+            }
+        }
+
         #[cfg(test)]
         if std::env::var("ENUM_DIAG").is_ok() {
             eprintln!(
@@ -932,43 +1081,15 @@ fn try_find_uv<const N: usize>(
             // `v_2(u)` in Algorithm 3.16 line 14, but that is only
             // equivalent to `v_2(gcd(u, v))` when `v_2(u) ≤ v_2(v)`.
             let e_val = u.gcd(&v).trailing_zeros();
-            // [`LeftIdeal::to_isogeny`]'s outer (2,2)-chain feeds
-            // [`surfaces::Kernel::isogeny`] a kernel of order
-            // `2^(sui.e + 2)` — two torsion bits above the
-            // `2^sui.e`-subgroup that is the chain's real kernel.
-            // Those 2 bits are mandatory (the chain's penultimate
-            // and ultimate steps consume 4- and 2-torsion residue
-            // via the `hadamard_bool` mechanism of Algorithm 8.41)
-            // and come from the `2^f`-torsion image basis
-            // `(phi_u(P_0), theta·phi_v(P_0))` via `scale = f −
-            // sui.e − 2` doublings. The padding only works when
-            // `sui.e ≤ f − 2`.
-            //
-            // The C reference's alternate `extra_torsion = false`
-            // chain path (`theta_isogenies.c:1088`) accepts a
-            // kernel of order exactly `2^sui.e` by running a
-            // shorter chain followed by dedicated 4-isogeny and
-            // 2-isogeny tail steps, so it handles
-            // `sui.e ∈ {f − 1, f}` directly. We have a draft
-            // implementation in
-            // [`surfaces::Kernel::isogeny_no_extra_torsion`] but
-            // it currently produces `splitting: zeros=0` — debug
-            // pending against the C reference's per-step chain
-            // dump. Until that's resolved, we reject pairs with
-            // `e_val < 2` here so [`to_isogeny`] never picks them.
-            //
-            // Pairs with `e_val < 2` get skipped; the outer v-loop
-            // enumerates more `(u, v)` solutions for the same
-            // `(β₁, β₂)`, so the acceptance cost is small (≈ 20%
-            // of pairs on NIST-I in practice).
-            if e_val < 2 {
-                u = u.ct_add(&d2_w);
-                if v <= d1_w {
-                    return None;
-                }
-                v = v.ct_sub(&d1_w);
-                continue;
-            }
+            // No `e_val < 2` rejection: matches the C reference's
+            // `find_uv_from_lists` (`dim2id2iso.c:397-483`), which
+            // returns the first `(u, v)` from the line walk and
+            // dispatches downstream on `e = f − v_2(gcd(u, v))`.
+            // [`LeftIdeal::to_isogeny`] now selects between
+            // [`surfaces::Kernel::isogeny`] (kernel `2^(e+2)`,
+            // `e ≤ f − 2`) and
+            // [`surfaces::Kernel::isogeny_no_extra_torsion`] (kernel
+            // `2^e`, `e ∈ {f − 1, f}`) based on `sui.e`.
             // Reject pairs whose odd parts `u_odd = u >> e_val`
             // or `v_odd = v >> e_val` fall outside the
             // `fixed_degree_isogeny`-safe window
@@ -1753,7 +1874,120 @@ impl<const N: usize> LeftIdeal<N> {
             let denom_w: BigInt<W> = (*lattice_n.denom()).widen();
             let norm_w: BigInt<W> = (*parent_ideal_t.norm()).widen();
 
-            let nrd_basis = NrdBasis::new(cols_w).l2_reduce();
+            // Feed L2 the *class gram* (= 2·nrd_bilinear / (denom²·ideal_norm))
+            // rather than the raw NRD gram, matching C ref's
+            // `quat_lideal_class_gram` + `quat_lll_core` pipeline
+            // (`the-sqisign/src/quaternion/ref/generic/ideal.c:237` →
+            // `lll/lll_applications.c:11-25`). L2 is algebraically
+            // scale-invariant in its decisions, but the DPE
+            // floating-point representation has finite precision —
+            // borderline swap/size-reduction decisions can flip when
+            // the gram values are at different magnitudes. Running
+            // L2 on the same class gram C ref runs it on guarantees
+            // bit-exact decision agreement.
+            //
+            // After L2, recompute the NRD gram from the post-L2
+            // cols so `enumerate_short_vectors` (which uses NRD form
+            // + divisor = ideal_norm·denom²) keeps working unchanged.
+            let nrd_pre = NrdBasis::new(cols_w);
+            let class_gram = {
+                let two = BigInt::<W>::from_u64(2);
+                let denom_sq = denom_w.ct_mul(&denom_w);
+                let class_divisor = denom_sq.ct_mul(&norm_w);
+                let mut g = Matrix::<W>::ZERO;
+                for i in 0..4 {
+                    for j in 0..4 {
+                        let traced = nrd_pre.gram()[i][j].ct_mul(&two);
+                        let (q, _rem) = traced.div_rem(&class_divisor);
+                        g[i][j] = q;
+                    }
+                }
+                g
+            };
+            #[cfg(test)]
+            if t == 0 && std::env::var_os("SELKIE_DUMP_CLASS_GRAM").is_some() {
+                eprintln!("[SELKIE_CLASS_GRAM_BEGIN]");
+                for i in 0..4 {
+                    for j in 0..4 {
+                        let v = class_gram[i][j];
+                        let neg = bool::from(v.is_negative());
+                        eprint!("g[{i}][{j}] sign={} hex=", if neg { 1 } else { 0 });
+                        let limbs = v.abs();
+                        let limbs = limbs.as_limbs();
+                        let mut last_nz = 0;
+                        for (k, &l) in limbs.iter().enumerate() {
+                            if l != 0 { last_nz = k; }
+                        }
+                        for k in (0..=last_nz).rev() {
+                            eprint!("{:016x}", limbs[k]);
+                        }
+                        eprintln!();
+                    }
+                }
+                eprintln!("[SELKIE_CLASS_GRAM_END]");
+            }
+            let class_basis = NrdBasis::from_cols_and_gram(cols_w, class_gram).l2_reduce();
+
+            #[cfg(test)]
+            if t == 0 && std::env::var_os("SELKIE_DUMP_POSTL2_GRAM").is_some() {
+                let cols_dump = class_basis.cols();
+                eprintln!("[SELKIE_POSTL2_COLS_BEGIN]");
+                for j in 0..4 {
+                    for r in 0..4 {
+                        let v = cols_dump[j][r];
+                        let neg = bool::from(v.is_negative());
+                        eprint!("c[{j}][{r}] sign={} hex=", if neg { 1 } else { 0 });
+                        let abs = v.abs();
+                        let limbs = abs.as_limbs();
+                        let mut last_nz = 0;
+                        for (k, &l) in limbs.iter().enumerate() {
+                            if l != 0 { last_nz = k; }
+                        }
+                        for k in (0..=last_nz).rev() {
+                            eprint!("{:016x}", limbs[k]);
+                        }
+                        eprintln!();
+                    }
+                }
+                eprintln!("[SELKIE_POSTL2_COLS_END]");
+                eprintln!("[SELKIE_POSTL2_GRAM_BEGIN] (class form)");
+                let g = class_basis.gram();
+                for i in 0..4 {
+                    for j in 0..4 {
+                        let v = g[i][j];
+                        let neg = bool::from(v.is_negative());
+                        eprint!("g[{i}][{j}] sign={} hex=", if neg { 1 } else { 0 });
+                        let abs = v.abs();
+                        let limbs = abs.as_limbs();
+                        let mut last_nz = 0;
+                        for (k, &l) in limbs.iter().enumerate() {
+                            if l != 0 { last_nz = k; }
+                        }
+                        for k in (0..=last_nz).rev() {
+                            eprint!("{:016x}", limbs[k]);
+                        }
+                        eprintln!();
+                    }
+                }
+                eprintln!("[SELKIE_POSTL2_GRAM_END]");
+            }
+
+            let post_l2_cols = *class_basis.cols();
+            let nrd_basis = NrdBasis::new(post_l2_cols);
+
+            // Apply C ref's `post_LLL_basis_treatment` for the
+            // "special" order t=0 only. Canonicalizes the L2-reduced
+            // basis by column swaps + sign flips based on Gram
+            // diagonal patterns. See
+            // `the-sqisign/src/id2iso/ref/lvlx/dim2id2iso.c:213-268`.
+            let nrd_basis = if t == 0 {
+                let mut cols = *nrd_basis.cols();
+                let mut gram = *nrd_basis.gram();
+                post_lll_basis_treatment_special::<W>(&mut cols, &mut gram);
+                NrdBasis::from_cols_and_gram(cols, gram)
+            } else {
+                nrd_basis
+            };
             short_vecs_per_order[t] = nrd_basis.enumerate_short_vectors(&norm_w, &denom_w);
             batches[t] = Some(ShortVectorBatch {
                 order: &EXTREMAL_ORDERS[t],

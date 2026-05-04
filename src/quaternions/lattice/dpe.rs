@@ -28,7 +28,7 @@ use crate::quaternions::bigint::BigInt;
 ///
 /// Represents the value `m * 2^e`. The mantissa is kept in
 /// `[0.5, 1.0)` (or zero) after every operation.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct DoublePlusExponent {
     /// Mantissa in `[0.5, 1.0)` or zero.
     pub m: f64,

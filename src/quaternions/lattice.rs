@@ -3145,7 +3145,7 @@ const D: usize = 4;
 /// The Gram matrix is derived from — and kept in sync with — the
 /// columns. It is computed once at construction and updated
 /// incrementally during L² reduction.
-pub(crate) struct NrdBasis<const N: usize> {
+pub struct NrdBasis<const N: usize> {
     cols: [Vector<N>; D],
     gram: Matrix<N>,
 }
