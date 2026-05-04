@@ -712,8 +712,16 @@ impl<const N: usize> BigInt<N> {
         };
 
         // Adjust signs to undo our `abs()` of the inputs.
-        let mut x_co = if self.sign == 1 { cc.wrapping_neg() } else { cc };
-        let mut y_co = if other.sign == 1 { dd.wrapping_neg() } else { dd };
+        let mut x_co = if self.sign == 1 {
+            cc.wrapping_neg()
+        } else {
+            cc
+        };
+        let mut y_co = if other.sign == 1 {
+            dd.wrapping_neg()
+        } else {
+            dd
+        };
         x_co.normalize();
         y_co.normalize();
 
@@ -1037,12 +1045,12 @@ impl<const N: usize> BigInt<N> {
         // for R². Fall back to the schoolbook path if `m` is even
         // (Montgomery requires an odd modulus).
         //
-        // CT note: see `MontCtx`'s doc. Within-function caching is
+        // CT note: see `MontReducer`'s doc. Within-function caching is
         // safe even when `m` is secret-derived (e.g. via
         // `cornacchia` from `random_prime_norm`) because the context
         // is dropped before this function returns — no cross-call
         // cache-occupancy channel.
-        let ctx = MontCtx::<N>::new(m);
+        let ctx = MontReducer::<N>::new(m);
 
         // Helper: mod-pow either via cached ctx or schoolbook fallback.
         let pow = |b: &Self, e: &Self| -> Self {
@@ -1161,14 +1169,14 @@ impl<const N: usize> BigInt<N> {
     /// with a wider working type.
     pub fn pow_mod(base: &Self, exp: &Self, modulus: &Self) -> Self {
         // Montgomery requires an odd modulus.
-        if let Some(ctx) = MontCtx::<N>::new(modulus) {
+        if let Some(ctx) = MontReducer::<N>::new(modulus) {
             return ctx.pow(base, exp);
         }
         Self::pow_mod_schoolbook(base, exp, modulus)
     }
 
     /// Schoolbook square-and-multiply fallback for even moduli. Kept
-    /// public(crate) so MontCtx::pow can delegate when the exponent
+    /// public(crate) so MontReducer::pow can delegate when the exponent
     /// loop trivially terminates.
     fn pow_mod_schoolbook(base: &Self, exp: &Self, modulus: &Self) -> Self {
         let mut result = Self::ONE;
@@ -1263,21 +1271,26 @@ impl<const N: usize> BigInt<N> {
         }
 
         // Build the Montgomery context once and delegate. (Per the CT
-        // note on `MontCtx`: this within-function context is safe even
+        // note on `MontReducer`: this within-function context is safe even
         // when `self` is a secret-derived prime candidate.)
-        let ctx = MontCtx::<N>::new(self).expect("self is odd > 1 by the early returns above");
+        let ctx = MontReducer::<N>::new(self).expect("self is odd > 1 by the early returns above");
         self.is_probable_prime_with_ctx(rounds, &ctx)
     }
 
     /// Same as [`is_probable_prime`](Self::is_probable_prime) but with
-    /// a caller-provided `MontCtx`. The caller must ensure `ctx` is the
-    /// Montgomery context for `self` — passing a mismatched context
+    /// a caller-provided `MontReducer`. The caller must ensure
+    /// `reducer` is built for `self` — passing a mismatched reducer
     /// returns garbage (debug-asserted).
     ///
-    /// Use case: known-fixed moduli (e.g. `params::D_MIX_W18_MONT`)
-    /// where the `MontCtx` is built at compile time as a `const` —
-    /// saves the ~6 µs `MontCtx::new` cost per primality test.
-    pub fn is_probable_prime_with_ctx(&self, rounds: u32, ctx: &MontCtx<N>) -> bool {
+    /// Use case: known-fixed moduli (e.g. `params::D_MIX_W18_MOD`)
+    /// where the `MontReducer` is built at compile time as a `const` —
+    /// saves the ~tens of µs `MontReducer::new` cost per primality
+    /// test (dominated by the `128·N` doublings to compute `R²`).
+    ///
+    /// Internal API. Crate-private because it exposes a `MontReducer`,
+    /// which is implementation detail; external callers use
+    /// [`Self::is_probable_prime`].
+    pub(crate) fn is_probable_prime_with_ctx(&self, rounds: u32, ctx: &MontReducer<N>) -> bool {
         debug_assert_eq!(
             ctx.modulus_limbs(),
             &self.limbs,
@@ -1645,15 +1658,16 @@ impl<const N: usize> BigInt<N> {
             // so cap and let the fix-up loop refine.
             let top2 = ((u_top as u128) << 64) | u_2nd as u128;
             let (mut q_hat, mut r_hat): (u128, u128) = if u_top >= v_hi {
-                (u128::from(u64::MAX), top2 - (u128::from(u64::MAX) * v_hi as u128))
+                (
+                    u128::from(u64::MAX),
+                    top2 - (u128::from(u64::MAX) * v_hi as u128),
+                )
             } else {
                 (top2 / v_hi as u128, top2 % v_hi as u128)
             };
 
             // Refine: at most 2 decrements (Knuth proves this).
-            while r_hat >> 64 == 0
-                && q_hat * v_2nd as u128 > (r_hat << 64) | u_3rd as u128
-            {
+            while r_hat >> 64 == 0 && q_hat * v_2nd as u128 > (r_hat << 64) | u_3rd as u128 {
                 q_hat -= 1;
                 r_hat += v_hi as u128;
             }
@@ -1881,107 +1895,127 @@ impl<const N: usize> BigInt<N> {
 // Montgomery arithmetic
 // ---------------------------------------------------------------------
 
-/// Precomputed context for Montgomery arithmetic modulo an odd value.
+/// Precomputed Montgomery reducer for a runtime-supplied odd modulus.
 ///
-/// Montgomery form represents a value `x` as `x · R mod n`, where
-/// `R = 2^{64·N}`. Multiplication in Montgomery form costs one CIOS
-/// multiply-and-reduce per operation (no division), making it faster
-/// than schoolbook reduction for chains like `pow_mod`.
+/// Distinct from [`crate::fields::fp::Fp`] (which hardcodes the SQIsign
+/// curve prime in its type identity): a `MontReducer<N>` is built at
+/// runtime — or compile time via [`MontReducer::const_new`] — for any
+/// odd `n < 2^{64N}`. The same struct shape backs every modulus used in
+/// signing's quaternion-side arithmetic (`D_mix`, ramification primes,
+/// Miller-Rabin candidates during `random_prime_norm`). Operates on
+/// canonical-form [`BigInt<N>`] values; the Montgomery representation
+/// is internal.
 ///
-/// **Variable-time.** The reduction step's final conditional subtract
-/// is a data-dependent branch, and the modular inverse precomputation
-/// uses early-exit Newton iteration. Constant-time Montgomery will be
-/// reintroduced in a separate pass.
+/// Montgomery form represents a value `x` as `x · R mod n` where
+/// `R = 2^{64N}`. Multiplication in this form costs one CIOS
+/// multiply-and-reduce (no division) per op, making chains like
+/// `pow_mod` substantially cheaper than schoolbook reduction.
 ///
-/// **CT note on caching.** The cached fields (`n_inv_neg`, `r2`) are
-/// derived purely from `n` and reveal nothing more than `n` does. Reusing
-/// a `MontCtx` across many ops on the *same* modulus is safe iff that
-/// modulus is public — for SQIsign the public-modulus call sites
-/// (challenge `D_mix`, `2^e` torsion, ramification primes) are the
-/// majority. For secret-modulus call sites (e.g. Miller-Rabin on a
-/// secret-derived prime candidate during `random_prime_norm`), cross-call
-/// reuse via a keyed cache would create a cache-occupancy timing channel
-/// on the modulus itself, even though the cached values are inert. Scope
-/// caching to within-operation lifetime in those cases when CT is
-/// reintroduced.
-pub struct MontCtx<const N: usize> {
+/// # Constant-time
+///
+/// **Variable-time.** The final conditional subtract in `mul`/`square`
+/// branches on a data-dependent comparison, and the modular-inverse
+/// precomputation uses early-exit Newton iteration. Constant-time
+/// Montgomery will be reintroduced in a separate pass.
+///
+/// **Caching note.** The cached fields (`n_inv_neg`, `r_squared`) are
+/// derived purely from `n` and leak nothing the modulus didn't. A
+/// within-operation `MontReducer` is safe even when the modulus is
+/// secret-derived (e.g. a Miller-Rabin candidate). Cross-operation
+/// reuse keyed on a secret modulus, however, opens a cache-occupancy
+/// timing channel on the modulus itself; scope caching to within an
+/// operation in those cases when CT lands.
+pub(crate) struct MontReducer<const N: usize> {
     /// The modulus (odd, nonzero).
     n: [u64; N],
-    /// `-n^{-1} mod 2^64`, used to choose the per-iteration reduction
-    /// constant `m_i` so that `t[0] + m_i · n[0] ≡ 0 (mod 2^64)`.
+    /// `-n^{-1} mod 2^64`. Used per-iteration in CIOS to choose the
+    /// reduction constant `m_i` so that `t[0] + m_i · n[0] ≡ 0
+    /// (mod 2^64)`.
     n_inv_neg: u64,
-    /// `R^2 mod n`, used to convert into Montgomery form.
-    r2: [u64; N],
+    /// `R^2 mod n` where `R = 2^{64N}`. Used by [`Self::to_montgomery`].
+    r_squared: [u64; N],
 }
 
-impl<const N: usize> MontCtx<N> {
-    /// Build a context for the given odd modulus. Returns `None` if
-    /// the modulus is even or zero.
-    pub fn new(modulus: &BigInt<N>) -> Option<Self> {
+impl<const N: usize> MontReducer<N> {
+    /// Returns a reducer for the given odd modulus, or `None` if the
+    /// modulus is even or zero.
+    pub(crate) fn new(modulus: &BigInt<N>) -> Option<Self> {
         // Modulus must be odd (n_inv_neg only exists then) and nonzero.
         if modulus.limbs[0] & 1 == 0 || bool::from(modulus.is_zero()) {
             return None;
         }
         let n = modulus.limbs;
-        let n_inv_neg = neg_inv_mod_2_64(n[0]);
-        let r2 = compute_r2_mod_n::<N>(&n);
-        Some(Self { n, n_inv_neg, r2 })
+        let n_inv_neg = Self::neg_inv_mod_2_64(n[0]);
+        let r_squared = Self::compute_r_squared(&n);
+        Some(Self {
+            n,
+            n_inv_neg,
+            r_squared,
+        })
     }
 
-    /// Build a context at compile time for a known-fixed odd modulus.
+    /// Returns a reducer at compile time for a known-fixed odd modulus.
     ///
-    /// Compile-time-panics if the modulus is even or zero (so callers
-    /// embedding this in a `const` get a build error instead of a
-    /// runtime `None`).
+    /// Use this for moduli known at build time (`D_mix`, ramification
+    /// primes, `2^e` torsion moduli) — folds the Newton iteration for
+    /// `n_inv_neg` and the `128·N` doublings for `R²` into build-time
+    /// constant evaluation, eliminating ~tens of µs of runtime setup
+    /// per operation.
     ///
-    /// Use this for known-fixed moduli (`D_mix`, ramification primes,
-    /// `2^e` torsion moduli) — eliminates the `~6 µs` `MontCtx::new`
-    /// runtime cost (Newton iter + 128·N doublings for R²) by folding
-    /// it all to build time.
-    pub const fn const_new(modulus: &BigInt<N>) -> Self {
+    /// # Panics
+    ///
+    /// Compile-time-panics if `modulus` is even (so callers embedding
+    /// this in a `const` get a build error instead of a runtime
+    /// `None`). At runtime this still panics on even input, but valid
+    /// callers go through [`Self::new`].
+    pub(crate) const fn const_new(modulus: &BigInt<N>) -> Self {
         let n = modulus.limbs;
-        assert!(
-            n[0] & 1 == 1,
-            "MontCtx::const_new: modulus must be odd",
-        );
-        // Check modulus != 0 (we know it's odd above, so a 0 here would
-        // mean the limb-0 odd-bit was checked but everything else is 0 —
-        // can't happen for odd n != 0). The odd check above implies
-        // n[0] >= 1, so n is nonzero.
-        let n_inv_neg = neg_inv_mod_2_64(n[0]);
-        let r2 = compute_r2_mod_n::<N>(&n);
+        assert!(n[0] & 1 == 1, "MontReducer::const_new: modulus must be odd");
+        // Odd implies nonzero (`n[0] >= 1`), so no further check.
+        let n_inv_neg = Self::neg_inv_mod_2_64(n[0]);
+        let r_squared = Self::compute_r_squared(&n);
         Self {
             n,
             n_inv_neg,
-            r2,
+            r_squared,
         }
     }
 
-    /// The modulus this context was built for, as a limb slice.
-    /// Used by `*_with_ctx` callers to verify the context matches their
-    /// modulus (debug-asserted).
+    /// Returns the modulus this reducer was built for, as a limb slice.
+    ///
+    /// Used by `*_with_ctx` callers to debug-assert that the supplied
+    /// reducer matches their modulus.
     pub(crate) fn modulus_limbs(&self) -> &[u64; N] {
         &self.n
     }
 
-    /// Convert a magnitude in `[0, n)` into Montgomery form.
-    fn to_mont(&self, x: &[u64; N]) -> [u64; N] {
-        self.mont_mul(x, &self.r2)
+    /// Returns `x · R mod n` — i.e. converts a canonical-form magnitude
+    /// in `[0, n)` into Montgomery form.
+    fn to_montgomery(&self, x: &[u64; N]) -> [u64; N] {
+        self.mul(x, &self.r_squared)
     }
 
-    /// Convert a Montgomery-form magnitude back to its natural value.
-    fn unmont(&self, x: &[u64; N]) -> [u64; N] {
+    /// Returns `x · R^{-1} mod n` — i.e. converts a Montgomery-form
+    /// magnitude back to canonical form.
+    fn reduce_montgomery(&self, x: &[u64; N]) -> [u64; N] {
         let mut one = [0u64; N];
         one[0] = 1;
-        self.mont_mul(x, &one)
+        self.mul(x, &one)
     }
 
-    /// CIOS Montgomery multiplication: returns `a · b · R^{-1} mod n`.
-    /// Inputs must be in `[0, n)`. Output is in `[0, n)`.
+    /// Returns `a · b · R^{-1} mod n` for two Montgomery-form
+    /// magnitudes. Inputs must be in `[0, n)`; output is in `[0, n)`.
     ///
-    /// Acar 1996, "Analyzing and Comparing Montgomery Multiplication
-    /// Algorithms", §5.
-    fn mont_mul(&self, a: &[u64; N], b: &[u64; N]) -> [u64; N] {
+    /// Uses the **CIOS** (Coarsely Integrated Operand Scanning)
+    /// schedule per [Acar 1996][acar96], §5: each outer iteration
+    /// over `b`'s limbs alternates one multiply step (`t += a · b[i]`)
+    /// with one reduction step (add `m·n` so the bottom limb cancels,
+    /// shift down). This interleaving keeps the working buffer at
+    /// `N+2` limbs throughout, vs `2N+1` for the separated form
+    /// (SOS), and is the fastest of Acar's variants in software.
+    ///
+    /// [acar96]: https://www.microsoft.com/en-us/research/wp-content/uploads/1996/01/j37acmon.pdf
+    fn mul(&self, a: &[u64; N], b: &[u64; N]) -> [u64; N] {
         let n = &self.n;
         let n_inv = self.n_inv_neg;
 
@@ -2029,28 +2063,30 @@ impl<const N: usize> MontCtx<N> {
         t
     }
 
-    /// Modular squaring in Montgomery form: returns `(a · a · R^{-1}) mod n`.
+    /// Returns `a · a · R^{-1} mod n` for a Montgomery-form magnitude.
     ///
     /// Decoupled implementation: computes the full 2N-limb `a²` using
-    /// schoolbook squaring with cross-term reuse (~N(N+1)/2 limb-mults
-    /// vs N² for `mont_mul(a, a)`), then applies Montgomery REDC.
+    /// schoolbook squaring with cross-term reuse (`~N(N+1)/2`
+    /// limb-mults, vs `N²` for [`Self::mul`]`(a, a)`), then applies
+    /// Montgomery REDC. Saves roughly 25% of the multiply phase
+    /// relative to `mul(a, a)`.
     ///
     /// Input `a` must be in Montgomery form, in `[0, n)`. Output is in
     /// `[0, n)`.
-    fn mont_sq(&self, a: &[u64; N]) -> [u64; N] {
-        let (lo, hi) = self.sq_wide(a);
-        self.redc_wide(lo, hi)
+    fn square(&self, a: &[u64; N]) -> [u64; N] {
+        let (lo, hi) = self.square_wide(a);
+        self.reduce_wide(lo, hi)
     }
 
-    /// Schoolbook squaring with cross-term symmetry. Returns the full
-    /// 2N-limb product `a²` as `(low N, high N)` halves.
+    /// Returns the full `2N`-limb product `a²` as `(low N, high N)`
+    /// halves, using cross-term symmetry.
     ///
     /// Phases:
-    /// 1. Compute lower-triangle cross products `a[i] · a[j]` for i<j,
+    /// 1. Compute lower-triangle cross products `a[i] · a[j]` for `i<j`,
     ///    accumulated into position `i+j` of the 2N-limb buffer.
     /// 2. Double the entire buffer (cross products contribute twice in `a²`).
     /// 3. Add diagonal squares `a[i]²` at position `2i`.
-    fn sq_wide(&self, a: &[u64; N]) -> ([u64; N], [u64; N]) {
+    fn square_wide(&self, a: &[u64; N]) -> ([u64; N], [u64; N]) {
         let mut lo = [0u64; N];
         let mut hi = [0u64; N];
 
@@ -2064,9 +2100,7 @@ impl<const N: usize> MontCtx<N> {
             while j < N {
                 let pos = i + j;
                 let cur = if pos < N { lo[pos] } else { hi[pos - N] };
-                let prod = a[i] as u128 * a[j] as u128
-                    + cur as u128
-                    + carry as u128;
+                let prod = a[i] as u128 * a[j] as u128 + cur as u128 + carry as u128;
                 if pos < N {
                     lo[pos] = prod as u64;
                 } else {
@@ -2105,7 +2139,7 @@ impl<const N: usize> MontCtx<N> {
         // Final `carry` overflows position 2N. For SQIsign sizes with
         // `a < n < 2^(64N)`, this can't happen — a² < 2^(128N) so the
         // 2N-limb buffer never fills its top bit before doubling.
-        debug_assert_eq!(carry, 0, "sq_wide: phase-2 doubling overflow");
+        debug_assert_eq!(carry, 0, "square_wide: phase-2 doubling overflow");
 
         // Phase 3: add diagonal squares a[i]² at position 2i.
         let mut carry: u64 = 0;
@@ -2116,7 +2150,11 @@ impl<const N: usize> MontCtx<N> {
             let phi = (prod >> 64) as u64;
 
             let pos_lo = 2 * i;
-            let cur_lo = if pos_lo < N { lo[pos_lo] } else { hi[pos_lo - N] };
+            let cur_lo = if pos_lo < N {
+                lo[pos_lo]
+            } else {
+                hi[pos_lo - N]
+            };
             let (s, c1) = cur_lo.overflowing_add(plo);
             let (s, c2) = s.overflowing_add(carry);
             if pos_lo < N {
@@ -2128,7 +2166,11 @@ impl<const N: usize> MontCtx<N> {
 
             let pos_hi = 2 * i + 1;
             // pos_hi = 2i+1, max at i=N-1 is 2N-1, always valid.
-            let cur_hi = if pos_hi < N { lo[pos_hi] } else { hi[pos_hi - N] };
+            let cur_hi = if pos_hi < N {
+                lo[pos_hi]
+            } else {
+                hi[pos_hi - N]
+            };
             let (s, c1) = cur_hi.overflowing_add(phi);
             let (s, c2) = s.overflowing_add(mid_carry);
             if pos_hi < N {
@@ -2139,7 +2181,7 @@ impl<const N: usize> MontCtx<N> {
             carry = (c1 | c2) as u64;
             i += 1;
         }
-        debug_assert_eq!(carry, 0, "sq_wide: phase-3 final carry overflow");
+        debug_assert_eq!(carry, 0, "square_wide: phase-3 final carry overflow");
 
         (lo, hi)
     }
@@ -2147,10 +2189,10 @@ impl<const N: usize> MontCtx<N> {
     /// Montgomery REDC on a 2N-limb input. Computes
     /// `(lo + hi · R) · R^{-1} mod n` where `R = 2^{64N}`.
     ///
-    /// Same shape as `mont_mul`'s reduce phase, applied N times to a
-    /// pre-multiplied 2N-limb input. The `(t_n, t_np1)` pair tracks
-    /// the working window's overflow above the N-limb `t`.
-    fn redc_wide(&self, lo: [u64; N], hi: [u64; N]) -> [u64; N] {
+    /// Same shape as [`Self::mul`]'s reduce phase, applied `N` times
+    /// to a pre-multiplied 2N-limb input. The `(t_n, t_np1)` pair
+    /// tracks the working window's overflow above the N-limb `t`.
+    fn reduce_wide(&self, lo: [u64; N], hi: [u64; N]) -> [u64; N] {
         let n = &self.n;
         let n_inv = self.n_inv_neg;
 
@@ -2187,7 +2229,7 @@ impl<const N: usize> MontCtx<N> {
 
         // After N rounds: result is in `t`; t_n is at-most-1 overflow;
         // t_np1 should be 0 (all hi limbs consumed).
-        debug_assert_eq!(t_np1, 0, "redc_wide: t_np1 nonzero at end");
+        debug_assert_eq!(t_np1, 0, "reduce_wide: t_np1 nonzero at end");
 
         if t_n != 0 || BigInt::<N>::mag_cmp(&t, n) != Ordering::Less {
             let (sub, _) = BigInt::<N>::mag_sub(&t, n);
@@ -2208,20 +2250,20 @@ impl<const N: usize> MontCtx<N> {
     /// public-exponent path. For a future secret-exponent CT path the
     /// table read needs to be made oblivious (scan all 16 entries with
     /// `subtle::ConditionallySelectable`).
-    pub fn pow(&self, base: &BigInt<N>, exp: &BigInt<N>) -> BigInt<N> {
+    pub(crate) fn pow(&self, base: &BigInt<N>, exp: &BigInt<N>) -> BigInt<N> {
         // Reduce base mod n then convert to Mont form.
         let base_red = BigInt::<N>::mag_div_rem(&base.limbs, &self.n).1;
-        let base_m = self.to_mont(&base_red);
+        let base_m = self.to_montgomery(&base_red);
 
         // table[i] = base^i in Mont form, for i in 0..16. table[0] = 1·R = R mod n.
         let mut one = [0u64; N];
         one[0] = 1;
         let mut table: [[u64; N]; 16] = [[0u64; N]; 16];
-        table[0] = self.mont_mul(&self.r2, &one);
+        table[0] = self.mul(&self.r_squared, &one);
         table[1] = base_m;
         let mut i = 2;
         while i < 16 {
-            table[i] = self.mont_mul(&table[i - 1], &base_m);
+            table[i] = self.mul(&table[i - 1], &base_m);
             i += 1;
         }
 
@@ -2230,7 +2272,7 @@ impl<const N: usize> MontCtx<N> {
             // base^0 = 1.
             return BigInt {
                 sign: 0,
-                limbs: self.unmont(&table[0]),
+                limbs: self.reduce_montgomery(&table[0]),
             };
         }
 
@@ -2263,72 +2305,79 @@ impl<const N: usize> MontCtx<N> {
             // First-window optimization: result is still 1, so 4
             // squarings are no-ops (1^2 = 1 each). Skip them.
             if nib_rev != nibbles - 1 {
-                result = self.mont_sq(&result);
-                result = self.mont_sq(&result);
-                result = self.mont_sq(&result);
-                result = self.mont_sq(&result);
+                result = self.square(&result);
+                result = self.square(&result);
+                result = self.square(&result);
+                result = self.square(&result);
             }
             // Multiply by table[w] (skip if w == 0, since table[0] = 1).
             if w != 0 {
-                result = self.mont_mul(&result, &table[w]);
+                result = self.mul(&result, &table[w]);
             }
         }
 
         BigInt {
             sign: 0,
-            limbs: self.unmont(&result),
+            limbs: self.reduce_montgomery(&result),
         }
     }
-}
 
-/// Compute `-u^{-1} mod 2^64` for odd `u`. Newton iteration converges
-/// quadratically; 4 iterations from a 5-bit seed suffice for 64 bits.
-const fn neg_inv_mod_2_64(u: u64) -> u64 {
-    debug_assert!(u & 1 == 1);
-    // 5-bit accurate seed (Hacker's Delight): 3·u XOR 2 ≡ u^{-1} (mod 32).
-    let mut x: u64 = u.wrapping_mul(3) ^ 2;
-    // Newton: x_{k+1} = x_k · (2 - u · x_k); precision doubles each iter.
-    x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 10 bits
-    x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 20 bits
-    x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 40 bits
-    x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 80 bits
-    x.wrapping_neg()
-}
-
-/// Compute `R^2 mod n` where `R = 2^{64N}`. Used by Montgomery
-/// conversion-in. Repeated doubling-and-reduce; O(N²) time, one-shot
-/// per modulus.
-///
-/// `const fn` so callers can build a `MontCtx` at compile time for
-/// fixed moduli (e.g., `D_mix`, ramification primes). The conditional
-/// subtract is driven by `mag_sub`'s borrow flag rather than `mag_cmp`
-/// because `mag_cmp` returns `Ordering` (not `const`-callable in our
-/// version) — the borrow flag tells us `x >= n` for free.
-const fn compute_r2_mod_n<const N: usize>(n: &[u64; N]) -> [u64; N] {
-    let mut x = [0u64; N];
-    x[0] = 1;
-    let mut iter = 0;
-    let target = 128u32 * N as u32;
-    while iter < target {
-        // x := 2x; if x >= n or carried out, x -= n.
-        let mut carry: u64 = 0;
-        let mut i = 0;
-        while i < N {
-            let new = (x[i] << 1) | carry;
-            carry = x[i] >> 63;
-            x[i] = new;
-            i += 1;
-        }
-        // Try the subtraction unconditionally; `borrow == 0` means
-        // `x >= n`. Combined with `carry == 1` (overflowed past 2^{64N}),
-        // we always want to subtract in those cases.
-        let (sub, borrow) = BigInt::<N>::mag_sub(&x, n);
-        if carry == 1 || borrow == 0 {
-            x = sub;
-        }
-        iter += 1;
+    /// Returns `-u^{-1} mod 2^64` for odd `u`.
+    ///
+    /// Newton iteration on `f(x) = u·x − 1` converges quadratically:
+    /// from a 5-bit accurate seed `(3·u XOR 2)` (Hacker's Delight),
+    /// four iterations reach 80-bit precision, well past the u64
+    /// window. Used to derive [`Self::n_inv_neg`].
+    const fn neg_inv_mod_2_64(u: u64) -> u64 {
+        debug_assert!(u & 1 == 1);
+        // 5-bit accurate seed: 3·u XOR 2 ≡ u^{-1} (mod 32) for odd u.
+        let mut x: u64 = u.wrapping_mul(3) ^ 2;
+        // Newton: x_{k+1} = x_k · (2 - u · x_k); precision doubles each iter.
+        x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 10 bits
+        x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 20 bits
+        x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 40 bits
+        x = x.wrapping_mul(2u64.wrapping_sub(u.wrapping_mul(x))); // 80 bits
+        x.wrapping_neg()
     }
-    x
+
+    /// Returns `R^2 mod n` where `R = 2^{64N}`. Used by
+    /// [`Self::to_montgomery`] to convert canonical-form values into
+    /// Montgomery form via a single multiply.
+    ///
+    /// Computed by `128·N` rounds of doubling-and-conditional-subtract
+    /// (`O(N²)` time, one-shot per modulus). `const fn` so
+    /// [`Self::const_new`] can fold the entire setup into compile-time
+    /// constant evaluation. The conditional subtract is driven by
+    /// `mag_sub`'s borrow flag rather than `mag_cmp` because
+    /// `mag_cmp` returns `Ordering`, which isn't `const`-callable in
+    /// this crate's `MSRV` window — the borrow flag tells us
+    /// `x >= n` for free.
+    const fn compute_r_squared(n: &[u64; N]) -> [u64; N] {
+        let mut x = [0u64; N];
+        x[0] = 1;
+        let mut iter = 0;
+        let target = 128u32 * N as u32;
+        while iter < target {
+            // x := 2x; if x >= n or carried out, x -= n.
+            let mut carry: u64 = 0;
+            let mut i = 0;
+            while i < N {
+                let new = (x[i] << 1) | carry;
+                carry = x[i] >> 63;
+                x[i] = new;
+                i += 1;
+            }
+            // Try the subtraction unconditionally; `borrow == 0` means
+            // `x >= n`. Combined with `carry == 1` (overflowed past
+            // `2^{64N}`), we always want to subtract in those cases.
+            let (sub, borrow) = BigInt::<N>::mag_sub(&x, n);
+            if carry == 1 || borrow == 0 {
+                x = sub;
+            }
+            iter += 1;
+        }
+        x
+    }
 }
 
 impl<const N: usize> Copy for BigInt<N> where [u64; N]: Copy {}

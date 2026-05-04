@@ -370,8 +370,7 @@ impl SigningKey {
         let mut entries = [[Scalar::ZERO; 2]; 2];
         for row in &mut entries {
             for entry in row.iter_mut() {
-                let chunk: &[u8; TORSION_2POWER_BYTES] = bytes
-                    [pos..pos + TORSION_2POWER_BYTES]
+                let chunk: &[u8; TORSION_2POWER_BYTES] = bytes[pos..pos + TORSION_2POWER_BYTES]
                     .try_into()
                     .map_err(|_| SignatureError::NonCanonical)?;
                 let b = BigInt::<4>::from_bytes_le_unsigned(chunk);
