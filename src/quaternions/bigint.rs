@@ -1967,6 +1967,173 @@ impl<const N: usize> MontCtx<N> {
         t
     }
 
+    /// Modular squaring in Montgomery form: returns `(a · a · R^{-1}) mod n`.
+    ///
+    /// Decoupled implementation: computes the full 2N-limb `a²` using
+    /// schoolbook squaring with cross-term reuse (~N(N+1)/2 limb-mults
+    /// vs N² for `mont_mul(a, a)`), then applies Montgomery REDC.
+    ///
+    /// Input `a` must be in Montgomery form, in `[0, n)`. Output is in
+    /// `[0, n)`.
+    fn mont_sq(&self, a: &[u64; N]) -> [u64; N] {
+        let (lo, hi) = self.sq_wide(a);
+        self.redc_wide(lo, hi)
+    }
+
+    /// Schoolbook squaring with cross-term symmetry. Returns the full
+    /// 2N-limb product `a²` as `(low N, high N)` halves.
+    ///
+    /// Phases:
+    /// 1. Compute lower-triangle cross products `a[i] · a[j]` for i<j,
+    ///    accumulated into position `i+j` of the 2N-limb buffer.
+    /// 2. Double the entire buffer (cross products contribute twice in `a²`).
+    /// 3. Add diagonal squares `a[i]²` at position `2i`.
+    fn sq_wide(&self, a: &[u64; N]) -> ([u64; N], [u64; N]) {
+        let mut lo = [0u64; N];
+        let mut hi = [0u64; N];
+
+        // Phase 1: lower-triangle cross products. Each pair (i, j) with
+        // i < j contributes a[i]·a[j] to position i+j, accumulating
+        // across outer iterations.
+        let mut i = 0;
+        while i < N {
+            let mut carry: u64 = 0;
+            let mut j = i + 1;
+            while j < N {
+                let pos = i + j;
+                let cur = if pos < N { lo[pos] } else { hi[pos - N] };
+                let prod = a[i] as u128 * a[j] as u128
+                    + cur as u128
+                    + carry as u128;
+                if pos < N {
+                    lo[pos] = prod as u64;
+                } else {
+                    hi[pos - N] = prod as u64;
+                }
+                carry = (prod >> 64) as u64;
+                j += 1;
+            }
+            // Final carry of this iteration goes to position i+N (in `hi`).
+            // hi[i] hasn't been written by any prior iter (each iter k
+            // writes its final carry to hi[k]; inner-loop accumulating
+            // writes to hi[k] for k > 0 happen via larger outer iters
+            // and read-modify-write the existing value).
+            hi[i] = carry;
+            i += 1;
+        }
+
+        // Phase 2: double the entire 2N-limb buffer (cross products
+        // appear twice in a²; doubling here lets Phase 3 add the
+        // diagonal squares un-doubled).
+        let mut carry: u64 = 0;
+        let mut k = 0;
+        while k < N {
+            let new = (lo[k] << 1) | carry;
+            carry = lo[k] >> 63;
+            lo[k] = new;
+            k += 1;
+        }
+        let mut k = 0;
+        while k < N {
+            let new = (hi[k] << 1) | carry;
+            carry = hi[k] >> 63;
+            hi[k] = new;
+            k += 1;
+        }
+        // Final `carry` overflows position 2N. For SQIsign sizes with
+        // `a < n < 2^(64N)`, this can't happen — a² < 2^(128N) so the
+        // 2N-limb buffer never fills its top bit before doubling.
+        debug_assert_eq!(carry, 0, "sq_wide: phase-2 doubling overflow");
+
+        // Phase 3: add diagonal squares a[i]² at position 2i.
+        let mut carry: u64 = 0;
+        let mut i = 0;
+        while i < N {
+            let prod = a[i] as u128 * a[i] as u128;
+            let plo = prod as u64;
+            let phi = (prod >> 64) as u64;
+
+            let pos_lo = 2 * i;
+            let cur_lo = if pos_lo < N { lo[pos_lo] } else { hi[pos_lo - N] };
+            let (s, c1) = cur_lo.overflowing_add(plo);
+            let (s, c2) = s.overflowing_add(carry);
+            if pos_lo < N {
+                lo[pos_lo] = s;
+            } else {
+                hi[pos_lo - N] = s;
+            }
+            let mid_carry = (c1 | c2) as u64;
+
+            let pos_hi = 2 * i + 1;
+            // pos_hi = 2i+1, max at i=N-1 is 2N-1, always valid.
+            let cur_hi = if pos_hi < N { lo[pos_hi] } else { hi[pos_hi - N] };
+            let (s, c1) = cur_hi.overflowing_add(phi);
+            let (s, c2) = s.overflowing_add(mid_carry);
+            if pos_hi < N {
+                lo[pos_hi] = s;
+            } else {
+                hi[pos_hi - N] = s;
+            }
+            carry = (c1 | c2) as u64;
+            i += 1;
+        }
+        debug_assert_eq!(carry, 0, "sq_wide: phase-3 final carry overflow");
+
+        (lo, hi)
+    }
+
+    /// Montgomery REDC on a 2N-limb input. Computes
+    /// `(lo + hi · R) · R^{-1} mod n` where `R = 2^{64N}`.
+    ///
+    /// Same shape as `mont_mul`'s reduce phase, applied N times to a
+    /// pre-multiplied 2N-limb input. The `(t_n, t_np1)` pair tracks
+    /// the working window's overflow above the N-limb `t`.
+    fn redc_wide(&self, lo: [u64; N], hi: [u64; N]) -> [u64; N] {
+        let n = &self.n;
+        let n_inv = self.n_inv_neg;
+
+        // Working window: t[0..N] + t_n + t_np1 (= conceptual N+2 limbs).
+        // Initialize from (lo, hi[0], hi[1]) — the bottom of the input.
+        let mut t = lo;
+        let mut t_n: u64 = if N >= 1 { hi[0] } else { 0 };
+        let mut t_np1: u64 = if N >= 2 { hi[1] } else { 0 };
+
+        let mut round = 0;
+        while round < N {
+            let m = t[0].wrapping_mul(n_inv);
+            // Low 64 bits of (t[0] + m·n[0]) are zero by choice of m.
+            let prod = t[0] as u128 + m as u128 * n[0] as u128;
+            let mut c = (prod >> 64) as u64;
+            let mut j = 1;
+            while j < N {
+                let prod = t[j] as u128 + m as u128 * n[j] as u128 + c as u128;
+                t[j - 1] = prod as u64;
+                c = (prod >> 64) as u64;
+                j += 1;
+            }
+            let sum = t_n as u128 + c as u128;
+            t[N - 1] = sum as u64;
+            let new_high_carry = (sum >> 64) as u64;
+
+            // Shift t_np1 down into t_n; shift in the next hi limb at t_np1.
+            t_n = t_np1.wrapping_add(new_high_carry);
+            let next_hi_idx = round + 2;
+            t_np1 = if next_hi_idx < N { hi[next_hi_idx] } else { 0 };
+
+            round += 1;
+        }
+
+        // After N rounds: result is in `t`; t_n is at-most-1 overflow;
+        // t_np1 should be 0 (all hi limbs consumed).
+        debug_assert_eq!(t_np1, 0, "redc_wide: t_np1 nonzero at end");
+
+        if t_n != 0 || BigInt::<N>::mag_cmp(&t, n) != Ordering::Less {
+            let (sub, _) = BigInt::<N>::mag_sub(&t, n);
+            t = sub;
+        }
+        t
+    }
+
     /// Modular exponentiation: `base^exp mod n`. Computed in Montgomery
     /// form using a 4-bit fixed-window scheme: precompute table of
     /// `base^i` for `i in 0..16`, then process the exponent four bits at
@@ -2034,10 +2201,10 @@ impl<const N: usize> MontCtx<N> {
             // First-window optimization: result is still 1, so 4
             // squarings are no-ops (1^2 = 1 each). Skip them.
             if nib_rev != nibbles - 1 {
-                result = self.mont_mul(&result, &result);
-                result = self.mont_mul(&result, &result);
-                result = self.mont_mul(&result, &result);
-                result = self.mont_mul(&result, &result);
+                result = self.mont_sq(&result);
+                result = self.mont_sq(&result);
+                result = self.mont_sq(&result);
+                result = self.mont_sq(&result);
             }
             // Multiply by table[w] (skip if w == 0, since table[0] = 1).
             if w != 0 {
