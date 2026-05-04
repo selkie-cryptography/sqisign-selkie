@@ -1262,18 +1262,44 @@ impl<const N: usize> BigInt<N> {
             return false;
         }
 
+        // Build the Montgomery context once and delegate. (Per the CT
+        // note on `MontCtx`: this within-function context is safe even
+        // when `self` is a secret-derived prime candidate.)
+        let ctx = MontCtx::<N>::new(self).expect("self is odd > 1 by the early returns above");
+        self.is_probable_prime_with_ctx(rounds, &ctx)
+    }
+
+    /// Same as [`is_probable_prime`](Self::is_probable_prime) but with
+    /// a caller-provided `MontCtx`. The caller must ensure `ctx` is the
+    /// Montgomery context for `self` — passing a mismatched context
+    /// returns garbage (debug-asserted).
+    ///
+    /// Use case: known-fixed moduli (e.g. `params::D_MIX_W18_MONT`)
+    /// where the `MontCtx` is built at compile time as a `const` —
+    /// saves the ~6 µs `MontCtx::new` cost per primality test.
+    pub fn is_probable_prime_with_ctx(&self, rounds: u32, ctx: &MontCtx<N>) -> bool {
+        debug_assert_eq!(
+            ctx.modulus_limbs(),
+            &self.limbs,
+            "is_probable_prime_with_ctx: ctx must be for `self`",
+        );
+        if bool::from(self.is_negative()) || bool::from(self.is_zero()) {
+            return false;
+        }
+        if *self == Self::ONE {
+            return false;
+        }
+        if *self == Self::TWO || *self == Self::THREE {
+            return true;
+        }
+        if bool::from(self.is_even()) {
+            return false;
+        }
+
         // Write self - 1 = 2^s · d with d odd.
         let n_minus_1 = self.ct_sub(&Self::ONE);
         let s = n_minus_1.two_adic_val();
         let d = n_minus_1.shr(s);
-
-        // Build the Montgomery context once and reuse across all
-        // witness rounds (each pow_mod would otherwise re-run Newton
-        // iteration for n_inv plus 128·N doublings for R²). See the
-        // CT note on `MontCtx`: this is a within-function cache, safe
-        // even when `self` is a secret-derived prime candidate because
-        // the context is dropped at the end of this primality test.
-        let ctx = MontCtx::<N>::new(self).expect("self is odd > 1 by the early returns above");
 
         // Deterministic witnesses sufficient for values up to 3.3×10²⁴.
         let witnesses: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
@@ -1902,6 +1928,42 @@ impl<const N: usize> MontCtx<N> {
         Some(Self { n, n_inv_neg, r2 })
     }
 
+    /// Build a context at compile time for a known-fixed odd modulus.
+    ///
+    /// Compile-time-panics if the modulus is even or zero (so callers
+    /// embedding this in a `const` get a build error instead of a
+    /// runtime `None`).
+    ///
+    /// Use this for known-fixed moduli (`D_mix`, ramification primes,
+    /// `2^e` torsion moduli) — eliminates the `~6 µs` `MontCtx::new`
+    /// runtime cost (Newton iter + 128·N doublings for R²) by folding
+    /// it all to build time.
+    pub const fn const_new(modulus: &BigInt<N>) -> Self {
+        let n = modulus.limbs;
+        assert!(
+            n[0] & 1 == 1,
+            "MontCtx::const_new: modulus must be odd",
+        );
+        // Check modulus != 0 (we know it's odd above, so a 0 here would
+        // mean the limb-0 odd-bit was checked but everything else is 0 —
+        // can't happen for odd n != 0). The odd check above implies
+        // n[0] >= 1, so n is nonzero.
+        let n_inv_neg = neg_inv_mod_2_64(n[0]);
+        let r2 = compute_r2_mod_n::<N>(&n);
+        Self {
+            n,
+            n_inv_neg,
+            r2,
+        }
+    }
+
+    /// The modulus this context was built for, as a limb slice.
+    /// Used by `*_with_ctx` callers to verify the context matches their
+    /// modulus (debug-asserted).
+    pub(crate) fn modulus_limbs(&self) -> &[u64; N] {
+        &self.n
+    }
+
     /// Convert a magnitude in `[0, n)` into Montgomery form.
     fn to_mont(&self, x: &[u64; N]) -> [u64; N] {
         self.mont_mul(x, &self.r2)
@@ -2221,7 +2283,7 @@ impl<const N: usize> MontCtx<N> {
 
 /// Compute `-u^{-1} mod 2^64` for odd `u`. Newton iteration converges
 /// quadratically; 4 iterations from a 5-bit seed suffice for 64 bits.
-fn neg_inv_mod_2_64(u: u64) -> u64 {
+const fn neg_inv_mod_2_64(u: u64) -> u64 {
     debug_assert!(u & 1 == 1);
     // 5-bit accurate seed (Hacker's Delight): 3·u XOR 2 ≡ u^{-1} (mod 32).
     let mut x: u64 = u.wrapping_mul(3) ^ 2;
@@ -2236,7 +2298,13 @@ fn neg_inv_mod_2_64(u: u64) -> u64 {
 /// Compute `R^2 mod n` where `R = 2^{64N}`. Used by Montgomery
 /// conversion-in. Repeated doubling-and-reduce; O(N²) time, one-shot
 /// per modulus.
-fn compute_r2_mod_n<const N: usize>(n: &[u64; N]) -> [u64; N] {
+///
+/// `const fn` so callers can build a `MontCtx` at compile time for
+/// fixed moduli (e.g., `D_mix`, ramification primes). The conditional
+/// subtract is driven by `mag_sub`'s borrow flag rather than `mag_cmp`
+/// because `mag_cmp` returns `Ordering` (not `const`-callable in our
+/// version) — the borrow flag tells us `x >= n` for free.
+const fn compute_r2_mod_n<const N: usize>(n: &[u64; N]) -> [u64; N] {
     let mut x = [0u64; N];
     x[0] = 1;
     let mut iter = 0;
@@ -2251,8 +2319,11 @@ fn compute_r2_mod_n<const N: usize>(n: &[u64; N]) -> [u64; N] {
             x[i] = new;
             i += 1;
         }
-        if carry == 1 || BigInt::<N>::mag_cmp(&x, n) != Ordering::Less {
-            let (sub, _) = BigInt::<N>::mag_sub(&x, n);
+        // Try the subtraction unconditionally; `borrow == 0` means
+        // `x >= n`. Combined with `carry == 1` (overflowed past 2^{64N}),
+        // we always want to subtract in those cases.
+        let (sub, borrow) = BigInt::<N>::mag_sub(&x, n);
+        if carry == 1 || borrow == 0 {
             x = sub;
         }
         iter += 1;
