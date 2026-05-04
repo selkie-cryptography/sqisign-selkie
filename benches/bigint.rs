@@ -1,5 +1,4 @@
-use sqisign_selkie::params::{D_MIX_W18, D_MIX_W18_MONT};
-use sqisign_selkie::quaternions::bigint::{BigInt, MontCtx};
+use sqisign_selkie::{params::D_MIX_W18, quaternions::bigint::BigInt};
 
 fn main() {
     divan::main();
@@ -281,26 +280,7 @@ fn gcd_30(bencher: divan::Bencher) {
     bencher.bench(|| divan::black_box(&a).gcd(divan::black_box(&b)));
 }
 
-// D_mix-specific Miller-Rabin: with vs without the precomputed const
-// MontCtx. The delta isolates the cost of `MontCtx::new` (~6 µs at N=18:
-// Newton iter for n_inv + 128·N doublings for R²) which the const path
-// folds to compile time.
-
 #[divan::bench(sample_count = 20)]
 fn is_probable_prime_d_mix(bencher: divan::Bencher) {
     bencher.bench(|| divan::black_box(&D_MIX_W18).is_probable_prime(8));
-}
-
-#[divan::bench(sample_count = 20)]
-fn is_probable_prime_d_mix_with_const_ctx(bencher: divan::Bencher) {
-    bencher.bench(|| {
-        divan::black_box(&D_MIX_W18).is_probable_prime_with_ctx(8, divan::black_box(&D_MIX_W18_MONT))
-    });
-}
-
-#[divan::bench(sample_count = 20)]
-fn mont_new_d_mix_w18(bencher: divan::Bencher) {
-    // Isolate just the cost of MontCtx::new(D_mix_w18) — the part that
-    // the const D_MIX_W18_MONT eliminates.
-    bencher.bench(|| MontCtx::<18>::new(divan::black_box(&D_MIX_W18)));
 }

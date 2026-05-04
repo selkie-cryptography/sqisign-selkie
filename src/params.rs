@@ -6,7 +6,7 @@
 //! [§4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.2
 //! [§5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.5.2
 
-use crate::quaternions::bigint::{BigInt, MontCtx};
+use crate::quaternions::bigint::{BigInt, MontReducer};
 
 /// Security parameter λ = 128.
 pub const SECURITY_BITS: u32 = 128;
@@ -122,18 +122,17 @@ pub const D_MIX: BigInt<9> = BigInt::from_limbs([0x4B, 0, 0, 0, 0, 0, 0, 0, 1]);
 
 /// `D_mix` widened to 18 limbs — the working width for `pow_mod_w::<18>`
 /// chains. Same value as [`D_MIX`], zero-padded.
-pub const D_MIX_W18: BigInt<18> = BigInt::from_limbs([
-    0x4B, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-]);
+pub const D_MIX_W18: BigInt<18> =
+    BigInt::from_limbs([0x4B, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
-/// Precomputed Montgomery context for `D_mix` at width 18 — built at
-/// compile time, eliminates the runtime `MontCtx::new` cost (Newton
-/// iter for `n_inv` + 128·N doublings for `R²`) for every pow_mod call
-/// against `D_mix`.
+/// Precomputed Montgomery reducer for `D_mix` at width 18, built at
+/// compile time. Eliminates the runtime `MontReducer::new` cost
+/// (Newton iteration for `n_inv` + `128·N` doublings for `R²`) for
+/// every pow_mod / Miller-Rabin / Cornacchia call against `D_mix`.
 ///
-/// Use directly via `D_MIX_W18_MONT.pow(base, exp)`, or pass to any
-/// `*_with_ctx` API that accepts a `&MontCtx<18>`.
-pub const D_MIX_W18_MONT: MontCtx<18> = MontCtx::const_new(&D_MIX_W18);
+/// Use directly via `D_MIX_W18_MOD.pow(base, exp)`, or pass to any
+/// `*_with_ctx` API that accepts a `&MontReducer<18>`.
+pub(crate) const D_MIX_W18_MOD: MontReducer<18> = MontReducer::const_new(&D_MIX_W18);
 
 // ---------------------------------------------------------------------------
 // Precomputed E₀ basis points
