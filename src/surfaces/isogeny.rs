@@ -163,6 +163,18 @@ impl GluingKernel {
         // with all four coordinates nonzero, which is needed for the
         // precomputation (d=0 makes three precomp values zero,
         // killing coordinates during theta doubling).
+        //
+        // Day 15 note: this is an internal representation choice.
+        // C ref's chain stores codomain with t=0 directly and uses
+        // a different (cross-product) precomputation that handles
+        // the degeneracy. Selkie's chain runs in an H-shifted
+        // representation throughout. Removing the Hadamard here
+        // breaks Selkie's chain entirely (splitting:zeros=10) — the
+        // downstream chain operations assume non-degenerate null.
+        // The shifted representation is internally consistent and
+        // produces correct codomains, just with different intermediate
+        // bytes than C ref. The 6-KAT regression with the (P, Q) FDI
+        // fix is from a different convention mismatch, not from this H.
         let (a2, b2, c2, d2) = hadamard4(&alpha, &beta, &gamma, &Fp2::ZERO);
         let null = ThetaNullPoint::new(a2, b2, c2, d2);
         let codomain = Jacobian::new(null);
