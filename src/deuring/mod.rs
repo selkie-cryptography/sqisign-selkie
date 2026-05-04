@@ -389,7 +389,15 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
     let theta = match order_wide.represent_integer(&m, true, rng) {
         Some(t) => {
             #[cfg(test)]
-            eprintln!("[FDI] represent_integer OK, e_fdi={e_fdi}");
+            {
+                eprintln!("[FDI] represent_integer OK, e_fdi={e_fdi}");
+                eprintln!("THETA_RAW coord0={}", t.a);
+                eprintln!("THETA_RAW coord1={}", t.b);
+                eprintln!("THETA_RAW coord2={}", t.c);
+                eprintln!("THETA_RAW coord3={}", t.d);
+                eprintln!("THETA_RAW denom={}", t.denom);
+                eprintln!("THETA_RAW u={}", BigInt::<4>::from(*u));
+            }
             t
         }
         None => {
@@ -401,6 +409,13 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
 
     // Step 3: M_θ via order-basis decomposition.
     let m_theta = action_matrix(&theta, order.order(), &gen_matrices, f)?;
+    #[cfg(test)]
+    {
+        eprintln!("CREF_FDI mat00={:?}", m_theta.entry(0, 0));
+        eprintln!("CREF_FDI mat01={:?}", m_theta.entry(0, 1));
+        eprintln!("CREF_FDI mat10={:?}", m_theta.entry(1, 0));
+        eprintln!("CREF_FDI mat11={:?}", m_theta.entry(1, 1));
+    }
 
     // Step 3.5: Multiply M_θ entries by u⁻¹ mod 2^{e_FDI+2}.
     //
@@ -917,21 +932,26 @@ impl<const N: usize> LeftIdeal<N> {
         // wrong signing keys that fail only against KAT
         // vectors.
         //
-        // `checked_sub` defends against future callers that
-        // bypass the `try_find_uv` filter: in debug builds the
-        // raw subtraction `f − sui.e − 2` panicked with
-        // "attempt to subtract with overflow" for `sui.e > f −
-        // 2`, and in release builds it wrapped to ~`u32::MAX`
-        // and produced a 4-billion-iteration padding loop
-        // (observed during the byte-trace investigation).
-        // Returning `None` lets the caller retry with a fresh
-        // ideal — same effect as the filter, but failure
-        // surfaces here too if anything ever upstream changes.
-        // The proper fix is to implement the
-        // `extra_torsion = false` chain (see
-        // [`Kernel::isogeny_no_extra_torsion`]) and dispatch
-        // to it here when `sui.e ∈ {f-1, f}`.
-        let scale = f.value().checked_sub(sui.e.value())?.checked_sub(2)?;
+        // Dispatch on `sui.e` vs `f`:
+        //
+        //   * `sui.e ≤ f − 2` → extra-torsion path. Pad the kernel by
+        //     `f − sui.e − 2` doublings, leaving 2 spare torsion bits
+        //     for the chain's penultimate/ultimate hadamard absorption.
+        //     Calls [`Kernel::isogeny`] (= `isogeny_extra_torsion`).
+        //
+        //   * `sui.e ∈ {f − 1, f}` → no-extra-torsion path. Pad by
+        //     `f − sui.e` doublings so the kernel is exactly
+        //     `2^sui.e`. Calls [`Kernel::isogeny_no_extra_torsion`],
+        //     which runs `sui.e − 2` main 8-torsion steps then a
+        //     dedicated 4-isogeny + 2-isogeny tail. Mirrors the C
+        //     reference's `extra_torsion=false` mode at
+        //     `dim2id2iso.c:1128`.
+        let no_extra_torsion = sui.e.value() > f.value() - 2;
+        let scale = if no_extra_torsion {
+            f.value().checked_sub(sui.e.value())?
+        } else {
+            f.value().checked_sub(sui.e.value())?.checked_sub(2)?
+        };
         #[cfg(test)]
         eprintln!(
             "[to_isogeny] outer chain: sui.e={}, scale={scale}",
@@ -994,6 +1014,10 @@ impl<const N: usize> LeftIdeal<N> {
             let (e2re, _e2im) = fp2_hex(&e_v.j_invariant());
             eprintln!("OUTER_KER E1_j_re=0x{e1re}");
             eprintln!("OUTER_KER E2_j_re=0x{e2re}");
+            let (e1a_re, e1a_im) = fp2_hex(e_u.coefficient().as_fp2());
+            let (e2a_re, e2a_im) = fp2_hex(e_v.coefficient().as_fp2());
+            eprintln!("OUTER_KER E1_A_re=0x{e1a_re} E1_A_im=0x{e1a_im}");
+            eprintln!("OUTER_KER E2_A_re=0x{e2a_re} E2_A_im=0x{e2a_im}");
             eprintln!("OUTER_KER exp={e}");
 
             let (kp1_half, kp1_full) = has_order(kp_first, e);
@@ -1044,10 +1068,38 @@ impl<const N: usize> LeftIdeal<N> {
         // semantics required by the next chain's `lift_basis`. See
         // the doc comment on this function for why we cannot recover
         // `PmQ` after the fact via `projective_difference`.
-        let (codomain, images) = kernel.isogeny(
-            chain_e,
-            &[(phi_u_p, zero_v), (phi_u_q, zero_v), (phi_u_pmq, zero_v)],
-        )?;
+        let chain_pts = &[(phi_u_p, zero_v), (phi_u_q, zero_v), (phi_u_pmq, zero_v)];
+        let (codomain, images) = if no_extra_torsion {
+            kernel.isogeny_no_extra_torsion(chain_e, chain_pts)?
+        } else {
+            kernel.isogeny(chain_e, chain_pts)?
+        };
+
+        #[cfg(test)]
+        {
+            let fp2_hex = |v: &crate::fields::fp2::Fp2| -> String {
+                let b = v.to_bytes();
+                let re: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                let im: String = b[32..].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                format!("re=0x{re} im=0x{im}")
+            };
+            eprintln!(
+                "[CHAIN_OUT] codomain.E1.j {}",
+                fp2_hex(&codomain.E1.j_invariant())
+            );
+            eprintln!(
+                "[CHAIN_OUT] codomain.E2.j {}",
+                fp2_hex(&codomain.E2.j_invariant())
+            );
+            eprintln!(
+                "[CHAIN_OUT] codomain.E1.A {}",
+                fp2_hex(codomain.E1.coefficient().as_fp2())
+            );
+            eprintln!(
+                "[CHAIN_OUT] codomain.E2.A {}",
+                fp2_hex(codomain.E2.coefficient().as_fp2())
+            );
+        }
 
         // Steps 10–13: Pick correct output curve via Weil-pairing
         // disambiguation.

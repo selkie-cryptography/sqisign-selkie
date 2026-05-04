@@ -12,6 +12,7 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/ffi");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FFI_CREF_LLL");
     println!("cargo:rerun-if-env-changed=SQISIGN_C_REF_PATH");
 
@@ -28,11 +29,15 @@ fn main() {
 
     let mini_gmp = cref.join("src/mini-gmp/mini-gmp.c");
     let mini_gmp_extra = cref.join("src/mini-gmp/mini-gmp-extra.c");
+    let lll_l2 = cref.join("src/quaternion/ref/generic/lll/l2.c");
+    let intbig = cref.join("src/quaternion/ref/generic/intbig.c");
     let mini_gmp_inc = cref.join("src/mini-gmp");
     let dpe_inc = cref.join("src/quaternion/ref/generic/internal_quaternion_headers");
     let tutil_inc = cref.join("src/common/generic/include");
+    let quat_inc = cref.join("src/quaternion/ref/generic/include");
+    let sqisign_namespace_inc = cref.join("include");
 
-    for p in [&mini_gmp, &mini_gmp_extra] {
+    for p in [&mini_gmp, &mini_gmp_extra, &lll_l2, &intbig] {
         assert!(
             p.exists(),
             "ffi-cref-lll: required C source missing: {}",
@@ -56,12 +61,20 @@ fn main() {
         .define("MINI_GMP", None)
         .define("GMP_LIMB_BITS", "64")
         .define("RADIX_64", None) // for tutil.h
+        // Disable C ref's symbol namespacing (default: prepends
+        // `sqisign_gen_` to every public function). Lets our shim
+        // call `quat_lll_core` directly.
+        .define("DISABLE_NAMESPACING", None)
         .include(&mini_gmp_inc)
         .include(&dpe_inc)
         .include(&tutil_inc)
+        .include(&quat_inc)
+        .include(&sqisign_namespace_inc)
         .include("src/ffi") // for our shim header
         .file(&mini_gmp)
         .file(&mini_gmp_extra)
+        .file(&lll_l2)
+        .file(&intbig)
         .file("src/ffi/cref_dpe_shim.c")
         .warnings(false) // mini-gmp emits a few benign warnings on macOS
         .compile("cref_lll_ffi");
