@@ -266,6 +266,13 @@ fn action_matrix(
     f: TorsionExponent,
 ) -> Option<ActionMatrix> {
     let coords = order.decompose(elem)?;
+    #[cfg(test)]
+    {
+        eprintln!("CREF_FDI coeffs[0]={}", coords[0]);
+        eprintln!("CREF_FDI coeffs[1]={}", coords[1]);
+        eprintln!("CREF_FDI coeffs[2]={}", coords[2]);
+        eprintln!("CREF_FDI coeffs[3]={}", coords[3]);
+    }
 
     // Reduce all coefficients mod 2^f. For negative coefficients,
     // ct_mod returns a negative remainder (truncated division), so
@@ -489,6 +496,35 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
     );
 
     // Lift using (P, P-Q) kernel generators.
+    //
+    // # Investigation note (Day 10)
+    //
+    // C ref's `copy_bases_to_kernel` (`hd.c:82-93`) uses (P, Q)
+    // generators with PmQ as the difference. Switching Selkie to match
+    // (let `comp1 = from_propagated(P, Q, PmQ)`, `k1=(P_jac, *), k2=(Q_jac, *)`)
+    // makes FDI(u) byte-equal to C ref but exposes a separate chain
+    // implementation divergence: the chain produces a codomain with the
+    // same j-invariant as C ref but a different Montgomery A
+    // representative for some inputs. Net: 17/100 → 15/100 KATs
+    // pass with the (P, Q) generators. Reverting until the chain bug
+    // is found and fixed; with both fixed together we expect a large jump.
+    // Lift using (P, P-Q) kernel generators.
+    //
+    // # Investigation note (Day 10/11)
+    //
+    // C ref's `copy_bases_to_kernel` (`hd.c:82-93`) uses (P, Q)
+    // generators with PmQ as the difference. Switching Selkie to match
+    // (`from_propagated(P, Q, PmQ)`, `k1=(P_jac, *), k2=(Q_jac, *)`)
+    // makes FDI(u) byte-equal to C ref (verified KAT[0]/KAT[36]:
+    // phi_u_p, phi_u_q, phi_u_pmq, e_u.A all match) but the OUTER chain
+    // in `to_isogeny` then produces a codomain with the same j as C ref
+    // but a different Montgomery A. Net: 17/100 → 15/100 KATs pass.
+    // The outer chain seems to have a compensating divergence that
+    // cancels with FDI's (P, P-Q) bug for some KATs.
+    //
+    // Reverting until the outer-chain bug (or whatever convention
+    // mismatch) is found and fixed; with both fixed together we
+    // expect a large jump in passing KATs.
     let comp1 = TorsionBasis::from_propagated(doubled_p, doubled_pmq, doubled_q);
     let (p_jac_1, pmq_jac_1) = comp1.lift(&curve_t)?;
     let comp2 = TorsionBasis::from_propagated(theta_p, theta_pmq, theta_q);
@@ -703,6 +739,18 @@ impl<const N: usize> LeftIdeal<N> {
         let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
         let (e_u, phi_u_p, phi_u_q, phi_u_pmq) =
             fixed_degree_isogeny(sui.factor1.order, &u_deg, rng)?;
+        #[cfg(test)]
+        {
+            let fp2_hex = |v: &crate::fields::fp2::Fp2| -> String {
+                let b = v.to_bytes();
+                let re: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                re
+            };
+            eprintln!("[FDI_OUT_U] phi_u_p.x_re=0x{}", fp2_hex(phi_u_p.to_affine_x().as_fp2()));
+            eprintln!("[FDI_OUT_U] phi_u_q.x_re=0x{}", fp2_hex(phi_u_q.to_affine_x().as_fp2()));
+            eprintln!("[FDI_OUT_U] phi_u_pmq.x_re=0x{}", fp2_hex(phi_u_pmq.to_affine_x().as_fp2()));
+            eprintln!("[FDI_OUT_U] e_u.A_re=0x{}", fp2_hex(e_u.coefficient().as_fp2()));
+        }
         #[cfg(test)]
         eprintln!(
             "[to_isogeny] after FDI(u): drbg_offset=0x{:x} elapsed={:?}",
