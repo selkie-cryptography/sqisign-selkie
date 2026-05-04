@@ -1367,7 +1367,13 @@ impl<const N: usize> BigInt<N> {
     // -----------------------------------------------------------------------
 
     /// Constant-time unsigned addition of magnitudes. Returns `(limbs, carry)`.
-    #[inline]
+    ///
+    /// The `c1 | c2` carry computation is equivalent to `c1 + c2` here
+    /// because in a chained add with carry-in ≤ 1, `c1` and `c2` can't
+    /// both be 1 — but the bitwise-or form lets LLVM see the carry as
+    /// strictly ≤ 1 and emit a tighter `adcs` chain instead of
+    /// materializing an intermediate carry register per limb.
+    #[inline(always)]
     const fn mag_add(a: &[u64; N], b: &[u64; N]) -> ([u64; N], u64) {
         let mut result = [0u64; N];
         let mut carry: u64 = 0;
@@ -1376,7 +1382,7 @@ impl<const N: usize> BigInt<N> {
             let (s1, c1) = a[i].overflowing_add(b[i]);
             let (s2, c2) = s1.overflowing_add(carry);
             result[i] = s2;
-            carry = (c1 as u64) + (c2 as u64);
+            carry = (c1 | c2) as u64;
             i += 1;
         }
         (result, carry)
@@ -1384,7 +1390,10 @@ impl<const N: usize> BigInt<N> {
 
     /// Constant-time unsigned subtraction of magnitudes. Returns `(limbs,
     /// borrow)`. Borrow is 1 if `a < b` (unsigned).
-    #[inline]
+    ///
+    /// Same `b1 | b2` simplification as in [`mag_add`] for tighter
+    /// `sbcs` chain codegen.
+    #[inline(always)]
     const fn mag_sub(a: &[u64; N], b: &[u64; N]) -> ([u64; N], u64) {
         let mut result = [0u64; N];
         let mut borrow: u64 = 0;
@@ -1393,7 +1402,7 @@ impl<const N: usize> BigInt<N> {
             let (d1, b1) = a[i].overflowing_sub(b[i]);
             let (d2, b2) = d1.overflowing_sub(borrow);
             result[i] = d2;
-            borrow = (b1 as u64) + (b2 as u64);
+            borrow = (b1 | b2) as u64;
             i += 1;
         }
         (result, borrow)
