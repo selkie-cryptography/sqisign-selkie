@@ -2765,16 +2765,18 @@
         const existing = map.get(e.sha);
         if (existing) {
           existing.hasBench = true;
+          if (e.subject) existing.subject = e.subject;
         } else {
-          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: true, hasMutants: false });
+          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: true, hasMutants: false, subject: e.subject });
         }
       }
       for (const e of mutantsIndex) {
         const existing = map.get(e.sha);
         if (existing) {
           existing.hasMutants = true;
+          if (e.subject) existing.subject = e.subject;
         } else {
-          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: false, hasMutants: true });
+          map.set(e.sha, { sha: e.sha, updated_at: e.updated_at, hasCov: false, hasBench: false, hasMutants: true, subject: e.subject });
         }
       }
       // Sort by updated_at descending.
