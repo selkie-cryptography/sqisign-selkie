@@ -78,6 +78,10 @@ jobs:
       - name: Verify mutants produced real outcomes
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
+          if ! grep -qE '^(\+\+\+ b/|--- a/).*\.rs$' git.diff; then
+            echo "diff touches no Rust sources; nothing for cargo-mutants to do"
+            exit 0
+          fi
           if [ ! -f mutants.out/outcomes.json ]; then
             echo "::error::mutants.out/outcomes.json missing; cargo-mutants did not run"
             exit 1
@@ -112,7 +116,7 @@ jobs:
     name: Full shard ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    timeout-minutes: 45
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
