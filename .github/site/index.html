@@ -795,49 +795,13 @@
       #kat-section { --plate-fail-fg: #f6efe6; }
     }
 
-    /* ── Headline ledger: dotted-leader stat lines ── */
-
-    .plate-stats {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      margin: 0 0 16px;
-      font-size: 13px;
-    }
-
-    .plate-stat {
-      display: grid;
-      grid-template-columns: max-content 1fr max-content;
-      gap: 10px;
-      align-items: end;
-      line-height: 1.4;
-    }
-
-    .plate-stat-label {
-      font-weight: 600;
-      color: var(--fg);
-    }
-
-    .plate-stat-leader {
-      border-bottom: 1px dotted var(--fg-dim);
-      transform: translateY(-3px);
-      align-self: end;
-    }
-
-    .plate-stat-value {
-      white-space: nowrap;
-      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
-      font-feature-settings: 'tnum' on, 'lnum' on;
-      font-size: 12px;
-    }
-    .plate-stat-value .accent { font-weight: 700; }
-
     /* ── Family entries ── */
 
     .plate-family {
       border-top: 1px solid var(--plate-rule);
       padding: 12px 0;
     }
+    .plate-family:first-of-type { border-top: none; padding-top: 0; }
 
     .plate-family-header {
       display: grid;
@@ -1070,11 +1034,29 @@
       padding-top: 12px;
       border-top: 1px solid var(--plate-rule);
     }
+    .plate-wycheproof-header {
+      display: grid;
+      grid-template-columns: 1fr max-content;
+      align-items: baseline;
+      gap: 12px;
+    }
     .plate-wycheproof h4 {
       font-size: 14px;
       font-weight: 700;
       margin-bottom: 4px;
     }
+    .plate-wycheproof-vectors {
+      color: var(--fg-dim);
+      font-weight: 400;
+    }
+    .plate-wycheproof-badge {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-feature-settings: 'tnum' on, 'lnum' on;
+      font-size: 12px;
+    }
+    .plate-wycheproof-badge .accent,
+    .plate-family-badge .accent { font-weight: 700; }
+
     .plate-wycheproof-intro {
       font-size: 12px;
       color: var(--fg-muted);
@@ -2681,32 +2663,8 @@
       const wycheTests = wycheSuite ? (wycheSuite.tests || []) : [];
       const wycheC = katFamilyCounts(wycheTests);
 
-      // ---- Stat ledger (dotted-leader headline) ----
-      let html = '<div class="plate-stats">';
-      for (const fam of KAT_FAMILIES) {
-        const tests = familyTests[fam.key];
-        if (tests.length === 0) continue;
-        const c = katFamilyCounts(tests);
-        const b = katBadge(c);
-        html += `<div class="plate-stat">`;
-        html += `<span class="plate-stat-label">${esc(fam.name)}</span>`;
-        html += `<span class="plate-stat-leader"></span>`;
-        html += `<span class="plate-stat-value" style="color:${katBadgeColor(b.status)}">${b.html}</span>`;
-        html += `</div>`;
-      }
-      if (wycheSuite) {
-        const b = katBadge(wycheC);
-        const vectors = wycheSuite.vectors || 0;
-        const label = vectors ? `Wycheproof <span style="color:var(--fg-dim);font-weight:400">(${vectors} vectors)</span>` : 'Wycheproof';
-        html += `<div class="plate-stat">`;
-        html += `<span class="plate-stat-label">${label}</span>`;
-        html += `<span class="plate-stat-leader"></span>`;
-        html += `<span class="plate-stat-value" style="color:${katBadgeColor(b.status)}">${b.html}</span>`;
-        html += `</div>`;
-      }
-      html += '</div>';
-
-      // ---- Per-family detail ----
+      // ---- Per-family rows (each shows its own badge; no separate ledger) ----
+      let html = '';
       for (const fam of KAT_FAMILIES) {
         const tests = familyTests[fam.key];
         if (tests.length === 0) continue;
@@ -2718,8 +2676,13 @@
       const allWychePassed = wycheTests.length > 0 && wycheTests.every(t => t.status === 'pass');
 
       if (wycheSuite) {
+        const b = katBadge(wycheC);
+        const vectors = wycheSuite.vectors || 0;
         html += '<div class="plate-wycheproof">';
-        html += `<h4>Wycheproof</h4>`;
+        html += `<div class="plate-wycheproof-header">`;
+        html += `<h4>Wycheproof${vectors ? ` <span class="plate-wycheproof-vectors">(${vectors} vectors)</span>` : ''}</h4>`;
+        html += `<span class="plate-wycheproof-badge" style="color:${katBadgeColor(b.status)}">${b.html}</span>`;
+        html += `</div>`;
         html += `<p class="plate-wycheproof-intro">Negative and robustness vectors in C2SP/wycheproof JSON format. The runner asserts each vector matches its declared <code>result</code>.</p>`;
 
         if (vectorFiles.length > 0) {
