@@ -2634,7 +2634,7 @@
       const badge = katBadge(c);
       const badgeColor = katBadgeColor(badge.status);
 
-      let html = `<article class="plate-family" data-open="true">`;
+      let html = `<article class="plate-family" data-open="false">`;
       html += `<header class="plate-family-header" onclick="this.parentElement.dataset.open = this.parentElement.dataset.open === 'true' ? 'false' : 'true'">`;
       html += `<div>`;
       html += `<h3 class="plate-family-name">${esc(fam.name)}</h3>`;
