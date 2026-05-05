@@ -210,13 +210,27 @@ impl DoublingConstants {
 }
 
 impl From<ProjectiveCoefficient> for DoublingConstants {
-    /// `(A : C) → (A + 2C : 4C)`.
+    /// `(A : C) → ((A + 2C)/(4C) : 1)`, the normalized affine
+    /// representative.
+    ///
+    /// The normalized form is required so Selkie's `xDBL` produces the
+    /// same projective `(X : Z)` representative as the C reference's
+    /// `xDBL_A24` (which always operates on a normalized
+    /// `(A₂₄/(4C) : 1)` after `ec_curve_normalize_A24`,
+    /// `dim2id2iso.c:30`). Without this normalization, every doubling
+    /// scales the output by an extra factor of `4C`, producing a
+    /// projectively-equivalent but byte-different `(X : Z)` that the
+    /// downstream chain reads (and the gluing site dumps).
+    ///
+    /// Uses one inversion per curve construction. Negligible cost
+    /// because curves are constructed rarely.
     fn from(pc: ProjectiveCoefficient) -> Self {
         let two_c = &pc.C + &pc.C;
-        let four = Fp2::from_fp(Fp::from_small(4));
+        let four_c = &two_c + &two_c;
+        let four_c_inv = four_c.invert();
         Self {
-            A24: &pc.A + &two_c,
-            C24: &four * &pc.C,
+            A24: &(&pc.A + &two_c) * &four_c_inv,
+            C24: Fp2::ONE,
         }
     }
 }
@@ -332,9 +346,25 @@ impl Curve {
             A: Fp2::ZERO,
             C: Fp2::ONE,
         },
+        // Normalized doubling constants `(A₂₄/(4C) : 1) = (1/2 : 1)`
+        // for E0 (A = 0, C = 1). See `DoublingConstants::from` for
+        // why the normalized form is required.
+        //
+        // `1/2` in Montgomery radix-2⁵¹ form was computed via
+        // `(Fp::ONE + Fp::ONE).invert()` (see `print_one_half_limbs`
+        // in `surfaces/tests.rs`).
         doubling: DoublingConstants {
-            A24: Fp2::new(Fp::TWO, Fp::ZERO),
-            C24: Fp2::new(Fp::FOUR, Fp::ZERO),
+            A24: Fp2::new(
+                Fp::from_limbs([
+                    0x000000000000000c,
+                    0x0000000000000000,
+                    0x0000000000000000,
+                    0x0000000000000000,
+                    0x0000400000000000,
+                ]),
+                Fp::ZERO,
+            ),
+            C24: Fp2::ONE,
         },
     };
 

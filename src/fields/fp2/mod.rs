@@ -51,6 +51,12 @@ impl Fp2 {
         b: Fp::ONE,
     };
 
+    /// The constant `-1 mod p` in `F_{p²}`, with imaginary part zero.
+    pub const MINUS_ONE: Fp2 = Fp2 {
+        a: Fp::MINUS_ONE,
+        b: Fp::ZERO,
+    };
+
     /// Construct an element from its real and imaginary parts.
     pub const fn new(a: Fp, b: Fp) -> Fp2 {
         Fp2 { a, b }

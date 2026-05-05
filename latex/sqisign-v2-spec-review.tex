@@ -1322,4 +1322,106 @@ $P$ and~$Q$ rather than recomputing.  Equivalently, update the
 to return the standard $(P, Q, P{-}Q)$ triple that \S2 already
 implicitly assumes throughout.
 
+% =====================================================================
+\section{\textsc{SplittingIsomorphism} omits a side-channel
+randomization that the published KAT vectors require}
+\label{sec:specrev-splitter-randomization}
+
+\finding{Affects \algo{8.42} (\textsc{SplittingIsomorphism}) and
+  the chain output of any algorithm that consumes it (\algo{3.13},
+  \algo{4.5}).}{\high}
+
+The output of an extra-torsion-free $(2, 2)$-isogeny chain is a
+level-2 theta null point on a product abelian surface
+$E_1 \times E_2$.  Multiple projective representatives exist for
+the same abstract surface, related by the symplectic
+modular-group action.  \algo{8.42} as written picks one such
+representative deterministically from the chain's terminal theta
+null.  But the choice is a function of the secret kernel, so the
+emitted projective representative leaks information about the
+kernel beyond what the curve isomorphism class already exposes.
+
+\paragraph{What the C reference does.}
+The C reference closes this leak in
+\texttt{splitting\_compute} (\texttt{theta\_isogenies.c:1001--1069})
+by pre-multiplying the deterministic splitting matrix~$M$ by a
+uniformly random $M_k$ drawn from a precomputed list of six
+$4 \times 4$ matrices over~$\Fpii$.  The six matrices are tensor
+products $M_k = m_k \otimes m_k$ of $2 \times 2$ coset
+representatives of the symplectic-modular-group quotient
+$\Gamma / \Gamma^0(4)$ that, as a group, suffice to mix the
+representative within its equivalence class when working in the
+Montgomery model.  The matrices are built by
+\texttt{precompute\_hd\_splitting.sage} and shipped as
+\texttt{NORMALIZATION\_TRANSFORMS} in
+\texttt{precomp/.../hd\_splitting\_transforms.c}.
+
+The index~$k \in \{0, \dots, 5\}$ is sampled by reading four bytes
+from the deterministic byte-replayable RNG, parsing them as a
+little-endian \texttt{u32}, rejection-sampling against threshold
+$4{,}294{,}967{,}292 = 6 \cdot \lfloor 2^{32} / 6 \rfloor$ for an
+unbiased~$\bmod\,6$, and indexing the precomputed list
+(\texttt{theta\_isogenies.c:980}, \texttt{sample\_random\_index}).
+The randomization is gated on \texttt{\#if defined(ENABLE\_SIGN)}
+and on a caller-supplied \texttt{randomize} flag: it is on for the
+keygen and signing outer chains
+(\texttt{theta\_chain\_compute\_and\_eval\_randomized}), and off
+for verification (\texttt{theta\_chain\_compute\_and\_eval\_verify})
+and for the deterministic \textsc{FixedDegreeIsogeny} chains
+(\texttt{theta\_chain\_compute\_and\_eval}).
+
+\paragraph{Two consequences.}
+
+\begin{enumerate}
+
+\item It is a real side-channel hardening.  Without it, the public
+  output of keygen and signing is a deterministic function of the
+  secret kernel structure, not just the abstract codomain.  An
+  attacker observing the projective representative of a public
+  key, signature, or commitment curve could potentially recover
+  information about the underlying kernel beyond what the curve
+  isomorphism class already reveals.  Whether the leakage is
+  exploitable in practice for SQIsign is, to our knowledge, an
+  open question, but the cost of the countermeasure is six
+  precomputed matrices, four bytes of RNG, and one matrix
+  multiplication.
+
+\item The published KAT vectors are produced \emph{with} this
+  randomization applied.  An implementation that follows the spec
+  literally and skips the randomization will produce a public key
+  that is projectively equivalent to the KAT vector's, but
+  byte-different.  Without mirroring the exact same RNG byte
+  consumption pattern (4 bytes, little-endian, threshold
+  $4{,}294{,}967{,}292$, $\bmod\,6$) and matrix selection logic,
+  byte-equality with the published KATs is impossible.  We spent
+  significant effort tracing chain-internal byte mismatches that
+  vanished only after replicating the splitter randomization.
+
+\end{enumerate}
+
+\paragraph{Recommendation.}
+Add an explicit \textsc{SplittingNormalization} step to
+\algo{8.42} (or as a post-processing step on its output) that
+specifies:
+
+\begin{itemize}
+\item The list of six normalization matrices $M_0, \dots, M_5$
+  (or a generating procedure --- the Sage script that produces
+  them is short).
+\item The exact RNG byte consumption pattern (four bytes,
+  little-endian \texttt{u32}, rejection threshold
+  $4{,}294{,}967{,}292$, $\bmod\,6$).
+\item A precise statement of which chain calls (keygen and
+  signing outer chains, but not FDI sub-chains and not
+  verification) randomize, and which use the deterministic form.
+\item The threat model: that the deterministic representative
+  leaks kernel structure, and that the randomization is required
+  to prevent that leak.
+\end{itemize}
+
+Without these specifics, an implementation that follows the spec
+correctly will still fail the KAT comparison and the implementor
+will have no way to discover the discrepancy without reading the
+C reference's \texttt{splitting\_compute}.
+
 \end{document}

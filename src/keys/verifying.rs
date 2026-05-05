@@ -448,6 +448,10 @@ impl VerifyingKey {
                 TorsionExponent::try_from(e_rsp_prime)
                     .map_err(|_| SignatureError::VerificationFailed)?,
                 &[],
+                // Verification uses the deterministic
+                // `theta_chain_compute_and_eval_verify` in C ref —
+                // `randomize=false`. No RNG consumed.
+                None,
             )
             .ok_or(SignatureError::VerificationFailed)?;
 

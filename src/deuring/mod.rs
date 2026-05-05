@@ -472,18 +472,18 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
         doubled_q = doubled_q.double();
         doubled_pmq = doubled_pmq.double();
     }
-    // Normalize to affine (Z=1) before the biladder. The C ref's
-    // `lift_basis` normalizes P.z to 1, and the biladder's output
-    // projective representative depends on the input's (X:Z). Without
-    // normalization, our doubling formula produces different (X:Z)
-    // than the C ref, which flows through the biladder and Okeya-Sakurai
-    // lift to give wrong y-coordinates.
-    let doubled_p =
-        ProjectiveXOnlyPoint::from_affine_x(*doubled_p.to_affine_x().as_fp2(), &curve_t);
-    let doubled_q =
-        ProjectiveXOnlyPoint::from_affine_x(*doubled_q.to_affine_x().as_fp2(), &curve_t);
-    let doubled_pmq =
-        ProjectiveXOnlyPoint::from_affine_x(*doubled_pmq.to_affine_x().as_fp2(), &curve_t);
+    // Do NOT normalize the doubled basis points. The C reference's
+    // biladder (`xDBLMUL`, `ec.c:384`) operates on the unnormalized
+    // post-doubling basis (`tmp_bas` in `matrix_application_even_basis`,
+    // `id2iso.c:103`), and the subsequent `lift_basis` (`basis.c:121`)
+    // normalizes only `P.z` to 1 before calling `lift_basis_normalized`.
+    // [`TorsionBasis::lift`] normalizes its `R` component internally via
+    // `R.Z.invert()`, so we get the same lift behavior as C ref without
+    // having to pre-normalize here. Pre-normalizing `doubled_p` would
+    // make Selkie's biladder run on a different projective `(X : Z)`
+    // representative than C ref, producing a `theta_q`/`theta_pmq` rep
+    // that flows into the Okeya-Sakurai lift differently and ultimately
+    // gives a byte-different (but projectively-equal) `K2_8.P2`.
     let doubled_basis = TorsionBasis::from_propagated(doubled_p, doubled_q, doubled_pmq);
 
     let endo_bits = TorsionExponent::try_from(e_fdi + 2).ok()?;
@@ -495,55 +495,36 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
         endo_bits,
     );
 
-    // Lift using (P, P-Q) kernel generators.
-    //
-    // # Investigation note (Day 10)
-    //
-    // C ref's `copy_bases_to_kernel` (`hd.c:82-93`) uses (P, Q)
-    // generators with PmQ as the difference. Switching Selkie to match
-    // (let `comp1 = from_propagated(P, Q, PmQ)`, `k1=(P_jac, *), k2=(Q_jac, *)`)
-    // makes FDI(u) byte-equal to C ref but exposes a separate chain
-    // implementation divergence: the chain produces a codomain with the
-    // same j-invariant as C ref but a different Montgomery A
-    // representative for some inputs. Net: 17/100 → 15/100 KATs
-    // pass with the (P, Q) generators. Reverting until the chain bug
-    // is found and fixed; with both fixed together we expect a large jump.
-    // Lift using (P, P-Q) kernel generators.
-    //
-    // # Investigation note (Day 10/11)
-    //
-    // C ref's `copy_bases_to_kernel` (`hd.c:82-93`) uses (P, Q)
-    // generators with PmQ as the difference. Switching Selkie to match
-    // (`from_propagated(P, Q, PmQ)`, `k1=(P_jac, *), k2=(Q_jac, *)`)
-    // makes FDI(u) byte-equal to C ref (verified KAT[0]/KAT[36]:
-    // phi_u_p, phi_u_q, phi_u_pmq, e_u.A all match) but the OUTER chain
-    // in `to_isogeny` then produces a codomain with the same j as C ref
-    // but a different Montgomery A. Net: 17/100 → 15/100 KATs pass.
-    // The outer chain seems to have a compensating divergence that
-    // cancels with FDI's (P, P-Q) bug for some KATs.
-    //
-    // Reverting until the outer-chain bug (or whatever convention
-    // mismatch) is found and fixed; with both fixed together we
-    // expect a large jump in passing KATs.
-    let comp1 = TorsionBasis::from_propagated(doubled_p, doubled_pmq, doubled_q);
-    let (p_jac_1, pmq_jac_1) = comp1.lift(&curve_t)?;
-    let comp2 = TorsionBasis::from_propagated(theta_p, theta_pmq, theta_q);
-    let (p_jac_2, pmq_jac_2) = match comp2.lift(&curve_t) {
-        Some(r) => {
-            #[cfg(test)]
-            eprintln!("[FDI] comp2 lift OK, proceeding to chain");
-            r
-        }
-        None => {
-            #[cfg(test)]
-            eprintln!("[FDI] comp2 lift FAILED (theta_p not on curve?)");
-            return None;
-        }
-    };
+    #[cfg(test)]
+    {
+        let fp2_hex = |v: &crate::fields::fp2::Fp2| {
+            let bytes = v.to_bytes();
+            let re: String = bytes[..32].iter().rev().map(|b| format!("{b:02x}")).collect();
+            let im: String = bytes[32..].iter().rev().map(|b| format!("{b:02x}")).collect();
+            format!("0x{re} + i*0x{im}")
+        };
+        eprintln!("THETA_BASIS_PX={}", fp2_hex(&theta_p.X));
+        eprintln!("THETA_BASIS_PZ={}", fp2_hex(&theta_p.Z));
+        eprintln!("THETA_BASIS_QX={}", fp2_hex(&theta_q.X));
+        eprintln!("THETA_BASIS_QZ={}", fp2_hex(&theta_q.Z));
+        eprintln!("THETA_BASIS_PMQX={}", fp2_hex(&theta_pmq.X));
+        eprintln!("THETA_BASIS_PMQZ={}", fp2_hex(&theta_pmq.Z));
+    }
+
+    // Lift using (P, Q) kernel generators (with PmQ as the difference
+    // point), matching the C reference's `copy_bases_to_kernel`
+    // (`hd.c:82-93`). The lifted Jacobian pairs `(p_jac_1, p_jac_2)`
+    // and `(q_jac_1, q_jac_2)` form the (2,2)-isogeny kernel
+    // generators `K1 = (P, θP)` and `K2 = (Q, θQ)` on the product
+    // `E_t × E_t`.
+    let comp1 = TorsionBasis::from_propagated(doubled_p, doubled_q, doubled_pmq);
+    let (p_jac_1, q_jac_1) = comp1.lift(&curve_t)?;
+    let comp2 = TorsionBasis::from_propagated(theta_p, theta_q, theta_pmq);
+    let (p_jac_2, q_jac_2) = comp2.lift(&curve_t)?;
 
     // No Jacobian doubling needed — basis was doubled before biladder.
     let k1_jac = (p_jac_1, p_jac_2);
-    let k2_jac = (pmq_jac_1, pmq_jac_2);
+    let k2_jac = (q_jac_1, q_jac_2);
 
     // Step 6: (2,2)-isogeny chain on E_t × E_t.
     let product = surfaces::EllipticProduct::new(curve_t, curve_t);
@@ -1117,10 +1098,29 @@ impl<const N: usize> LeftIdeal<N> {
         // the doc comment on this function for why we cannot recover
         // `PmQ` after the fact via `projective_difference`.
         let chain_pts = &[(phi_u_p, zero_v), (phi_u_q, zero_v), (phi_u_pmq, zero_v)];
+        // The outer chain in keygen and signing must consume four bytes
+        // of randomness at its splitting step to mirror the C reference's
+        // `theta_chain_compute_and_eval_randomized` (`dim2id2iso.c:1261`),
+        // which calls `splitting_compute(..., randomize=true)`. The four
+        // bytes pick a uniform index in `[0, 6)` selecting one of six
+        // `NORMALIZATION_TRANSFORMS` matrices that re-randomizes the
+        // post-splitter projective representative. Without this, the
+        // public output curve is a deterministic function of secret
+        // kernel structure (a side-channel leak) and bytes diverge from
+        // the C reference's published KAT vectors. FDI's internal chain
+        // (`isogeny_extra_torsion`, called above) is the only chain
+        // where C ref calls the non-randomized `theta_chain_compute_and_eval`.
+        //
+        // The Mode A branch (else) does NOT yet match the C reference
+        // bytewise: C ref always uses `extra_torsion=false` (Mode B)
+        // for the outer chain regardless of available torsion. Switching
+        // Mode A to randomize without also switching to Mode B doesn't
+        // help byte-equality (the chain output differs structurally).
+        // TODO: route both branches through Mode B when feasible.
         let (codomain, images) = if no_extra_torsion {
-            kernel.isogeny_no_extra_torsion(chain_e, chain_pts)?
+            kernel.isogeny_no_extra_torsion(chain_e, chain_pts, Some(rng))?
         } else {
-            kernel.isogeny(chain_e, chain_pts)?
+            kernel.isogeny(chain_e, chain_pts, None)?
         };
 
         #[cfg(test)]
