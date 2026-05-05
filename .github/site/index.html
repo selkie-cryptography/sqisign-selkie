@@ -976,22 +976,25 @@
       color: var(--fg-dim);
     }
 
+    .sticky-nav {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: rgba(10, 10, 11, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    @media (prefers-color-scheme: light) {
+      .sticky-nav {
+        background: rgba(242, 241, 236, 0.85);
+      }
+    }
+
     .section-nav {
       display: flex;
       gap: 6px;
       padding: 10px 0;
-      position: sticky;
-      top: 0;
-      background: rgba(10, 10, 11, 0.85);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      z-index: 5;
-    }
-
-    @media (prefers-color-scheme: light) {
-      .section-nav {
-        background: rgba(242, 241, 236, 0.85);
-      }
     }
 
     .section-nav a {
@@ -1121,27 +1124,29 @@
 
 
   <div class="container">
-    <div class="commit-nav">
-      <label for="commit-select">Commit</label>
-      <select id="commit-select" onchange="onCommitChange(this.value)">
-        <option value="">&hellip;</option>
-      </select>
-      <span class="commit-time" id="commit-time"></span>
-    </div>
+    <div class="sticky-nav">
+      <div class="commit-nav">
+        <label for="commit-select" title="Step with [ and ] (or arrow keys)">Commit</label>
+        <select id="commit-select" onchange="onCommitChange(this.value)" title="Step with [ and ] (or arrow keys)">
+          <option value="">&hellip;</option>
+        </select>
+        <span class="commit-time" id="commit-time"></span>
+      </div>
 
-    <nav class="section-nav" id="section-nav">
-      <a href="/rustdoc/" target="_blank" rel="noopener">Docs</a>
-      <a href="#analysis-section">Risks</a>
-      <a href="#coverage-section">Coverage</a>
-      <a href="#bench-section">Benchmarks</a>
-      <a href="#mutants-section">Mutants</a>
-      <a href="#dudect-section">Constant-Time</a>
-      <a href="#kat-section">Test Vectors</a>
-      <a href="#platform-section">Platforms</a>
-      <a href="#iai-section">Instructions</a>
-      <a href="#audits-section">Audits</a>
-      <a href="#fuzz-section">Fuzzing</a>
-    </nav>
+      <nav class="section-nav" id="section-nav">
+        <a href="/rustdoc/" target="_blank" rel="noopener">Docs</a>
+        <a href="#analysis-section">Risks</a>
+        <a href="#coverage-section">Coverage</a>
+        <a href="#bench-section">Benchmarks</a>
+        <a href="#mutants-section">Mutants</a>
+        <a href="#dudect-section">Constant-Time</a>
+        <a href="#kat-section">Test Vectors</a>
+        <a href="#platform-section">Platforms</a>
+        <a href="#iai-section">Instructions</a>
+        <a href="#audits-section">Audits</a>
+        <a href="#fuzz-section">Fuzzing</a>
+      </nav>
+    </div>
 
     <div id="status-summary" style="padding:12px 0;display:none"></div>
 
@@ -3120,6 +3125,33 @@
     }, { rootMargin: '-40% 0px -55% 0px' });
 
     sections.forEach(s => observer.observe(s.el));
+
+    // --- Commit-step keyboard shortcuts ---
+    // [ / ← step to a newer commit (toward the top of the list).
+    // ] / → step to an older commit. Skipped when typing in an
+    // input or when a modifier is held; SELECT-focused arrow keys
+    // are handled natively via the existing onchange handler.
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = (e.target.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
+
+      let dir = 0;
+      if (e.key === '[' || e.key === 'ArrowLeft') dir = -1;
+      else if (e.key === ']' || e.key === 'ArrowRight') dir = 1;
+      else return;
+
+      const select = document.getElementById('commit-select');
+      const opts = [...select.options].filter(o => o.value);
+      if (opts.length === 0) return;
+      const idx = opts.findIndex(o => o.value === selectedSha);
+      if (idx < 0) return;
+      const next = Math.max(0, Math.min(opts.length - 1, idx + dir));
+      if (next === idx) return;
+      e.preventDefault();
+      select.value = opts[next].value;
+      onCommitChange(opts[next].value);
+    });
 
     // --- Chart tooltip ---
     const chartTipEl = document.createElement('div');
