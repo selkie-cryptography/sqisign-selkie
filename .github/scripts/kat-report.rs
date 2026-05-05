@@ -17,7 +17,7 @@ use std::time::SystemTime;
 
 struct TestResult {
     name: String,
-    status: String, // "pass", "fail", "skip"
+    status: String, // "pass", "fail", "ignored"
     detail: String,
 }
 
@@ -49,7 +49,7 @@ fn run_tests(args: &[&str]) -> Vec<TestResult> {
             } else if outcome == "FAILED" {
                 "fail"
             } else if outcome == "ignored" {
-                "skip"
+                "ignored"
             } else {
                 continue;
             };
@@ -188,13 +188,17 @@ fn main() -> io::Result<()> {
     for (si, &(suite_name, results, vectors)) in all_results.iter().enumerate() {
         let pass = results.iter().filter(|r| r.status == "pass").count();
         let fail = results.iter().filter(|r| r.status == "fail").count();
-        let skip = results.iter().filter(|r| r.status == "skip").count();
+        let ignored = results
+            .iter()
+            .filter(|r| r.status == "ignored" || r.status == "skip")
+            .count();
 
         writeln!(w, "    {{")?;
         writeln!(w, "      \"name\": {},", json_str(suite_name))?;
         writeln!(w, "      \"pass\": {},", pass)?;
         writeln!(w, "      \"fail\": {},", fail)?;
-        writeln!(w, "      \"skip\": {},", skip)?;
+        writeln!(w, "      \"ignored\": {},", ignored)?;
+        writeln!(w, "      \"skip\": {},", ignored)?;
         writeln!(w, "      \"total\": {},", results.len())?;
         writeln!(w, "      \"vectors\": {},", vectors)?;
         writeln!(w, "      \"tests\": [")?;

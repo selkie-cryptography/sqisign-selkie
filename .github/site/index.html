@@ -776,6 +776,72 @@
       color: var(--fg-muted);
     }
 
+    /* Per-family headline strip + 10x10 vector grid. */
+    .kat-headline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px 24px;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+
+    .kat-headline strong {
+      color: var(--fg);
+      font-weight: 600;
+      margin-right: 4px;
+    }
+
+    .kat-grid {
+      display: grid;
+      grid-template-columns: repeat(10, 22px);
+      gap: 2px;
+      margin: 6px 0 12px;
+    }
+
+    .kat-grid-cell {
+      width: 22px;
+      height: 22px;
+      border-radius: 3px;
+      font-size: 9px;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--fg-dim);
+    }
+
+    .kat-grid-cell.pass    { background: rgba(34, 197, 94, 0.45); color: var(--fg); }
+    .kat-grid-cell.fail    { background: rgba(220, 50, 50, 0.65); color: #fff; }
+    .kat-grid-cell.ignored { background: rgba(128, 128, 128, 0.18); }
+    .kat-grid-cell.unknown { background: var(--bar-bg); }
+
+    .kat-family-header {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      flex-wrap: wrap;
+      cursor: pointer;
+      margin: 16px 0 4px;
+    }
+
+    .kat-family-header h4 {
+      font-size: 13px;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .kat-family-header .desc {
+      font-size: 12px;
+      color: var(--fg-dim);
+      font-weight: 400;
+    }
+
+    .kat-family-header .count {
+      margin-left: auto;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 12px;
+    }
+
     /* Audit badges */
     .audit-grid {
       display: flex;
@@ -2187,69 +2253,169 @@
       return html;
     }
 
+    // Test families inside the `kat` suite, in display order. The
+    // wycheproof suite is its own family. `expected` is set for
+    // 100-vector families that get a 10x10 visual grid.
+    const KAT_FAMILIES = [
+      { key: 'verify', name: 'Verify',                 desc: 'C-ref signature verification',           expected: 100,
+        match: (n) => /^verify_kat_\d{3}$/.test(n) || n === 'kat_verify_all' },
+      { key: 'keygen', name: 'Keygen byte-equality',    desc: 'pk + sk reproduce C ref byte-for-byte', expected: 100,
+        match: (n) => /^keygen_kat_\d{3}$/.test(n) || n === 'keygen_kat_all' },
+      { key: 'sign',   name: 'Sign trajectory',         desc: 'End-to-end sign with parsed KAT sk',    expected: null,
+        match: (n) => /^sign_kat_/.test(n) },
+      { key: 'wire',   name: 'Wire format & negative',  desc: 'Roundtrip and rejection paths',         expected: null,
+        match: () => true /* catch-all for the kat suite */ },
+    ];
+
+    // True when a test was annotated #[ignore] (or otherwise didn't run).
+    function katIsIgnored(t) {
+      return t.status === 'ignored' || t.status === 'skip';
+    }
+
+    // Compact pass/fail/ignored counts and a one-line badge for a family.
+    function katFamilyCounts(tests) {
+      let pass = 0, fail = 0, ign = 0;
+      for (const t of tests) {
+        if (t.status === 'pass') pass++;
+        else if (t.status === 'fail') fail++;
+        else if (katIsIgnored(t)) ign++;
+      }
+      return { pass, fail, ign, total: tests.length };
+    }
+
+    function katBadge(c) {
+      if (c.total === 0) return { html: '\u2014', color: 'var(--fg-dim)' };
+      if (c.fail > 0) return { html: `${c.pass}/${c.pass + c.fail} \u2718`, color: 'var(--red)' };
+      if (c.ign === c.total) return { html: `${c.total} ignored`, color: 'var(--fg-dim)' };
+      const ranTotal = c.pass + c.fail;
+      if (c.ign > 0) return {
+        html: `${c.pass}/${ranTotal} \u2714 <span style="color:var(--fg-dim)">+${c.ign} ignored</span>`,
+        color: 'var(--green)',
+      };
+      return { html: `${c.pass}/${c.total} \u2714`, color: 'var(--green)' };
+    }
+
+    // Pull the trailing 3-digit KAT index out of a test name.
+    function katIndexFromName(n) {
+      const m = /_(\d{3})$/.exec(n);
+      return m ? parseInt(m[1], 10) : null;
+    }
+
+    function renderKatGrid(tests, expected) {
+      const cells = new Array(expected).fill(null).map(() => ({ status: 'unknown' }));
+      for (const t of tests) {
+        const idx = katIndexFromName(t.name);
+        if (idx !== null && idx < expected) cells[idx] = t;
+      }
+      let html = '<div class="kat-grid">';
+      for (let i = 0; i < expected; i++) {
+        const t = cells[i];
+        const cls = t.status === 'pass' ? 'pass'
+                  : t.status === 'fail' ? 'fail'
+                  : (t.status === 'ignored' || t.status === 'skip') ? 'ignored'
+                  : 'unknown';
+        const id3 = String(i).padStart(3, '0');
+        const id2 = String(i).padStart(2, '0');
+        html += `<div class="kat-grid-cell ${cls}" title="KAT[${id3}] \u2014 ${esc(t.status)}">${id2}</div>`;
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function renderKatFamily(fam, tests) {
+      const c = katFamilyCounts(tests);
+      const badge = katBadge(c);
+      let html = '<div class="kat-family">';
+      html += `<div class="kat-family-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">`;
+      html += `<h4>${esc(fam.name)}</h4>`;
+      html += `<span class="desc">${esc(fam.desc)}</span>`;
+      html += `<span class="count" style="color:${badge.color}">${badge.html}</span>`;
+      html += `<span style="font-size:11px;color:var(--fg-muted)">\u25bc</span>`;
+      html += `</div>`;
+      html += `<div class="kat-family-body" style="display:none">`;
+
+      if (fam.expected) html += renderKatGrid(tests, fam.expected);
+
+      html += `<table class="dudect-table"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>`;
+      for (const t of tests) {
+        let icon, cls, style = '';
+        if (t.status === 'pass') { icon = '\u2714'; cls = 'dudect-pass'; }
+        else if (t.status === 'fail') { icon = '\u2718'; cls = 'dudect-fail'; }
+        else { icon = 'ignored'; cls = ''; style = 'color:var(--fg-dim)'; }
+        html += `<tr><td class="fn-name">${esc(t.name)}</td><td class="${cls}" style="${style}">${icon}</td></tr>`;
+      }
+      html += `</tbody></table></div></div>`;
+      return html;
+    }
+
     function renderKatData(data) {
       const suites = data.suites || [];
-      const totalVectors = suites.reduce((s, x) => s + (x.vectors || 0), 0);
 
-      // Summary badges per suite.
-      let html = '<div class="audit-grid">';
-      for (const s of suites) {
-        const hasFail = s.fail > 0;
-        const color = hasFail ? 'var(--red)' : 'var(--green)';
-        const vectors = s.vectors || '?';
-        html += `<div class="audit-badge">
-          <div class="badge-status" style="color:${color}">${hasFail ? '\u2718' : '\u2714'}</div>
-          <div class="badge-label">${esc(s.name)}</div>
-          <div class="badge-detail">${vectors} vectors, ${s.total} tests${s.skip > 0 ? `, ${s.skip} skipped` : ''}</div>
-        </div>`;
+      // Bucket kat-suite tests into named families; first matching family wins.
+      const katSuite = suites.find(s => s.name === 'kat');
+      const katTests = katSuite ? (katSuite.tests || []) : [];
+      const familyTests = Object.fromEntries(KAT_FAMILIES.map(f => [f.key, []]));
+      for (const t of katTests) {
+        const fam = KAT_FAMILIES.find(f => f.match(t.name)) || KAT_FAMILIES[KAT_FAMILIES.length - 1];
+        familyTests[fam.key].push(t);
+      }
+
+      const wycheSuite = suites.find(s => s.name === 'wycheproof');
+      const wycheTests = wycheSuite ? (wycheSuite.tests || []) : [];
+      const wycheC = katFamilyCounts(wycheTests);
+
+      // ---- Headline strip ----
+      let html = '<div class="kat-headline">';
+      for (const fam of KAT_FAMILIES) {
+        const tests = familyTests[fam.key];
+        if (tests.length === 0) continue;
+        const c = katFamilyCounts(tests);
+        const b = katBadge(c);
+        html += `<span><strong>${esc(fam.name)}:</strong> <span style="color:${b.color}">${b.html}</span></span>`;
+      }
+      if (wycheSuite) {
+        const b = katBadge(wycheC);
+        const vectors = wycheSuite.vectors || 0;
+        const label = vectors ? `Wycheproof (${vectors} vectors)` : 'Wycheproof';
+        html += `<span><strong>${label}:</strong> <span style="color:${b.color}">${b.html}</span></span>`;
       }
       html += '</div>';
 
-      // Wycheproof vector detail: per-file breakdown with individual vectors.
-      const wycheSuite = suites.find(s => s.name === 'wycheproof');
-      const vectorFiles = wycheSuite ? (wycheSuite.vector_files || []) : [];
+      // ---- Per-family detail ----
+      for (const fam of KAT_FAMILIES) {
+        const tests = familyTests[fam.key];
+        if (tests.length === 0) continue;
+        html += renderKatFamily(fam, tests);
+      }
 
-      // Did the wycheproof test function pass? If so, all vectors passed.
-      const wycheTests = wycheSuite ? (wycheSuite.tests || []) : [];
+      // ---- Wycheproof detail (preserved per-file vector breakdown) ----
+      const vectorFiles = wycheSuite ? (wycheSuite.vector_files || []) : [];
       const allWychePassed = wycheTests.length > 0 && wycheTests.every(t => t.status === 'pass');
+
+      if (wycheSuite) {
+        html += `<h4 style="margin:20px 0 4px">Wycheproof</h4>`;
+        html += `<p style="font-size:12px;color:var(--fg-dim);margin-bottom:8px">Negative and robustness vectors. The runner asserts each vector matches its <code>result</code> field.</p>`;
+      }
 
       if (vectorFiles.length > 0) {
         for (const vf of vectorFiles) {
           const name = vf.file || '?';
           const label = name.replace('sqisign_', '').replace(/_/g, ' ');
           const total = (vf.vectors || []).length;
-          html += `<h4 style="margin:16px 0 6px;cursor:pointer" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">`;
-          html += `${esc(label)} <span style="font-weight:400;font-size:12px;color:var(--fg-dim)">${total} vectors (${vf.valid || 0} accept, ${vf.invalid || 0} reject)</span>`;
-          html += ` <span style="font-size:11px;color:var(--fg-muted)">\u25bc</span></h4>`;
+          html += `<h5 style="margin:8px 0 4px;cursor:pointer;font-size:12px;font-weight:600" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">`;
+          html += `${esc(label)} <span style="font-weight:400;color:var(--fg-dim)">${total} vectors (${vf.valid || 0} accept, ${vf.invalid || 0} reject)</span>`;
+          html += ` <span style="font-size:11px;color:var(--fg-muted)">\u25bc</span></h5>`;
           html += '<table class="dudect-table" style="display:none"><thead><tr><th>Test</th><th>Expects</th><th>Result</th></tr></thead><tbody>';
           for (const v of (vf.vectors || [])) {
             const expects = v.result === 'valid' ? 'accept' : v.result === 'invalid' ? 'reject' : v.result;
-            // If the test function passed, every vector matched its expectation.
             const passed = allWychePassed;
             const icon = passed ? '\u2714' : '\u2718';
             const cls = passed ? 'dudect-pass' : 'dudect-fail';
-            html += `<tr>
-              <td>${esc(v.comment)}</td>
-              <td>${esc(expects)}</td>
-              <td class="${cls}">${icon}</td>
-            </tr>`;
+            html += `<tr><td>${esc(v.comment)}</td><td>${esc(expects)}</td><td class="${cls}">${icon}</td></tr>`;
           }
           html += '</tbody></table>';
         }
       }
-
-      // Test function summary (collapsed by default).
-      html += `<h4 style="margin:16px 0 6px;cursor:pointer" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">`;
-      html += `Test functions <span style="font-size:11px;color:var(--fg-muted)">\u25bc</span></h4>`;
-      html += '<table class="dudect-table" style="display:none"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>';
-      for (const s of suites) {
-        for (const t of (s.tests || [])) {
-          const icon = t.status === 'pass' ? '\u2714' : t.status === 'skip' ? '\u2013' : '\u2718';
-          const cls = t.status === 'pass' ? 'dudect-pass' : t.status === 'fail' ? 'dudect-fail' : '';
-          html += `<tr><td class="fn-name">${esc(t.name)}</td><td class="${cls}">${icon}</td></tr>`;
-        }
-      }
-      html += '</tbody></table>';
 
       return html;
     }
