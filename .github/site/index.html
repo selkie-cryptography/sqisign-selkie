@@ -776,70 +776,336 @@
       color: var(--fg-muted);
     }
 
-    /* Per-family headline strip + 10x10 vector grid. */
-    .kat-headline {
+    /* ─────────────────────────────────────────────────────────────────
+       Test Vectors panel — family-grouped 10×10 plate grids with
+       hex-style axis labels. Typography matches the rest of the page
+       (Inter + system mono); the grid is the only distinctive element.
+       ───────────────────────────────────────────────────────────────── */
+
+    #kat-section {
+      --plate-pass: var(--green);
+      --plate-fail: var(--red);
+      --plate-fail-fg: #fff;
+      --plate-ignored-fg: var(--fg-dim);
+      --plate-rule: var(--border);
+      --plate-cell: 24px;
+    }
+
+    @media (prefers-color-scheme: light) {
+      #kat-section { --plate-fail-fg: #f6efe6; }
+    }
+
+    /* ── Headline ledger: dotted-leader stat lines ── */
+
+    .plate-stats {
       display: flex;
-      flex-wrap: wrap;
-      gap: 16px 24px;
-      margin-bottom: 12px;
+      flex-direction: column;
+      gap: 4px;
+      margin: 4px 0 24px;
       font-size: 13px;
     }
 
-    .kat-headline strong {
-      color: var(--fg);
-      font-weight: 600;
-      margin-right: 4px;
-    }
-
-    .kat-grid {
+    .plate-stat {
       display: grid;
-      grid-template-columns: repeat(10, 22px);
-      gap: 2px;
-      margin: 6px 0 12px;
+      grid-template-columns: max-content 1fr max-content;
+      gap: 10px;
+      align-items: end;
+      line-height: 1.4;
     }
 
-    .kat-grid-cell {
-      width: 22px;
-      height: 22px;
-      border-radius: 3px;
-      font-size: 9px;
+    .plate-stat-label {
+      font-weight: 600;
+      color: var(--fg);
+    }
+
+    .plate-stat-leader {
+      border-bottom: 1px dotted var(--fg-dim);
+      transform: translateY(-3px);
+      align-self: end;
+    }
+
+    .plate-stat-value {
+      white-space: nowrap;
       font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-feature-settings: 'tnum' on, 'lnum' on;
+      font-size: 12px;
+    }
+    .plate-stat-value .accent { font-weight: 700; }
+
+    /* ── Family entries ── */
+
+    .plate-family {
+      border-top: 1px solid var(--plate-rule);
+      padding: 16px 0 4px;
+    }
+
+    .plate-family-header {
+      display: grid;
+      grid-template-columns: 1fr max-content;
+      align-items: baseline;
+      gap: 12px;
+      cursor: pointer;
+      user-select: none;
+      transition: opacity 0.15s;
+    }
+    .plate-family-header:hover { opacity: 0.78; }
+
+    .plate-family-name {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.005em;
+      line-height: 1.3;
+    }
+    .plate-family-desc {
+      font-size: 12px;
+      color: var(--fg-muted);
+      margin-top: 1px;
+    }
+    .plate-family-badge {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-feature-settings: 'tnum' on, 'lnum' on;
+      font-size: 12px;
+    }
+    .plate-family-chev {
+      font-size: 10px;
+      color: var(--fg-muted);
+      transition: transform 0.2s;
+      display: inline-block;
+      margin-left: 6px;
+    }
+    .plate-family[data-open="true"] .plate-family-chev { transform: rotate(180deg); }
+
+    .plate-family-body {
+      display: none;
+      margin-top: 14px;
+    }
+    .plate-family[data-open="true"] .plate-family-body { display: block; }
+
+    .plate-family-cols {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 24px 32px;
+      align-items: start;
+    }
+    @media (max-width: 760px) {
+      .plate-family-cols { grid-template-columns: 1fr; gap: 16px; }
+    }
+
+    /* ── 10×10 plate grid with hex-style axis labels ── */
+
+    .plate-grid-wrap {
+      display: grid;
+      grid-template-columns: max-content max-content;
+      grid-template-areas:
+        ".      axis-x"
+        "axis-y grid";
+      column-gap: 10px;
+      row-gap: 8px;
+      width: max-content;
+    }
+
+    .plate-grid-axis-x {
+      grid-area: axis-x;
+      display: grid;
+      grid-template-columns: repeat(5, var(--plate-cell)) 10px repeat(5, var(--plate-cell));
+      gap: 3px;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 9px;
+      color: var(--fg-muted);
+      letter-spacing: 0.05em;
+    }
+
+    .plate-grid-axis-y {
+      grid-area: axis-y;
+      display: grid;
+      grid-template-rows: repeat(5, var(--plate-cell)) 10px repeat(5, var(--plate-cell));
+      gap: 3px;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 9px;
+      color: var(--fg-muted);
+      letter-spacing: 0.05em;
+    }
+
+    .plate-grid-axis-x > span,
+    .plate-grid-axis-y > span {
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--fg-dim);
+    }
+    .plate-grid-axis-gap { visibility: hidden; }
+
+    .plate-grid {
+      grid-area: grid;
+      display: grid;
+      grid-template-columns: repeat(5, var(--plate-cell)) 10px repeat(5, var(--plate-cell));
+      grid-template-rows: repeat(5, var(--plate-cell)) 10px repeat(5, var(--plate-cell));
+      gap: 3px;
+      position: relative;
     }
 
-    .kat-grid-cell.pass    { background: rgba(34, 197, 94, 0.45); color: var(--fg); }
-    .kat-grid-cell.fail    { background: rgba(220, 50, 50, 0.65); color: #fff; }
-    .kat-grid-cell.ignored { background: rgba(128, 128, 128, 0.18); }
-    .kat-grid-cell.unknown { background: var(--bar-bg); }
-
-    .kat-family-header {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-      flex-wrap: wrap;
-      cursor: pointer;
-      margin: 16px 0 4px;
+    /* Cropmarks: corner ticks framing the grid like a printer's plate. */
+    .plate-grid::before,
+    .plate-grid::after {
+      content: '';
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border: 1px solid var(--fg-muted);
+      pointer-events: none;
+      opacity: 0.4;
+    }
+    .plate-grid::before {
+      top: -10px;
+      left: -10px;
+      border-right: none;
+      border-bottom: none;
+    }
+    .plate-grid::after {
+      bottom: -10px;
+      right: -10px;
+      border-left: none;
+      border-top: none;
     }
 
-    .kat-family-header h4 {
-      font-size: 13px;
-      font-weight: 700;
-      margin: 0;
+    .plate-cell {
+      width: var(--plate-cell);
+      height: var(--plate-cell);
+      border-radius: 3px;
+      position: relative;
+      overflow: hidden;
+      background: var(--bar-bg);
+      transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+      animation: plateCellReveal 360ms cubic-bezier(0.2, 0.8, 0.3, 1) backwards;
+      animation-delay: calc(var(--i, 0) * 5ms);
+    }
+    .plate-cell:hover {
+      transform: scale(1.18);
+      z-index: 2;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+    .plate-grid-spacer {
+      width: var(--plate-cell);
+      height: var(--plate-cell);
+      visibility: hidden;
     }
 
-    .kat-family-header .desc {
+    /* Pass: solid ink-green tile, faint inner highlight. */
+    .plate-cell.pass {
+      background: var(--plate-pass);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    }
+
+    /* Fail: red tile with a CSS-stamped × glyph. */
+    .plate-cell.fail {
+      background: var(--plate-fail);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    }
+    .plate-cell.fail::before,
+    .plate-cell.fail::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 18%;
+      right: 18%;
+      height: 2px;
+      background: var(--plate-fail-fg);
+      transform-origin: center;
+      border-radius: 1px;
+    }
+    .plate-cell.fail::before { transform: translateY(-50%) rotate(45deg); }
+    .plate-cell.fail::after  { transform: translateY(-50%) rotate(-45deg); }
+
+    /* Ignored: 45° hatching like a printer's "intentionally blank" mark. */
+    .plate-cell.ignored {
+      background:
+        repeating-linear-gradient(135deg,
+          transparent 0 3px,
+          var(--plate-ignored-fg) 3px 4px),
+        var(--bar-bg);
+      opacity: 0.7;
+    }
+
+    /* Unknown: empty outline, no fill. */
+    .plate-cell.unknown {
+      background: transparent;
+      border: 1px dashed var(--border);
+    }
+
+    @keyframes plateCellReveal {
+      from { opacity: 0; transform: scale(0.4); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    /* ── Test list (compact, for expanded family) ── */
+
+    .plate-test-list {
+      width: 100%;
+      border-collapse: collapse;
       font-size: 12px;
-      color: var(--fg-dim);
-      font-weight: 400;
-    }
-
-    .kat-family-header .count {
-      margin-left: auto;
       font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    }
+    .plate-test-list th,
+    .plate-test-list td {
+      padding: 4px 8px;
+      text-align: left;
+      border-bottom: 1px solid var(--plate-rule);
+    }
+    .plate-test-list th {
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+    }
+    .plate-test-list td:last-child { width: 70px; text-align: right; font-feature-settings: 'tnum' on; }
+    .plate-test-list .pass { color: var(--plate-pass); }
+    .plate-test-list .fail { color: var(--plate-fail); font-weight: 700; }
+    .plate-test-list .ignored { color: var(--fg-dim); }
+
+    /* ── Wycheproof per-file detail block ── */
+
+    .plate-wycheproof {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid var(--plate-rule);
+    }
+    .plate-wycheproof h4 {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .plate-wycheproof-intro {
       font-size: 12px;
+      color: var(--fg-muted);
+      margin-bottom: 12px;
+    }
+
+    .plate-wycheproof-file {
+      margin-top: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--plate-rule);
+      display: grid;
+      grid-template-columns: max-content 1fr max-content;
+      gap: 12px;
+      align-items: baseline;
+    }
+    .plate-wycheproof-file .label {
+      color: var(--fg);
+      font-weight: 600;
+    }
+    .plate-wycheproof-file .stats {
+      color: var(--fg-muted);
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-feature-settings: 'tnum' on;
+      font-size: 11px;
+    }
+    .plate-wycheproof-file .leader {
+      border-bottom: 1px dotted var(--fg-dim);
+      align-self: end;
+      transform: translateY(-3px);
     }
 
     /* Audit badges */
@@ -2283,16 +2549,26 @@
       return { pass, fail, ign, total: tests.length };
     }
 
+    // Inline badge for headline ledger and family header. Returns
+    // { html, status } \u2014 `status` drives the line's color via CSS class.
     function katBadge(c) {
-      if (c.total === 0) return { html: '\u2014', color: 'var(--fg-dim)' };
-      if (c.fail > 0) return { html: `${c.pass}/${c.pass + c.fail} \u2718`, color: 'var(--red)' };
-      if (c.ign === c.total) return { html: `${c.total} ignored`, color: 'var(--fg-dim)' };
+      if (c.total === 0) return { html: '\u2014', status: 'none' };
+      if (c.fail > 0) {
+        return { html: `<span class="accent">${c.pass}</span>/${c.pass + c.fail} \u2718${c.ign ? ` <span style="color:var(--fg-dim)">+${c.ign} ign</span>` : ''}`, status: 'fail' };
+      }
+      if (c.ign === c.total) return { html: `${c.total} ignored`, status: 'ignored' };
       const ranTotal = c.pass + c.fail;
       if (c.ign > 0) return {
-        html: `${c.pass}/${ranTotal} \u2714 <span style="color:var(--fg-dim)">+${c.ign} ignored</span>`,
-        color: 'var(--green)',
+        html: `<span class="accent">${c.pass}</span>/${ranTotal} \u2714 <span style="color:var(--fg-dim)">+${c.ign} ign</span>`,
+        status: 'pass',
       };
-      return { html: `${c.pass}/${c.total} \u2714`, color: 'var(--green)' };
+      return { html: `<span class="accent">${c.pass}</span>/${c.total} \u2714`, status: 'pass' };
+    }
+
+    function katBadgeColor(status) {
+      if (status === 'pass') return 'var(--plate-pass)';
+      if (status === 'fail') return 'var(--plate-fail)';
+      return 'var(--fg-muted)';
     }
 
     // Pull the trailing 3-digit KAT index out of a test name.
@@ -2301,50 +2577,91 @@
       return m ? parseInt(m[1], 10) : null;
     }
 
+    // 10\u00d710 plate grid with hex-style row/column axis labels and a
+    // 5-cell gutter splitting each axis (low-nibble / high-nibble).
     function renderKatGrid(tests, expected) {
       const cells = new Array(expected).fill(null).map(() => ({ status: 'unknown' }));
       for (const t of tests) {
         const idx = katIndexFromName(t.name);
         if (idx !== null && idx < expected) cells[idx] = t;
       }
-      let html = '<div class="kat-grid">';
-      for (let i = 0; i < expected; i++) {
-        const t = cells[i];
-        const cls = t.status === 'pass' ? 'pass'
-                  : t.status === 'fail' ? 'fail'
-                  : (t.status === 'ignored' || t.status === 'skip') ? 'ignored'
-                  : 'unknown';
-        const id3 = String(i).padStart(3, '0');
-        const id2 = String(i).padStart(2, '0');
-        html += `<div class="kat-grid-cell ${cls}" title="KAT[${id3}] \u2014 ${esc(t.status)}">${id2}</div>`;
+
+      let html = '<div class="plate-grid-wrap">';
+
+      // X-axis (\u00b70 \u00b71 \u00b72 \u00b73 \u00b74 \u2502 \u00b75 \u00b76 \u00b77 \u00b78 \u00b79).
+      html += '<div class="plate-grid-axis-x">';
+      for (let c = 0; c < 10; c++) {
+        if (c === 5) html += '<span class="plate-grid-axis-gap"></span>';
+        html += `<span>\u00b7${c}</span>`;
       }
+      html += '</div>';
+
+      // Y-axis (0\u00b7 1\u00b7 2\u00b7 3\u00b7 4\u00b7 \u2502 5\u00b7 6\u00b7 7\u00b7 8\u00b7 9\u00b7).
+      html += '<div class="plate-grid-axis-y">';
+      for (let r = 0; r < 10; r++) {
+        if (r === 5) html += '<span class="plate-grid-axis-gap"></span>';
+        html += `<span>${r}\u00b7</span>`;
+      }
+      html += '</div>';
+
+      // Grid: 11 columns / 11 rows (10 cells + 1 spacer between halves).
+      html += '<div class="plate-grid">';
+      for (let r = 0; r < 10; r++) {
+        if (r === 5) {
+          for (let c = 0; c < 11; c++) html += '<div class="plate-grid-spacer"></div>';
+        }
+        for (let c = 0; c < 10; c++) {
+          if (c === 5) html += '<div class="plate-grid-spacer"></div>';
+          const i = r * 10 + c;
+          const t = cells[i];
+          const cls = t.status === 'pass' ? 'pass'
+                    : t.status === 'fail' ? 'fail'
+                    : (t.status === 'ignored' || t.status === 'skip') ? 'ignored'
+                    : 'unknown';
+          const id3 = String(i).padStart(3, '0');
+          html += `<div class="plate-cell ${cls}" style="--i:${i}" title="KAT[${id3}] \u2014 ${esc(t.status)}"></div>`;
+        }
+      }
+      html += '</div>';
       html += '</div>';
       return html;
     }
 
+    // One family entry: heading, description, status badge, and (when
+    // expected=100) a plate grid + per-test list.
     function renderKatFamily(fam, tests) {
       const c = katFamilyCounts(tests);
       const badge = katBadge(c);
-      let html = '<div class="kat-family">';
-      html += `<div class="kat-family-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">`;
-      html += `<h4>${esc(fam.name)}</h4>`;
-      html += `<span class="desc">${esc(fam.desc)}</span>`;
-      html += `<span class="count" style="color:${badge.color}">${badge.html}</span>`;
-      html += `<span style="font-size:11px;color:var(--fg-muted)">\u25bc</span>`;
+      const badgeColor = katBadgeColor(badge.status);
+
+      let html = `<article class="plate-family" data-open="true">`;
+      html += `<header class="plate-family-header" onclick="this.parentElement.dataset.open = this.parentElement.dataset.open === 'true' ? 'false' : 'true'">`;
+      html += `<div>`;
+      html += `<h3 class="plate-family-name">${esc(fam.name)}</h3>`;
+      html += `<p class="plate-family-desc">${esc(fam.desc)}</p>`;
       html += `</div>`;
-      html += `<div class="kat-family-body" style="display:none">`;
+      html += `<div class="plate-family-badge" style="color:${badgeColor}">${badge.html}<span class="plate-family-chev">\u25be</span></div>`;
+      html += `</header>`;
 
-      if (fam.expected) html += renderKatGrid(tests, fam.expected);
-
-      html += `<table class="dudect-table"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>`;
-      for (const t of tests) {
-        let icon, cls, style = '';
-        if (t.status === 'pass') { icon = '\u2714'; cls = 'dudect-pass'; }
-        else if (t.status === 'fail') { icon = '\u2718'; cls = 'dudect-fail'; }
-        else { icon = 'ignored'; cls = ''; style = 'color:var(--fg-dim)'; }
-        html += `<tr><td class="fn-name">${esc(t.name)}</td><td class="${cls}" style="${style}">${icon}</td></tr>`;
+      html += `<div class="plate-family-body">`;
+      if (fam.expected) {
+        html += `<div class="plate-family-cols">`;
+        html += renderKatGrid(tests, fam.expected);
+        html += `<div>`;
       }
-      html += `</tbody></table></div></div>`;
+      html += `<table class="plate-test-list"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>`;
+      for (const t of tests) {
+        let label, cls;
+        if (t.status === 'pass') { label = 'pass'; cls = 'pass'; }
+        else if (t.status === 'fail') { label = 'fail'; cls = 'fail'; }
+        else { label = 'ignored'; cls = 'ignored'; }
+        html += `<tr><td>${esc(t.name)}</td><td class="${cls}">${label}</td></tr>`;
+      }
+      html += `</tbody></table>`;
+      if (fam.expected) {
+        html += `</div></div>`; // close col + cols
+      }
+      html += `</div></article>`;
       return html;
     }
 
@@ -2364,20 +2681,28 @@
       const wycheTests = wycheSuite ? (wycheSuite.tests || []) : [];
       const wycheC = katFamilyCounts(wycheTests);
 
-      // ---- Headline strip ----
-      let html = '<div class="kat-headline">';
+      // ---- Stat ledger (dotted-leader headline) ----
+      let html = '<div class="plate-stats">';
       for (const fam of KAT_FAMILIES) {
         const tests = familyTests[fam.key];
         if (tests.length === 0) continue;
         const c = katFamilyCounts(tests);
         const b = katBadge(c);
-        html += `<span><strong>${esc(fam.name)}:</strong> <span style="color:${b.color}">${b.html}</span></span>`;
+        html += `<div class="plate-stat">`;
+        html += `<span class="plate-stat-label">${esc(fam.name)}</span>`;
+        html += `<span class="plate-stat-leader"></span>`;
+        html += `<span class="plate-stat-value" style="color:${katBadgeColor(b.status)}">${b.html}</span>`;
+        html += `</div>`;
       }
       if (wycheSuite) {
         const b = katBadge(wycheC);
         const vectors = wycheSuite.vectors || 0;
-        const label = vectors ? `Wycheproof (${vectors} vectors)` : 'Wycheproof';
-        html += `<span><strong>${label}:</strong> <span style="color:${b.color}">${b.html}</span></span>`;
+        const label = vectors ? `Wycheproof <span style="color:var(--fg-dim);font-weight:400">(${vectors} vectors)</span>` : 'Wycheproof';
+        html += `<div class="plate-stat">`;
+        html += `<span class="plate-stat-label">${label}</span>`;
+        html += `<span class="plate-stat-leader"></span>`;
+        html += `<span class="plate-stat-value" style="color:${katBadgeColor(b.status)}">${b.html}</span>`;
+        html += `</div>`;
       }
       html += '</div>';
 
@@ -2393,28 +2718,32 @@
       const allWychePassed = wycheTests.length > 0 && wycheTests.every(t => t.status === 'pass');
 
       if (wycheSuite) {
-        html += `<h4 style="margin:20px 0 4px">Wycheproof</h4>`;
-        html += `<p style="font-size:12px;color:var(--fg-dim);margin-bottom:8px">Negative and robustness vectors. The runner asserts each vector matches its <code>result</code> field.</p>`;
-      }
+        html += '<div class="plate-wycheproof">';
+        html += `<h4>Wycheproof</h4>`;
+        html += `<p class="plate-wycheproof-intro">Negative and robustness vectors in C2SP/wycheproof JSON format. The runner asserts each vector matches its declared <code>result</code>.</p>`;
 
-      if (vectorFiles.length > 0) {
-        for (const vf of vectorFiles) {
-          const name = vf.file || '?';
-          const label = name.replace('sqisign_', '').replace(/_/g, ' ');
-          const total = (vf.vectors || []).length;
-          html += `<h5 style="margin:8px 0 4px;cursor:pointer;font-size:12px;font-weight:600" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">`;
-          html += `${esc(label)} <span style="font-weight:400;color:var(--fg-dim)">${total} vectors (${vf.valid || 0} accept, ${vf.invalid || 0} reject)</span>`;
-          html += ` <span style="font-size:11px;color:var(--fg-muted)">\u25bc</span></h5>`;
-          html += '<table class="dudect-table" style="display:none"><thead><tr><th>Test</th><th>Expects</th><th>Result</th></tr></thead><tbody>';
-          for (const v of (vf.vectors || [])) {
-            const expects = v.result === 'valid' ? 'accept' : v.result === 'invalid' ? 'reject' : v.result;
-            const passed = allWychePassed;
-            const icon = passed ? '\u2714' : '\u2718';
-            const cls = passed ? 'dudect-pass' : 'dudect-fail';
-            html += `<tr><td>${esc(v.comment)}</td><td>${esc(expects)}</td><td class="${cls}">${icon}</td></tr>`;
+        if (vectorFiles.length > 0) {
+          for (const vf of vectorFiles) {
+            const name = vf.file || '?';
+            const label = name.replace('sqisign_', '').replace(/_/g, ' ');
+            const total = (vf.vectors || []).length;
+            html += `<div class="plate-wycheproof-file" onclick="(function(t){const n=t.nextElementSibling;n.style.display=n.style.display==='none'?'':'none';})(this)">`;
+            html += `<span class="label">${esc(label)}</span>`;
+            html += `<span class="leader"></span>`;
+            html += `<span class="stats">${total} vectors \u00b7 ${vf.valid || 0} accept \u00b7 ${vf.invalid || 0} reject</span>`;
+            html += `</div>`;
+            html += '<table class="plate-test-list" style="display:none;margin-bottom:6px"><thead><tr><th>test</th><th>expects</th><th>result</th></tr></thead><tbody>';
+            for (const v of (vf.vectors || [])) {
+              const expects = v.result === 'valid' ? 'accept' : v.result === 'invalid' ? 'reject' : v.result;
+              const passed = allWychePassed;
+              const cls = passed ? 'pass' : 'fail';
+              const lbl = passed ? 'pass' : 'fail';
+              html += `<tr><td>${esc(v.comment)}</td><td>${esc(expects)}</td><td class="${cls}">${lbl}</td></tr>`;
+            }
+            html += '</tbody></table>';
           }
-          html += '</tbody></table>';
         }
+        html += '</div>';
       }
 
       return html;
