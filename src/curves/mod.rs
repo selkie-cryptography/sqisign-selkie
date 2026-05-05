@@ -585,6 +585,15 @@ impl TorsionBasis {
         let mut F1 = R2;
         let mut F2 = *PmQ;
 
+        // The C reference's biladder (`xDBLMUL`, `ec.c:485`) branches on
+        // `A == 0` and uses the specialized `xDBL_E0` formula when `A = 0`,
+        // but the general `xDBL_A24` formula otherwise. Mirror that here so
+        // the biladder output's projective `(X : Z)` representative matches
+        // the C reference byte-for-byte: `xDBL_E0` produces `2 · xDBL_A24`,
+        // and that scaling is what propagates through the biladder's
+        // doubling chain into the output rep.
+        let a_is_zero = *curve.coefficient().as_fp2() == Fp2::ZERO;
+
         // Main loop: process bits from MSB to LSB.
         for i in (0..kbits).rev() {
             let h = r[2 * i] + r[2 * i + 1]; // h ∈ {0, 1, 2}
@@ -594,7 +603,7 @@ impl TorsionBasis {
             let h_bit1 = subtle::Choice::from((h >> 1) & 1);
             let mut T0 = ProjectiveXOnlyPoint::conditional_select(&R0, &R1, h_bit0);
             T0 = ProjectiveXOnlyPoint::conditional_select(&T0, &R2, h_bit1);
-            T0 = T0.double();
+            T0 = if a_is_zero { T0.double_e0() } else { T0.double() };
 
             // T1 and T2 depend on r[2i+1].
             let r_bit = subtle::Choice::from(r[2 * i + 1] & 1);

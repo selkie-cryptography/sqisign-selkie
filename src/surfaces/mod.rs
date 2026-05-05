@@ -32,6 +32,7 @@
 //! [§8.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
 
 pub(crate) mod isogeny;
+pub(crate) mod precomputed;
 
 use core::ops::Mul;
 
@@ -542,6 +543,7 @@ impl Kernel {
         &self,
         e: TorsionExponent,
         pts: &[ProductPoint],
+        randomize: Option<&mut dyn rand_core::RngCore>,
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         debug_assert!(
             {
@@ -551,7 +553,7 @@ impl Kernel {
             },
             "kernel must be isotropic for the 2^(e+2)-Weil pairing"
         );
-        self.isogeny_inner(e, pts, false)
+        self.isogeny_inner(e, pts, false, randomize)
     }
 
     /// Compute the chain with extra torsion (signing path).
@@ -579,7 +581,9 @@ impl Kernel {
             },
             "kernel must be isotropic for the 2^(e+2)-Weil pairing"
         );
-        self.isogeny_inner(e, pts, true)
+        // FDI's internal chain — non-randomized in the C reference
+        // (`theta_chain_compute_and_eval`, `dim2id2iso.c:240, 1018, 1094`).
+        self.isogeny_inner(e, pts, true, None)
     }
 
     /// Compute the chain consuming a kernel of order exactly `2^e`,
@@ -603,12 +607,13 @@ impl Kernel {
         &self,
         e: TorsionExponent,
         pts: &[ProductPoint],
+        randomize: Option<&mut dyn rand_core::RngCore>,
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         debug_assert!(
             self.is_isotropic(e),
             "kernel must be isotropic for the 2^e-Weil pairing"
         );
-        self.isogeny_inner_no_extra_torsion(e, pts)
+        self.isogeny_inner_no_extra_torsion(e, pts, randomize)
     }
 
     fn isogeny_inner(
@@ -616,6 +621,7 @@ impl Kernel {
         e: TorsionExponent,
         pts: &[ProductPoint],
         _extra_torsion: bool,
+        randomize: Option<&mut dyn rand_core::RngCore>,
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         // Algorithm 8.47 (Isogeny22ChainWithTorsion):
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
@@ -697,6 +703,10 @@ impl Kernel {
             eprintln!("GLUE_IN T1.0.Z={}", fp2_hex(&gluing.T1.0.Z));
             eprintln!("GLUE_IN T1.1.X={}", fp2_hex(&gluing.T1.1.X));
             eprintln!("GLUE_IN T1.1.Z={}", fp2_hex(&gluing.T1.1.Z));
+            eprintln!("GLUE_IN T2.0.X={}", fp2_hex(&gluing.T2.0.X));
+            eprintln!("GLUE_IN T2.0.Z={}", fp2_hex(&gluing.T2.0.Z));
+            eprintln!("GLUE_IN T2.1.X={}", fp2_hex(&gluing.T2.1.X));
+            eprintln!("GLUE_IN T2.1.Z={}", fp2_hex(&gluing.T2.1.Z));
         }
 
         let (gluing_data, _) = gluing.isogeny(&[]);
@@ -1113,7 +1123,7 @@ impl Kernel {
         let splitter = SplittingKernel {
             domain: current_jacobian,
         };
-        splitter.isogeny(&theta_pts)
+        splitter.isogeny(&theta_pts, randomize)
     }
 
     /// Body for [`Self::isogeny_no_extra_torsion`].
@@ -1139,6 +1149,7 @@ impl Kernel {
         &self,
         e: TorsionExponent,
         pts: &[ProductPoint],
+        randomize: Option<&mut dyn rand_core::RngCore>,
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         // Full-hex (re, im) pair for `[NOEX]` step dumps, matching the
         // format the C ref uses in `[CHAIN_DUMP]` lines so per-step
@@ -1386,6 +1397,6 @@ impl Kernel {
         let splitter = SplittingKernel {
             domain: current_jacobian,
         };
-        splitter.isogeny(&theta_pts)
+        splitter.isogeny(&theta_pts, randomize)
     }
 }

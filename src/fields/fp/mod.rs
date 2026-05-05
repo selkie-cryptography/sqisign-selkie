@@ -103,6 +103,19 @@ impl Fp {
         0x0000C00000000000,
     ]);
 
+    /// The constant `-1 mod p` in Montgomery form.
+    ///
+    /// Used by the `NORMALIZATION_TRANSFORMS` precomputed matrices in
+    /// the (2,2)-isogeny splitter (`src/surfaces/isogeny.rs`), where
+    /// a `const` definition is required.
+    pub const MINUS_ONE: Fp = Fp([
+        0x0007FFFFFFFFFFE5,
+        0x0007FFFFFFFFFFFF,
+        0x0007FFFFFFFFFFFF,
+        0x0007FFFFFFFFFFFF,
+        0x00006FFFFFFFFFFF,
+    ]);
+
     /// Construct a field element from a small integer.
     pub fn from_small(x: u32) -> Fp {
         let mut a = Fp::ZERO;

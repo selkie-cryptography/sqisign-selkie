@@ -94,6 +94,42 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
+    /// Compute \[2\]self specialized for `A = 0` (the curve `E_0`).
+    ///
+    /// Implements the C reference's `xDBL_E0` (`ec.c:215-231`):
+    ///
+    /// - `X' = (X + Z)² · 2(X - Z)²`
+    /// - `Z' = 4XZ · (2(X - Z)² + 4XZ)`
+    ///
+    /// This is **not** projectively equal to [`double`] in the
+    /// `(X : Z)` representative — the output is exactly `2 ·
+    /// double(self)` per coordinate. The C reference uses this
+    /// specialized variant inside its biladder (`xDBLMUL`,
+    /// `ec.c:485`) but uses the normalized `xDBL_A24` variant
+    /// elsewhere (`ec_dbl_iter`, `ec.c:586`). To produce
+    /// byte-equal projective representatives against the C
+    /// reference's biladder output, the biladder MUST use this
+    /// `xDBL_E0` form when `A = 0`.
+    ///
+    /// The caller is responsible for ensuring `A = 0` (i.e. the
+    /// curve is `E_0`); the formula is correct only on that curve.
+    ///
+    /// [`double`]: Self::double
+    #[must_use]
+    pub fn double_e0(&self) -> ProjectiveXOnlyPoint {
+        let t0 = (&self.X + &self.Z).square();
+        let t1 = (&self.X - &self.Z).square();
+        let t2 = &t0 - &t1;
+        let t1_doubled = &t1 + &t1;
+        let X2 = &t0 * &t1_doubled;
+        let Z2 = &t2 * &(&t1_doubled + &t2);
+        ProjectiveXOnlyPoint {
+            X: X2,
+            Z: Z2,
+            curve: self.curve,
+        }
+    }
+
     /// Compute self + other, given self − other.
     ///
     /// See [§8.2], Algorithm 8.4 (`xADD`).

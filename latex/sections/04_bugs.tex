@@ -820,6 +820,76 @@ identify without an external benchmark to compare against.  We had
 the existing primal-LLL path running for weeks before the per-iter
 trajectory analysis pointed at sampling efficiency.
 
+\subsection{\textsc{SplittingIsomorphism} omits a side-channel
+randomization that the KAT vectors require}
+\label{sec:bug-splitter-randomization}
+
+The output of an extra-torsion-free $(2, 2)$-isogeny chain is a
+level-2 theta null point on a product abelian surface
+$E_1 \times E_2$.  Multiple projective representatives exist for
+the same abstract surface, related by the symplectic-modular-group
+action.  The spec's \textsc{SplittingIsomorphism}
+(Algorithm~8.42)~\cite{spec:sqisign-v2} picks one specific
+representative deterministically from the chain's terminal theta
+null---but that choice is a function of the secret kernel, so the
+emitted projective representative leaks information about the
+kernel.
+
+The C reference closes this leak by pre-multiplying the splitting
+matrix $M$ by a uniformly random $M_k \in
+\{\texttt{NORMALIZATION\_TRANSFORMS}[0..6)\}$, where the six
+matrices are tensor products $M_k = m_k \otimes m_k$ of $2 \times 2$
+coset representatives of the symplectic-modular-group quotient
+$\Gamma / \Gamma^0(4)$.  The choice is sampled by reading four bytes
+of randomness from the deterministic byte-replayable RNG, parsing
+them as a little-endian \texttt{u32}, rejection-sampling against
+threshold $4{,}294{,}967{,}292$ for an unbiased $\bmod\,6$, and
+indexing the precomputed list (\texttt{theta\_isogenies.c:980,
+1043--1059}; matrices in
+\texttt{precomp/.../hd\_splitting\_transforms.c}).
+
+Two consequences:
+
+\begin{enumerate}
+
+\item It is a real side-channel hardening.  Without it, the public
+output of keygen and signing is a deterministic function of the
+secret kernel structure, not just the abstract codomain.  An
+attacker observing the projective representative of a public key
+or signature could potentially recover information about the
+kernel's specific structure beyond what the curve isomorphism class
+already reveals.
+
+\item The published KAT vectors are produced \emph{with} this
+randomization applied.  An implementation that skips the
+randomization will produce a public key that is projectively
+equivalent to the KAT vector's, but byte-different.  Without
+mirroring the same RNG byte consumption pattern and matrix
+selection logic, byte-equality with the published KATs is
+impossible.
+
+\end{enumerate}
+
+We mirror the C reference's randomization in
+\texttt{src/surfaces/precomputed.rs} (the six precomputed matrices)
+and \texttt{src/surfaces/isogeny.rs} (\texttt{sample\_normalization
+\_index} and the splitter integration).  The randomization is gated
+on a caller-supplied \texttt{Option<\&mut dyn rand\_core::RngCore>}:
+\texttt{Some(rng)} for keygen's outer chain (matching C ref's
+\texttt{theta\_chain\_compute\_and\_eval\_randomized}), \texttt{None}
+for FDI's internal chains (which match C ref's deterministic
+\texttt{theta\_chain\_compute\_and\_eval}) and for verification.
+
+\paragraph{Advice for implementers.}  Read the C reference's
+\texttt{splitting\_compute} function (\texttt{theta\_isogenies.c:1001})
+end-to-end before implementing the splitter, including the
+\texttt{\#if defined(ENABLE\_SIGN)} block.  Without it, your $(2,
+2)$-isogeny chain will produce projectively-equivalent but
+byte-different output, and the spec's KAT comparisons will fail in
+a way that misdirects effort toward looking for chain-internal bugs
+that aren't there.  See also
+\S\ref{sec:specrev-splitter-randomization} of the spec review.
+
 \section{Bugs from Fixed-Width Arithmetic}
 \label{sec:fixed-width-bugs}
 

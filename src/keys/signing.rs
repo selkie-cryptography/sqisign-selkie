@@ -1886,6 +1886,12 @@ pub(crate) fn split_auxiliary_isogeny(
     let (codomain, images) = match kernel.isogeny(
         e_chain,
         &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
+        // TODO(byte-eq): C reference's sign uses
+        // `theta_chain_compute_and_eval_randomized` here too
+        // (`sign.c:274`). For sign-side KAT byte-equality this needs to
+        // be `Some(rng)` threaded through, matching keygen's outer
+        // chain. Keygen byte-eq does not depend on this.
+        None,
     ) {
         Some(r) => r,
         None => {

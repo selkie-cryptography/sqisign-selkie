@@ -29,7 +29,7 @@ use crate::{
     fields::fp2::Fp2,
     surfaces::{
         DualThetaNullPoint, EllipticProduct, GluingMatrix, Jacobian, JacobianPoint, ProductPoint,
-        ThetaNullPoint, hadamard4,
+        ThetaNullPoint, hadamard4, precomputed::NORMALIZATION_TRANSFORMS,
     },
 };
 
@@ -769,6 +769,7 @@ impl SplittingKernel {
     pub(crate) fn isogeny(
         &self,
         pts: &[JacobianPoint],
+        randomize: Option<&mut dyn rand_core::RngCore>,
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         // Exactly one of the 10 `U_{i,j}(0)` coordinates must
         // vanish for the chain's terminal theta null to
@@ -783,7 +784,22 @@ impl SplittingKernel {
         }
 
         // 1. SplittingIsomorphism: find the matrix M (Algorithm 8.42).
-        let M = splitting_isomorphism(&self.domain.null);
+        let mut M = splitting_isomorphism(&self.domain.null);
+
+        // Apply a random level-2 normalization matrix when the caller
+        // requested randomization. See `NORMALIZATION_TRANSFORMS` for
+        // the underlying construction. This does not change the
+        // *abstract* product surface — both `M` and
+        // `NORMALIZATION_TRANSFORMS[idx] · M` send the level-2 theta
+        // null to a product theta null on the same `E₁ × E₂` — but it
+        // does randomize the specific projective representative the
+        // caller observes. Mirrors C reference's
+        // `splitting_compute(...)`'s `randomize=true` branch
+        // (`theta_isogenies.c:1043-1059`).
+        if let Some(rng) = randomize {
+            let idx = sample_normalization_index(rng) as usize;
+            M = &NORMALIZATION_TRANSFORMS[idx] * &M;
+        }
 
         // 2. Apply M to the null point to get product theta structure.
         let product_null = M.apply_null(&self.domain.null);
@@ -805,6 +821,37 @@ impl SplittingKernel {
     }
 }
 
+/// Sample a uniform index in `[0, 6)` for selecting one of the six
+/// [`NORMALIZATION_TRANSFORMS`] matrices.
+///
+/// Reads four bytes from `rng`, parses them as a little-endian
+/// `u32`, and rejects-and-resamples any value `≥ 6 · ⌊2³² / 6⌋ =
+/// 4_294_967_292` to obtain an unbiased `mod 6` reduction.
+///
+/// Mirrors the C reference's `sample_random_index`
+/// (`theta_isogenies.c:980`) — same byte-stream consumption pattern
+/// (4 bytes, little-endian, rejection-sample threshold `4_294_967_292`)
+/// so a deterministic DRBG seeded identically on both
+/// implementations selects the same index. The C reference also
+/// uses a constant-time `mod 6` trick (Granlund–Möller); we use the
+/// plain `% 6` since this code path is variable-time on public data
+/// (the chain output is public; the secret signing key has already
+/// been fully consumed by the kernel).
+///
+/// [`NORMALIZATION_TRANSFORMS`]: super::precomputed::NORMALIZATION_TRANSFORMS
+fn sample_normalization_index<R: rand_core::RngCore + ?Sized>(rng: &mut R) -> u8 {
+    loop {
+        let mut buf = [0u8; 4];
+        rng.fill_bytes(&mut buf);
+        let seed = u32::from_le_bytes(buf);
+        if seed < 4_294_967_292u32 {
+            return (seed % 6) as u8;
+        }
+        // Resample on the rare seed in `[4_294_967_292, 2³²)` —
+        // approximately `4 / 2³² ≈ 10⁻⁹` chance per draw.
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Internal computations
 // ---------------------------------------------------------------------------
@@ -817,6 +864,9 @@ pub(crate) fn codomain_8torsion(
     let hs1 = T1.squared().hadamard();
     let hs2 = T2.squared().hadamard();
 
+    #[cfg(test)]
+    dump_step_internal_inputs(T1, T2, &hs1, &hs2);
+
     let xawb = &hs1.X * &hs2.Y;
     let zaxb = &hs2.X * &hs1.Y;
 
@@ -824,6 +874,9 @@ pub(crate) fn codomain_8torsion(
     let beta = &hs2.Y * &zaxb;
     let gamma = &hs2.Z * &xawb;
     let delta = &hs2.W * &zaxb;
+
+    #[cfg(test)]
+    dump_step_internal_pre_h(&alpha, &beta, &gamma, &delta);
 
     #[cfg(test)]
     {
@@ -1509,4 +1562,88 @@ pub(crate) fn theta_product_to_montgomery(
         ProjectiveXOnlyPoint::from_XZ(X1, Z1, &product.E1),
         ProjectiveXOnlyPoint::from_XZ(X2, Z2, &product.E2),
     )
+}
+
+/// Format an `Fp2` element as `(re, im)` little-endian hex strings.
+///
+/// Used by the `dump_step_internal_*` byte-interop diagnostics to emit
+/// the same line format the C reference's `[CHAIN_DUMP]` macros use,
+/// so a single `diff` run aligns lines between the two implementations.
+#[cfg(test)]
+fn dump_fp2_hex(value: &Fp2) -> (String, String) {
+    let bytes = value.to_bytes();
+    let re: String = bytes[..32]
+        .iter()
+        .rev()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let im: String = bytes[32..]
+        .iter()
+        .rev()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    (re, im)
+}
+
+/// Emit `[CHAIN_DUMP] step=internal` lines for the four 8-torsion step
+/// inputs and their squared-Hadamard images, byte-formatted to match
+/// the C reference's `theta_isogeny_compute` instrumentation.
+///
+/// `T1`/`T2` are the kernel inputs (mapped `X→x`, `Y→y`, `Z→z`, `W→t`
+/// to align with the C reference's `theta_point_t` field names).
+/// `hs1`/`hs2` are `H ∘ S` of `T1`/`T2`, i.e. the C ref's `TT1`/`TT2`
+/// when `hadamard_bool_1 == 0`.
+///
+/// Reader correlates dump groups with the surrounding
+/// `[MODA] main {step}` / `[CHAIN_DUMP] step=main_<i>` markers emitted
+/// by the chain main loop after the step returns.
+#[cfg(test)]
+fn dump_step_internal_inputs(
+    T1: &JacobianPoint,
+    T2: &JacobianPoint,
+    hs1: &JacobianPoint,
+    hs2: &JacobianPoint,
+) {
+    let emit = |label: &str, value: &Fp2| {
+        let (re, im) = dump_fp2_hex(value);
+        eprintln!("[CHAIN_DUMP] step=internal {label}.re=0x{re}");
+        eprintln!("[CHAIN_DUMP] step=internal {label}.im=0x{im}");
+    };
+    emit("T1.x", &T1.X);
+    emit("T1.y", &T1.Y);
+    emit("T1.z", &T1.Z);
+    emit("T1.t", &T1.W);
+    emit("T2.x", &T2.X);
+    emit("T2.y", &T2.Y);
+    emit("T2.z", &T2.Z);
+    emit("T2.t", &T2.W);
+    emit("TT1.x", &hs1.X);
+    emit("TT1.y", &hs1.Y);
+    emit("TT1.z", &hs1.Z);
+    emit("TT1.t", &hs1.W);
+    emit("TT2.x", &hs2.X);
+    emit("TT2.y", &hs2.Y);
+    emit("TT2.z", &hs2.Z);
+    emit("TT2.t", &hs2.W);
+}
+
+/// Emit `[CHAIN_DUMP] step=internal pre_H.null.{a..d}` lines for the
+/// codomain null point before the final Hadamard.
+///
+/// In Selkie's [`codomain_8torsion`], `(α, β, γ, δ)` are the
+/// pre-Hadamard codomain coordinates: they correspond exactly to the
+/// C reference's `out->codomain.null_point.{x,y,z,t}` after the four
+/// `fp2_mul`s but before the `hadamard_bool_2` branch. Mapped to
+/// `{a,b,c,d}` so the labels match the post-Hadamard null dumps.
+#[cfg(test)]
+fn dump_step_internal_pre_h(alpha: &Fp2, beta: &Fp2, gamma: &Fp2, delta: &Fp2) {
+    let emit = |label: &str, value: &Fp2| {
+        let (re, im) = dump_fp2_hex(value);
+        eprintln!("[CHAIN_DUMP] step=internal {label}.re=0x{re}");
+        eprintln!("[CHAIN_DUMP] step=internal {label}.im=0x{im}");
+    };
+    emit("pre_H.null.a", alpha);
+    emit("pre_H.null.b", beta);
+    emit("pre_H.null.c", gamma);
+    emit("pre_H.null.d", delta);
 }
