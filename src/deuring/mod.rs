@@ -975,12 +975,16 @@ impl<const N: usize> LeftIdeal<N> {
         //     dedicated 4-isogeny + 2-isogeny tail. Mirrors the C
         //     reference's `extra_torsion=false` mode at
         //     `dim2id2iso.c:1128`.
-        let no_extra_torsion = sui.e.value() > f.value() - 2;
-        let scale = if no_extra_torsion {
-            f.value().checked_sub(sui.e.value())?
-        } else {
-            f.value().checked_sub(sui.e.value())?.checked_sub(2)?
-        };
+        // Always dispatch the outer chain to Mode B
+        // (`isogeny_no_extra_torsion`), matching C ref's
+        // `theta_chain_compute_and_eval_randomized(.., extra_torsion=false,
+        // .)` at `dim2id2iso.c:1128`. C ref uses Mode B for the outer
+        // chain regardless of available torsion; we previously
+        // dispatched to Mode A when `sui.e ≤ f − 2` and got a different
+        // codomain rep. With the `double_unnormalized` curve fix landed,
+        // Mode B is byte-stable on FDI codomains and matches C ref.
+        let no_extra_torsion = true;
+        let scale = f.value().checked_sub(sui.e.value())?;
         #[cfg(test)]
         eprintln!(
             "[to_isogeny] outer chain: sui.e={}, scale={scale}",
