@@ -3402,10 +3402,14 @@ impl<const N: usize> NrdBasis<N> {
             let delta_bar_dpe = DoublePlusExponent::from_f64(delta_bar);
             let mut s = k;
             while s > 0 {
-                if !(t[s - 1] < delta_bar_dpe * r[s - 1][s - 1]) {
-                    break;
+                // Lovász fails at level s-1 iff t[s-1] < δ̄·r[s-1][s-1].
+                // Anything else (≥ or `DoublePlusExponent::partial_cmp`
+                // returning `None`) is treated as a hold and breaks the
+                // descent — matching C ref's `dpe_cmp` short-circuit.
+                match t[s - 1].partial_cmp(&(delta_bar_dpe * r[s - 1][s - 1])) {
+                    Some(core::cmp::Ordering::Less) => s -= 1,
+                    _ => break,
                 }
-                s -= 1;
             }
 
             if k != s {
