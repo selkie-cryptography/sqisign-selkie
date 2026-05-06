@@ -724,12 +724,12 @@ sequence $t[0], \ldots, t[\kappa-1]$.
 The C~reference's \texttt{quat\_lll\_core}
 (\texttt{quaternion/ref/generic/lll/l2.c:110-114}) uses a different
 iteration order:
-\begin{lstlisting}[language=C]
+\begin{verbatim}
 for (swap = kappa; swap > 0; swap--) {
     if (delta_bar * r[swap-1][swap-1] < lovasz[swap-1])
         break;
 }
-\end{lstlisting}
+\end{verbatim}
 This iterates~$s$ \emph{from~$\kappa$ down to~$1$} and breaks on the
 first level where the $L^2$-condition still holds.
 
