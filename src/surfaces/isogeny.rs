@@ -1508,7 +1508,22 @@ fn splitting_isomorphism(null: &ThetaNullPoint) -> GluingMatrix {
 
 /// Recover Montgomery coefficients from a product theta null point
 /// (Algorithm 8.44).
+///
+/// Constructs each component curve via
+/// `Curve::from(ProjectiveCoefficient)`, preserving the un-reduced
+/// `(A : C)` form that comes out of the formulas (`A = -2(x⁴ + z⁴)`,
+/// `C = x⁴ − z⁴`). The cached `DoublingConstants` is still normalized
+/// to `(A₂₄/C₂₄ : 1)`, so `.double()` produces the normalized
+/// `xDBL_A24` representative used in most downstream code paths.
+///
+/// The original `(A : C)` is still readable via `curve.projective`.
+/// Code paths that need to byte-match C ref's un-normalized `xDBL`
+/// (e.g., the outer-chain prep doublings in `to_isogeny`, where C ref
+/// skips `ec_curve_normalize_A24`) use
+/// [`ProjectiveXOnlyPoint::double_unnormalized`] instead.
 pub(crate) fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
+    use crate::curves::montgomery::ProjectiveCoefficient;
+
     let (a, b, c, d) = (&null.a, &null.b, &null.c, &null.d);
 
     // Check product structure: ad == bc.
@@ -1522,21 +1537,18 @@ pub(crate) fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
     let z = c.square().square(); // c⁴
 
     // (A₂ : C₂) for E₂: A₂ = -2(x + y), C₂ = x - y
-    let A2_num = -&(&(&x + &y) + &(&x + &y));
-    let C2 = &x - &y;
+    let pc2 = ProjectiveCoefficient {
+        A: -&(&(&x + &y) + &(&x + &y)),
+        C: &x - &y,
+    };
 
     // (A₁ : C₁) for E₁: A₁ = -2(x + z), C₁ = x - z
-    let A1_num = -&(&(&x + &z) + &(&x + &z));
-    let C1 = &x - &z;
+    let pc1 = ProjectiveCoefficient {
+        A: -&(&(&x + &z) + &(&x + &z)),
+        C: &x - &z,
+    };
 
-    // Convert from projective (A:C) to affine A/C for Curve.
-    let A1 = &A1_num * &C1.invert();
-    let A2 = &A2_num * &C2.invert();
-
-    EllipticProduct::new(
-        Curve::from(Coefficient::from(A1)),
-        Curve::from(Coefficient::from(A2)),
-    )
+    EllipticProduct::new(Curve::from(pc1), Curve::from(pc2))
 }
 
 /// Convert a theta point with product structure to Montgomery
