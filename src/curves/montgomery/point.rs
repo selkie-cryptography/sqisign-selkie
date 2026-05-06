@@ -94,6 +94,66 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
+    /// Compute \[2\]self using **un-normalized** projective curve
+    /// constants `(A + 2C : 4C)` derived from `self.curve.projective`.
+    ///
+    /// Mirrors C ref's `xDBL` (`ec.c:234`): the formula uses
+    /// `(A + 2C, 4C)` directly, never dividing by `4C`. Each call
+    /// scales the output `(X : Z)` by a projective factor of `4C`
+    /// per doubling relative to [`double`] (which always divides by
+    /// `4C` because curves are constructed with normalized
+    /// [`DoublingConstants`]).
+    ///
+    /// Use this for kernel-prep doublings on a curve that came out
+    /// of `theta_to_product` (and whose downstream consumers expect
+    /// the un-normalized rep, like C ref's
+    /// `double_couple_point_iter` on a freshly returned
+    /// `Fu_codomain.E1`). Required for byte-equality with C ref on
+    /// outer-chain prep when `scale > 0`.
+    ///
+    /// # Design note
+    ///
+    /// The current single-`Curve` design carries one cached
+    /// (always normalized) [`DoublingConstants`] and lets specific
+    /// call sites opt into un-normalized doubling via this method.
+    /// C ref takes the dual approach: a per-curve runtime flag
+    /// `is_A24_computed_and_normalized` that `ec_dbl` reads to
+    /// dispatch to `xDBL` or `xDBL_A24`, and lazily flips the flag
+    /// in `ec_curve_normalize_A24` when a long doubling chain
+    /// (`n > 50`) makes normalization profitable.
+    ///
+    /// We could mirror C ref's flag-based design, or further split
+    /// `Curve` into a normalized/un-normalized type pair that makes
+    /// the choice unrepresentable at compile time. The latter is
+    /// more in line with our compile-time-invariants style but is a
+    /// substantive refactor (every `Curve` parameter and every
+    /// `ProjectiveXOnlyPoint::curve` deref would need to think
+    /// about which form it expects). The current escape-hatch is
+    /// the smallest change that gives byte-equality at the one
+    /// known interop boundary; promote to an in-type representation
+    /// if more boundaries appear.
+    ///
+    /// [`double`]: Self::double
+    /// [`DoublingConstants`]: crate::curves::montgomery::DoublingConstants
+    #[must_use]
+    pub fn double_unnormalized(&self) -> ProjectiveXOnlyPoint {
+        let pc = &self.curve.projective;
+        let two_c = &pc.C + &pc.C;
+        let a24 = &pc.A + &two_c;
+        let c24 = &two_c + &two_c;
+        let t0 = (&self.X + &self.Z).square();
+        let t1 = (&self.X - &self.Z).square();
+        let t2 = &t0 - &t1;
+        let t1_c24 = &t1 * &c24;
+        let X2 = &t0 * &t1_c24;
+        let Z2 = &t2 * &(&(&t2 * &a24) + &t1_c24);
+        ProjectiveXOnlyPoint {
+            X: X2,
+            Z: Z2,
+            curve: self.curve,
+        }
+    }
+
     /// Compute \[2\]self specialized for `A = 0` (the curve `E_0`).
     ///
     /// Implements the C reference's `xDBL_E0` (`ec.c:215-231`):

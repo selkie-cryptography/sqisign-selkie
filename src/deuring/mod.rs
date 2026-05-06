@@ -986,13 +986,30 @@ impl<const N: usize> LeftIdeal<N> {
             "[to_isogeny] outer chain: sui.e={}, scale={scale}",
             sui.e.value()
         );
+        // Outer-chain kernel-prep doubling, mirroring C ref's
+        // `double_couple_point_iter(&ker.T1, TORSION_EVEN_POWER - exp,
+        // ...)` (`dim2id2iso.c:1196-1198`). C ref calls `ec_dbl` on a
+        // freshly returned `Fu_codomain` / `Fv_codomain` curve whose
+        // `is_A24_computed_and_normalized` flag is `false`, so it
+        // dispatches to the un-normalized `xDBL` (`ec.c:234`). To
+        // produce the same `(X : Z)` byte-rep we use
+        // [`ProjectiveXOnlyPoint::double_unnormalized`], which reads
+        // the curve's projective `(A : C)` from `theta_to_product`
+        // (preserved un-divided since the `theta_to_product` rewrite)
+        // and applies the `xDBL` formula directly. Without this
+        // un-normalized doubling, our `(X : Z)` drifts from C ref by
+        // a `4C^scale` projective scalar; `lift_basis` absorbs the
+        // drift on the P side (R normalizes to Z=1) but the
+        // Okeya-Sakurai recovery on Q propagates it, breaking
+        // byte-equality at the outer-chain `step=glue null` for any
+        // KAT with `scale > 0`.
         for _ in 0..scale {
-            kp_first = kp_first.double();
-            kp_second = kp_second.double();
-            kq_first = kq_first.double();
-            kq_second = kq_second.double();
-            kpmq_first = kpmq_first.double();
-            kpmq_second = kpmq_second.double();
+            kp_first = kp_first.double_unnormalized();
+            kp_second = kp_second.double_unnormalized();
+            kq_first = kq_first.double_unnormalized();
+            kq_second = kq_second.double_unnormalized();
+            kpmq_first = kpmq_first.double_unnormalized();
+            kpmq_second = kpmq_second.double_unnormalized();
         }
 
         // Diagnostics: kernel order and curve-membership checks, plus
@@ -1109,14 +1126,20 @@ impl<const N: usize> LeftIdeal<N> {
         // kernel structure (a side-channel leak) and bytes diverge from
         // the C reference's published KAT vectors. FDI's internal chain
         // (`isogeny_extra_torsion`, called above) is the only chain
-        // where C ref calls the non-randomized `theta_chain_compute_and_eval`.
+        // where C ref calls the non-randomized
+        // `theta_chain_compute_and_eval`.
         //
         // The Mode A branch (else) does NOT yet match the C reference
         // bytewise: C ref always uses `extra_torsion=false` (Mode B)
-        // for the outer chain regardless of available torsion. Switching
-        // Mode A to randomize without also switching to Mode B doesn't
-        // help byte-equality (the chain output differs structurally).
-        // TODO: route both branches through Mode B when feasible.
+        // for the outer chain regardless of available torsion. An
+        // attempt to unify by routing both branches through Mode B
+        // with `scale = f - sui.e` regressed the KAT pass count from
+        // 35 to 33; Mode B in `isogeny_inner_no_extra_torsion`
+        // appears to compute something subtly different from the
+        // C reference's `_theta_chain_compute_impl(..., false, true)`
+        // for the case where the kernel does NOT come from a chain
+        // already short on torsion. TODO: instrument step-by-step to
+        // localize the divergence.
         let (codomain, images) = if no_extra_torsion {
             kernel.isogeny_no_extra_torsion(chain_e, chain_pts, Some(rng))?
         } else {
