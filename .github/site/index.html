@@ -452,6 +452,8 @@
     }
 
     /* Mutants */
+    /* Legacy `.mutants-summary` / `.mutants-stat` are still used by
+       `renderCtData`. Mutants uses the compact `.mutants-headline` strip. */
     .mutants-summary {
       display: flex;
       gap: 24px;
@@ -477,10 +479,34 @@
       color: var(--fg-dim);
     }
 
+    .mutants-headline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 6px 18px;
+      margin-bottom: 16px;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-feature-settings: 'tnum' on, 'lnum' on;
+      font-size: 13px;
+    }
+    .mutants-headline .stat {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .mutants-headline .num { font-weight: 700; }
+    .mutants-headline .label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+    }
+
     .mutants-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 13px;
+      font-size: 12px;
     }
 
     .mutants-table th {
@@ -490,12 +516,12 @@
       letter-spacing: 1px;
       text-transform: uppercase;
       color: var(--fg-dim);
-      padding: 8px;
+      padding: 6px 8px;
       border-bottom: 1px solid var(--border);
     }
 
     .mutants-table td {
-      padding: 8px;
+      padding: 4px 8px;
       border-bottom: 1px solid var(--border-faint);
     }
 
@@ -507,18 +533,13 @@
       color: var(--red);
     }
 
-    .mutants-table .mutant-loc {
-      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    .mutants-table .mutant-loc a {
+    .mutants-table .mutant-loc-suffix {
+      margin-left: 10px;
+      font-size: 11px;
       color: var(--fg-muted);
       border-bottom: 1px solid var(--border);
     }
-
-    .mutants-table .mutant-loc a:hover {
+    .mutants-table .mutant-loc-suffix:hover {
       color: var(--fg);
       border-color: var(--fg-dim);
     }
@@ -2044,20 +2065,17 @@
           const d = latest - prev;
           const dArrow = d > 0.5 ? '\u2191' : d < -0.5 ? '\u2193' : '';
           const dColor = d > 0.5 ? 'var(--green)' : d < -0.5 ? 'var(--red)' : 'var(--fg-dim)';
-          const chart = minichart(history, { color: killColor, width: 100, height: 28, labels: mutLabels, suffix: '%' });
-          trendHtml = `<div class="mutants-stat">
-            <span class="value" style="color:${dColor};font-size:16px">${dArrow}${d > 0 ? '+' : ''}${d.toFixed(1)}%</span>
-            <span class="label">trend ${chart}</span>
-          </div>`;
+          const chart = minichart(history, { color: killColor, width: 80, height: 18, labels: mutLabels, suffix: '%' });
+          trendHtml = `<span class="stat"><span class="num" style="color:${dColor}">${dArrow}${d > 0 ? '+' : ''}${d.toFixed(1)}%</span><span class="label">trend</span>${chart}</span>`;
         }
       }
 
-      let html = '<div class="mutants-summary">';
-      html += `<div class="mutants-stat"><span class="value" style="color:${killColor}">${killPct}%</span><span class="label">kill rate</span></div>`;
-      html += `<div class="mutants-stat"><span class="value" style="color:var(--green)">${esc(String(s.caught || 0))}</span><span class="label">caught</span></div>`;
-      html += `<div class="mutants-stat"><span class="value" style="color:var(--red)">${esc(String(s.missed || 0))}</span><span class="label">missed</span></div>`;
-      if (s.timeout) html += `<div class="mutants-stat"><span class="value" style="color:var(--yellow)">${esc(String(s.timeout))}</span><span class="label">timeout</span></div>`;
-      html += `<div class="mutants-stat"><span class="value">${esc(String(s.unviable || 0))}</span><span class="label">unviable</span></div>`;
+      let html = '<div class="mutants-headline">';
+      html += `<span class="stat"><span class="num" style="color:${killColor}">${killPct}%</span><span class="label">kill rate</span></span>`;
+      html += `<span class="stat"><span class="num" style="color:var(--green)">${esc(String(s.caught || 0))}</span><span class="label">caught</span></span>`;
+      html += `<span class="stat"><span class="num" style="color:var(--red)">${esc(String(s.missed || 0))}</span><span class="label">missed</span></span>`;
+      if (s.timeout) html += `<span class="stat"><span class="num" style="color:var(--yellow)">${esc(String(s.timeout))}</span><span class="label">timeout</span></span>`;
+      html += `<span class="stat"><span class="num">${esc(String(s.unviable || 0))}</span><span class="label">unviable</span></span>`;
       if (trendHtml) html += trendHtml;
       html += '</div>';
 
@@ -2171,7 +2189,6 @@
           <thead><tr>
             <th>Function</th>
             <th>Survivors</th>
-            <th>Location</th>
           </tr></thead><tbody>`;
 
         for (const g of sorted) {
@@ -2179,13 +2196,13 @@
             ? `https://github.com/${REPO}/blob/${esc(sha)}/${esc(g.file)}#L${g.line}`
             : '#';
           const fnName = g.function || g.file;
+          const fileLoc = `${g.file.replace(/^src\//, '')}:${g.line}`;
           const details = g.mutants.map(d => `<li>${esc(d)}</li>`).join('');
           html += `<tr class="expandable" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">
-            <td class="mutant-name"><span class="chevron">&#9654;</span> ${esc(fnName)}</td>
+            <td class="mutant-name"><span class="chevron">&#9654;</span> ${esc(fnName)}<a href="${ghLink}" class="mutant-loc-suffix" onclick="event.stopPropagation()">${esc(fileLoc)}</a></td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${g.mutants.length}</td>
-            <td class="mutant-loc"><a href="${ghLink}" onclick="event.stopPropagation()">${esc(g.file.replace(/^src\//, ''))}:${g.line}</a></td>
           </tr>`;
-          html += `<tr style="display:none"><td colspan="3"><ul class="mutant-detail-list">${details}</ul></td></tr>`;
+          html += `<tr style="display:none"><td colspan="2"><ul class="mutant-detail-list">${details}</ul></td></tr>`;
         }
         html += '</tbody></table>';
       }
