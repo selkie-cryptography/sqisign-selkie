@@ -820,6 +820,94 @@ identify without an external benchmark to compare against.  We had
 the existing primal-LLL path running for weeks before the per-iter
 trajectory analysis pointed at sampling efficiency.
 
+\subsection{\texorpdfstring{$L^2$}{L2} deep-insertion iteration order
+is implementation-defined}
+\label{sec:bug-l2-deep-insertion-order}
+
+\algo{3.6} (\textsc{$L^2$-DeepInsertion}, used by every \textsc{LLL}
+reduction in the keygen pipeline through
+\texttt{quat\_lideal\_prime\_norm\_reduced\_equivalent}) defines the
+deep-insertion point as ``the smallest~$j$ such that
+$\bar\delta \cdot r[j][j] > t[j]$,'' i.e.\ the smallest level at which
+the $L^2$-condition fails on the partial squared-norm sequence
+$t[0], \dots, t[\kappa-1]$.
+
+The C~reference's \texttt{quat\_lll\_core}
+(\texttt{quaternion/ref/generic/lll/l2.c:110-114}) computes the
+insertion point~$s$ by a different iteration order:
+\begin{lstlisting}[language=C]
+for (swap = kappa; swap > 0; swap--) {
+    if (delta_bar * r[swap-1][swap-1] < lovasz[swap-1])
+        break;
+}
+\end{lstlisting}
+That is, it iterates~$s$ \emph{from $\kappa$ down to~$1$} and breaks
+on the first level where the $L^2$-condition still holds. Our
+initial port followed the spec literally:
+\begin{lstlisting}[language=Rust]
+let mut s = k;
+for j in 0..k {
+    if t[j] < delta_bar * r[j][j] {
+        s = s.min(j);
+    }
+}
+\end{lstlisting}
+
+When the failure pattern is monotonic---fails for $j < a$, holds for
+$j \ge a$---both formulations return $s = a$.  The partial squared
+norms $t[j]$ come from the running Gram--Schmidt orthogonalization
+(GSO) update $t[j] = t[j-1] - \mu[\kappa][j-1] \cdot r[\kappa][j-1]$,
+computed on floating-point scalars (\texttt{dpe\_t} in the C~ref,
+\texttt{DoublePlusExponent} in our port).  Under rounding in those
+GSO scalars \emph{the failure pattern can be non-monotonic} for some
+inputs: failures at, say, $j = 0$ and $j = 2$ but a hold at $j = 1$.  The spec-literal form returns $s = 0$
+(smallest failing level); the C~ref returns $s = 2$ (largest level
+above the deepest contiguous hold).
+
+Both are valid deep-insertion choices in the sense that each
+produces a properly $L^2$-reduced basis.  They produce different
+reduced bases: the resulting bases differ in the sign of column zero
+(one formulation passes $b_\kappa$ over a hold layer that the other
+does not, propagating opposite size-reduction signs).  The post-LLL
+Gram matrices then differ in $G[0][2]$, $G[0][3]$ (and their
+transposes), with diagonals and other off-diagonals byte-identical.
+
+Downstream consequences are not subtle.  After the LLL-reduced basis
+enters \texttt{quat\_lideal\_prime\_norm\_reduced\_equivalent}
+(\texttt{lll\_applications.c}), the rejection-sampling loop generates
+short-vector candidates~$c$ and accepts the first~$c$ whose class
+quadratic form $c^\top G_{\mathrm{class}} c$ is prime.  A different
+post-LLL $G_{\mathrm{class}}$ produces a different acceptance,
+hence a different equivalent prime ideal, hence a different chain
+codomain, hence a different public key.  For~16 of our 100 NIST-I
+KAT vectors---every input that hit the non-monotonic
+condition---this single-line iteration-order divergence cascaded all
+the way to a public-key mismatch.
+
+\noindent\textbf{Fix.} Match the C~ref's iteration order exactly.
+The two-line change in \texttt{NrdBasis::l2\_reduce}
+(\texttt{src/quaternions/lattice.rs}):
+\begin{lstlisting}[language=Rust]
+let mut s = k;
+while s > 0 {
+    if !(t[s - 1] < delta_bar * r[s - 1][s - 1]) {
+        break;
+    }
+    s -= 1;
+}
+\end{lstlisting}
+moved the keygen byte-equality count from $83/100$ to $99/100$ in a
+single commit, with no other changes.
+
+\noindent\textbf{Advice for implementers:} \algo{3.6}'s English
+description is mathematically unambiguous when the $L^2$-condition
+behaves monotonically, but the algorithm is run on floating-point
+GSO scalars where monotonicity can fail by rounding error.  When two
+equivalent descriptions of a step coincide ``up to monotonicity'',
+pick the one the reference chose, even if the spec's English
+suggests otherwise: KAT byte-equality requires matching the
+implementation, not the specification.
+
 \subsection{\textsc{SplittingIsomorphism} omits a side-channel
 randomization that the KAT vectors require}
 \label{sec:bug-splitter-randomization}

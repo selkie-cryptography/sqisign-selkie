@@ -161,175 +161,146 @@ fn keygen_kat_idx_inner(idx: usize) {
 // 'test(/keygen_kat_/)'`.
 
 #[test]
-#[ignore]
 fn keygen_kat_000() {
     keygen_kat_idx_inner(0);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_001() {
     keygen_kat_idx_inner(1);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_002() {
     keygen_kat_idx_inner(2);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_003() {
     keygen_kat_idx_inner(3);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_004() {
     keygen_kat_idx_inner(4);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_005() {
     keygen_kat_idx_inner(5);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_006() {
     keygen_kat_idx_inner(6);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_007() {
     keygen_kat_idx_inner(7);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_008() {
     keygen_kat_idx_inner(8);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_009() {
     keygen_kat_idx_inner(9);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_010() {
     keygen_kat_idx_inner(10);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_011() {
     keygen_kat_idx_inner(11);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_012() {
     keygen_kat_idx_inner(12);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_013() {
     keygen_kat_idx_inner(13);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_014() {
     keygen_kat_idx_inner(14);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_015() {
     keygen_kat_idx_inner(15);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_016() {
     keygen_kat_idx_inner(16);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_017() {
     keygen_kat_idx_inner(17);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_018() {
     keygen_kat_idx_inner(18);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_019() {
     keygen_kat_idx_inner(19);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_020() {
     keygen_kat_idx_inner(20);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_021() {
     keygen_kat_idx_inner(21);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_022() {
     keygen_kat_idx_inner(22);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_023() {
     keygen_kat_idx_inner(23);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_024() {
     keygen_kat_idx_inner(24);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_025() {
     keygen_kat_idx_inner(25);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_026() {
     keygen_kat_idx_inner(26);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_027() {
     keygen_kat_idx_inner(27);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_028() {
     keygen_kat_idx_inner(28);
 }
@@ -341,421 +312,351 @@ fn keygen_kat_029() {
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_030() {
     keygen_kat_idx_inner(30);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_031() {
     keygen_kat_idx_inner(31);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_032() {
     keygen_kat_idx_inner(32);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_033() {
     keygen_kat_idx_inner(33);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_034() {
     keygen_kat_idx_inner(34);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_035() {
     keygen_kat_idx_inner(35);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_036() {
     keygen_kat_idx_inner(36);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_037() {
     keygen_kat_idx_inner(37);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_038() {
     keygen_kat_idx_inner(38);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_039() {
     keygen_kat_idx_inner(39);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_040() {
     keygen_kat_idx_inner(40);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_041() {
     keygen_kat_idx_inner(41);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_042() {
     keygen_kat_idx_inner(42);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_043() {
     keygen_kat_idx_inner(43);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_044() {
     keygen_kat_idx_inner(44);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_045() {
     keygen_kat_idx_inner(45);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_046() {
     keygen_kat_idx_inner(46);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_047() {
     keygen_kat_idx_inner(47);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_048() {
     keygen_kat_idx_inner(48);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_049() {
     keygen_kat_idx_inner(49);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_050() {
     keygen_kat_idx_inner(50);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_051() {
     keygen_kat_idx_inner(51);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_052() {
     keygen_kat_idx_inner(52);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_053() {
     keygen_kat_idx_inner(53);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_054() {
     keygen_kat_idx_inner(54);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_055() {
     keygen_kat_idx_inner(55);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_056() {
     keygen_kat_idx_inner(56);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_057() {
     keygen_kat_idx_inner(57);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_058() {
     keygen_kat_idx_inner(58);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_059() {
     keygen_kat_idx_inner(59);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_060() {
     keygen_kat_idx_inner(60);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_061() {
     keygen_kat_idx_inner(61);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_062() {
     keygen_kat_idx_inner(62);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_063() {
     keygen_kat_idx_inner(63);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_064() {
     keygen_kat_idx_inner(64);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_065() {
     keygen_kat_idx_inner(65);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_066() {
     keygen_kat_idx_inner(66);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_067() {
     keygen_kat_idx_inner(67);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_068() {
     keygen_kat_idx_inner(68);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_069() {
     keygen_kat_idx_inner(69);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_070() {
     keygen_kat_idx_inner(70);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_071() {
     keygen_kat_idx_inner(71);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_072() {
     keygen_kat_idx_inner(72);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_073() {
     keygen_kat_idx_inner(73);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_074() {
     keygen_kat_idx_inner(74);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_075() {
     keygen_kat_idx_inner(75);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_076() {
     keygen_kat_idx_inner(76);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_077() {
     keygen_kat_idx_inner(77);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_078() {
     keygen_kat_idx_inner(78);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_079() {
     keygen_kat_idx_inner(79);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_080() {
     keygen_kat_idx_inner(80);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_081() {
     keygen_kat_idx_inner(81);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_082() {
     keygen_kat_idx_inner(82);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_083() {
     keygen_kat_idx_inner(83);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_084() {
     keygen_kat_idx_inner(84);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_085() {
     keygen_kat_idx_inner(85);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_086() {
     keygen_kat_idx_inner(86);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_087() {
     keygen_kat_idx_inner(87);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_088() {
     keygen_kat_idx_inner(88);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_089() {
     keygen_kat_idx_inner(89);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_090() {
     keygen_kat_idx_inner(90);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_091() {
     keygen_kat_idx_inner(91);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_092() {
     keygen_kat_idx_inner(92);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_093() {
     keygen_kat_idx_inner(93);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_094() {
     keygen_kat_idx_inner(94);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_095() {
     keygen_kat_idx_inner(95);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_096() {
     keygen_kat_idx_inner(96);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_097() {
     keygen_kat_idx_inner(97);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_098() {
     keygen_kat_idx_inner(98);
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_099() {
     keygen_kat_idx_inner(99);
 }
