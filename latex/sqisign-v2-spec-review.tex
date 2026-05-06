@@ -708,6 +708,80 @@ reference's choice is the load-bearing one for matching its
 benchmark timings.
 
 % =====================================================================
+\section{\texorpdfstring{$L^2$}{L2}-deep-insertion iteration order
+underspecified}
+\label{sec:l2-deep-insertion-order}
+
+\finding{Affects \algo{3.6} ($L^2$-DeepInsertion), used by every
+LLL reduction in keygen and signing through
+\texttt{quat\_lideal\_prime\_norm\_reduced\_equivalent}.}{\high}
+
+\algo{3.6} defines the deep-insertion point as ``the smallest~$j$
+such that $\bar\delta \cdot r[j][j] > t[j]$,'' i.e.\ the smallest
+level at which the $L^2$-condition fails on the partial squared-norm
+sequence $t[0], \ldots, t[\kappa-1]$.
+
+The C~reference's \texttt{quat\_lll\_core}
+(\texttt{quaternion/ref/generic/lll/l2.c:110-114}) uses a different
+iteration order:
+\begin{lstlisting}[language=C]
+for (swap = kappa; swap > 0; swap--) {
+    if (delta_bar * r[swap-1][swap-1] < lovasz[swap-1])
+        break;
+}
+\end{lstlisting}
+This iterates~$s$ \emph{from~$\kappa$ down to~$1$} and breaks on the
+first level where the $L^2$-condition still holds.
+
+When the failure pattern is monotonic---fails for $j < a$, holds
+for $j \ge a$---both formulations return $s = a$.  But the partial
+squared norms $t[j]$ are computed from a running Gram--Schmidt
+orthogonalization update on floating-point scalars (\texttt{dpe\_t}
+in the C~ref).  Under rounding the failure pattern can be
+\emph{non-monotonic}: failures at, say, $j = 0$ and $j = 2$ but a
+hold at $j = 1$.  The spec-literal form returns $s = 0$
+(smallest failing); the C~ref returns $s = 2$ (largest level above
+the deepest contiguous hold).  Both are valid $L^2$-reduced bases,
+but the resulting bases differ in the sign of column zero,
+propagating to off-diagonal sign flips in the post-LLL Gram matrix
+($G[0][2]$, $G[0][3]$ and their transposes; diagonals match
+byte-for-byte).
+
+The downstream call to
+\texttt{quat\_lideal\_prime\_norm\_reduced\_equivalent}
+(\texttt{lll\_applications.c}) rejection-samples short vectors~$c$
+and accepts the first~$c$ whose class quadratic form
+$c^\top G_{\mathrm{class}} c$ is prime.  A different post-LLL
+$G_{\mathrm{class}}$ produces a different acceptance, hence a
+different equivalent prime ideal, hence a different chain codomain,
+hence a different public key.
+
+\paragraph{Empirical impact.}
+For~16 of~100 NIST-I keygen KATs every input that hit the
+non-monotonic condition---this single iteration-order divergence
+cascaded all the way to a public-key mismatch.  Switching from the
+spec-literal order (smallest failing $j$, ascending) to the C~ref
+order (deepest contiguous failure, descending) moved our keygen
+byte-equality count from~83/100 to~99/100 in a single commit.
+
+\paragraph{Current spec text.}
+\algo{3.6} (and~\algo{3.3} which calls it) describe the
+deep-insertion choice mathematically but do not specify the
+iteration direction.  Both orders satisfy the spec's English
+description under the implicit monotonicity assumption; floating-
+point rounding can break that assumption silently.
+
+\paragraph{Recommendation.}
+Either (a)~specify the iteration order in \algo{3.6}---``iterate
+$s = \kappa, \kappa-1, \ldots, 1$ and stop at the first $s$ such
+that $\bar\delta \cdot r[s-1][s-1] \ge t[s-1]$''---or (b)~note that
+the choice of order is implementation-defined but that KAT
+byte-equality requires matching the reference's order exactly.
+Without this clarification, an implementor who follows the spec's
+``smallest~$j$ that fails'' will produce a non-interoperable build
+and need to read \texttt{quat\_lll\_core} source to find the gap.
+
+% =====================================================================
 \section{\textsc{FixedDegreeIsogeny} missing $u^{-1}$ normalization}
 \label{sec:u-inv}
 

@@ -3392,14 +3392,20 @@ impl<const N: usize> NrdBasis<N> {
                 t[i] = t[i - 1] - mu[k][i - 1] * r[k][i - 1];
             }
 
-            // Deep insertion: find earliest s where
-            // t[s] < δ̄ · r[s][s].
+            // Deep insertion (C ref's `quat_lll_core` ordering, l2.c:110): iterate
+            // s from k down to 1, BREAK on first level where Lovász holds (i.e.,
+            // δ̄ · r[s-1][s-1] >= t[s-1]). Resulting `s` is the deepest level
+            // such that Lovász fails at all levels in (s, k]. In monotonic cases
+            // this equals "smallest j where t[j] < δ̄·r[j][j]"; under DPE rounding
+            // a non-monotonic pattern can occur and the iteration order chosen
+            // here matches C ref's byte-for-byte.
             let delta_bar_dpe = DoublePlusExponent::from_f64(delta_bar);
             let mut s = k;
-            for j in 0..k {
-                if t[j] < delta_bar_dpe * r[j][j] {
-                    s = s.min(j);
+            while s > 0 {
+                if !(t[s - 1] < delta_bar_dpe * r[s - 1][s - 1]) {
+                    break;
                 }
+                s -= 1;
             }
 
             if k != s {
