@@ -22,10 +22,13 @@
       --fg-muted: #777;
       --fg-dim: #3a3a3a;
       --border: rgba(255, 255, 255, 0.08);
+      --border-faint: rgba(255, 255, 255, 0.03);
       --bar-bg: rgba(255, 255, 255, 0.04);
       --green: #3fb950;
+      --green-bg: rgba(63, 185, 80, 0.08);
       --yellow: #d29922;
       --red: #f85149;
+      --red-bg: rgba(248, 81, 73, 0.08);
     }
 
     @media (prefers-color-scheme: light) {
@@ -36,10 +39,13 @@
         --fg-muted: #777;
         --fg-dim: #c0bdb5;
         --border: rgba(0, 0, 0, 0.08);
+        --border-faint: rgba(0, 0, 0, 0.04);
         --bar-bg: rgba(0, 0, 0, 0.04);
         --green: #1a7f37;
+        --green-bg: rgba(26, 127, 55, 0.08);
         --yellow: #9a6700;
         --red: #cf222e;
+        --red-bg: rgba(207, 34, 46, 0.08);
       }
     }
 
@@ -222,7 +228,7 @@
 
     .cov-table > tbody > tr > td {
       padding: 8px;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border-faint);
       font-weight: 500;
     }
 
@@ -238,7 +244,7 @@
 
     .cov-table .module-name,
     .cov-table .file-name {
-      font-family: 'Inter', monospace;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 13px;
     }
 
@@ -420,7 +426,7 @@
 
     .bench-table td {
       padding: 8px;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border-faint);
       font-weight: 500;
     }
 
@@ -432,7 +438,7 @@
     }
 
     .bench-table .bench-name {
-      font-family: 'Inter', monospace;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 13px;
     }
 
@@ -490,19 +496,19 @@
 
     .mutants-table td {
       padding: 8px;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border-faint);
     }
 
     .mutants-table tbody tr:hover { background: var(--bar-bg); }
 
     .mutants-table .mutant-name {
-      font-family: 'Inter', monospace;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 12px;
       color: var(--red);
     }
 
     .mutants-table .mutant-loc {
-      font-family: 'Inter', monospace;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 12px;
       white-space: nowrap;
     }
@@ -548,7 +554,7 @@
     .mutant-detail-list {
       list-style: none;
       padding: 4px 8px 8px 24px;
-      font-family: 'Inter', monospace;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 12px;
       color: var(--fg-muted);
     }
@@ -590,7 +596,7 @@
     .cov-insight-list {
       list-style: none;
       font-size: 12px;
-      font-family: 'Inter', monospace;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
     }
 
     .cov-insight-list li {
@@ -693,7 +699,7 @@
 
     .dudect-table td {
       padding: 8px;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border-faint);
       font-weight: 500;
     }
 
@@ -705,76 +711,12 @@
     }
 
     .dudect-table .fn-name {
-      font-family: 'Inter', monospace;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 13px;
     }
 
     .dudect-pass { color: var(--green); }
     .dudect-fail { color: var(--red); font-weight: 700; }
-
-    /* KAT section */
-    .kat-suites {
-      display: flex;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-
-    .kat-suite {
-      flex: 1;
-      min-width: 250px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 16px;
-    }
-
-    .kat-suite h4 {
-      font-size: 13px;
-      font-weight: 900;
-      margin-bottom: 8px;
-    }
-
-    .kat-progress {
-      height: 8px;
-      border-radius: 4px;
-      background: var(--bar-bg);
-      overflow: hidden;
-      margin-bottom: 8px;
-    }
-
-    .kat-progress span {
-      display: block;
-      height: 100%;
-      border-radius: 4px;
-    }
-
-    .kat-stats {
-      display: flex;
-      gap: 16px;
-      font-size: 13px;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .kat-failures {
-      margin-top: 12px;
-      font-size: 12px;
-    }
-
-    .kat-failures summary {
-      cursor: pointer;
-      color: var(--red);
-      font-weight: 600;
-    }
-
-    .kat-failures ul {
-      list-style: none;
-      padding: 4px 0 0 8px;
-      font-family: 'Inter', monospace;
-    }
-
-    .kat-failures li {
-      padding: 2px 0;
-      color: var(--fg-muted);
-    }
 
     /* ─────────────────────────────────────────────────────────────────
        Test Vectors panel — family-grouped 10×10 plate grids with
@@ -787,7 +729,6 @@
       --plate-fail: var(--red);
       --plate-fail-fg: #fff;
       --plate-ignored-fg: var(--fg-dim);
-      --plate-rule: var(--border);
       --plate-cell: 24px;
     }
 
@@ -795,13 +736,19 @@
       #kat-section { --plate-fail-fg: #f6efe6; }
     }
 
-    /* ── Family entries ── */
+    /* ── Family cards (matches `.cov-insight` / `.audit-badge` frame) ── */
+
+    .plate-families {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
 
     .plate-family {
-      border-top: 1px solid var(--plate-rule);
-      padding: 12px 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
     }
-    .plate-family:first-of-type { border-top: none; padding-top: 0; }
 
     .plate-family-header {
       display: grid;
@@ -814,16 +761,19 @@
     }
     .plate-family-header:hover { opacity: 0.78; }
 
+    /* Small-label voice, matching `.cov-insight h4`. */
     .plate-family-name {
-      font-size: 14px;
+      font-size: 11px;
       font-weight: 700;
-      letter-spacing: -0.005em;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
       line-height: 1.3;
     }
     .plate-family-desc {
       font-size: 12px;
       color: var(--fg-muted);
-      margin-top: 1px;
+      margin-top: 4px;
     }
     .plate-family-badge {
       font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
@@ -841,7 +791,9 @@
 
     .plate-family-body {
       display: none;
-      margin-top: 12px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-faint);
     }
     .plate-family[data-open="true"] .plate-family-body { display: block; }
 
@@ -939,8 +891,6 @@
       overflow: hidden;
       background: var(--bar-bg);
       transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
-      animation: plateCellReveal 360ms cubic-bezier(0.2, 0.8, 0.3, 1) backwards;
-      animation-delay: calc(var(--i, 0) * 5ms);
     }
     .plate-cell:hover {
       transform: scale(1.18);
@@ -995,11 +945,6 @@
       border: 1px dashed var(--border);
     }
 
-    @keyframes plateCellReveal {
-      from { opacity: 0; transform: scale(0.4); }
-      to   { opacity: 1; transform: scale(1); }
-    }
-
     /* ── Test list (compact, for expanded family) ── */
 
     .plate-test-list {
@@ -1012,8 +957,9 @@
     .plate-test-list td {
       padding: 4px 8px;
       text-align: left;
-      border-bottom: 1px solid var(--plate-rule);
     }
+    .plate-test-list th { border-bottom: 1px solid var(--border); }
+    .plate-test-list td { border-bottom: 1px solid var(--border-faint); }
     .plate-test-list th {
       font-family: 'Inter', sans-serif;
       font-size: 11px;
@@ -1027,12 +973,12 @@
     .plate-test-list .fail { color: var(--plate-fail); font-weight: 700; }
     .plate-test-list .ignored { color: var(--fg-dim); }
 
-    /* ── Wycheproof per-file detail block ── */
+    /* ── Wycheproof card (per-file detail block) ── */
 
     .plate-wycheproof {
-      margin-top: 16px;
-      padding-top: 12px;
-      border-top: 1px solid var(--plate-rule);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
     }
     .plate-wycheproof-header {
       display: grid;
@@ -1040,40 +986,46 @@
       align-items: baseline;
       gap: 12px;
     }
+    /* Small-label voice, matching `.plate-family-name`. */
     .plate-wycheproof h4 {
-      font-size: 14px;
+      font-size: 11px;
       font-weight: 700;
-      margin-bottom: 4px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--fg-dim);
     }
     .plate-wycheproof-vectors {
-      color: var(--fg-dim);
+      color: var(--fg-muted);
       font-weight: 400;
+      letter-spacing: 0;
+      text-transform: none;
+      font-size: 11px;
     }
     .plate-wycheproof-badge {
       font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-feature-settings: 'tnum' on, 'lnum' on;
       font-size: 12px;
     }
-    .plate-wycheproof-badge .accent,
-    .plate-family-badge .accent { font-weight: 700; }
+    #kat-section .accent { font-weight: 700; }
 
     .plate-wycheproof-intro {
       font-size: 12px;
       color: var(--fg-muted);
+      margin-top: 6px;
       margin-bottom: 10px;
     }
 
     .plate-wycheproof-file {
-      margin-top: 6px;
       cursor: pointer;
       font-size: 12px;
       padding: 6px 0;
-      border-bottom: 1px solid var(--plate-rule);
+      border-bottom: 1px solid var(--border-faint);
       display: grid;
       grid-template-columns: max-content 1fr max-content;
       gap: 12px;
       align-items: baseline;
     }
+    .plate-wycheproof-file:last-of-type { border-bottom: none; }
     .plate-wycheproof-file .label {
       color: var(--fg);
       font-weight: 600;
@@ -1169,7 +1121,7 @@
     }
 
     .audit-bloat .fn-name {
-      font-family: 'Inter', monospace;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 12px;
     }
 
@@ -1207,7 +1159,7 @@
 
     .health-table td {
       padding: 8px;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border-faint);
       font-weight: 500;
     }
 
@@ -1219,7 +1171,7 @@
     }
 
     .health-table .module-name {
-      font-family: 'Inter', monospace;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       font-size: 13px;
     }
 
@@ -1294,15 +1246,9 @@
       position: sticky;
       top: 0;
       z-index: 5;
-      background: rgba(10, 10, 11, 0.85);
+      background: color-mix(in srgb, var(--bg) 85%, transparent);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-    }
-
-    @media (prefers-color-scheme: light) {
-      .sticky-nav {
-        background: rgba(242, 241, 236, 0.85);
-      }
     }
 
     .section-nav {
@@ -1336,7 +1282,7 @@
       border-radius: 6px;
       font-size: 12px;
       font-weight: 500;
-      background: rgba(63, 185, 80, 0.06);
+      background: var(--green-bg);
       color: var(--green);
     }
     .status-warn {
@@ -1344,9 +1290,9 @@
       border-radius: 6px;
       font-size: 12px;
       font-weight: 700;
-      background: rgba(248, 81, 73, 0.08);
+      background: var(--red-bg);
       color: var(--red);
-      border: 1px solid rgba(248, 81, 73, 0.15);
+      border: 1px solid color-mix(in srgb, var(--red) 18%, transparent);
     }
 
     .empty {
@@ -2663,15 +2609,14 @@
       const wycheTests = wycheSuite ? (wycheSuite.tests || []) : [];
       const wycheC = katFamilyCounts(wycheTests);
 
-      // ---- Per-family rows (each shows its own badge; no separate ledger) ----
-      let html = '';
+      // ---- Per-family cards + Wycheproof card (one stack) ----
+      let html = '<div class="plate-families">';
       for (const fam of KAT_FAMILIES) {
         const tests = familyTests[fam.key];
         if (tests.length === 0) continue;
         html += renderKatFamily(fam, tests);
       }
 
-      // ---- Wycheproof detail (preserved per-file vector breakdown) ----
       const vectorFiles = wycheSuite ? (wycheSuite.vector_files || []) : [];
       const allWychePassed = wycheTests.length > 0 && wycheTests.every(t => t.status === 'pass');
 
@@ -2708,6 +2653,7 @@
         }
         html += '</div>';
       }
+      html += '</div>'; // .plate-families
 
       return html;
     }
