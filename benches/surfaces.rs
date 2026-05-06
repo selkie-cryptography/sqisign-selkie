@@ -76,6 +76,6 @@ fn lift(bencher: divan::Bencher) {
 #[divan::bench(args = [10, 50, 122])]
 fn isogeny_22_chain(bencher: divan::Bencher, e_val: u32) {
     if let Some((kernel, te)) = e0_product_kernel(e_val) {
-        bencher.bench(|| divan::black_box(&kernel).isogeny(te, divan::black_box(&[])));
+        bencher.bench(|| divan::black_box(&kernel).isogeny(te, divan::black_box(&[]), None));
     }
 }

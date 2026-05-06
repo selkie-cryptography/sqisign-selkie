@@ -300,7 +300,7 @@ impl ExtremalOrder<8> {
                 // `ω · j = i · j = +k` flips the k-coefficient's sign,
                 // breaking byte-equality with C ref's RepresentInteger
                 // for any input where `ω` has an `i`-component.
-                let omega_j = Element::<4>::J.mul(&omega);
+                let omega_j = Element::<4>::J.mul(omega);
 
                 let omega_coords = [
                     omega.a.wide(),
@@ -586,28 +586,6 @@ impl Deref for ShortVector {
     }
 }
 
-/// Enumerate the C-reference's filtered half-cube of integer
-/// 4-tuples in `[-m, m]⁴`.
-///
-/// Returns the tuples in the same deterministic order as the C
-/// reference's `enumerate_hypercube` (`dim2id2iso.c:270-376`).
-/// Pinning the candidate order pins the first-success
-/// `(β_s, β_t)` choice in [`try_find_uv`], which in turn pins
-/// `e_pk` for KAT byte match.
-///
-/// Filters applied, in order:
-///
-///   * Half-cube iteration: walk only `x ≤ 0`, breaking each inner loop when
-///     the leading-zero suffix would cross into the positive half. `±v` and `v`
-///     give the same Gram-form value, so keeping just one representative halves
-///     the candidate pool.
-///   * Skip all-even tuples: `2·v` has Gram-form value `4·G(v, v)`, never
-///     smaller than `G(v, v)` itself.
-///   * Skip all-mult-of-3 tuples for the same reason.
-///   * When `gram_has_i_symmetry` is set — i.e., the L2-reduced basis is `(γ,
-///     iγ, β, iβ)` so that `G[0][0] = G[1][1]` and `G[2][2] = G[3][3]` — keep
-///     only the `i`-orbit representative with the smallest lex rank in the `dim
-///     = 2m + 1` hypercube layout.
 /// Canonicalize the L2-reduced basis of an ideal in the **special
 /// order** O₀ (the t=0 case in `suitable_ideals`'s multi-order loop).
 ///
@@ -621,9 +599,10 @@ impl Deref for ShortVector {
 /// vectors and the eventual `(β_s, β_t)` pair are reproducible. Two
 /// independent L2 implementations agree on the abstract reduced
 /// basis but may differ in the L2-output column order; without this
-/// canonicalization step, Selkie's downstream `enumerate_short_vectors`
-/// + `try_find_uv` produces a *different* (β_s, β_t) than C ref does
-/// for the same input ideal — even when L2 is bit-exact.
+/// canonicalization step, the downstream
+/// `enumerate_short_vectors` and `try_find_uv` produce a *different*
+/// `(β_s, β_t)` than C ref does for the same input ideal — even when
+/// L2 is bit-exact.
 ///
 /// The canonicalization has two phases:
 ///
@@ -709,6 +688,28 @@ fn post_lll_basis_treatment_special<const W: usize>(
     }
 }
 
+/// Enumerate the C-reference's filtered half-cube of integer
+/// 4-tuples in `[-m, m]⁴`.
+///
+/// Returns the tuples in the same deterministic order as the C
+/// reference's `enumerate_hypercube` (`dim2id2iso.c:270-376`).
+/// Pinning the candidate order pins the first-success
+/// `(β_s, β_t)` choice in [`try_find_uv`], which in turn pins
+/// `e_pk` for KAT byte match.
+///
+/// Filters applied, in order:
+///
+/// * Half-cube iteration: walk only `x ≤ 0`, breaking each inner loop when
+///   the leading-zero suffix would cross into the positive half. `±v` and `v`
+///   give the same Gram-form value, so keeping just one representative halves
+///   the candidate pool.
+/// * Skip all-even tuples: `2·v` has Gram-form value `4·G(v, v)`, never
+///   smaller than `G(v, v)` itself.
+/// * Skip all-mult-of-3 tuples for the same reason.
+/// * When `gram_has_i_symmetry` is set — i.e., the L2-reduced basis is `(γ,
+///   iγ, β, iβ)` so that `G[0][0] = G[1][1]` and `G[2][2] = G[3][3]` — keep
+///   only the `i`-orbit representative with the smallest lex rank in the `dim
+///   = 2m + 1` hypercube layout.
 fn enumerate_hypercube(m: i64, gram_has_i_symmetry: bool) -> Vec<[i64; 4]> {
     debug_assert!(m > 0);
 
@@ -1977,6 +1978,7 @@ impl<const N: usize> LeftIdeal<N> {
             if t == 0 && std::env::var_os("SELKIE_DUMP_POSTL2_GRAM").is_some() {
                 let cols_dump = class_basis.cols();
                 eprintln!("[SELKIE_POSTL2_COLS_BEGIN]");
+                #[allow(clippy::needless_range_loop)]
                 for j in 0..4 {
                     for r in 0..4 {
                         let v = cols_dump[j][r];
