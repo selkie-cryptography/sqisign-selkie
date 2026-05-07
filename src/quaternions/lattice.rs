@@ -569,6 +569,22 @@ impl<const N: usize> Lattice<N> {
     /// Uses [`Element::mul_direct`] at width N — coordinates must
     /// use at most N/2 limbs to avoid overflow.
     ///
+    /// # HNF strategy
+    ///
+    /// Mirrors C ref's `quat_lattice_mul` (`quaternion/ref/generic/
+    /// lattice.c:178-216`): form a 4×4 matrix from the first
+    /// quaternion product (`alpha_0 · beta_*`, columns 0..4), take
+    /// `|det|` as the modular-HNF bound, then run
+    /// [`Matrix::from_hnf_columns_mod`] on the full 16 columns at
+    /// working width `N`. Classical HNF on 16 columns of large
+    /// entries (≈ 600 bits, the multi-order-enumeration `conj(I)·J_t`
+    /// shape) overflows fixed-precision; the modular variant bounds
+    /// every intermediate by `4·|det|` and stays within a working
+    /// width around `4·bits(det)`. For typical SQIsign-shaped inputs
+    /// (`bits(det) < N·64/4`) the modular path returns a canonical
+    /// HNF; in the rank-deficient case `det = 0` we fall back to
+    /// classical HNF (which is well-defined there).
+    ///
     /// See [§3.1.5.2] (Multiplication) of the spec.
     ///
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
@@ -580,8 +596,6 @@ impl<const N: usize> Lattice<N> {
             for j in 0..4 {
                 let beta = other.basis_elem(j);
                 let product = alpha.mul_direct(&beta);
-                // The product has denom = self.denom * other.denom * product.denom.
-                // We need to express it in a common denominator for HNF.
                 all_cols.push(Vector::new(
                     *product.a.as_bigint(),
                     *product.b.as_bigint(),
@@ -591,17 +605,136 @@ impl<const N: usize> Lattice<N> {
             }
         }
 
-        // The common denominator for all columns.
-        // Each product has denom = (self.denom/1) * (other.denom/1) * element_denom.
-        // Since basis_elem includes the lattice denom, and mul produces a
-        // normalized result, the product columns share a common denom.
-        // For now, use the product of the two lattice denoms as the HNF denom.
-        let result_basis = Matrix::from_hnf_columns(&all_cols);
+        let new_denom = self.denom.ct_mul(&other.denom);
+
+        let first_block: [Vector<N>; 4] = [all_cols[0], all_cols[1], all_cols[2], all_cols[3]];
+        let det_modulus = Matrix::<N>::from_columns(&first_block).det().abs();
+        let result_basis = if bool::from(det_modulus.is_zero()) {
+            Matrix::from_hnf_columns(&all_cols)
+        } else {
+            Matrix::from_hnf_columns_mod::<N>(&all_cols, &det_modulus)
+        };
         HnfLattice {
             basis: result_basis,
-            // The product denominator needs careful handling of the
-            // element denominators. For now, use the product.
-            denom: self.denom.ct_mul(&other.denom),
+            denom: new_denom,
+        }
+    }
+
+    /// Lattice product with explicit covolume modulus.
+    ///
+    /// Same as [`Lattice::product`] but lets the caller supply the
+    /// modular-HNF bound directly. Use this when the
+    /// `det(first 4 cols)` heuristic in [`Lattice::product`] gives a
+    /// modulus that's a *multiple* of the canonical covolume rather
+    /// than equal to it: the result then has covolume = modulus
+    /// instead of canonical covolume, embedding the lattice in a
+    /// coarser sublattice. For ideal-class arithmetic
+    /// `conj(reduced_id) · J_t` the canonical covolume formula is
+    /// `denom_result^4 · N(result)² / 4`; passing that here returns
+    /// the canonical (not coarsened) HNF.
+    ///
+    /// `modulus` must be a positive multiple of the integer-column
+    /// covolume of the result lattice.
+    pub fn product_with_modulus(&self, other: &Self, modulus: &BigInt<N>) -> HnfLattice<N> {
+        let mut all_cols = Vec::new();
+
+        for i in 0..4 {
+            let alpha = self.basis_elem(i);
+            for j in 0..4 {
+                let beta = other.basis_elem(j);
+                let product = alpha.mul_direct(&beta);
+                all_cols.push(Vector::new(
+                    *product.a.as_bigint(),
+                    *product.b.as_bigint(),
+                    *product.c.as_bigint(),
+                    *product.d.as_bigint(),
+                ));
+            }
+        }
+
+        let new_denom = self.denom.ct_mul(&other.denom);
+        let basis = if bool::from(modulus.is_zero()) {
+            Matrix::from_hnf_columns(&all_cols)
+        } else {
+            Matrix::from_hnf_columns_mod::<N>(&all_cols, modulus)
+        };
+        HnfLattice {
+            basis,
+            denom: new_denom,
+        }
+    }
+
+    /// Right-multiply this lattice by a single quaternion element.
+    ///
+    /// Each basis vector `b_j` of `self` is replaced by `b_j · elem`,
+    /// the result is HNF-reduced via classical HNF, and the
+    /// denominator becomes `self.denom * elem.denom`. Mirrors C ref's
+    /// `quat_lattice_alg_elem_mul`
+    /// (`quaternion/ref/generic/lattice.c`).
+    ///
+    /// The storage width `N` must be wide enough to hold the post-mul
+    /// product entries plus classical-HNF intermediate growth. For
+    /// the multi-order-enumeration `self · conj(δ)/N(I)` shape
+    /// (entries ≈ 530 bits, intermediates ≈ 4×) callers should work
+    /// at `N ≥ 50`.
+    pub fn alg_elem_mul(&self, elem: &Element<N>) -> HnfLattice<N> {
+        let new_cols: [Vector<N>; 4] = core::array::from_fn(|j| {
+            let basis_j = self.basis_elem(j);
+            let prod = basis_j.mul_direct(elem);
+            Vector::new(
+                *prod.a.as_bigint(),
+                *prod.b.as_bigint(),
+                *prod.c.as_bigint(),
+                *prod.d.as_bigint(),
+            )
+        });
+        let new_denom = self.denom.ct_mul(elem.denom.as_bigint());
+
+        // Modular HNF with `|det(new_cols)|` as the bound, mirroring
+        // the strategy in [`Lattice::product`]. Classical HNF on 4
+        // wide columns (≈ 530 bits for the multi-order-enumeration
+        // `conj(δ)/N(I)` shape) blows past the storage budget; the
+        // modular variant bounds intermediates by `|det|` and stays
+        // within working width `N` whenever `bits(det) < N·64/2`.
+        let det_modulus = Matrix::<N>::from_columns(&new_cols).det().abs();
+        let basis = if bool::from(det_modulus.is_zero()) {
+            Matrix::from_hnf_columns(&new_cols)
+        } else {
+            Matrix::from_hnf_columns_mod::<N>(&new_cols, &det_modulus)
+        };
+        HnfLattice {
+            basis,
+            denom: new_denom,
+        }
+    }
+
+    /// Like [`Lattice::alg_elem_mul`] but with explicit modular-HNF
+    /// modulus. See [`Lattice::product_with_modulus`] for when this
+    /// matters.
+    pub fn alg_elem_mul_with_modulus(
+        &self,
+        elem: &Element<N>,
+        modulus: &BigInt<N>,
+    ) -> HnfLattice<N> {
+        let new_cols: [Vector<N>; 4] = core::array::from_fn(|j| {
+            let basis_j = self.basis_elem(j);
+            let prod = basis_j.mul_direct(elem);
+            Vector::new(
+                *prod.a.as_bigint(),
+                *prod.b.as_bigint(),
+                *prod.c.as_bigint(),
+                *prod.d.as_bigint(),
+            )
+        });
+        let new_denom = self.denom.ct_mul(elem.denom.as_bigint());
+        let basis = if bool::from(modulus.is_zero()) {
+            Matrix::from_hnf_columns(&new_cols)
+        } else {
+            Matrix::from_hnf_columns_mod::<N>(&new_cols, modulus)
+        };
+        HnfLattice {
+            basis,
+            denom: new_denom,
         }
     }
 
@@ -919,6 +1052,42 @@ pub struct HnfLattice<const N: usize> {
 }
 
 impl<const N: usize> HnfLattice<N> {
+    /// Divide out `gcd(basis_entries, denom)`, mirroring C ref's
+    /// `quat_lattice_reduce_denom` (`quaternion/ref/generic/lattice.c:41`).
+    ///
+    /// After lattice multiplication or alg-elem multiplication the
+    /// `denom` accumulates factors from both operands, but the basis
+    /// entries typically share a common gcd with the denom. Dividing
+    /// both by that gcd produces the canonical representation
+    /// (smallest denom for the given Z-lattice).
+    #[must_use]
+    pub fn reduce_denom(self) -> Self {
+        let mut g = self.denom.abs();
+        for row in 0..4 {
+            for col in 0..4 {
+                let entry = self.basis[row][col];
+                if !bool::from(entry.is_zero()) {
+                    g = g.gcd(&entry.abs());
+                    if g == BigInt::<N>::ONE {
+                        return self;
+                    }
+                }
+            }
+        }
+        if g == BigInt::<N>::ONE {
+            return self;
+        }
+        let mut basis = self.basis;
+        for row in 0..4 {
+            for col in 0..4 {
+                let (q, _) = basis[row][col].div_rem(&g);
+                basis[row][col] = q;
+            }
+        }
+        let (denom, _) = self.denom.div_rem(&g);
+        Self { basis, denom }
+    }
+
     /// Returns the HNF basis matrix.
     #[inline]
     pub const fn basis(&self) -> &Matrix<N> {
