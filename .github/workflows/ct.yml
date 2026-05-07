@@ -3,6 +3,13 @@ name: Constant-Time
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - '.config/nextest.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/ct.yml'
   schedule:
     - cron: "0 7 * * 1"   # weekly, Monday 07:00 UTC (after mutants)
   workflow_dispatch:

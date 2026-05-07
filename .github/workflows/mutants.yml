@@ -3,6 +3,14 @@ name: Mutation testing
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - '.config/nextest.toml'
+      - '.cargo/mutants.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/mutants.yml'
   workflow_dispatch:
 
 permissions:

@@ -3,6 +3,14 @@ name: Coverage
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - '.config/nextest.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/coverage.yml'
   workflow_dispatch:
 
 permissions:

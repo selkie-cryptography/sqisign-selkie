@@ -3,6 +3,12 @@ name: Instruction count
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/iai.yml'
   workflow_dispatch:
 
 permissions:

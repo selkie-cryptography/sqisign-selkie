@@ -3,6 +3,12 @@ name: Benchmarks
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/bench.yml'
   workflow_dispatch:
 
 permissions:

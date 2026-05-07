@@ -3,6 +3,12 @@ name: Fuzzing
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'fuzz/**'
+      - 'Cargo.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/fuzz.yml'
   workflow_dispatch:
 
 permissions:

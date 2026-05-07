@@ -3,8 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
+    paths: &rust-paths
+      - 'src/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'rustfmt.toml'
+      - '.config/nextest.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
+    paths: *rust-paths
   workflow_dispatch:
 
 # Restrict default permissions to read-only. Jobs that need more
