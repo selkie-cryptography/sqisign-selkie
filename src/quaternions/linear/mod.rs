@@ -395,18 +395,31 @@ impl<const N: usize> Matrix<N> {
     ///
     /// # Algorithm
     ///
-    /// This is the standard Domich--Kannan--Trotter modular HNF
-    /// (see also Cohen's *A Course in Computational Algebraic
-    /// Number Theory*, §2.4.2, and Storjohann's subsequent
-    /// refinements). The key observation is: if `D` is any
-    /// positive multiple of the lattice determinant $\det(L)$ in
-    /// the rank-$n$ case $L \subseteq \mathbb{Z}^n$, then
-    /// $L \supseteq D \cdot \mathbb{Z}^n$. Consequently, adding
-    /// $D \cdot e_i$ to any column preserves the lattice, and so
-    /// we may reduce every intermediate entry modulo `D` after
-    /// every arithmetic update without changing the resulting
-    /// HNF. Entries are then bounded by `D` rather than by the
-    /// exponential classical bound.
+    /// This is the standard modular HNF, originally due to
+    /// Domich–Kannan–Trotter and treated in detail as Algorithm
+    /// 2.4.8 in Cohen, *A Course in Computational Algebraic
+    /// Number Theory*, GTM 138, Springer (1993),
+    /// [doi:10.1007/978-3-662-02945-9][cohen1993]. The same
+    /// algorithm name appears in the C reference's
+    /// `ibz_mat_4xn_hnf_mod_core` (`quaternion/ref/generic/hnf/hnf.c`).
+    ///
+    /// The key observation: if `D` is any positive multiple of the
+    /// lattice determinant $\det(L)$ in the rank-$n$ case
+    /// $L \subseteq \mathbb{Z}^n$, then
+    /// $L \supseteq D \cdot \mathbb{Z}^n$. We exploit this in two
+    /// ways:
+    ///
+    /// 1. We append the modulus columns $D \cdot e_i$ ($i = 0, \dots, n-1$) to
+    ///    the input generator set, so the row-pivot gcd accumulation produces
+    ///    the canonical pivot $d_i = \gcd(\text{row-}i \text{ entries}, D)$
+    ///    rather than the smaller $\gcd(\text{row-}i \text{ entries})$, which
+    ///    is what Cohen 2.4.8 achieves via its inner $\mathrm{xgcd}(a_{k,i},
+    ///    m)$ step with decreasing $m$.
+    /// 2. We reduce every intermediate entry modulo $D$ after every arithmetic
+    ///    update. Adding any multiple of $D \cdot e_i \in L$ to a column does
+    ///    not change the lattice, so this leaves the HNF unchanged while
+    ///    bounding every entry by $D$ rather than by the exponential classical
+    ///    bound.
     ///
     /// The working width `W` must be at least large enough to
     /// hold a product of two `D`-sized values before reduction:
@@ -457,6 +470,8 @@ impl<const N: usize> Matrix<N> {
     /// sequence is data-dependent. `TODO(ct)`: make constant-time
     /// before production use — this path is on the secret-derived
     /// signing ideal.
+    ///
+    /// [cohen1993]: https://doi.org/10.1007/978-3-662-02945-9
     pub fn from_hnf_columns_mod<const W: usize>(cols: &[Vector<N>], modulus: &BigInt<N>) -> Self {
         const {
             assert!(
@@ -464,19 +479,51 @@ impl<const N: usize> Matrix<N> {
                 "Matrix::from_hnf_columns_mod: working width W must be >= storage width N"
             )
         };
-        let c = cols.len();
-        assert!(c >= 4, "need at least 4 columns for rank-4 HNF");
+        let c_orig = cols.len();
+        assert!(c_orig >= 4, "need at least 4 columns for rank-4 HNF");
         let d = 4usize;
 
         let modulus_w: BigInt<W> = modulus.widen();
 
-        // Positive reduction mod D: returns r in [0, D).
+        // Positive Euclidean reduction mod D: returns r in [0, D).
         let reduce = |x: &BigInt<W>| -> BigInt<W> {
             let r = x.ct_mod(&modulus_w);
             if bool::from(r.is_negative()) {
                 r.ct_add(&modulus_w)
             } else {
                 r
+            }
+        };
+
+        // Convert a value in [0, D] to the centered representative in
+        // (-D/2, D/2] when in [0, D), or leave it as D when exactly D.
+        //
+        // Used only for `xgcd` inputs so that
+        // `xgcd(a[k][i], a[j][i])` computes the true integer gcd of
+        // their *signed* values rather than the much larger gcd of
+        // their wrapped (near-D positive) representations.
+        //
+        // The "leave D as D" carve-out matters for the modulus columns
+        // (`D · e_i`) we append: their pivot-row entry is the literal D.
+        // Centering would map D → 0, dropping the modulus from the gcd
+        // and giving non-canonical pivots for negatively-signed inputs.
+        //
+        // The cofactors `u, v` returned by xgcd satisfy
+        // `u·signed(a[k][i]) + v·signed(a[j][i]) = g`. Applied to the
+        // unsigned (Euclidean) values, the linear combination
+        // `u·a[k][r] + v·a[j][r]` differs from the signed version only
+        // by a multiple of D in each coordinate, so reducing mod D
+        // recovers the canonical value.
+        let to_centered = |x: BigInt<W>| -> BigInt<W> {
+            let two_x = x.ct_add(&x);
+            // 2x > D  ⇔  x > D/2.
+            let above_half = bool::from(two_x.ct_sub(&modulus_w).is_positive());
+            // x < D  (so x ∈ [0, D)). Excludes the literal modulus value.
+            let below_d = bool::from(modulus_w.ct_sub(&x).is_positive());
+            if above_half && below_d {
+                x.ct_sub(&modulus_w)
+            } else {
+                x
             }
         };
 
@@ -494,7 +541,85 @@ impl<const N: usize> Matrix<N> {
             })
             .collect();
 
+        // Append the implicit modulus columns D·e_i (i = 0..d) so the
+        // row-pivot gcd accumulation produces the canonical pivot
+        // gcd(row entries, D) instead of just gcd(row entries).
+        //
+        // The lattice we want to HNF-reduce is L = ⟨input cols⟩ + D·Z^d
+        // (the caller's contract: D is a positive multiple of the
+        // intended covolume, which means D·Z^d ⊆ L). Without these
+        // explicit generators, our column-style accumulation only sees
+        // the input columns: combining (5·e_3) and modulus 8 in the row
+        // gcd yields 5 instead of the canonical gcd(5, 8) = 1.
+        //
+        // Cohen 2.4.8 / `ibz_mat_4xn_hnf_mod_core` (C reference) reaches
+        // the same canonical answer via an explicit `xgcd(a[k][i], m)`
+        // step at each pivot, with `m` decreasing as gcds peel off.
+        // Adding 4 explicit un-reduced columns is mathematically
+        // equivalent and slots into our existing column-style loop
+        // without restructuring the algorithm.
+        for i in 0..d {
+            let mut extra = [BigInt::<W>::ZERO; 4];
+            extra[i] = modulus_w;
+            a.push(extra);
+        }
+        let c = c_orig + d;
+
         // Classical HNF, reducing every updated entry mod D.
+        // Helper for the gcd-combine pair update. Mirrors Cohen 2.4.8 /
+        // C ref's `ibz_mat_4xn_hnf_mod_core` lines:
+        //
+        //     c = u·a[k] + v·a[j]                       (new gcd col)
+        //     a[j] = (a[k][i]/g)·a[j] - (a[j][i]/g)·a[k]  (orthogonal col, row-i zero)
+        //     a[k] = c mod m
+        //
+        // Updating only `a[k]` (the gcd col) without simultaneously
+        // updating `a[j]` makes the pair-transformation non-unimodular,
+        // shrinking the lattice. With our previous one-sided update the
+        // canonical HNF covolume came out as `(product of nontrivial
+        // pivots) × (some integer factor)` — fine on inputs where the
+        // gcd-combine never actually combines two nonzero values, but
+        // wrong on real inputs (KAT 29).
+        let combine_pair =
+            |a: &mut Vec<[BigInt<W>; 4]>,
+             k: usize,
+             j: usize,
+             reduce: &dyn Fn(&BigInt<W>) -> BigInt<W>,
+             to_centered: &dyn Fn(BigInt<W>) -> BigInt<W>| {
+                let val_k_eu = a[k][k];
+                let val_j_eu = a[j][k];
+                // Mirror C ref's `if (!ibz_is_zero(&(a[j][i])))` guard. With
+                // val_j = 0, xgcd(val_k, 0) = (val_k, ±1, 0) and the
+                // pair-update degenerates to a[k] := ±a[k], a[j] := ±a[j]
+                // — a sign flip that, while unimodular, breaks the
+                // canonical-HNF output convention (entries should stay
+                // sign-stable across pivot iterations).
+                if bool::from(val_j_eu.is_zero()) {
+                    return;
+                }
+                // xgcd on centered representatives so the gcd is the true
+                // integer gcd of the signed values (not the wrapped ones).
+                let val_k = to_centered(val_k_eu);
+                let val_j = to_centered(val_j_eu);
+                let (g, u, v) = val_k.xgcd(&val_j);
+                // coeff_k = a[k][k]_signed / g, coeff_j = a[j][k]_signed / g.
+                // Both are exact (g divides both signed values).
+                let (coeff_k, _) = val_k.div_rem(&g);
+                let (coeff_j, _) = val_j.div_rem(&g);
+                let old_k = a[k];
+                let old_j = a[j];
+                for r in 0..4 {
+                    // u·a[k] + v·a[j] gives the new gcd col.
+                    let new_k_r = reduce(&u.ct_mul(&old_k[r]).ct_add(&v.ct_mul(&old_j[r])));
+                    // coeff_k·a[j] - coeff_j·a[k] gives the orthogonal col
+                    // (row-k entry zero).
+                    let new_j_r =
+                        reduce(&coeff_k.ct_mul(&old_j[r]).ct_sub(&coeff_j.ct_mul(&old_k[r])));
+                    a[k][r] = new_k_r;
+                    a[j][r] = new_j_r;
+                }
+            };
+
         let mut pivot = d;
         while pivot > 0 {
             pivot -= 1;
@@ -503,38 +628,29 @@ impl<const N: usize> Matrix<N> {
                 let mut j = pivot;
                 while j > 0 {
                     j -= 1;
-                    let val_i = a[pivot][pivot];
-                    let val_j = a[j][pivot];
-                    if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
-                        let (_g, u, v) = val_i.xgcd(&val_j);
-                        let old_i = a[pivot];
-                        let old_j = a[j];
-                        for r in 0..d {
-                            let prod1 = u.ct_mul(&old_i[r]);
-                            let prod2 = v.ct_mul(&old_j[r]);
-                            a[pivot][r] = reduce(&prod1.ct_add(&prod2));
-                        }
-                    }
+                    combine_pair(&mut a, pivot, j, &reduce, &to_centered);
                 }
             }
 
             {
                 let mut j = d;
                 while j < c {
-                    let val_i = a[pivot][pivot];
-                    let val_j = a[j][pivot];
-                    if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
-                        let (_g, u, v) = val_i.xgcd(&val_j);
-                        let old_i = a[pivot];
-                        let old_j = a[j];
-                        for r in 0..d {
-                            let prod1 = u.ct_mul(&old_i[r]);
-                            let prod2 = v.ct_mul(&old_j[r]);
-                            a[pivot][r] = reduce(&prod1.ct_add(&prod2));
-                        }
-                    }
+                    combine_pair(&mut a, pivot, j, &reduce, &to_centered);
                     j += 1;
                 }
+            }
+
+            // Edge case: every input row-pivot entry is a multiple of D.
+            // After folding in the D·e_pivot extra, xgcd(0, D) = (D, 0, 1),
+            // so a[pivot] becomes D·e_pivot, which then reduces to all
+            // zeros mod D. The canonical pivot in this case is D itself
+            // (the lattice's row-pivot projection is D·Z), so set the
+            // pivot column to modulus·e_pivot directly. Mirrors the
+            // `if (ibz_is_zero(&w[i][i])) ibz_copy(&w[i][i], &m)` step
+            // in C ref's `ibz_mat_4xn_hnf_mod_core`.
+            if bool::from(a[pivot][pivot].is_zero()) {
+                a[pivot] = [BigInt::<W>::ZERO; 4];
+                a[pivot][pivot] = modulus_w;
             }
 
             let piv = a[pivot][pivot];
