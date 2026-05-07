@@ -379,11 +379,21 @@ impl ExtremalOrder<8> {
                 // the target M can be wide enough to push γ past
                 // 256 bits. The represent_integer outer retry loop
                 // will re-sample a (z, t) pair.
-                let Some(g0) = gamma_coords[0].narrow_to::<4>() else { continue; };
-                let Some(g1) = gamma_coords[1].narrow_to::<4>() else { continue; };
-                let Some(g2) = gamma_coords[2].narrow_to::<4>() else { continue; };
-                let Some(g3) = gamma_coords[3].narrow_to::<4>() else { continue; };
-                let Some(gd) = common_d.narrow_to::<4>() else { continue; };
+                let Some(g0) = gamma_coords[0].narrow_to::<4>() else {
+                    continue;
+                };
+                let Some(g1) = gamma_coords[1].narrow_to::<4>() else {
+                    continue;
+                };
+                let Some(g2) = gamma_coords[2].narrow_to::<4>() else {
+                    continue;
+                };
+                let Some(g3) = gamma_coords[3].narrow_to::<4>() else {
+                    continue;
+                };
+                let Some(gd) = common_d.narrow_to::<4>() else {
+                    continue;
+                };
                 let gamma = Element::<4>::new(
                     Coordinate::from_bigint(g0),
                     Coordinate::from_bigint(g1),
@@ -612,14 +622,13 @@ impl Deref for ShortVector {
 ///
 /// The canonicalization has two phases:
 ///
-/// 1. **Column swap.** If `gram[0][0] == gram[2][2]`, swap col 1 ↔
-///    col 2. Else if `gram[0][0] == gram[3][3]`, swap col 1 ↔ col 3.
-///    Else if `gram[1][1] == gram[3][3]`, swap col 1 ↔ col 2 (same
-///    swap as the first case). The Gram is updated correspondingly
-///    via the symmetric permutation `P^T G P`.
-/// 2. **Sign flip.** If `basis[0][0] != basis[1][1]`, negate col 1.
-///    If `basis[0][2] != basis[1][3]`, negate col 3. Each negation
-///    flips the sign of the corresponding row + column of Gram.
+/// 1. **Column swap.** If `gram[0][0] == gram[2][2]`, swap col 1 ↔ col 2. Else
+///    if `gram[0][0] == gram[3][3]`, swap col 1 ↔ col 3. Else if `gram[1][1] ==
+///    gram[3][3]`, swap col 1 ↔ col 2 (same swap as the first case). The Gram
+///    is updated correspondingly via the symmetric permutation `P^T G P`.
+/// 2. **Sign flip.** If `basis[0][0] != basis[1][1]`, negate col 1. If
+///    `basis[0][2] != basis[1][3]`, negate col 3. Each negation flips the sign
+///    of the corresponding row + column of Gram.
 ///
 /// The non-special-order branch (`is_special_order=false`) of the
 /// C ref is empty, so this function is only called for `t = 0`.
@@ -705,17 +714,17 @@ fn post_lll_basis_treatment_special<const W: usize>(
 ///
 /// Filters applied, in order:
 ///
-/// * Half-cube iteration: walk only `x ≤ 0`, breaking each inner loop when
-///   the leading-zero suffix would cross into the positive half. `±v` and `v`
-///   give the same Gram-form value, so keeping just one representative halves
-///   the candidate pool.
-/// * Skip all-even tuples: `2·v` has Gram-form value `4·G(v, v)`, never
-///   smaller than `G(v, v)` itself.
+/// * Half-cube iteration: walk only `x ≤ 0`, breaking each inner loop when the
+///   leading-zero suffix would cross into the positive half. `±v` and `v` give
+///   the same Gram-form value, so keeping just one representative halves the
+///   candidate pool.
+/// * Skip all-even tuples: `2·v` has Gram-form value `4·G(v, v)`, never smaller
+///   than `G(v, v)` itself.
 /// * Skip all-mult-of-3 tuples for the same reason.
-/// * When `gram_has_i_symmetry` is set — i.e., the L2-reduced basis is `(γ,
-///   iγ, β, iβ)` so that `G[0][0] = G[1][1]` and `G[2][2] = G[3][3]` — keep
-///   only the `i`-orbit representative with the smallest lex rank in the `dim
-///   = 2m + 1` hypercube layout.
+/// * When `gram_has_i_symmetry` is set — i.e., the L2-reduced basis is `(γ, iγ,
+///   β, iβ)` so that `G[0][0] = G[1][1]` and `G[2][2] = G[3][3]` — keep only
+///   the `i`-orbit representative with the smallest lex rank in the `dim = 2m +
+///   1` hypercube layout.
 fn enumerate_hypercube(m: i64, gram_has_i_symmetry: bool) -> Vec<[i64; 4]> {
     debug_assert!(m > 0);
 
@@ -995,7 +1004,9 @@ impl<const W: usize> NrdBasis<W> {
                 let limbs = v.degree.limbs();
                 let mut last_nz = 0;
                 for (k, &l) in limbs.iter().enumerate() {
-                    if l != 0 { last_nz = k; }
+                    if l != 0 {
+                        last_nz = k;
+                    }
                 }
                 let mut s = String::new();
                 for k in (0..=last_nz).rev() {
@@ -1073,33 +1084,37 @@ fn try_find_uv<const N: usize>(
         return None;
     }
 
-    // Enumerate every positive-integer solution `(u, v)` to
-    // `u·d₁ + v·d₂ = 2^f` along the line
-    // `(u, v) = (u_0 + k·d₂, v_0 − k·d₁)` for `k = 0, 1, 2, …` until
-    // `v ≤ 0`. The initial solution has `u_0 = 2^f · d₁⁻¹ mod d₂`,
-    // so `u_0 ∈ [0, d₂)` and `v_0 = (2^f − u_0·d₁)/d₂`. For each
-    // valid solution, factor out the 2-adic part of `gcd(u, v)` to
-    // obtain `(u', v', e)` with `u'·d₁ + v'·d₂ = 2^e`.
+    // Enumerate positive-integer solutions `(u, v)` to
+    // `u·d₁ + v·d₂ = 2^f` along the line, starting at the smallest
+    // `v` and walking `v += d₁` (correspondingly `u -= d₂`) — matches
+    // C ref's `find_uv_from_lists` enumeration direction
+    // (`dim2id2iso.c:404-429`):
     //
-    // Prior versions checked only the `k = 0` pair and returned
-    // `None` whenever the resulting `e` constraint failed.
-    // Matching the C reference's `find_uv_from_lists`
-    // (`dim2id2iso.c:382-460`), which walks the whole line with a
-    // `v += d₁` increment, improves acceptance by roughly an order
-    // of magnitude for short-vector pairs with `d₁·d₂ ≪ 2^f`.
-    let d1_inv = d1_w.invert_mod(&d2_w)?;
-    let u0 = two_f.ct_mul(&d1_inv).ct_mod(&d2_w);
-    let mut u = u0;
-    let mut v = {
-        let ud1 = u.ct_mul(&d1_w);
-        if ud1 >= *two_f {
+    //     v = (n · d₂⁻¹) mod d₁    (smallest non-negative v)
+    //     while v < n / d₂:
+    //         u = (n − v·d₂) / d₁
+    //         if accept(u, v): return (u, v)
+    //         v += d₁
+    //
+    // Earlier versions started at the smallest `u` and walked
+    // `v -= d₁`, but that's the *opposite* enumeration order: it
+    // accepts `(small u, large v)` first while C ref accepts
+    // `(large u, small v)` first. With the same accept criterion
+    // both directions terminate, but they pick different `(u, v)` —
+    // so on KAT-aligned DRBG the chosen `(β_s, β_t)` diverges.
+    let d2_inv = d2_w.invert_mod(&d1_w)?;
+    let v0 = two_f.ct_mul(&d2_inv).ct_mod(&d1_w);
+    let mut v = v0;
+    let mut u = {
+        let vd2 = v.ct_mul(&d2_w);
+        if vd2 >= *two_f {
             return None;
         }
-        let (v, rem) = two_f.ct_sub(&ud1).div_rem(&d2_w);
-        if !bool::from(rem.is_zero()) || bool::from(v.is_negative()) {
+        let (u, rem) = two_f.ct_sub(&vd2).div_rem(&d1_w);
+        if !bool::from(rem.is_zero()) || bool::from(u.is_negative()) {
             return None;
         }
-        v
+        u
     };
 
     // Note: an earlier version "balance-biased" the start by jumping
@@ -1142,38 +1157,27 @@ fn try_find_uv<const N: usize>(
             // `e ≤ f − 2`) and
             // [`surfaces::Kernel::isogeny_no_extra_torsion`] (kernel
             // `2^e`, `e ∈ {f − 1, f}`) based on `sui.e`.
-            // Reject pairs whose odd parts `u_odd = u >> e_val`
-            // or `v_odd = v >> e_val` fall outside the
-            // `fixed_degree_isogeny`-safe window
-            // `[MIN_BITS, MAX_BITS] = [26, 135]`.
+            // Mirror C ref's `(ibz_get(u) != 0 && ibz_get(v) != 0)`
+            // guard at `dim2id2iso.c:421`. `ibz_get` returns an
+            // `int32_t` packed as `(sign_bit << 31) | (low_31_bits)`
+            // (`intbig.c:399-410`); for non-negative `u, v` (which
+            // is the case on this enumeration line) this is just
+            // the low 31 bits, so `ibz_get(u) == 0` ⟺ `v_2(u) >= 31`.
+            // Per the C ref comment, the filter "removes weird
+            // cases where u, v have big power of two".
             //
-            // Lower bound (26): below this, `e_fdi` caps at
-            // `f-2`, `represent_integer`'s bound collapses to
-            // 256, and its ~55-candidate `(z, t)` search
-            // nearly always fails (`represent_integer FAILED,
-            // e_fdi=246`).
-            //
-            // Upper bound (135): above this, `e_fdi = min(f-2,
-            // p_bits − bits + 20)` shrinks so `fixed_degree_
-            // isogeny` rejects the pair immediately via its
-            // `u_wide ≥ 2^{e_fdi}` guard (for `bits > 135`,
-            // `e_fdi < bits` always).
-            //
-            // The balance-jump above places us near `u ≈
-            // 2^{f/2}` where both odd parts typically fall in
-            // range; the walks below peel off trailing zeros.
-            const MIN_ODD_BITS: u32 = 26;
-            const MAX_ODD_BITS: u32 = 135;
-            let u_odd_bits = u.shr(e_val).bitsize();
-            let v_odd_bits = v.shr(e_val).bitsize();
-            if !(MIN_ODD_BITS..=MAX_ODD_BITS).contains(&u_odd_bits)
-                || !(MIN_ODD_BITS..=MAX_ODD_BITS).contains(&v_odd_bits)
-            {
-                u = u.ct_add(&d2_w);
-                if v <= d1_w {
+            // Without this filter, our line walk would accept
+            // `(u, v)` pairs that C ref rejects, leading to
+            // different `(β_s, β_t)` selections than C ref on
+            // KAT-aligned DRBG sequences.
+            if u.trailing_zeros() >= 31 || v.trailing_zeros() >= 31 {
+                // Advance `v += d₁`, `u -= d₂`. Stop if u would go
+                // non-positive.
+                v = v.ct_add(&d1_w);
+                if u <= d2_w {
                     return None;
                 }
-                v = v.ct_sub(&d1_w);
+                u = u.ct_sub(&d2_w);
                 continue;
             }
             if let Ok(e) = TorsionExponent::try_from(f.value() - e_val) {
@@ -1201,13 +1205,14 @@ fn try_find_uv<const N: usize>(
             }
         }
 
-        // Advance to the next solution on the line: `u += d₂`,
-        // `v −= d₁`. Stop when `v` would go non-positive.
-        u = u.ct_add(&d2_w);
-        if v <= d1_w {
+        // Advance to the next solution on the line: `v += d₁`,
+        // `u -= d₂`. Stop when `u` would go non-positive (matches
+        // C ref's `while (cmp < 0)` exit at v >= n/d₂).
+        v = v.ct_add(&d1_w);
+        if u <= d2_w {
             return None;
         }
-        v = v.ct_sub(&d1_w);
+        u = u.ct_sub(&d2_w);
     }
 }
 
@@ -1887,14 +1892,13 @@ impl<const N: usize> LeftIdeal<N> {
 
         // C ref's multi-order recipe (`dim2id2iso.c:617-666`):
         // 1. After LLL on self, let δ = first post-L² basis col.
-        // 2. k = nrd(δ_num) / (denom_self² · N(self)) — integer
-        //    "abstract norm" of the equivalent ideal class.
-        // 3. reduced_id.lattice = self.lattice · conj(δ)/N(self)
-        //    (a fractional left-O_0-ideal in B; integer-col
-        //    covolume at denom 4N is 64·N^5·k).
+        // 2. k = nrd(δ_num) / (denom_self² · N(self)) — integer "abstract norm" of the
+        //    equivalent ideal class.
+        // 3. reduced_id.lattice = self.lattice · conj(δ)/N(self) (a fractional
+        //    left-O_0-ideal in B; integer-col covolume at denom 4N is 64·N^5·k).
         // 4. conj_reduced_id = conjugate(reduced_id).
-        // 5. ideal[t] = conj_reduced_id · J_t. Norm = k · N(J_t).
-        //    Integer-col covolume at denom 8N is 1024·N^4·(k·N_J)².
+        // 5. ideal[t] = conj_reduced_id · J_t. Norm = k · N(J_t). Integer-col covolume
+        //    at denom 8N is 1024·N^4·(k·N_J)².
         //
         // We pass these *exact* covolume formulas as modular-HNF
         // moduli rather than the `det(first 4 cols)` heuristic, which
@@ -2007,7 +2011,9 @@ impl<const N: usize> LeftIdeal<N> {
                         let limbs = limbs.as_limbs();
                         let mut last_nz = 0;
                         for (k, &l) in limbs.iter().enumerate() {
-                            if l != 0 { last_nz = k; }
+                            if l != 0 {
+                                last_nz = k;
+                            }
                         }
                         for k in (0..=last_nz).rev() {
                             eprint!("{:016x}", limbs[k]);
@@ -2033,7 +2039,9 @@ impl<const N: usize> LeftIdeal<N> {
                         let limbs = abs.as_limbs();
                         let mut last_nz = 0;
                         for (k, &l) in limbs.iter().enumerate() {
-                            if l != 0 { last_nz = k; }
+                            if l != 0 {
+                                last_nz = k;
+                            }
                         }
                         for k in (0..=last_nz).rev() {
                             eprint!("{:016x}", limbs[k]);
@@ -2053,7 +2061,9 @@ impl<const N: usize> LeftIdeal<N> {
                         let limbs = abs.as_limbs();
                         let mut last_nz = 0;
                         for (k, &l) in limbs.iter().enumerate() {
-                            if l != 0 { last_nz = k; }
+                            if l != 0 {
+                                last_nz = k;
+                            }
                         }
                         for k in (0..=last_nz).rev() {
                             eprint!("{:016x}", limbs[k]);
@@ -2145,8 +2155,7 @@ impl<const N: usize> LeftIdeal<N> {
                     .alg_elem_mul_with_modulus(&conj_delta, &modulus_inner)
                     .reduce_denom();
                 let reduced_id_lat: Lattice<W2> = reduced_id_lat_hnf.into();
-                conj_reduced_state =
-                    Some((reduced_id_lat.conjugate(), k_norm, norm_t0_w2));
+                conj_reduced_state = Some((reduced_id_lat.conjugate(), k_norm, norm_t0_w2));
             }
         }
 

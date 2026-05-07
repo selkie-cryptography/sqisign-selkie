@@ -499,8 +499,16 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
     {
         let fp2_hex = |v: &crate::fields::fp2::Fp2| {
             let bytes = v.to_bytes();
-            let re: String = bytes[..32].iter().rev().map(|b| format!("{b:02x}")).collect();
-            let im: String = bytes[32..].iter().rev().map(|b| format!("{b:02x}")).collect();
+            let re: String = bytes[..32]
+                .iter()
+                .rev()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            let im: String = bytes[32..]
+                .iter()
+                .rev()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             format!("0x{re} + i*0x{im}")
         };
         eprintln!("THETA_BASIS_PX={}", fp2_hex(&theta_p.X));
@@ -727,10 +735,22 @@ impl<const N: usize> LeftIdeal<N> {
                 let re: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
                 re
             };
-            eprintln!("[FDI_OUT_U] phi_u_p.x_re=0x{}", fp2_hex(phi_u_p.to_affine_x().as_fp2()));
-            eprintln!("[FDI_OUT_U] phi_u_q.x_re=0x{}", fp2_hex(phi_u_q.to_affine_x().as_fp2()));
-            eprintln!("[FDI_OUT_U] phi_u_pmq.x_re=0x{}", fp2_hex(phi_u_pmq.to_affine_x().as_fp2()));
-            eprintln!("[FDI_OUT_U] e_u.A_re=0x{}", fp2_hex(e_u.coefficient().as_fp2()));
+            eprintln!(
+                "[FDI_OUT_U] phi_u_p.x_re=0x{}",
+                fp2_hex(phi_u_p.to_affine_x().as_fp2())
+            );
+            eprintln!(
+                "[FDI_OUT_U] phi_u_q.x_re=0x{}",
+                fp2_hex(phi_u_q.to_affine_x().as_fp2())
+            );
+            eprintln!(
+                "[FDI_OUT_U] phi_u_pmq.x_re=0x{}",
+                fp2_hex(phi_u_pmq.to_affine_x().as_fp2())
+            );
+            eprintln!(
+                "[FDI_OUT_U] e_u.A_re=0x{}",
+                fp2_hex(e_u.coefficient().as_fp2())
+            );
         }
         #[cfg(test)]
         eprintln!(
@@ -963,18 +983,16 @@ impl<const N: usize> LeftIdeal<N> {
         //
         // Dispatch on `sui.e` vs `f`:
         //
-        //   * `sui.e ≤ f − 2` → extra-torsion path. Pad the kernel by
-        //     `f − sui.e − 2` doublings, leaving 2 spare torsion bits
-        //     for the chain's penultimate/ultimate hadamard absorption.
-        //     Calls [`Kernel::isogeny`] (= `isogeny_extra_torsion`).
+        //   * `sui.e ≤ f − 2` → extra-torsion path. Pad the kernel by `f − sui.e − 2`
+        //     doublings, leaving 2 spare torsion bits for the chain's
+        //     penultimate/ultimate hadamard absorption. Calls [`Kernel::isogeny`] (=
+        //     `isogeny_extra_torsion`).
         //
-        //   * `sui.e ∈ {f − 1, f}` → no-extra-torsion path. Pad by
-        //     `f − sui.e` doublings so the kernel is exactly
-        //     `2^sui.e`. Calls [`Kernel::isogeny_no_extra_torsion`],
-        //     which runs `sui.e − 2` main 8-torsion steps then a
-        //     dedicated 4-isogeny + 2-isogeny tail. Mirrors the C
-        //     reference's `extra_torsion=false` mode at
-        //     `dim2id2iso.c:1128`.
+        //   * `sui.e ∈ {f − 1, f}` → no-extra-torsion path. Pad by `f − sui.e`
+        //     doublings so the kernel is exactly `2^sui.e`. Calls
+        //     [`Kernel::isogeny_no_extra_torsion`], which runs `sui.e − 2` main
+        //     8-torsion steps then a dedicated 4-isogeny + 2-isogeny tail. Mirrors the
+        //     C reference's `extra_torsion=false` mode at `dim2id2iso.c:1128`.
         // Always dispatch the outer chain to Mode B
         // (`isogeny_no_extra_torsion`), matching C ref's
         // `theta_chain_compute_and_eval_randomized(.., extra_torsion=false,

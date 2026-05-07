@@ -19,8 +19,10 @@
 //! condition and size-reduction rounding. The integer basis and Gram
 //! updates remain exact; only the GSO coefficients are approximate.
 
-use core::cmp::Ordering;
-use core::ops::{Add, Div, Mul, Sub, SubAssign};
+use core::{
+    cmp::Ordering,
+    ops::{Add, Div, Mul, Sub, SubAssign},
+};
 
 use crate::quaternions::bigint::BigInt;
 
@@ -88,15 +90,13 @@ impl DoublePlusExponent {
     /// Algorithm (from C ref):
     /// 1. If `v == 0`: return `(0.0, 0)`.
     /// 2. Set `e = bitsize(|v|)` (= `mpz_sizeinbase(op, 2)`).
-    /// 3. If `e > DBL_MAX_EXP` (= 1024): shift `|v|` right by
-    ///    `(e − 1024)` so the truncated value fits in `f64`'s normal
-    ///    range when converted.
-    /// 4. Convert the (possibly shifted) magnitude to `f64` using
-    ///    mini-GMP's `mpz_get_d` (truncation at bit 53,
-    ///    round-toward-zero — NOT round-to-nearest).
-    /// 5. Apply `frexp` to canonicalize the mantissa to `[1/2, 1)`;
-    ///    discard `frexp`'s exponent (the bit length is what we
-    ///    return).
+    /// 3. If `e > DBL_MAX_EXP` (= 1024): shift `|v|` right by `(e − 1024)` so
+    ///    the truncated value fits in `f64`'s normal range when converted.
+    /// 4. Convert the (possibly shifted) magnitude to `f64` using mini-GMP's
+    ///    `mpz_get_d` (truncation at bit 53, round-toward-zero — NOT
+    ///    round-to-nearest).
+    /// 5. Apply `frexp` to canonicalize the mantissa to `[1/2, 1)`; discard
+    ///    `frexp`'s exponent (the bit length is what we return).
     /// 6. Negate the mantissa if `v < 0`.
     ///
     /// # Bit-exactness
@@ -123,10 +123,7 @@ impl DoublePlusExponent {
         } else {
             mantissa
         };
-        Self {
-            m: signed,
-            e: bits,
-        }
+        Self { m: signed, e: bits }
     }
 
     /// Convert to a `BigInt<N>`, rounding to the nearest integer.

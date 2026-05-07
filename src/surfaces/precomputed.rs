@@ -42,13 +42,12 @@ use crate::{fields::fp2::Fp2, surfaces::GluingMatrix};
 /// `hd/ref/lvlx/theta_isogenies.c:1043-1059`). We mirror it
 /// because:
 ///
-/// 1. It is a real side-channel hardening — without it, the public
-///    output of keygen / sign is a deterministic function of secret
-///    kernel structure, not just the secret kernel itself.
-/// 2. The published KAT vectors are produced *with* this
-///    randomization applied, so byte-equality with KATs requires us
-///    to mirror the same RNG-byte consumption pattern and matrix
-///    selection as the C reference.
+/// 1. It is a real side-channel hardening — without it, the public output of
+///    keygen / sign is a deterministic function of secret kernel structure, not
+///    just the secret kernel itself.
+/// 2. The published KAT vectors are produced *with* this randomization applied,
+///    so byte-equality with KATs requires us to mirror the same RNG-byte
+///    consumption pattern and matrix selection as the C reference.
 pub(crate) const NORMALIZATION_TRANSFORMS: [GluingMatrix; 6] = [
     // Index 0 — identity: `M = I₂ ⊗ I₂`, no transform.
     GluingMatrix([
