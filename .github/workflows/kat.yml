@@ -23,6 +23,26 @@ name: KAT (manual)
 # slowest sign KATs (matching the platform job in ci.yml).
 
 on:
+  # Triggered on the same push/PR paths as ci.yml. Yes, this duplicates
+  # ci.yml's `platform` job, which already runs the same KAT tests across
+  # the cross-platform matrix. The duplication is intentional for now:
+  # we're iterating heavily on KAT byte-equality and want a faster
+  # single-platform signal in addition to the matrix. Once KAT progress
+  # stabilizes, fold this back into ci.yml and drop the workflow.
+  push:
+    branches: [main]
+    paths: &rust-paths
+      - 'src/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'rustfmt.toml'
+      - '.config/nextest.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/kat.yml'
+  pull_request:
+    branches: [main]
+    paths: *rust-paths
   workflow_dispatch:
     inputs:
       filter:

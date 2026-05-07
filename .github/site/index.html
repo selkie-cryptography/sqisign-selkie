@@ -2465,13 +2465,17 @@
     // Test families inside the `kat` suite, in display order. The
     // wycheproof suite is its own family. `expected` is set for
     // 100-vector families that get a 10x10 visual grid.
+    // Matchers anchor on `(?:^|::)` so they fire on module-prefixed test
+    // names: `cargo test` emits `keys::tests::verify_kat_000`, not the
+    // bare `verify_kat_000`. A bare `^` anchor here silently routed every
+    // per-vector test into the `wire` catch-all.
     const KAT_FAMILIES = [
       { key: 'verify', name: 'Verify',                 desc: 'C-ref signature verification',           expected: 100,
-        match: (n) => /^verify_kat_\d{3}$/.test(n) || n === 'kat_verify_all' },
+        match: (n) => /(?:^|::)verify_kat_\d{3}$/.test(n) || /(?:^|::)kat_verify_all$/.test(n) },
       { key: 'keygen', name: 'Keygen byte-equality',    desc: 'pk + sk reproduce C ref byte-for-byte', expected: 100,
-        match: (n) => /^keygen_kat_\d{3}$/.test(n) || n === 'keygen_kat_all' },
+        match: (n) => /(?:^|::)keygen_kat_\d{3}$/.test(n) || /(?:^|::)keygen_kat_all$/.test(n) },
       { key: 'sign',   name: 'Sign trajectory',         desc: 'End-to-end sign with parsed KAT sk',    expected: 100,
-        match: (n) => /^sign_kat_/.test(n) },
+        match: (n) => /(?:^|::)sign_kat_/.test(n) },
       { key: 'wire',   name: 'Wire format & negative',  desc: 'Roundtrip and rejection paths',         expected: null,
         match: () => true /* catch-all for the kat suite */ },
     ];

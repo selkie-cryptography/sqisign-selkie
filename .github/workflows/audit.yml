@@ -3,6 +3,15 @@ name: Audits
 on:
   push:
     branches: [main]
+    paths: &audit-paths
+      - 'src/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - '.config/nextest.toml'
+      - 'deny.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/audit.yml'
   workflow_dispatch:
 
 permissions:
