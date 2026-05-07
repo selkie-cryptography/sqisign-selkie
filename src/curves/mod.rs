@@ -603,7 +603,11 @@ impl TorsionBasis {
             let h_bit1 = subtle::Choice::from((h >> 1) & 1);
             let mut T0 = ProjectiveXOnlyPoint::conditional_select(&R0, &R1, h_bit0);
             T0 = ProjectiveXOnlyPoint::conditional_select(&T0, &R2, h_bit1);
-            T0 = if a_is_zero { T0.double_e0() } else { T0.double() };
+            T0 = if a_is_zero {
+                T0.double_e0()
+            } else {
+                T0.double()
+            };
 
             // T1 and T2 depend on r[2i+1].
             let r_bit = subtle::Choice::from(r[2 * i + 1] & 1);

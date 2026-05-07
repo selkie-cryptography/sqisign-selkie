@@ -3394,13 +3394,13 @@ impl<const N: usize> NrdBasis<N> {
     /// L² reduction with DPE-based GSO ([Alg. 3.3]).
     ///
     /// Reduces the basis in place, keeping the Gram matrix in sync.
-    /// Uses [`DoublePlusExponent`](dpe::DoublePlusExponent) (double-precision with extended
-    /// exponent) for the Gram-Schmidt coefficients, matching the C
-    /// reference's approach. The basis and Gram updates remain exact
+    /// Uses [`DoublePlusExponent`](dpe::DoublePlusExponent) (double-precision
+    /// with extended exponent) for the Gram-Schmidt coefficients, matching
+    /// the C reference's approach. The basis and Gram updates remain exact
     /// (integer). Size-reduction rounding uses
-    /// [`DoublePlusExponent::to_bigint`](dpe::DoublePlusExponent::to_bigint) to convert the float
-    /// μ back to an integer coefficient, which handles values that
-    /// exceed `i64` range (e.g., μ[3][0] ≈ 2^260 before first
+    /// [`DoublePlusExponent::to_bigint`](dpe::DoublePlusExponent::to_bigint) to
+    /// convert the float μ back to an integer coefficient, which handles
+    /// values that exceed `i64` range (e.g., μ[3][0] ≈ 2^260 before first
     /// reduction).
     ///
     /// # Precision requirement

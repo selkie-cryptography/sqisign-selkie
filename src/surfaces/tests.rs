@@ -537,14 +537,14 @@ fn fp2_from_dump_hex(re_be_hex: &str, im_be_hex: &str) -> Fp2 {
 /// `step=main_codomain null.{a..d}`.
 ///
 /// Outcome interpretation:
-/// - **Passes** → `codomain_8torsion` is byte-correct given byte-equal
-///   inputs. The KAT divergence observed in keygen logs is therefore
-///   purely orchestrational (different chain instances run on each
-///   side), not a step-internal bug.
-/// - **Fails** → the `cfg(test)` `step=internal` dumps emitted by the
-///   call (TT1/TT2 after `T.squared().hadamard()`, and `pre_H.null`
-///   after the four cross-product `fp2_mul`s) pin the divergence to
-///   one of: input transform, cross-product formula, or final Hadamard.
+/// - **Passes** → `codomain_8torsion` is byte-correct given byte-equal inputs.
+///   The KAT divergence observed in keygen logs is therefore purely
+///   orchestrational (different chain instances run on each side), not a
+///   step-internal bug.
+/// - **Fails** → the `cfg(test)` `step=internal` dumps emitted by the call
+///   (TT1/TT2 after `T.squared().hadamard()`, and `pre_H.null` after the four
+///   cross-product `fp2_mul`s) pin the divergence to one of: input transform,
+///   cross-product formula, or final Hadamard.
 #[test]
 fn cref_kat0_main1_codomain_8torsion_byte_eq() {
     let null = ThetaNullPoint::new(
@@ -813,8 +813,16 @@ fn selkie_theta_basis_vs_cref_kat0_projective_eq() {
         let lambda_z = selkie_z * &cref_z_inv;
         let bytes_x = lambda_x.to_bytes();
         let bytes_z = lambda_z.to_bytes();
-        let hex_x: String = bytes_x[..32].iter().rev().map(|b| format!("{b:02x}")).collect();
-        let hex_z: String = bytes_z[..32].iter().rev().map(|b| format!("{b:02x}")).collect();
+        let hex_x: String = bytes_x[..32]
+            .iter()
+            .rev()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let hex_z: String = bytes_z[..32]
+            .iter()
+            .rev()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         eprintln!("  lambda_x = 0x{hex_x}");
         eprintln!("  lambda_z = 0x{hex_z}");
         eprintln!("  lambda equal = {}", lambda_x == lambda_z);
@@ -833,15 +841,14 @@ fn selkie_theta_basis_vs_cref_kat0_projective_eq() {
 /// scalar `λ ∈ F_{p^2}*` with `(a, b, c, d) = λ · (a', b', c', d')`.
 ///
 /// Outcome interpretation:
-/// - **One pair matches per chain** → the gluing math is correct;
-///   our intermediate `(X:Z)` reps drift from C ref's reps, but the
-///   underlying group element is the same. The pk divergence for
-///   failing KATs comes from later in the chain.
-/// - **No pair matches** → our gluing produces a *different* theta
-///   null point than C ref's gluing, on the same KAT. The bug is
-///   in/before `gluing_compute` itself (either upstream kernel
-///   construction, or the gluing's `theta_change_of_basis` /
-///   cross-product formulas).
+/// - **One pair matches per chain** → the gluing math is correct; our
+///   intermediate `(X:Z)` reps drift from C ref's reps, but the underlying
+///   group element is the same. The pk divergence for failing KATs comes from
+///   later in the chain.
+/// - **No pair matches** → our gluing produces a *different* theta null point
+///   than C ref's gluing, on the same KAT. The bug is in/before
+///   `gluing_compute` itself (either upstream kernel construction, or the
+///   gluing's `theta_change_of_basis` / cross-product formulas).
 ///
 /// `#[ignore]`d because the second of our two chains does not match
 /// any C ref chain projectively, by design — this test captures a
@@ -895,204 +902,237 @@ fn kat17_glue_vs_cref_projective_eq_scan() {
 
     // C ref chains (n values inline as label).
     let cref: Vec<(u32, [Fp2; 4])> = vec![
-        (148, [
-            fp2_from_dump_hex(
-                "0x02999a7fe67108096e9c7b12ec0a32fee3ec0f14ac7dd8c4b1a3a0e0c873c01f",
-                "0x00a6a4fa7cfff23ff904d53c5ef08c89d83fe4b93e792ee662990516b3eaf1e9",
-            ),
-            fp2_from_dump_hex(
-                "0x014c84953f2960b4b795e10b1a957798426ce8eecd3b817554ded225541a556b",
-                "0x04aaf8cd9982a212647c75540d434036f5d7222968f76bb84e7c1d315818147d",
-            ),
-            fp2_from_dump_hex(
-                "0x04af2797a453ef78dcf27edd3717d4ba9ffbd9a1084641b8bf3e15c007b887ff",
-                "0x0407f147bf35b698e47cf0a42148046268a9b7b0b7c63cf854bf1413338e80cd",
-            ),
-            fp2_from_dump_hex(
-                "0x036211acfd0c482425ebe4d565a31953fe7cb37b2903ea6962794704935f1d4b",
-                "0x030c451adbb8666b4ff490bbcf9ab80f8640f520e24479ca40a22c2dd7bba362",
-            ),
-        ]),
-        (153, [
-            fp2_from_dump_hex(
-                "0x030504d65a9c580420693f69a55a2693a90caa13c3f90a75f1bc35f5c7093ca5",
-                "0x0333392f31bb13f9085d7ae3c9fbe3be144c26fc0b32d8ff54048dbf7044f4ae",
-            ),
-            fp2_from_dump_hex(
-                "0x04aa3caa291e5f74ceb995cc809d3f61315ce79a0f16242a22b2d379fef06c9b",
-                "0x03d64e49cd14a50a3d626d4fffaa22cf9b129eed2d1ad1faf727d7531446144a",
-            ),
-            fp2_from_dump_hex(
-                "0x03b08b82085f991a82f613d0a41fa7d14652dadfa5ccc221ac568f01c928636d",
-                "0x00869c9b9791c9e48d98a043caa79e1ede26e921b0fd350965b4df1947b8cc19",
-            ),
-            fp2_from_dump_hex(
-                "0x0055c355d6e1a08b31466a337f62c09ecea31865f0e9dbd5dd4d2c86010f9364",
-                "0x0129b1b632eb5af5c29d92b00055dd3064ed6112d2e52e0508d828acebb9ebb5",
-            ),
-        ]),
-        (248, [
-            fp2_from_dump_hex(
-                "0x0430f54569dc074b2f39b7156a48983c1bc42b0e4c4e5c47392a1d2aedda29cf",
-                "0x0425859f3a9f8dc2a89dbee1f5eae543caeafb3274f90c5bfd44c799d0ca8d71",
-            ),
-            fp2_from_dump_hex(
-                "0x045ca355e5ad8b9fa93bfc4e1679de107d0e6fadc88a2ca7106d385ae957c07d",
-                "0x02015d84acfdc293b482f1f611460b9aec48173679f5993481f564c112a037c0",
-            ),
-            fp2_from_dump_hex(
-                "0x03aa5fe4b6a20981d38f9253de30ff4b3b26ebed96fb952250d74dd2a892e4df",
-                "0x040620b077c3073a2e48edae91779e38cf70f3184dfb05b0bb8824ebd77ca362",
-            ),
-            fp2_from_dump_hex(
-                "0x03d60df532738dd64d91d78c8a62451f9c71308d13376582281a6902a4107b8d",
-                "0x01e1f895ea213c0b3a2e20c2acd2c48ff0ce0f1c52f792894038c21319524db1",
-            ),
-        ]),
-        (152, [
-            fp2_from_dump_hex(
-                "0x00b4a65962dffdc314fda2a825c4039033caf52be49cbbadcd19e3a0985aa944",
-                "0x01d0589cc165afec58e888655fa10aaca66f2a9f5ead7ad35ea6db8df461156b",
-            ),
-            fp2_from_dump_hex(
-                "0x032fa7633e9a5013a717779aa05ef5535990d560a152852ca15924720b9eea94",
-                "0x01d0589cc165afec58e888655fa10aaca66f2a9f5ead7ad35ea6db8df461156b",
-            ),
-            fp2_from_dump_hex(
-                "0x01d0589cc165afec58e888655fa10aaca66f2a9f5ead7ad35ea6db8df461156b",
-                "0x00b4a65962dffdc314fda2a825c4039033caf52be49cbbadcd19e3a0985aa944",
-            ),
-            fp2_from_dump_hex(
-                "0x044b59a69d20023ceb025d57da3bfc6fcc350ad41b63445232e61c5f67a556bb",
-                "0x00b4a65962dffdc314fda2a825c4039033caf52be49cbbadcd19e3a0985aa944",
-            ),
-        ]),
-        (150, [
-            fp2_from_dump_hex(
-                "0x013f747455882aff5b8407f1e47b7b80a26cf6adbd88cab00cbe4c3ef7070043",
-                "0x048d881c8c0d5d964e28c619baf6e8ca9b71f1d0b59fe4a755639dab29f3a56e",
-            ),
-            fp2_from_dump_hex(
-                "0x02a6412a7d3004e2dd9b2016c37ac7cba9b7f2e6e6e996a041eb1cc61fffbf88",
-                "0x04a88c26ff01775b1e1ffde8cc0bea494f19658e2e597f7d8138a20ba29df96b",
-            ),
-            fp2_from_dump_hex(
-                "0x023ebacb0fdbe158526da81a2b7036b5a2a0995ba05cce89923fded96755ec7a",
-                "0x01be408f28a6628863f71a3c12f36201b83196aafb074c72b3f42e7b865ac5d9",
-            ),
-            fp2_from_dump_hex(
-                "0x03a587813783bb3bd484c03f0a6f8300a9eb9594c9bd9a79c76caf60904eabbf",
-                "0x01d944999b9a7c4d33ee520b240863806bd90a6873c0e748dfc932dbff0519d6",
-            ),
-        ]),
-        (245, [
-            fp2_from_dump_hex(
-                "0x0407a0729d41351649ca1dfda3e4fef79c026dd56c708a91c7c9236243ff5f28",
-                "0x01eae3f44c964bdd16141ba7d1d46d8a664877f0f589b344a0412a6c2146025a",
-            ),
-            fp2_from_dump_hex(
-                "0x03c50995fdab266e6ce6cadbf67e65391976dac573d69864c7315bfffaa0a2eb",
-                "0x003ece5972b320a4827b6f3c1ee6a4f7d8bebde43c2b7827a0124cbfc1aab994",
-            ),
-            fp2_from_dump_hex(
-                "0x00f8437297d4f8f123013238a1d547c758d219c59c8e96cee11874fbe86fb43f",
-                "0x01a9c3630f0696fc9e4519bf66a5f5a1a87c823b2986f65db0b5298730010945",
-            ),
-            fp2_from_dump_hex(
-                "0x00b5ac95f83eea49461ddf16f46eae08d64686b5a3f4a4a1e080ad999f10f802",
-                "0x04fdadc835236bc40aac6d53b3b82d0f1af2c82e7028bb40b0864bdad065c07e",
-            ),
-        ]),
-        (149, [
-            fp2_from_dump_hex(
-                "0x0076768bbe4aed0d35fb6977f631c6473a394282235f0461956c5ecfad178ce3",
-                "0x000b1d5f07b9679710cb6d29d07da1b066c768eb9fee85269743568db2ce97c8",
-            ),
-            fp2_from_dump_hex(
-                "0x04e339708c501ebaa75fcc1776b52ba6f4376b132b90b99e252e3f327b83e4e0",
-                "0x01911319f37454c8ef4ed7fc8143ebfc43d723a598c18af206e45d15cf2a2094",
-            ),
-            fp2_from_dump_hex(
-                "0x0489897441b512f2ca04968809ce39b8c5c6bd7ddca0fb9e6a93a13052e8731c",
-                "0x04f4e2a0f8469868ef3492d62f825e4f9938971460117ad968bca9724d316837",
-            ),
-            fp2_from_dump_hex(
-                "0x03f64c590fba44a03b68f9278a519f187fc4e60ee4d2b0dafa5581932154cb1a",
-                "0x017ad85be401859acdb7fda8e048a89b764851ce58e480a4d85daffa698cf104",
-            ),
-        ]),
-        (148, [
-            fp2_from_dump_hex(
-                "0x033cb2173b9a6533708fca87df661c21054623e594680509a0a6cbb2b47ba7e6",
-                "0x03c624d55437cd060a95fad18c89f0de0233a80ed5f7e141a5e8e87b56ae1d8d",
-            ),
-            fp2_from_dump_hex(
-                "0x0078bbddc4b8e56495efba7c078300a7d16f78cc884592c746865670335debe1",
-                "0x00e028d37c268e96dd99294a8675f881b9a2db5dff3679c86c80985d5d770e04",
-            ),
-            fp2_from_dump_hex(
-                "0x01a148206335dc2c3d1373fcf26906fbe5ffba82a0f905bf80115971d36b0495",
-                "0x01e3cd65fabaf137fd06e6c1516d22f77a33cfbb0cebf879ed9fdce523a6ae01",
-            ),
-            fp2_from_dump_hex(
-                "0x03dd51e6ec545c5d627363f11a85eb82b2290f6994d6937d25f0e42f524d488f",
-                "0x03fdd16422a9b2c8d00a153a4b592a9b31a3030a362a9100b4378cc72a6f9e77",
-            ),
-        ]),
-        (248, [
-            fp2_from_dump_hex(
-                "0x010d67d54d3746b784705271d2835ab2c5f56ef7bad880a53082033c67cde70a",
-                "0x04889c9411ddb62023c994b8f5275ba879c7e4d90083c2ba45c0502379ab67d4",
-            ),
-            fp2_from_dump_hex(
-                "0x0318d1eb9c95972ea4a0685e76bc70f7476ca77aada834827dfe01b4a8bd3719",
-                "0x0166d9ea2c0db919bbfa7da0861e4331c1d39251548011944d2a5bbba288eed7",
-            ),
-            fp2_from_dump_hex(
-                "0x005d6832607fc815b5f0e3e1445260ddfc71f18750c86f86f687ba412b5c4d20",
-                "0x04eb1d22ad20bb5ea156167ad7055c0882a9867220ab389debfd225c0f4ec775",
-            ),
-            fp2_from_dump_hex(
-                "0x0268d248afde188cd620f9cde88b77227de92a0a439823644403b8b96c4b9d2f",
-                "0x01c95a78c750be583986ff6267fc4391cab533ea74a78777f3672df4382c4e78",
-            ),
-        ]),
-        (126, [
-            fp2_from_dump_hex(
-                "0x027acc2a2f00e29a947624b0342b8290ff5842d26fd772329d93ba0df41ce23b",
-                "0x025fbaaa995cddcd26e13f3c31fa823c73baa92b1e1b64a8f19152a3974df1f6",
-            ),
-            fp2_from_dump_hex(
-                "0x016086afdf3b2a661a41f5f06eb49d73c37cd2542a9219a82ed72736ad0296f5",
-                "0x04f466316e7206b504c169b1274bc7b3b0f1f127fd582065e1fbfaac3d9ecaf2",
-            ),
-            fp2_from_dump_hex(
-                "0x033894759b6fc6674882b18d553e37d7e3795905f699a61d0eb9eb4a8646371a",
-                "0x0459dd2b2088dfd221ab14d3270ccefc9788b3e2dc915bad365cbaa1994f2b3e",
-            ),
-            fp2_from_dump_hex(
-                "0x021e4efb4baa0e32ce4e82cd8fc752baa79de887b1544d929ffd58733f2bebd4",
-                "0x01ee88b1f59e08b9ff8b3f481c5e1473d4bffbdfbbce176a26c762aa3fa0043b",
-            ),
-        ]),
-        (126, [
-            fp2_from_dump_hex(
-                "0x01f017a476f3bb3a86c158eb101f1471682d4ca7efd8602ced01e121ef0e4a01",
-                "0x04998da12d77c77eb835306090fe4f97aa951b526d9af4e906a0419705aaa9e4",
-            ),
-            fp2_from_dump_hex(
-                "0x04e8062c6cdb80b5d513f2dc4143719c9973685e1c6327bde44a8f62f11fbc62",
-                "0x009333ef0611a0e2b46e5f0637bc8aae149ce977a45e070bd1bee8ca9dd8d175",
-            ),
-            fp2_from_dump_hex(
-                "0x04fb28df441fb3b524867ee5cd3786fd24838e23df96dde729949854fc80bf8d",
-                "0x008b9d1e410d78e391bd5fe1b3f2cf372529d3a541e60ab1cf858c2809c68a3c",
-            ),
-            fp2_from_dump_hex(
-                "0x02f317673a07793072d918d6fe5be42855c9a9da0c21a57820dd4695fe9231ef",
-                "0x0185436c19a752478df68e875ab10a4d8f31a1ca78a91cd49aa4335ba1f4b1cc",
-            ),
-        ]),
+        (
+            148,
+            [
+                fp2_from_dump_hex(
+                    "0x02999a7fe67108096e9c7b12ec0a32fee3ec0f14ac7dd8c4b1a3a0e0c873c01f",
+                    "0x00a6a4fa7cfff23ff904d53c5ef08c89d83fe4b93e792ee662990516b3eaf1e9",
+                ),
+                fp2_from_dump_hex(
+                    "0x014c84953f2960b4b795e10b1a957798426ce8eecd3b817554ded225541a556b",
+                    "0x04aaf8cd9982a212647c75540d434036f5d7222968f76bb84e7c1d315818147d",
+                ),
+                fp2_from_dump_hex(
+                    "0x04af2797a453ef78dcf27edd3717d4ba9ffbd9a1084641b8bf3e15c007b887ff",
+                    "0x0407f147bf35b698e47cf0a42148046268a9b7b0b7c63cf854bf1413338e80cd",
+                ),
+                fp2_from_dump_hex(
+                    "0x036211acfd0c482425ebe4d565a31953fe7cb37b2903ea6962794704935f1d4b",
+                    "0x030c451adbb8666b4ff490bbcf9ab80f8640f520e24479ca40a22c2dd7bba362",
+                ),
+            ],
+        ),
+        (
+            153,
+            [
+                fp2_from_dump_hex(
+                    "0x030504d65a9c580420693f69a55a2693a90caa13c3f90a75f1bc35f5c7093ca5",
+                    "0x0333392f31bb13f9085d7ae3c9fbe3be144c26fc0b32d8ff54048dbf7044f4ae",
+                ),
+                fp2_from_dump_hex(
+                    "0x04aa3caa291e5f74ceb995cc809d3f61315ce79a0f16242a22b2d379fef06c9b",
+                    "0x03d64e49cd14a50a3d626d4fffaa22cf9b129eed2d1ad1faf727d7531446144a",
+                ),
+                fp2_from_dump_hex(
+                    "0x03b08b82085f991a82f613d0a41fa7d14652dadfa5ccc221ac568f01c928636d",
+                    "0x00869c9b9791c9e48d98a043caa79e1ede26e921b0fd350965b4df1947b8cc19",
+                ),
+                fp2_from_dump_hex(
+                    "0x0055c355d6e1a08b31466a337f62c09ecea31865f0e9dbd5dd4d2c86010f9364",
+                    "0x0129b1b632eb5af5c29d92b00055dd3064ed6112d2e52e0508d828acebb9ebb5",
+                ),
+            ],
+        ),
+        (
+            248,
+            [
+                fp2_from_dump_hex(
+                    "0x0430f54569dc074b2f39b7156a48983c1bc42b0e4c4e5c47392a1d2aedda29cf",
+                    "0x0425859f3a9f8dc2a89dbee1f5eae543caeafb3274f90c5bfd44c799d0ca8d71",
+                ),
+                fp2_from_dump_hex(
+                    "0x045ca355e5ad8b9fa93bfc4e1679de107d0e6fadc88a2ca7106d385ae957c07d",
+                    "0x02015d84acfdc293b482f1f611460b9aec48173679f5993481f564c112a037c0",
+                ),
+                fp2_from_dump_hex(
+                    "0x03aa5fe4b6a20981d38f9253de30ff4b3b26ebed96fb952250d74dd2a892e4df",
+                    "0x040620b077c3073a2e48edae91779e38cf70f3184dfb05b0bb8824ebd77ca362",
+                ),
+                fp2_from_dump_hex(
+                    "0x03d60df532738dd64d91d78c8a62451f9c71308d13376582281a6902a4107b8d",
+                    "0x01e1f895ea213c0b3a2e20c2acd2c48ff0ce0f1c52f792894038c21319524db1",
+                ),
+            ],
+        ),
+        (
+            152,
+            [
+                fp2_from_dump_hex(
+                    "0x00b4a65962dffdc314fda2a825c4039033caf52be49cbbadcd19e3a0985aa944",
+                    "0x01d0589cc165afec58e888655fa10aaca66f2a9f5ead7ad35ea6db8df461156b",
+                ),
+                fp2_from_dump_hex(
+                    "0x032fa7633e9a5013a717779aa05ef5535990d560a152852ca15924720b9eea94",
+                    "0x01d0589cc165afec58e888655fa10aaca66f2a9f5ead7ad35ea6db8df461156b",
+                ),
+                fp2_from_dump_hex(
+                    "0x01d0589cc165afec58e888655fa10aaca66f2a9f5ead7ad35ea6db8df461156b",
+                    "0x00b4a65962dffdc314fda2a825c4039033caf52be49cbbadcd19e3a0985aa944",
+                ),
+                fp2_from_dump_hex(
+                    "0x044b59a69d20023ceb025d57da3bfc6fcc350ad41b63445232e61c5f67a556bb",
+                    "0x00b4a65962dffdc314fda2a825c4039033caf52be49cbbadcd19e3a0985aa944",
+                ),
+            ],
+        ),
+        (
+            150,
+            [
+                fp2_from_dump_hex(
+                    "0x013f747455882aff5b8407f1e47b7b80a26cf6adbd88cab00cbe4c3ef7070043",
+                    "0x048d881c8c0d5d964e28c619baf6e8ca9b71f1d0b59fe4a755639dab29f3a56e",
+                ),
+                fp2_from_dump_hex(
+                    "0x02a6412a7d3004e2dd9b2016c37ac7cba9b7f2e6e6e996a041eb1cc61fffbf88",
+                    "0x04a88c26ff01775b1e1ffde8cc0bea494f19658e2e597f7d8138a20ba29df96b",
+                ),
+                fp2_from_dump_hex(
+                    "0x023ebacb0fdbe158526da81a2b7036b5a2a0995ba05cce89923fded96755ec7a",
+                    "0x01be408f28a6628863f71a3c12f36201b83196aafb074c72b3f42e7b865ac5d9",
+                ),
+                fp2_from_dump_hex(
+                    "0x03a587813783bb3bd484c03f0a6f8300a9eb9594c9bd9a79c76caf60904eabbf",
+                    "0x01d944999b9a7c4d33ee520b240863806bd90a6873c0e748dfc932dbff0519d6",
+                ),
+            ],
+        ),
+        (
+            245,
+            [
+                fp2_from_dump_hex(
+                    "0x0407a0729d41351649ca1dfda3e4fef79c026dd56c708a91c7c9236243ff5f28",
+                    "0x01eae3f44c964bdd16141ba7d1d46d8a664877f0f589b344a0412a6c2146025a",
+                ),
+                fp2_from_dump_hex(
+                    "0x03c50995fdab266e6ce6cadbf67e65391976dac573d69864c7315bfffaa0a2eb",
+                    "0x003ece5972b320a4827b6f3c1ee6a4f7d8bebde43c2b7827a0124cbfc1aab994",
+                ),
+                fp2_from_dump_hex(
+                    "0x00f8437297d4f8f123013238a1d547c758d219c59c8e96cee11874fbe86fb43f",
+                    "0x01a9c3630f0696fc9e4519bf66a5f5a1a87c823b2986f65db0b5298730010945",
+                ),
+                fp2_from_dump_hex(
+                    "0x00b5ac95f83eea49461ddf16f46eae08d64686b5a3f4a4a1e080ad999f10f802",
+                    "0x04fdadc835236bc40aac6d53b3b82d0f1af2c82e7028bb40b0864bdad065c07e",
+                ),
+            ],
+        ),
+        (
+            149,
+            [
+                fp2_from_dump_hex(
+                    "0x0076768bbe4aed0d35fb6977f631c6473a394282235f0461956c5ecfad178ce3",
+                    "0x000b1d5f07b9679710cb6d29d07da1b066c768eb9fee85269743568db2ce97c8",
+                ),
+                fp2_from_dump_hex(
+                    "0x04e339708c501ebaa75fcc1776b52ba6f4376b132b90b99e252e3f327b83e4e0",
+                    "0x01911319f37454c8ef4ed7fc8143ebfc43d723a598c18af206e45d15cf2a2094",
+                ),
+                fp2_from_dump_hex(
+                    "0x0489897441b512f2ca04968809ce39b8c5c6bd7ddca0fb9e6a93a13052e8731c",
+                    "0x04f4e2a0f8469868ef3492d62f825e4f9938971460117ad968bca9724d316837",
+                ),
+                fp2_from_dump_hex(
+                    "0x03f64c590fba44a03b68f9278a519f187fc4e60ee4d2b0dafa5581932154cb1a",
+                    "0x017ad85be401859acdb7fda8e048a89b764851ce58e480a4d85daffa698cf104",
+                ),
+            ],
+        ),
+        (
+            148,
+            [
+                fp2_from_dump_hex(
+                    "0x033cb2173b9a6533708fca87df661c21054623e594680509a0a6cbb2b47ba7e6",
+                    "0x03c624d55437cd060a95fad18c89f0de0233a80ed5f7e141a5e8e87b56ae1d8d",
+                ),
+                fp2_from_dump_hex(
+                    "0x0078bbddc4b8e56495efba7c078300a7d16f78cc884592c746865670335debe1",
+                    "0x00e028d37c268e96dd99294a8675f881b9a2db5dff3679c86c80985d5d770e04",
+                ),
+                fp2_from_dump_hex(
+                    "0x01a148206335dc2c3d1373fcf26906fbe5ffba82a0f905bf80115971d36b0495",
+                    "0x01e3cd65fabaf137fd06e6c1516d22f77a33cfbb0cebf879ed9fdce523a6ae01",
+                ),
+                fp2_from_dump_hex(
+                    "0x03dd51e6ec545c5d627363f11a85eb82b2290f6994d6937d25f0e42f524d488f",
+                    "0x03fdd16422a9b2c8d00a153a4b592a9b31a3030a362a9100b4378cc72a6f9e77",
+                ),
+            ],
+        ),
+        (
+            248,
+            [
+                fp2_from_dump_hex(
+                    "0x010d67d54d3746b784705271d2835ab2c5f56ef7bad880a53082033c67cde70a",
+                    "0x04889c9411ddb62023c994b8f5275ba879c7e4d90083c2ba45c0502379ab67d4",
+                ),
+                fp2_from_dump_hex(
+                    "0x0318d1eb9c95972ea4a0685e76bc70f7476ca77aada834827dfe01b4a8bd3719",
+                    "0x0166d9ea2c0db919bbfa7da0861e4331c1d39251548011944d2a5bbba288eed7",
+                ),
+                fp2_from_dump_hex(
+                    "0x005d6832607fc815b5f0e3e1445260ddfc71f18750c86f86f687ba412b5c4d20",
+                    "0x04eb1d22ad20bb5ea156167ad7055c0882a9867220ab389debfd225c0f4ec775",
+                ),
+                fp2_from_dump_hex(
+                    "0x0268d248afde188cd620f9cde88b77227de92a0a439823644403b8b96c4b9d2f",
+                    "0x01c95a78c750be583986ff6267fc4391cab533ea74a78777f3672df4382c4e78",
+                ),
+            ],
+        ),
+        (
+            126,
+            [
+                fp2_from_dump_hex(
+                    "0x027acc2a2f00e29a947624b0342b8290ff5842d26fd772329d93ba0df41ce23b",
+                    "0x025fbaaa995cddcd26e13f3c31fa823c73baa92b1e1b64a8f19152a3974df1f6",
+                ),
+                fp2_from_dump_hex(
+                    "0x016086afdf3b2a661a41f5f06eb49d73c37cd2542a9219a82ed72736ad0296f5",
+                    "0x04f466316e7206b504c169b1274bc7b3b0f1f127fd582065e1fbfaac3d9ecaf2",
+                ),
+                fp2_from_dump_hex(
+                    "0x033894759b6fc6674882b18d553e37d7e3795905f699a61d0eb9eb4a8646371a",
+                    "0x0459dd2b2088dfd221ab14d3270ccefc9788b3e2dc915bad365cbaa1994f2b3e",
+                ),
+                fp2_from_dump_hex(
+                    "0x021e4efb4baa0e32ce4e82cd8fc752baa79de887b1544d929ffd58733f2bebd4",
+                    "0x01ee88b1f59e08b9ff8b3f481c5e1473d4bffbdfbbce176a26c762aa3fa0043b",
+                ),
+            ],
+        ),
+        (
+            126,
+            [
+                fp2_from_dump_hex(
+                    "0x01f017a476f3bb3a86c158eb101f1471682d4ca7efd8602ced01e121ef0e4a01",
+                    "0x04998da12d77c77eb835306090fe4f97aa951b526d9af4e906a0419705aaa9e4",
+                ),
+                fp2_from_dump_hex(
+                    "0x04e8062c6cdb80b5d513f2dc4143719c9973685e1c6327bde44a8f62f11fbc62",
+                    "0x009333ef0611a0e2b46e5f0637bc8aae149ce977a45e070bd1bee8ca9dd8d175",
+                ),
+                fp2_from_dump_hex(
+                    "0x04fb28df441fb3b524867ee5cd3786fd24838e23df96dde729949854fc80bf8d",
+                    "0x008b9d1e410d78e391bd5fe1b3f2cf372529d3a541e60ab1cf858c2809c68a3c",
+                ),
+                fp2_from_dump_hex(
+                    "0x02f317673a07793072d918d6fe5be42855c9a9da0c21a57820dd4695fe9231ef",
+                    "0x0185436c19a752478df68e875ab10a4d8f31a1ca78a91cd49aa4335ba1f4b1cc",
+                ),
+            ],
+        ),
     ];
 
     // Projective equality of (a:b:c:d) and (a':b':c':d') in P^3.
@@ -1113,14 +1153,15 @@ fn kat17_glue_vs_cref_projective_eq_scan() {
     for (si, s) in ours.iter().enumerate() {
         for (cj, (n, c)) in cref.iter().enumerate() {
             if proj_eq(s, c) {
-                eprintln!(
-                    "MATCH: our chain {si} ≡ C ref chain {cj} (n={n}) projectively"
-                );
+                eprintln!("MATCH: our chain {si} ≡ C ref chain {cj} (n={n}) projectively");
                 any_match[si] = true;
             }
         }
         if !any_match[si] {
-            eprintln!("NO MATCH for our chain {si} against any of {} C ref chains", cref.len());
+            eprintln!(
+                "NO MATCH for our chain {si} against any of {} C ref chains",
+                cref.len()
+            );
         }
     }
 

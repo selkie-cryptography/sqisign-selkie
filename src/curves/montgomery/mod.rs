@@ -356,7 +356,7 @@ impl Curve {
         doubling: DoublingConstants {
             A24: Fp2::new(
                 Fp::from_limbs([
-                    0x000000000000000c,
+                    0x000000000000000C,
                     0x0000000000000000,
                     0x0000000000000000,
                     0x0000000000000000,
