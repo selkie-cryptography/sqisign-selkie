@@ -374,16 +374,22 @@ impl ExtremalOrder<8> {
                 //   - Verifying the chain for [3] (correct: splits)
                 //   - Discovering nrd(theta) = 4*m via Python norm computation
                 //   - Tracing back to normalize() vs make_primitive
-                let narrow = |v: &BigInt<8>| -> BigInt<4> {
-                    v.narrow_to::<4>()
-                        .expect("γ coord fits in BigInt<4>: bounded by √M")
-                };
+                // Skip rather than panic when γ doesn't fit in
+                // `BigInt<4>`: for the multi-order-enumeration path
+                // the target M can be wide enough to push γ past
+                // 256 bits. The represent_integer outer retry loop
+                // will re-sample a (z, t) pair.
+                let Some(g0) = gamma_coords[0].narrow_to::<4>() else { continue; };
+                let Some(g1) = gamma_coords[1].narrow_to::<4>() else { continue; };
+                let Some(g2) = gamma_coords[2].narrow_to::<4>() else { continue; };
+                let Some(g3) = gamma_coords[3].narrow_to::<4>() else { continue; };
+                let Some(gd) = common_d.narrow_to::<4>() else { continue; };
                 let gamma = Element::<4>::new(
-                    Coordinate::from_bigint(narrow(&gamma_coords[0])),
-                    Coordinate::from_bigint(narrow(&gamma_coords[1])),
-                    Coordinate::from_bigint(narrow(&gamma_coords[2])),
-                    Coordinate::from_bigint(narrow(&gamma_coords[3])),
-                    Denominator::from_bigint_unchecked(narrow(&common_d)),
+                    Coordinate::from_bigint(g0),
+                    Coordinate::from_bigint(g1),
+                    Coordinate::from_bigint(g2),
+                    Coordinate::from_bigint(g3),
+                    Denominator::from_bigint_unchecked(gd),
                 );
 
                 // Decompose gamma on the order basis to find the content
@@ -1879,30 +1885,69 @@ impl<const N: usize> LeftIdeal<N> {
         let mut short_vecs_per_order: [Vec<ShortVectorCandidate>; NUM_EXTREMAL_ORDERS] =
             Default::default();
 
+        // C ref's multi-order recipe (`dim2id2iso.c:617-666`):
+        // 1. After LLL on self, let δ = first post-L² basis col.
+        // 2. k = nrd(δ_num) / (denom_self² · N(self)) — integer
+        //    "abstract norm" of the equivalent ideal class.
+        // 3. reduced_id.lattice = self.lattice · conj(δ)/N(self)
+        //    (a fractional left-O_0-ideal in B; integer-col
+        //    covolume at denom 4N is 64·N^5·k).
+        // 4. conj_reduced_id = conjugate(reduced_id).
+        // 5. ideal[t] = conj_reduced_id · J_t. Norm = k · N(J_t).
+        //    Integer-col covolume at denom 8N is 1024·N^4·(k·N_J)².
+        //
+        // We pass these *exact* covolume formulas as modular-HNF
+        // moduli rather than the `det(first 4 cols)` heuristic, which
+        // would give a strict multiple of canonical covolume and
+        // embed the lattice in a coarser sublattice (failing
+        // enumerate's divisor check).
+        const W2: usize = 60;
+        let mut conj_reduced_state: Option<(Lattice<W2>, BigInt<W2>, BigInt<W2>)> = None;
+
         for t in 0..NUM_EXTREMAL_ORDERS {
             // Build the parent ideal for this order.
             let parent_ideal_t = if t == 0 {
                 *self
             } else {
-                // Compute pushforward at `BigInt<16>` to absorb the
-                // worst-case intermediate product `|J|² · p · |I|`
-                // — for KAT-shaped α with coord magnitudes ~2^140
-                // and `|J| ≈ 2^125`, the inverse step's quaternion
-                // multiplication can reach ~2^640. Width 16 (= 1024
-                // bits) holds it; width 8 silently truncated, leaving
-                // every short vector with `nrd` undivisible by `N`
-                // and every `t > 0` batch empty.
-                //
-                // The result is expected to fit in `BigInt<N>` (the
-                // pushforward has the same norm as `self`); if not,
-                // skip this curve index for this iteration.
-                let j_t_w = connecting_ideal(t).widen::<16>();
-                let self_w = self.widen::<16>();
-                let order_t_w = EXTREMAL_ORDERS[t].widen::<16>();
-                let push_w = j_t_w.pushforward(&self_w, order_t_w.order());
-                match push_w.narrow_to::<N>() {
+                let Some((ref conj_lat, ref k_norm, ref n_self_w2)) = conj_reduced_state else {
+                    continue;
+                };
+                let j_t_lat: Lattice<W2> = {
+                    let l = *connecting_ideal(t).widen::<W2>().lattice();
+                    l.into()
+                };
+                let j_t_norm: BigInt<W2> = *connecting_ideal(t).widen::<W2>().norm();
+                let prod_norm = k_norm.ct_mul(&j_t_norm);
+                // modulus = 1024 · N^4 · (k·N_J)² (integer-col covolume of result).
+                let n_sq = n_self_w2.ct_mul(n_self_w2);
+                let n4 = n_sq.ct_mul(&n_sq);
+                let prod_norm_sq = prod_norm.ct_mul(&prod_norm);
+                let modulus_outer = BigInt::<W2>::from_u64(1024)
+                    .ct_mul(&n4)
+                    .ct_mul(&prod_norm_sq);
+                let prod_lat = conj_lat
+                    .product_with_modulus(&j_t_lat, &modulus_outer)
+                    .reduce_denom();
+                let parent_o0 = *EXTREMAL_ORDERS[0].widen::<W2>().order();
+                let ideal_w2 = LeftIdeal::<W2>::from_parts(prod_lat, prod_norm, parent_o0);
+                match ideal_w2.narrow_to::<N>() {
                     Some(p) => p,
-                    None => continue,
+                    None => {
+                        #[cfg(test)]
+                        eprintln!(
+                            "[suitable_ideals] t={t}: conj_reduced·J_t narrow_to::<{N}> failed (basis max={}, denom={} bits, norm={} bits)",
+                            {
+                                let b = ideal_w2.lattice().basis();
+                                (0..4)
+                                    .flat_map(|r| (0..4).map(move |c| b[r][c].bitsize()))
+                                    .max()
+                                    .unwrap_or(0)
+                            },
+                            ideal_w2.lattice().denom().bitsize(),
+                            ideal_w2.norm().bitsize(),
+                        );
+                        continue;
+                    }
                 }
             };
 
@@ -2040,6 +2085,69 @@ impl<const N: usize> LeftIdeal<N> {
                 order: &EXTREMAL_ORDERS[t],
                 parent_ideal: parent_ideal_t,
             });
+
+            // After t=0 L², populate conj_reduced_state for t > 0.
+            if t == 0 {
+                let cols_t0 = post_l2_cols;
+                let denom_t0_w2: BigInt<W2> = denom_w.widen();
+                let norm_t0_w2: BigInt<W2> = norm_w.widen();
+
+                let p_w2: BigInt<W2> = {
+                    let p8 = P_WIDE;
+                    let mut limbs = [0u64; W2];
+                    limbs[..8].copy_from_slice(p8.as_limbs());
+                    BigInt::from_sign_and_limbs(0, limbs)
+                };
+
+                let dx: BigInt<W2> = cols_t0[0][0].widen();
+                let dy: BigInt<W2> = cols_t0[0][1].widen();
+                let dz: BigInt<W2> = cols_t0[0][2].widen();
+                let dw: BigInt<W2> = cols_t0[0][3].widen();
+
+                // nrd(δ_num) = dx² + dy² + p·(dz² + dw²).
+                let nrd_delta_num = dx
+                    .ct_mul(&dx)
+                    .ct_add(&dy.ct_mul(&dy))
+                    .ct_add(&p_w2.ct_mul(&dz.ct_mul(&dz).ct_add(&dw.ct_mul(&dw))));
+
+                // k = nrd(δ_num) / (denom² · N(self)). Integer for valid input.
+                let denom_sq = denom_t0_w2.ct_mul(&denom_t0_w2);
+                let div = denom_sq.ct_mul(&norm_t0_w2);
+                let (k_norm, rem) = nrd_delta_num.div_rem(&div);
+                if !bool::from(rem.is_zero()) {
+                    #[cfg(test)]
+                    eprintln!("[suitable_ideals] reduced_id k extraction non-integer");
+                    continue;
+                }
+
+                // conj(δ) as Element<W2> with denom = denom_self · N(self).
+                let conj_delta = Element::<W2>::new(
+                    Coordinate::from_bigint(dx),
+                    Coordinate::from_bigint(dy.wrapping_neg()),
+                    Coordinate::from_bigint(dz.wrapping_neg()),
+                    Coordinate::from_bigint(dw.wrapping_neg()),
+                    Denominator::from_bigint_unchecked(denom_t0_w2.ct_mul(&norm_t0_w2)),
+                );
+
+                let self_lat_w2: Lattice<W2> = {
+                    let widened = self.widen::<W2>();
+                    (*widened.lattice()).into()
+                };
+
+                // modulus_inner = (4N)^4·k²/4 = 64·N^4·k²
+                // (integer-col covolume of reduced_id at denom 4N).
+                let n_sq = norm_t0_w2.ct_mul(&norm_t0_w2);
+                let n4 = n_sq.ct_mul(&n_sq);
+                let k_sq = k_norm.ct_mul(&k_norm);
+                let modulus_inner = BigInt::<W2>::from_u64(64).ct_mul(&n4).ct_mul(&k_sq);
+
+                let reduced_id_lat_hnf = self_lat_w2
+                    .alg_elem_mul_with_modulus(&conj_delta, &modulus_inner)
+                    .reduce_denom();
+                let reduced_id_lat: Lattice<W2> = reduced_id_lat_hnf.into();
+                conj_reduced_state =
+                    Some((reduced_id_lat.conjugate(), k_norm, norm_t0_w2));
+            }
         }
 
         // Phase 2: iterate (s, t) pairs with `t ≥ s` (matching the
