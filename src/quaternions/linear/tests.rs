@@ -203,6 +203,233 @@ fn hnf_from_8_columns() {
     assert_eq!(h, M::IDENTITY);
 }
 
+// Cross-check `from_hnf_columns_mod` against the classical
+// `from_hnf_columns` on a non-trivial diagonal-ish input. Modular HNF
+// of `cols` with modulus `D` must equal the classical HNF of
+// `cols ∪ D·I_4` (the explicit lattice ⟨cols⟩ + D·Z^4).
+#[test]
+fn hnf_mod_matches_classical_on_extended_cols() {
+    // Diagonal cols + a non-identity off-diagonal column at row 0.
+    // Classical HNF of these alone has pivots (2, 2, 2, 5), but the
+    // 5 should reduce to gcd(5, 8) = 1 with modulus = 8.
+    let cols = [
+        V::new(i(2), i(0), i(0), i(0)),
+        V::new(i(0), i(2), i(0), i(0)),
+        V::new(i(0), i(0), i(2), i(0)),
+        V::new(i(0), i(0), i(0), i(5)),
+    ];
+    let modulus = i(8);
+    let h_mod = M::from_hnf_columns_mod::<4>(&cols, &modulus);
+
+    // Reference: same lattice, classical HNF on cols + 8·I_4.
+    let extended = [
+        cols[0],
+        cols[1],
+        cols[2],
+        cols[3],
+        V::new(i(8), i(0), i(0), i(0)),
+        V::new(i(0), i(8), i(0), i(0)),
+        V::new(i(0), i(0), i(8), i(0)),
+        V::new(i(0), i(0), i(0), i(8)),
+    ];
+    let h_classical = M::from_hnf_columns(&extended);
+
+    assert_eq!(
+        h_mod, h_classical,
+        "mod-HNF must agree with classical HNF on the extended (cols ∪ D·I_4) input.\n\
+         h_mod = {h_mod:?}\n\
+         h_classical = {h_classical:?}"
+    );
+}
+
+// Test our `from_hnf_columns_mod` against C ref's exact KAT 29 first-FINDUV
+// inputs. C ref's `quat_lattice_alg_elem_mul` produces these
+// post-multiplication columns and passes them to mod-HNF with modulus = |det|.
+// Both spans the canonical lattice with covolume 64·N^4·k². The expected
+// canonical HNF has diagonal (2k·2N, 2k·2N, 2N, 2N) pre-reduce-denom, where 2k
+// = 0x2c1d9c..., 2N = 0x1398f6a... .
+//
+// Captured from `cref_kat29_iso.log` (first FINDUV_MUL block).
+#[test]
+fn hnf_mod_kat29_cref_first_finduv() {
+    fn h(s: &str) -> BigInt<60> {
+        let neg = s.starts_with('-');
+        let hex = if neg { &s[1..] } else { s };
+        let trimmed = hex.trim_start_matches("0x");
+        let mut even = String::new();
+        if trimmed.len() % 2 != 0 {
+            even.push('0');
+        }
+        even.push_str(trimmed);
+        let mut bytes_be: Vec<u8> = (0..even.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&even[i..i + 2], 16).unwrap())
+            .collect();
+        // little-endian
+        bytes_be.reverse();
+        let val = BigInt::<60>::from_bytes_le_unsigned(&bytes_be);
+        if neg { val.wrapping_neg() } else { val }
+    }
+    type V60 = Vector<60>;
+    let cols = [
+        V60::new(
+            h("3608eab7d8d6d9ca588157440bf4ac3330b1e5e9b59f442fc84025a4c5758c8318"),
+            h("0"),
+            h("0"),
+            h("0"),
+        ),
+        V60::new(
+            h("0"),
+            h("-3608eab7d8d6d9ca588157440bf4ac3330b1e5e9b59f442fc84025a4c5758c8318"),
+            h("0"),
+            h("0"),
+        ),
+        V60::new(
+            h("-1439ed37bf01f5f6ae4b1f17f5c4cff4a7caeabf541dce91b291b4478c8bb98c48"),
+            h("18d71b690f3f0d5ed5a0e96cc64ad3e8bd31a3f5a6bbd1b020637b5a093a459c8a"),
+            h("1398f6a0001a1e0db940394daddff8be32ea"),
+            h("0"),
+        ),
+        V60::new(
+            h("18d71b690f3f0d5ed5a0e96cc64ad3e8bd31a3f5a6bbd1b020637b5a093a459c8a"),
+            h("1439ed37bf01f5f6ae4b1f17f5c4cff4a7caeabf541dce91b291b4478c8bb98c48"),
+            h("0"),
+            h("-1398f6a0001a1e0db940394daddff8be32ea"),
+        ),
+    ];
+    // modulus = 64 · N^4 · k² = 0x111c5b8...
+    let modulus = h(
+        "111c5b8d70a0b3a01863b8da08c070b0bae11274203ec1452181dadff3972c8c274a2c1b776a9e3f9ab56043cb8c0308cc829042b4583090047a2dd8b16730d600dcfd6ca98478f3f15c80ed188a8b82416fd94689a49100e23f671e90cd84bc8f18bf8100",
+    );
+
+    let h_out = Matrix::<60>::from_hnf_columns_mod::<60>(&cols, &modulus);
+
+    // Expected canonical HNF (pre-reduce-denom) from C ref's reduced_id.basis
+    // multiplied by g = 2N = 0x1398f6a0001a1e0db940394daddff8be32ea on each entry.
+    // Diagonal pivots: (2k · 2N, 2k · 2N, 2N, 2N).
+    let two_n = h("1398f6a0001a1e0db940394daddff8be32ea");
+    let two_k = h("2c1d9c251a519ad987c008d9d1dbddc");
+    let pivot_01 = two_k.ct_mul(&two_n); // 2k · 2N
+
+    // Check diagonals
+    assert_eq!(
+        h_out[0][0], pivot_01,
+        "row 0 pivot wrong:\n  got = {:?}\n  exp = {:?}",
+        h_out[0][0], pivot_01
+    );
+    assert_eq!(h_out[1][1], pivot_01, "row 1 pivot wrong");
+    assert_eq!(h_out[2][2], two_n, "row 2 pivot wrong");
+    assert_eq!(h_out[3][3], two_n, "row 3 pivot wrong");
+}
+
+// Same canonical lattice as `hnf_mod_kat29_cref_first_finduv` but with OUR
+// generator set (post-`mul_direct` of our HNF basis × conj_delta, not C ref's
+// L²-reduced basis × conj_delta). |det(our new_cols)| = modulus, so canonical
+// HNF must give the same canonical pivots as the C ref test.
+#[test]
+fn hnf_mod_kat29_our_first_finduv() {
+    fn h(s: &str) -> BigInt<60> {
+        let neg = s.starts_with('-');
+        let hex = if neg { &s[1..] } else { s };
+        let trimmed = hex.trim_start_matches("0x");
+        let mut even = String::new();
+        if trimmed.len() % 2 != 0 {
+            even.push('0');
+        }
+        even.push_str(trimmed);
+        let mut bytes_be: Vec<u8> = (0..even.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&even[i..i + 2], 16).unwrap())
+            .collect();
+        bytes_be.reverse();
+        let val = BigInt::<60>::from_bytes_le_unsigned(&bytes_be);
+        if neg { val.wrapping_neg() } else { val }
+    }
+    type V60 = Vector<60>;
+    // Captured from a release `MULTIORDER_TRACE=1 cargo test --lib --release
+    // keygen_kat_029 -- --ignored` run, first MULTIORDER_INPUT block.
+    let cols = [
+        V60::new(
+            h("b65b87db26d1fa3044273b1312e9d6f5cd119b4ae2e598df35b8c3a4fc2b90f82c6"),
+            h("-169ca9e69539ce8cadec9331d604ff4fab2fcddddcb9a45d8d7707f536a7dee63ec"),
+            h("-24bece6c0030f859bb586b71a603f2649f76c"),
+            h("-34ab16ce004630c4e1dc9a00c349ec7f28d4e"),
+        ),
+        V60::new(
+            h("169ca9e69539ce8cadec9331d604ff4fab2fcddddcb9a45d8d7707f536a7dee63ec"),
+            h("b65b87db26d1fa3044273b1312e9d6f5cd119b4ae2e598df35b8c3a4fc2b90f82c6"),
+            h("34ab16ce004630c4e1dc9a00c349ec7f28d4e"),
+            h("-24bece6c0030f859bb586b71a603f2649f76c"),
+        ),
+        V60::new(
+            h("3b7149b9e34b3680833dc0b7c86ef7fe1476aef24116a13ea77a31c740a97172b10"),
+            h("788b444dbbce35678a6b21aeaa975ba2dcd2ee49a3d6baca9e863ab7cbe86a962c"),
+            h("-7595c7c0009cb452578157d2133fd475317c"),
+            h("-1398f6a0001a1e0db940394daddff8be32ea0"),
+        ),
+        V60::new(
+            h("aed2d3964b1516d9cb8088f82840613b9f446c6648a82d328bd05ff97f6d0a4ec9a"),
+            h("24d49fd34e1167f3d5512d85f269f8ae6946e114645cfce11a0329d20a01928c724"),
+            h("-1125d7cc0016da4c02183223f823f9a66c8cc"),
+            h("-3c04734a004ffc0a0754af7de47de9c67beca"),
+        ),
+    ];
+    let modulus = h(
+        "111c5b8d70a0b3a01863b8da08c070b0bae11274203ec1452181dadff3972c8c274a2c1b776a9e3f9ab56043cb8c0308cc829042b4583090047a2dd8b16730d600dcfd6ca98478f3f15c80ed188a8b82416fd94689a49100e23f671e90cd84bc8f18bf8100",
+    );
+
+    let h_out = Matrix::<60>::from_hnf_columns_mod::<60>(&cols, &modulus);
+
+    // Same canonical pivots expected as the C-ref-input test:
+    //   diagonal (2k · 2N, 2k · 2N, 2N, 2N)
+    let two_n = h("1398f6a0001a1e0db940394daddff8be32ea");
+    let two_k = h("2c1d9c251a519ad987c008d9d1dbddc");
+    let pivot_01 = two_k.ct_mul(&two_n);
+
+    // Print the diagonals if they don't match (so we see what we got).
+    eprintln!("h_out[0][0] = {:?}", h_out[0][0]);
+    eprintln!("h_out[1][1] = {:?}", h_out[1][1]);
+    eprintln!("h_out[2][2] = {:?}", h_out[2][2]);
+    eprintln!("h_out[3][3] = {:?}", h_out[3][3]);
+    eprintln!("expected pivot_01 = {:?}", pivot_01);
+    eprintln!("expected pivot_23 = 2N = {:?}", two_n);
+
+    assert_eq!(h_out[0][0], pivot_01, "row 0 pivot wrong");
+    assert_eq!(h_out[1][1], pivot_01, "row 1 pivot wrong");
+    assert_eq!(h_out[2][2], two_n, "row 2 pivot wrong");
+    assert_eq!(h_out[3][3], two_n, "row 3 pivot wrong");
+}
+
+// Regression: the modular HNF must fold the implicit `modulus · I_4`
+// generators into the gcd at every pivot, otherwise the row pivot equals
+// `gcd(input row entries)` instead of the canonical
+// `gcd(input row entries, modulus)`.
+//
+// Construction: cols = (e_0, e_1, e_2, 5·e_3), modulus D = 8. Then
+// gcd(5, 8) = 1, so the lattice generated by the cols plus D·I_4 is all
+// of Z^4 — canonical HNF is the identity. A buggy algorithm that only
+// gcds the four input cols at row 3 picks pivot = 5 (since 5 mod 8 = 5)
+// instead of 1.
+#[test]
+fn hnf_mod_folds_in_modulus() {
+    let cols = [
+        V::new(i(1), i(0), i(0), i(0)),
+        V::new(i(0), i(1), i(0), i(0)),
+        V::new(i(0), i(0), i(1), i(0)),
+        V::new(i(0), i(0), i(0), i(5)),
+    ];
+    let modulus = i(8);
+    let h = M::from_hnf_columns_mod::<4>(&cols, &modulus);
+    // Lattice generated by (e_0, e_1, e_2, 5·e_3) ∪ 8·I_4 = Z^4
+    // since gcd(5, 8) = 1. Canonical HNF is the identity.
+    assert_eq!(
+        h,
+        M::IDENTITY,
+        "from_hnf_columns_mod must fold modulus into the row gcd; \
+         got {h:?} but expected identity"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Property-based tests — Vector<4>
 // ---------------------------------------------------------------------------
