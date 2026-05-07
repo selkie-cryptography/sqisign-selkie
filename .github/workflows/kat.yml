@@ -1,0 +1,70 @@
+name: KAT (manual)
+
+# Manually-triggerable run of the full KAT test suite.
+#
+# CI's `platform` job (in ci.yml) already runs the same tests on
+# every push/PR via the cross-platform matrix, but those runs are
+# tied to commits landing on the branch. This workflow lets us
+# kick off a KAT pass on demand against any branch — useful when
+# iterating on byte-interop work without churning the PR.
+#
+# Covers:
+#   - `verify_kat_NNN`        (KAT signature verification, fast)
+#   - `keygen_kat_NNN`        (deterministic keygen vs KAT vector)
+#   - `sign_kat_derand_NNN`   (deterministic sign + verify roundtrip)
+#   - `keygen_kat_all`, `sign_kat_all`, `kat_verify_all` aggregates
+#   - `c_ref_kat_cross_check` (verify our sigs against the C ref)
+#
+# Per-test budget comes from the `kat` nextest profile (30 min);
+# the job cap is 6 h to absorb 8-way parallel contention on the
+# slowest sign KATs (matching the platform job in ci.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'nextest filter expression. Empty = all KAT tests. Examples: test(/sign_kat_derand_/) or test(=keygen_kat_005)'
+        required: false
+        default: ''
+      release:
+        description: 'Build in release mode (much faster sign KATs, slower compile)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  kat:
+    name: KAT tests (x86_64-linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: taiki-e/install-action@51cd0b8c0499559d9a4d75c0f5c67bec3a894ec8
+        with:
+          tool: cargo-nextest
+
+      - name: Run KAT tests
+        run: |
+          set -o pipefail
+          FILTER='${{ inputs.filter }}'
+          if [ -z "$FILTER" ]; then
+            FILTER='test(/kat/)'
+          fi
+          ARGS=(nextest run --profile kat --run-ignored=all -E "$FILTER")
+          if [ "${{ inputs.release }}" = "true" ]; then
+            ARGS+=(--release)
+          fi
+          echo "## KAT run" >> "$GITHUB_STEP_SUMMARY"
+          echo "Filter: \`$FILTER\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Release: \`${{ inputs.release }}\`" >> "$GITHUB_STEP_SUMMARY"
+          cargo "${ARGS[@]}"
