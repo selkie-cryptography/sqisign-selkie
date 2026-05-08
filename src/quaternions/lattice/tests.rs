@@ -548,3 +548,262 @@ fn canonicalize_preserves_denom() {
 
     assert_eq!(*canonical.denom(), denom);
 }
+
+/// Intersection of two diagonal lattices with coprime scalars.
+///
+/// L1 = 3·Z^4 with denom=1; L2 = 5·Z^4 with denom=1. Intersection
+/// must equal 15·Z^4 (covolume 15^4 = 50625).
+#[test]
+fn intersection_via_kernel_coprime_diagonal() {
+    let basis_3 = Matrix::from_columns(&[
+        V::new(i(3), i(0), i(0), i(0)),
+        V::new(i(0), i(3), i(0), i(0)),
+        V::new(i(0), i(0), i(3), i(0)),
+        V::new(i(0), i(0), i(0), i(3)),
+    ]);
+    let basis_5 = Matrix::from_columns(&[
+        V::new(i(5), i(0), i(0), i(0)),
+        V::new(i(0), i(5), i(0), i(0)),
+        V::new(i(0), i(0), i(5), i(0)),
+        V::new(i(0), i(0), i(0), i(5)),
+    ]);
+    let l1 = Lattice::<4>::new(basis_3, i(1));
+    let l2 = Lattice::<4>::new(basis_5, i(1));
+
+    let inter = l1
+        .intersection_via_kernel::<8>(&l2)
+        .expect("intersection must succeed");
+    let inter_lat: Lattice<4> = Lattice::from(inter);
+
+    // Determinant of (15·I) = 15^4 = 50625; with any denom d the
+    // covolume is 50625/d^4. Compare cross-multiplied integers.
+    let det = inter_lat.basis().det().abs();
+    let denom = *inter_lat.denom();
+    let denom4 = {
+        let d2 = denom.ct_mul(&denom);
+        d2.ct_mul(&d2)
+    };
+    let expected = i(50625);
+    let expected_scaled = expected.ct_mul(&denom4);
+
+    assert_eq!(
+        det, expected_scaled,
+        "L1 ∩ L2: expected covolume 15^4 / denom^4 (det={det:?}, denom={denom:?})"
+    );
+}
+
+/// Intersection of O0 with itself is O0.
+///
+/// O0 has basis with denom 2 (the standard maximal order). Self-
+/// intersection must produce a lattice with the same covolume as O0.
+/// Stresses the denom-tracking path that pure-integer diagonal
+/// tests don't exercise.
+#[test]
+fn intersection_via_kernel_o0_self() {
+    use crate::quaternions::precomputed::EXTREMAL_ORDERS;
+    let o0 = *EXTREMAL_ORDERS[0].order();
+    let o0_lat: Lattice<4> = Lattice::from(o0);
+
+    let inter = o0_lat
+        .intersection_via_kernel::<10>(&o0_lat)
+        .expect("self-intersection must succeed");
+    let inter_lat: Lattice<4> = Lattice::from(inter);
+
+    // Cross-multiplied covolume equality: |det_o0| * denom_inter^4
+    // = |det_inter| * denom_o0^4.
+    let det_o0 = o0_lat.basis().det().abs();
+    let denom_o0 = *o0_lat.denom();
+    let det_inter = inter_lat.basis().det().abs();
+    let denom_inter = *inter_lat.denom();
+    let dn_o0_4 = {
+        let d2 = denom_o0.ct_mul(&denom_o0);
+        d2.ct_mul(&d2)
+    };
+    let dn_in_4 = {
+        let d2 = denom_inter.ct_mul(&denom_inter);
+        d2.ct_mul(&d2)
+    };
+    let lhs = det_o0.ct_mul(&dn_in_4);
+    let rhs = det_inter.ct_mul(&dn_o0_4);
+
+    assert_eq!(
+        lhs, rhs,
+        "O0 self-intersection covolume mismatch: \
+         O0 det={det_o0:?} denom={denom_o0:?}, inter det={det_inter:?} denom={denom_inter:?}"
+    );
+}
+
+/// Intersection of `2·O0 ∩ 3·O0 = 6·O0`.
+///
+/// Stress test: inputs share the O0 basis with denom 2 but
+/// scaled differently. Covolume of `n·O0` equals `n^4 · cov(O0)`,
+/// so `cov(6·O0) = 6^4 · cov(O0) = 1296 · cov(O0)`.
+#[test]
+fn intersection_via_kernel_scaled_o0() {
+    use crate::quaternions::precomputed::EXTREMAL_ORDERS;
+    let o0 = *EXTREMAL_ORDERS[0].order();
+    let o0_lat: Lattice<4> = Lattice::from(o0);
+
+    // n·O0: multiply each basis entry by n, keep denom. Net effect:
+    // each basis vector is scaled by n in algebra coords.
+    let scale_basis = |s: I| -> Matrix<4> {
+        let mut m = Matrix::<4>::ZERO;
+        for r in 0..4 {
+            for c in 0..4 {
+                m[r][c] = o0_lat.basis()[r][c].ct_mul(&s);
+            }
+        }
+        m
+    };
+    let l2 = Lattice::<4>::new(scale_basis(i(2)), *o0_lat.denom());
+    let l3 = Lattice::<4>::new(scale_basis(i(3)), *o0_lat.denom());
+
+    let inter = l2
+        .intersection_via_kernel::<10>(&l3)
+        .expect("intersection must succeed");
+    let inter_lat: Lattice<4> = Lattice::from(inter);
+
+    // Expected: 6·O0. Covolume = 6^4 · cov(O0) = 1296 · cov(O0).
+    let det_o0 = o0_lat.basis().det().abs();
+    let denom_o0 = *o0_lat.denom();
+    let det_inter = inter_lat.basis().det().abs();
+    let denom_inter = *inter_lat.denom();
+    let dn_o0_4 = {
+        let d2 = denom_o0.ct_mul(&denom_o0);
+        d2.ct_mul(&d2)
+    };
+    let dn_in_4 = {
+        let d2 = denom_inter.ct_mul(&denom_inter);
+        d2.ct_mul(&d2)
+    };
+    let factor_1296 = i(1296);
+
+    // det_o0 / dn_o0_4 * 1296 = det_inter / dn_in_4
+    // → det_o0 * dn_in_4 * 1296 = det_inter * dn_o0_4
+    let lhs = det_o0.ct_mul(&dn_in_4).ct_mul(&factor_1296);
+    let rhs = det_inter.ct_mul(&dn_o0_4);
+
+    assert_eq!(
+        lhs, rhs,
+        "2·O0 ∩ 3·O0 expected 6·O0 (covolume 6^4 · cov(O0)): \
+         det_inter={det_inter:?} denom_inter={denom_inter:?}"
+    );
+}
+
+/// `intersection_via_kernel` output must satisfy
+/// `refresh_norm`'s perfect-square covolume invariant.
+///
+/// Sanity check tying together intersection + refresh_norm. For the
+/// intersection of O0 with `n·O0` (= `n·O0`), the resulting LeftIdeal
+/// must have a well-defined integer norm.
+#[test]
+fn intersection_then_refresh_norm_o0_with_scaled() {
+    use crate::quaternions::precomputed::EXTREMAL_ORDERS;
+    let o0_ext = EXTREMAL_ORDERS[0];
+    let o0 = *o0_ext.order();
+    let o0_lat: Lattice<4> = Lattice::from(o0);
+
+    let scale_basis = |s: I| -> Matrix<4> {
+        let mut m = Matrix::<4>::ZERO;
+        for r in 0..4 {
+            for c in 0..4 {
+                m[r][c] = o0_lat.basis()[r][c].ct_mul(&s);
+            }
+        }
+        m
+    };
+    let l_scaled = Lattice::<4>::new(scale_basis(i(7)), *o0_lat.denom());
+
+    let inter = o0_lat
+        .intersection_via_kernel::<10>(&l_scaled)
+        .expect("intersection must succeed");
+
+    let mut ideal = LeftIdeal::<4>::from_parts(inter, I::ZERO, o0);
+    let r = ideal.refresh_norm::<10>();
+
+    assert!(
+        r.is_some(),
+        "refresh_norm on (O0 ∩ 7·O0) failed — covolume not a perfect square"
+    );
+    // 7·O0 ⊆ O0, so intersection = 7·O0. N(7·O0) = 7² = 49.
+    assert_eq!(*ideal.norm(), i(49), "expected N(7·O0) = 49");
+}
+
+/// Intersection where one operand is `2^60 · O0`.
+///
+/// Mirrors the structure of the sign-time intersection
+/// `I_chl ∩ I_sk` (entries at the scale of large powers of 2)
+/// without exceeding the BigInt<4> 256-bit ceiling for the
+/// resulting norm `(2^60)^2 = 2^120`.
+#[test]
+fn intersection_via_kernel_large_power_of_two() {
+    use crate::quaternions::precomputed::EXTREMAL_ORDERS;
+    let o0_ext = EXTREMAL_ORDERS[0];
+    let o0 = *o0_ext.order();
+    let o0_lat: Lattice<4> = Lattice::from(o0);
+
+    let two_to_60 = I::ONE.shl(60);
+    let mut basis_big = Matrix::<4>::ZERO;
+    for r in 0..4 {
+        for c in 0..4 {
+            basis_big[r][c] = o0_lat.basis()[r][c].ct_mul(&two_to_60);
+        }
+    }
+    let l_big = Lattice::<4>::new(basis_big, *o0_lat.denom());
+
+    let inter = l_big
+        .intersection_via_kernel::<10>(&o0_lat)
+        .expect("intersection at scale 2^60 must succeed");
+
+    let mut ideal = LeftIdeal::<4>::from_parts(inter, I::ZERO, o0);
+    let r = ideal.refresh_norm::<10>();
+
+    assert!(
+        r.is_some(),
+        "refresh_norm on (2^60·O0) ∩ O0 failed — covolume not a perfect square"
+    );
+
+    let expected = I::ONE.shl(120); // (2^60)^2 = 2^120
+    assert_eq!(*ideal.norm(), expected, "expected N(2^60·O0) = 2^120");
+}
+
+/// Intersection of two diagonal lattices with non-coprime scalars.
+///
+/// L1 = 4·Z^4, L2 = 6·Z^4. lcm = 12, so intersection = 12·Z^4
+/// (covolume 12^4 = 20736).
+#[test]
+fn intersection_via_kernel_lcm_diagonal() {
+    let basis_4 = Matrix::from_columns(&[
+        V::new(i(4), i(0), i(0), i(0)),
+        V::new(i(0), i(4), i(0), i(0)),
+        V::new(i(0), i(0), i(4), i(0)),
+        V::new(i(0), i(0), i(0), i(4)),
+    ]);
+    let basis_6 = Matrix::from_columns(&[
+        V::new(i(6), i(0), i(0), i(0)),
+        V::new(i(0), i(6), i(0), i(0)),
+        V::new(i(0), i(0), i(6), i(0)),
+        V::new(i(0), i(0), i(0), i(6)),
+    ]);
+    let l1 = Lattice::<4>::new(basis_4, i(1));
+    let l2 = Lattice::<4>::new(basis_6, i(1));
+
+    let inter = l1
+        .intersection_via_kernel::<8>(&l2)
+        .expect("intersection must succeed");
+    let inter_lat: Lattice<4> = Lattice::from(inter);
+
+    let det = inter_lat.basis().det().abs();
+    let denom = *inter_lat.denom();
+    let denom4 = {
+        let d2 = denom.ct_mul(&denom);
+        d2.ct_mul(&d2)
+    };
+    let expected = i(20736); // 12^4
+    let expected_scaled = expected.ct_mul(&denom4);
+
+    assert_eq!(
+        det, expected_scaled,
+        "L1 ∩ L2: expected covolume 12^4 / denom^4 (det={det:?}, denom={denom:?})"
+    );
+}

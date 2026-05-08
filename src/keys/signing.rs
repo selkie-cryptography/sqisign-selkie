@@ -40,7 +40,7 @@ use crate::{
     quaternions::{
         algebra::{Coordinate, Denominator, Element},
         bigint::BigInt,
-        lattice::{HnfLattice, Lattice, LeftIdeal},
+        lattice::{Lattice, LeftIdeal},
         precomputed::EXTREMAL_ORDERS,
     },
     surfaces,
@@ -875,18 +875,26 @@ impl SigningKey {
             // refreshing from the actual lattice covolume gives
             // the value `nrd(α)` is divisible by, which is what
             // the downstream divisibility check needs.
-            let o0_full = EXTREMAL_ORDERS[0].widen::<N_RESP>();
-            let mut intersection_ideal = LeftIdeal::<N_RESP>::from_parts(
-                HnfLattice::from(intersection_lat),
-                BigInt::<N_RESP>::ZERO,
-                *o0_full.order(),
-            );
-            if intersection_ideal.refresh_norm::<120>().is_none() {
-                #[cfg(test)]
-                crate::selkie_trace!("[sign {_iter}] DROP: intersection_ideal.refresh_norm None");
-                continue;
-            }
-            let lattice_content_r: BigInt<N_RESP> = *intersection_ideal.norm();
+            // `intersection_lat = I_chl_secret ∩ conj(I_com)` is the
+            // lattice C-ref calls `lattice_hom_chall_to_com`. It is
+            // NOT a left O0-ideal (conj(I_com) is a *right* ideal,
+            // and the intersection is closed under neither side
+            // alone), so `LeftIdeal::refresh_norm` -- which assumes
+            // left-ideal structure and checks `[O0:I] = N(I)^2` --
+            // spuriously rejects on most iterations and produces a
+            // wrong norm on others.
+            //
+            // C-ref (`sign.c:140`) instead computes
+            //   `lattice_content = N(I_chl_secret) · N(I_com)`
+            // directly from the constituent ideal norms, with
+            //   `N(I_chl_secret) = N(I_chl) · N(I_sk) = 2^f · N(I_sk)`
+            // since `I_chl` (norm `2^f`) and `I_sk` (odd prime norm)
+            // are coprime. We mirror that here -- product of the
+            // three known norms.
+            let n_chl: BigInt<N_RESP> = *i_chl_prime_w.norm();
+            let n_sk: BigInt<N_RESP> = *i_sk_w.norm();
+            let n_com: BigInt<N_RESP> = *i_com_w.norm();
+            let lattice_content_r: BigInt<N_RESP> = n_chl.ct_mul(&n_sk).ct_mul(&n_com);
             let two_to_e_rsp: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(e_rsp);
             let two_e_rsp_minus_one = two_to_e_rsp.ct_sub(&BigInt::<N_RESP>::ONE);
             let radius = two_e_rsp_minus_one.ct_mul(&lattice_content_r);
@@ -938,6 +946,7 @@ impl SigningKey {
             // actual ideal.
             let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
             let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
+
             #[cfg(test)]
             crate::selkie_trace!(
                 "[sign {_iter}] backtracking: n_bt={}, nrd_num bits={}, nrd_den bits={}",
