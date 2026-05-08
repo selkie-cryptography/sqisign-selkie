@@ -2269,9 +2269,9 @@ impl<const N: usize> LeftIdeal<N> {
                             // and `t == 0` (the special-order path
                             // already produces β in O_0).
                             let mut result = result;
-                            if (s != 0 || t != 0) && conj_reduced_state.is_some() {
-                                let (_, k_norm, _n_self_w2, denom_self_w2, conj_delta) =
-                                    conj_reduced_state.as_ref().unwrap();
+                            if let (true, Some((_, k_norm, _n_self_w2, denom_self_w2, conj_delta))) =
+                                (s != 0 || t != 0, conj_reduced_state.as_ref())
+                            {
                                 // delta_pp: same coords as conj_delta,
                                 // denom = denom_self · k_norm
                                 // (instead of denom_self · n_self).
