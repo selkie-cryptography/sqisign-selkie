@@ -410,7 +410,7 @@ impl TorsionBasis {
     ///
     /// [`ChangeOfBasisMatrix::from_bases`]:
     ///     crate::curves::ChangeOfBasisMatrix::from_bases
-    pub(crate) fn cross_pairings(
+    pub fn cross_pairings(
         &self,
         reduced: &TorsionBasis,
         e: TorsionExponent,

@@ -159,3 +159,93 @@ fn ideal_generator(bencher: divan::Bencher) {
         bencher.bench(|| divan::black_box(&ideal).generator());
     }
 }
+
+/// Construct `O·⟨α, N⟩` from a quaternion generator + norm. Hot in
+/// keygen (response-ideal construction) and sign.
+#[divan::bench]
+fn ideal_from_generator(bencher: divan::Bencher) {
+    let order = EXTREMAL_ORDERS[0].order();
+    let alpha = sample_element();
+    let norm = BigInt::<4>::from_limbs([0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0]);
+    bencher.bench(|| {
+        LeftIdeal::<4>::from_generator(
+            divan::black_box(&alpha),
+            divan::black_box(&norm),
+            divan::black_box(order),
+        )
+    });
+}
+
+// --- Hot-path primitives ---
+//
+// `intersection_via_kernel` is a major sign-side cost; the working
+// width `W` is the dominant lever. The three explicit-W variants
+// below mirror the three production call sites:
+//
+//   - `W = 60`  — sub-step of `sample_from_ball` (gram inputs).
+//   - `W = 120` — refresh_norm on intersected ideals.
+//   - `W = 150` — the response-phase intersection in `sign_with_rng`.
+//
+// Const generics can't take a runtime argument, so each width gets
+// its own divan bench.
+
+#[divan::bench(sample_count = 30)]
+fn intersection_via_kernel_w60(bencher: divan::Bencher) {
+    let lat1: Lattice<4> = *EXTREMAL_ORDERS[0].order().lattice();
+    let lat2: Lattice<4> = *EXTREMAL_ORDERS[1].order().lattice();
+    bencher.bench(|| {
+        divan::black_box(&lat1).intersection_via_kernel::<60>(divan::black_box(&lat2))
+    });
+}
+
+#[divan::bench(sample_count = 20)]
+fn intersection_via_kernel_w120(bencher: divan::Bencher) {
+    let lat1: Lattice<4> = *EXTREMAL_ORDERS[0].order().lattice();
+    let lat2: Lattice<4> = *EXTREMAL_ORDERS[1].order().lattice();
+    bencher.bench(|| {
+        divan::black_box(&lat1).intersection_via_kernel::<120>(divan::black_box(&lat2))
+    });
+}
+
+#[divan::bench(sample_count = 10)]
+fn intersection_via_kernel_w150(bencher: divan::Bencher) {
+    let lat1: Lattice<4> = *EXTREMAL_ORDERS[0].order().lattice();
+    let lat2: Lattice<4> = *EXTREMAL_ORDERS[1].order().lattice();
+    bencher.bench(|| {
+        divan::black_box(&lat1).intersection_via_kernel::<150>(divan::black_box(&lat2))
+    });
+}
+
+/// `sample_from_ball` — the dual-LLL sampling at the heart of the
+/// response phase. The radius drives most of the cost; benchmark at
+/// a sub-production size (~256 bits) for tolerable bench time. The
+/// production response radius is closer to ~600 bits.
+#[divan::bench(sample_count = 10)]
+fn sample_from_ball(bencher: divan::Bencher) {
+    let lat: Lattice<4> = *EXTREMAL_ORDERS[0].order().lattice();
+    // 256-bit radius: 2^255 + 1 (any nontrivial value of about that
+    // magnitude exercises the dual-LLL setup + sampling loop).
+    let mut radius_limbs = [0u64; 4];
+    radius_limbs[3] = 1u64 << 63;
+    let radius = BigInt::<4>::from_limbs(radius_limbs);
+    bencher.bench(|| {
+        let mut rng = rand_core::OsRng;
+        divan::black_box(&lat).sample_from_ball::<8, _>(divan::black_box(&radius), &mut rng)
+    });
+}
+
+/// `refresh_norm` — recovers the ideal's stored norm from its
+/// lattice covolume. Hot in sign (called twice per response-phase
+/// iteration) and cheap relative to the intersections that produce
+/// the ideal it's called on.
+#[divan::bench]
+fn ideal_refresh_norm(bencher: divan::Bencher) {
+    let order = &EXTREMAL_ORDERS[0];
+    let norm = BigInt::<4>::from_limbs([0xDEAD_BEEF_CAFE_BAB1, 0, 0, 0]);
+    if let Some(ideal) = LeftIdeal::<4>::random_prime_norm(&norm, order) {
+        bencher.with_inputs(|| ideal).bench_values(|mut i| {
+            i.refresh_norm::<8>();
+            i
+        });
+    }
+}
