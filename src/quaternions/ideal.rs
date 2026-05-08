@@ -188,11 +188,11 @@ impl ExtremalOrder<8> {
         // `ibz_rand_interval(rand, 1, temp)` call.
         #[cfg(test)]
         if std::env::var("REPI_TRACE").is_ok() {
-            eprintln!(
+            crate::selkie_trace!(
                 "[REPI] init bound={} counter={} adjusted_n_gamma={}",
                 z_max_big, counter_big, four_m
             );
-            eprintln!(
+            crate::selkie_trace!(
                 "[REPI] init q={} p={} non_diag={} standard_order={}",
                 q,
                 p,
@@ -210,7 +210,7 @@ impl ExtremalOrder<8> {
             let z = BigInt::<8>::rand_interval(rng, &one_big, &z_max_big);
             #[cfg(test)]
             if std::env::var("REPI_TRACE").is_ok() {
-                eprintln!("[REPI] iter={} z={}", _iter_idx, z);
+                crate::selkie_trace!("[REPI] iter={} z={}", _iter_idx, z);
             }
 
             let pz_sq = p.ct_mul(&z.ct_mul(&z));
@@ -851,7 +851,7 @@ impl<const W: usize> NrdBasis<W> {
             // Print G[0][0], G[0][1], G[1][1] and the divisor once so we
             // can see if divisor divides G[i][i] (which is nrd(α_i)·denom²
             // for the i-th basis column).
-            eprintln!(
+            crate::selkie_trace!(
                 "[enum-trace] G[0][0]={}, G[1][1]={}, G[2][2]={}, G[3][3]={}, divisor={}",
                 self.gram()[0][0],
                 self.gram()[1][1],
@@ -862,7 +862,7 @@ impl<const W: usize> NrdBasis<W> {
             // Check divisibility of each diagonal.
             for i in 0..4 {
                 let (_, rem) = self.gram()[i][i].div_rem(&divisor);
-                eprintln!(
+                crate::selkie_trace!(
                     "[enum-trace] G[{i}][{i}] / divisor: rem = {} (is_zero={})",
                     rem,
                     bool::from(rem.is_zero()),
@@ -1016,13 +1016,13 @@ impl<const W: usize> NrdBasis<W> {
                     s.push_str(&format!("{:016x}", limbs[k]));
                 }
                 let s = s.trim_start_matches('0').to_string();
-                eprintln!("[SELKIE_SORTED] idx={i} degree=0x{s}");
+                crate::selkie_trace!("[SELKIE_SORTED] idx={i} degree=0x{s}");
             }
         }
 
         #[cfg(test)]
         if std::env::var("ENUM_DIAG").is_ok() {
-            eprintln!(
+            crate::selkie_trace!(
                 "[enum] ideal_norm={} bits, denom={} bits, kept={}, rejected: \
                  zero_nrd={} nonintegral={} degree_zero={} narrow_degree={} \
                  not_odd={} narrow_coord={}",
@@ -1542,7 +1542,7 @@ impl<const N: usize> LeftIdeal<N> {
         candidates.truncate(TOP_K);
         #[cfg(test)]
         if let Some((_, min_nrd)) = candidates.first() {
-            eprintln!(
+            crate::selkie_trace!(
                 "[smallest_equiv_narrow] self.norm={} bits, min brute-force nrd={} bits (ratio={} bits)",
                 self.norm().bitsize(),
                 min_nrd.bitsize(),
@@ -1565,7 +1565,7 @@ impl<const N: usize> LeftIdeal<N> {
                 let rn = *result.norm();
                 if rn == BigInt::<4>::ONE || bool::from(rn.is_zero()) {
                     #[cfg(test)]
-                    eprintln!(
+                    crate::selkie_trace!(
                         "[smallest_equiv_narrow] skipping trivial candidate, norm={} bits",
                         rn.bitsize()
                     );
@@ -1587,7 +1587,7 @@ impl<const N: usize> LeftIdeal<N> {
                 // mathematically correct one.
                 if result.refresh_norm::<24>().is_none() {
                     #[cfg(test)]
-                    eprintln!(
+                    crate::selkie_trace!(
                         "[smallest_equiv_narrow] refresh_norm failed on candidate, stored norm={} bits",
                         _stored_norm.bitsize()
                     );
@@ -1596,7 +1596,7 @@ impl<const N: usize> LeftIdeal<N> {
                 let refreshed_norm = *result.norm();
                 if refreshed_norm == BigInt::<4>::ONE || bool::from(refreshed_norm.is_zero()) {
                     #[cfg(test)]
-                    eprintln!(
+                    crate::selkie_trace!(
                         "[smallest_equiv_narrow] skipping trivial post-refresh, norm={} bits",
                         refreshed_norm.bitsize()
                     );
@@ -1610,14 +1610,14 @@ impl<const N: usize> LeftIdeal<N> {
                 // which only accepts prime-norm candidates.
                 if bool::from(refreshed_norm.is_even()) {
                     #[cfg(test)]
-                    eprintln!(
+                    crate::selkie_trace!(
                         "[smallest_equiv_narrow] skipping even-norm candidate, norm={} bits",
                         refreshed_norm.bitsize()
                     );
                     continue;
                 }
                 #[cfg(test)]
-                eprintln!(
+                crate::selkie_trace!(
                     "[smallest_equiv_narrow] accepted candidate, brute-force norm={} bits, \
                      refresh norm={} bits",
                     _stored_norm.bitsize(),
@@ -1627,7 +1627,7 @@ impl<const N: usize> LeftIdeal<N> {
             }
         }
         #[cfg(test)]
-        eprintln!(
+        crate::selkie_trace!(
             "[smallest_equiv_narrow] no TOP_K={TOP_K} candidate yielded a narrow-able equivalent ideal"
         );
         None
@@ -1806,7 +1806,7 @@ impl<const N: usize> LeftIdeal<N> {
                     Some(v) => basis_4[row][col] = v,
                     None => {
                         #[cfg(test)]
-                        eprintln!(
+                        crate::selkie_trace!(
                             "[build_equiv_from_delta] basis[{row}][{col}] narrow_to<4> None: hnf_w bits={}",
                             hnf_w[row][col].bitsize(),
                         );
@@ -1819,7 +1819,7 @@ impl<const N: usize> LeftIdeal<N> {
             Some(d) => d,
             None => {
                 #[cfg(test)]
-                eprintln!(
+                crate::selkie_trace!(
                     "[build_equiv_from_delta] denom narrow_to<4> None: o_alpha_denom bits={}",
                     o_alpha_denom.bitsize(),
                 );
@@ -1953,7 +1953,7 @@ impl<const N: usize> LeftIdeal<N> {
                     Some(p) => p,
                     None => {
                         #[cfg(test)]
-                        eprintln!(
+                        crate::selkie_trace!(
                             "[suitable_ideals] t={t}: conj_reduced·J_t narrow_to::<{N}> failed (basis max={}, denom={} bits, norm={} bits)",
                             {
                                 let b = ideal_w2.lattice().basis();
@@ -2016,7 +2016,7 @@ impl<const N: usize> LeftIdeal<N> {
             };
             #[cfg(test)]
             if t == 0 && std::env::var_os("SELKIE_DUMP_CLASS_GRAM").is_some() {
-                eprintln!("[SELKIE_CLASS_GRAM_BEGIN]");
+                crate::selkie_trace!("[SELKIE_CLASS_GRAM_BEGIN]");
                 for i in 0..4 {
                     for j in 0..4 {
                         let v = class_gram[i][j];
@@ -2033,17 +2033,17 @@ impl<const N: usize> LeftIdeal<N> {
                         for k in (0..=last_nz).rev() {
                             eprint!("{:016x}", limbs[k]);
                         }
-                        eprintln!();
+                        crate::selkie_trace!();
                     }
                 }
-                eprintln!("[SELKIE_CLASS_GRAM_END]");
+                crate::selkie_trace!("[SELKIE_CLASS_GRAM_END]");
             }
             let class_basis = NrdBasis::from_cols_and_gram(cols_w, class_gram).l2_reduce();
 
             #[cfg(test)]
             if t == 0 && std::env::var_os("SELKIE_DUMP_POSTL2_GRAM").is_some() {
                 let cols_dump = class_basis.cols();
-                eprintln!("[SELKIE_POSTL2_COLS_BEGIN]");
+                crate::selkie_trace!("[SELKIE_POSTL2_COLS_BEGIN]");
                 #[allow(clippy::needless_range_loop)]
                 for j in 0..4 {
                     for r in 0..4 {
@@ -2061,11 +2061,11 @@ impl<const N: usize> LeftIdeal<N> {
                         for k in (0..=last_nz).rev() {
                             eprint!("{:016x}", limbs[k]);
                         }
-                        eprintln!();
+                        crate::selkie_trace!();
                     }
                 }
-                eprintln!("[SELKIE_POSTL2_COLS_END]");
-                eprintln!("[SELKIE_POSTL2_GRAM_BEGIN] (class form)");
+                crate::selkie_trace!("[SELKIE_POSTL2_COLS_END]");
+                crate::selkie_trace!("[SELKIE_POSTL2_GRAM_BEGIN] (class form)");
                 let g = class_basis.gram();
                 for i in 0..4 {
                     for j in 0..4 {
@@ -2083,10 +2083,10 @@ impl<const N: usize> LeftIdeal<N> {
                         for k in (0..=last_nz).rev() {
                             eprint!("{:016x}", limbs[k]);
                         }
-                        eprintln!();
+                        crate::selkie_trace!();
                     }
                 }
-                eprintln!("[SELKIE_POSTL2_GRAM_END]");
+                crate::selkie_trace!("[SELKIE_POSTL2_GRAM_END]");
             }
 
             let post_l2_cols = *class_basis.cols();
@@ -2141,7 +2141,7 @@ impl<const N: usize> LeftIdeal<N> {
                 let (k_norm, rem) = nrd_delta_num.div_rem(&div);
                 if !bool::from(rem.is_zero()) {
                     #[cfg(test)]
-                    eprintln!("[suitable_ideals] reduced_id k extraction non-integer");
+                    crate::selkie_trace!("[suitable_ideals] reduced_id k extraction non-integer");
                     continue;
                 }
 
@@ -2210,7 +2210,7 @@ impl<const N: usize> LeftIdeal<N> {
                         if let Some(result) = try_find_uv(sv1, sv2, batch_s, batch_t, &two_f, f) {
                             #[cfg(test)]
                             {
-                                eprintln!(
+                                crate::selkie_trace!(
                                     "[suitable_ideals] selected (s={s}, t={t}) after {_pairs_tried} pairs \
                                      | norm={} bits, batch sizes={:?}",
                                     self.norm().bitsize(),
@@ -2220,13 +2220,13 @@ impl<const N: usize> LeftIdeal<N> {
                                         .collect::<Vec<_>>(),
                                 );
                                 if std::env::var("SUITABLE_IDEALS_TRACE").is_ok() {
-                                    eprintln!(
+                                    crate::selkie_trace!(
                                         "[suitable_ideals] u={} v={} e={}",
                                         result.u,
                                         result.v,
                                         result.e.value(),
                                     );
-                                    eprintln!(
+                                    crate::selkie_trace!(
                                         "[suitable_ideals] beta_s coord=[{}, {}, {}, {}] denom={} d_s={}",
                                         result.factor1.beta.a.as_bigint(),
                                         result.factor1.beta.b.as_bigint(),
@@ -2235,7 +2235,7 @@ impl<const N: usize> LeftIdeal<N> {
                                         result.factor1.beta.denom.as_bigint(),
                                         result.factor1.degree.to_bigint(),
                                     );
-                                    eprintln!(
+                                    crate::selkie_trace!(
                                         "[suitable_ideals] beta_t coord=[{}, {}, {}, {}] denom={} d_t={}",
                                         result.factor2.beta.a.as_bigint(),
                                         result.factor2.beta.b.as_bigint(),
@@ -2321,7 +2321,7 @@ impl<const N: usize> LeftIdeal<N> {
         }
 
         #[cfg(test)]
-        eprintln!(
+        crate::selkie_trace!(
             "[suitable_ideals] EXHAUSTED after {_pairs_tried} pairs \
              | norm={} bits, batch sizes={:?}",
             self.norm().bitsize(),
@@ -2408,7 +2408,7 @@ mod tests {
         let t0 = std::time::Instant::now();
         let gamma = order.represent_integer(&mn, false, &mut OsRng);
         let elapsed = t0.elapsed();
-        eprintln!(
+        crate::selkie_trace!(
             "[aux-RI] mn.bits={} elapsed={elapsed:?} ok={}",
             mn.bitsize(),
             gamma.is_some()
@@ -2695,19 +2695,19 @@ mod tests {
         for n_u64 in candidates {
             let n = BigInt::<4>::from_u64(n_u64);
             if let Some(i) = LeftIdeal::random_norm(&n, &EXTREMAL_ORDERS[0], &mut OsRng) {
-                eprintln!("[composite-norm smoke] built ideal with norm {n_u64}");
+                crate::selkie_trace!("[composite-norm smoke] built ideal with norm {n_u64}");
                 ideal = Some(i);
                 break;
             }
         }
         let Some(ideal) = ideal else {
-            eprintln!("[composite-norm smoke] no composite fixture buildable — skipping");
+            crate::selkie_trace!("[composite-norm smoke] no composite fixture buildable — skipping");
             return;
         };
 
         match ideal.suitable_ideals() {
             Some(r) => {
-                eprintln!(
+                crate::selkie_trace!(
                     "[composite-norm smoke] succeeded: (s, t) = ({}, {}), \
                      degrees = ({:?}, {:?}), e = {}",
                     EXTREMAL_ORDERS
@@ -2724,7 +2724,7 @@ mod tests {
                 );
             }
             None => {
-                eprintln!("[composite-norm smoke] suitable_ideals returned None");
+                crate::selkie_trace!("[composite-norm smoke] suitable_ideals returned None");
             }
         }
     }

@@ -299,10 +299,10 @@ fn action_matrix(
     ];
     #[cfg(test)]
     {
-        eprintln!("CREF_FDI coeffs[0]={}", coords[0]);
-        eprintln!("CREF_FDI coeffs[1]={}", coords[1]);
-        eprintln!("CREF_FDI coeffs[2]={}", coords[2]);
-        eprintln!("CREF_FDI coeffs[3]={}", coords[3]);
+        crate::selkie_trace!("CREF_FDI coeffs[0]={}", coords[0]);
+        crate::selkie_trace!("CREF_FDI coeffs[1]={}", coords[1]);
+        crate::selkie_trace!("CREF_FDI coeffs[2]={}", coords[2]);
+        crate::selkie_trace!("CREF_FDI coeffs[3]={}", coords[3]);
     }
 
     // Reduce all coefficients mod 2^f. For negative coefficients,
@@ -388,7 +388,7 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
 
     let (px, qx, pmq_x, a_coeff) = curve_idx.basis();
     #[cfg(test)]
-    eprintln!("[FDI] t={t}, e_fdi will be computed next");
+    crate::selkie_trace!("[FDI] t={t}, e_fdi will be computed next");
     let curve_t = if curve_idx == precomputed::torsion_basis::ExtremalCurve::E0 {
         Curve::E0
     } else {
@@ -428,19 +428,19 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
         Some(t) => {
             #[cfg(test)]
             {
-                eprintln!("[FDI] represent_integer OK, e_fdi={e_fdi}");
-                eprintln!("THETA_RAW coord0={}", t.a);
-                eprintln!("THETA_RAW coord1={}", t.b);
-                eprintln!("THETA_RAW coord2={}", t.c);
-                eprintln!("THETA_RAW coord3={}", t.d);
-                eprintln!("THETA_RAW denom={}", t.denom);
-                eprintln!("THETA_RAW u={}", BigInt::<4>::from(*u));
+                crate::selkie_trace!("[FDI] represent_integer OK, e_fdi={e_fdi}");
+                crate::selkie_trace!("THETA_RAW coord0={}", t.a);
+                crate::selkie_trace!("THETA_RAW coord1={}", t.b);
+                crate::selkie_trace!("THETA_RAW coord2={}", t.c);
+                crate::selkie_trace!("THETA_RAW coord3={}", t.d);
+                crate::selkie_trace!("THETA_RAW denom={}", t.denom);
+                crate::selkie_trace!("THETA_RAW u={}", BigInt::<4>::from(*u));
             }
             t
         }
         None => {
             #[cfg(test)]
-            eprintln!("[FDI] represent_integer FAILED, e_fdi={e_fdi}");
+            crate::selkie_trace!("[FDI] represent_integer FAILED, e_fdi={e_fdi}");
             return None;
         }
     };
@@ -449,10 +449,10 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
     let m_theta = action_matrix(&theta, order.order(), &gen_matrices, f)?;
     #[cfg(test)]
     {
-        eprintln!("CREF_FDI mat00={:?}", m_theta.entry(0, 0));
-        eprintln!("CREF_FDI mat01={:?}", m_theta.entry(0, 1));
-        eprintln!("CREF_FDI mat10={:?}", m_theta.entry(1, 0));
-        eprintln!("CREF_FDI mat11={:?}", m_theta.entry(1, 1));
+        crate::selkie_trace!("CREF_FDI mat00={:?}", m_theta.entry(0, 0));
+        crate::selkie_trace!("CREF_FDI mat01={:?}", m_theta.entry(0, 1));
+        crate::selkie_trace!("CREF_FDI mat10={:?}", m_theta.entry(1, 0));
+        crate::selkie_trace!("CREF_FDI mat11={:?}", m_theta.entry(1, 1));
     }
 
     // Step 3.5: Multiply M_θ entries by u⁻¹ mod 2^{e_FDI+2}.
@@ -542,12 +542,12 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
                 .collect();
             format!("0x{re} + i*0x{im}")
         };
-        eprintln!("THETA_BASIS_PX={}", fp2_hex(&theta_p.X));
-        eprintln!("THETA_BASIS_PZ={}", fp2_hex(&theta_p.Z));
-        eprintln!("THETA_BASIS_QX={}", fp2_hex(&theta_q.X));
-        eprintln!("THETA_BASIS_QZ={}", fp2_hex(&theta_q.Z));
-        eprintln!("THETA_BASIS_PMQX={}", fp2_hex(&theta_pmq.X));
-        eprintln!("THETA_BASIS_PMQZ={}", fp2_hex(&theta_pmq.Z));
+        crate::selkie_trace!("THETA_BASIS_PX={}", fp2_hex(&theta_p.X));
+        crate::selkie_trace!("THETA_BASIS_PZ={}", fp2_hex(&theta_p.Z));
+        crate::selkie_trace!("THETA_BASIS_QX={}", fp2_hex(&theta_q.X));
+        crate::selkie_trace!("THETA_BASIS_QZ={}", fp2_hex(&theta_q.Z));
+        crate::selkie_trace!("THETA_BASIS_PMQX={}", fp2_hex(&theta_pmq.X));
+        crate::selkie_trace!("THETA_BASIS_PMQZ={}", fp2_hex(&theta_pmq.Z));
     }
 
     // Lift using (P, Q) kernel generators (with PmQ as the difference
@@ -587,12 +587,12 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
     if e_out.recover_y(&p_out.to_affine_x()).is_none()
         || e_out.recover_y(&q_out.to_affine_x()).is_none()
     {
-        eprintln!("[fixed_degree_isogeny] chain output invalid — retry");
+        crate::selkie_trace!("[fixed_degree_isogeny] chain output invalid — retry");
         return None;
     }
 
     #[cfg(test)]
-    eprintln!("[fixed_degree_isogeny] chain OK, e_fdi={e_fdi}");
+    crate::selkie_trace!("[fixed_degree_isogeny] chain OK, e_fdi={e_fdi}");
     Some((codomain.E1, p_out, q_out, pmq_out))
 }
 
@@ -694,7 +694,7 @@ impl<const N: usize> LeftIdeal<N> {
         let f = TorsionExponent::FULL;
 
         #[cfg(test)]
-        eprintln!(
+        crate::selkie_trace!(
             "[to_isogeny] before suitable_ideals: drbg_offset=0x{:x}",
             crate::drbg::debug::offset()
         );
@@ -704,7 +704,7 @@ impl<const N: usize> LeftIdeal<N> {
         let _t0 = std::time::Instant::now();
         let sui = self.suitable_ideals()?;
         #[cfg(test)]
-        eprintln!(
+        crate::selkie_trace!(
             "[to_isogeny] after suitable_ideals: drbg_offset=0x{:x} elapsed={:?}",
             crate::drbg::debug::offset(),
             _t0.elapsed()
@@ -728,20 +728,20 @@ impl<const N: usize> LeftIdeal<N> {
                 .map_or(-1i32, |i| i as i32);
             let b1 = &*sui.factor1.beta;
             let b2 = &*sui.factor2.beta;
-            eprintln!("[KEYGEN_PROBE] s={s_idx} t={t_idx}");
-            eprintln!(
+            crate::selkie_trace!("[KEYGEN_PROBE] s={s_idx} t={t_idx}");
+            crate::selkie_trace!(
                 "[KEYGEN_PROBE] beta_s coord=[{}, {}, {}, {}] denom={}",
                 b1.a, b1.b, b1.c, b1.d, b1.denom
             );
-            eprintln!(
+            crate::selkie_trace!(
                 "[KEYGEN_PROBE] beta_t coord=[{}, {}, {}, {}] denom={}",
                 b2.a, b2.b, b2.c, b2.d, b2.denom
             );
             let d_s = BigInt::<4>::from(sui.factor1.degree);
             let d_t = BigInt::<4>::from(sui.factor2.degree);
-            eprintln!("[KEYGEN_PROBE] d_s={d_s} d_t={d_t}");
-            eprintln!("[KEYGEN_PROBE] u_pre_gcd={} v_pre_gcd={}", sui.u, sui.v);
-            eprintln!("[KEYGEN_PROBE] lideal_norm={}", self.norm());
+            crate::selkie_trace!("[KEYGEN_PROBE] d_s={d_s} d_t={d_t}");
+            crate::selkie_trace!("[KEYGEN_PROBE] u_pre_gcd={} v_pre_gcd={}", sui.u, sui.v);
+            crate::selkie_trace!("[KEYGEN_PROBE] lideal_norm={}", self.norm());
         }
 
         // Steps 2–3: degrees (already in sui.factor1.degree, sui.factor2.degree).
@@ -752,7 +752,7 @@ impl<const N: usize> LeftIdeal<N> {
         #[cfg(test)]
         let _t1 = std::time::Instant::now();
         #[cfg(test)]
-        eprintln!(
+        crate::selkie_trace!(
             "[to_isogeny] before FDI(u): drbg_offset=0x{:x}",
             crate::drbg::debug::offset()
         );
@@ -766,25 +766,25 @@ impl<const N: usize> LeftIdeal<N> {
                 let re: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
                 re
             };
-            eprintln!(
+            crate::selkie_trace!(
                 "[FDI_OUT_U] phi_u_p.x_re=0x{}",
                 fp2_hex(phi_u_p.to_affine_x().as_fp2())
             );
-            eprintln!(
+            crate::selkie_trace!(
                 "[FDI_OUT_U] phi_u_q.x_re=0x{}",
                 fp2_hex(phi_u_q.to_affine_x().as_fp2())
             );
-            eprintln!(
+            crate::selkie_trace!(
                 "[FDI_OUT_U] phi_u_pmq.x_re=0x{}",
                 fp2_hex(phi_u_pmq.to_affine_x().as_fp2())
             );
-            eprintln!(
+            crate::selkie_trace!(
                 "[FDI_OUT_U] e_u.A_re=0x{}",
                 fp2_hex(e_u.coefficient().as_fp2())
             );
         }
         #[cfg(test)]
-        eprintln!(
+        crate::selkie_trace!(
             "[to_isogeny] after FDI(u): drbg_offset=0x{:x} elapsed={:?}",
             crate::drbg::debug::offset(),
             _t1.elapsed()
@@ -794,7 +794,7 @@ impl<const N: usize> LeftIdeal<N> {
         #[cfg(test)]
         let _t2 = std::time::Instant::now();
         #[cfg(test)]
-        eprintln!(
+        crate::selkie_trace!(
             "[to_isogeny] before FDI(v): drbg_offset=0x{:x}",
             crate::drbg::debug::offset()
         );
@@ -802,7 +802,7 @@ impl<const N: usize> LeftIdeal<N> {
         let (e_v, phi_v_p, phi_v_q, phi_v_pmq) =
             fixed_degree_isogeny(sui.factor2.order, &v_deg, rng)?;
         #[cfg(test)]
-        eprintln!(
+        crate::selkie_trace!(
             "[to_isogeny] after FDI(v): drbg_offset=0x{:x} elapsed={:?}",
             crate::drbg::debug::offset(),
             _t2.elapsed()
@@ -1071,7 +1071,7 @@ impl<const N: usize> LeftIdeal<N> {
         let no_extra_torsion = true;
         let scale = f.value().checked_sub(sui.e.value())?;
         #[cfg(test)]
-        eprintln!(
+        crate::selkie_trace!(
             "[to_isogeny] outer chain: sui.e={}, scale={scale}",
             sui.e.value()
         );
@@ -1141,25 +1141,25 @@ impl<const N: usize> LeftIdeal<N> {
             let (p2re, p2im) = point_hex(&kp_second);
             let (q1re, q1im) = point_hex(&kq_first);
             let (q2re, q2im) = point_hex(&kq_second);
-            eprintln!("OUTER_KER T1.P1_x_re=0x{p1re} T1.P1_x_im=0x{p1im}");
-            eprintln!("OUTER_KER T1.P2_x_re=0x{p2re} T1.P2_x_im=0x{p2im}");
-            eprintln!("OUTER_KER T2.P1_x_re=0x{q1re} T2.P1_x_im=0x{q1im}");
-            eprintln!("OUTER_KER T2.P2_x_re=0x{q2re} T2.P2_x_im=0x{q2im}");
+            crate::selkie_trace!("OUTER_KER T1.P1_x_re=0x{p1re} T1.P1_x_im=0x{p1im}");
+            crate::selkie_trace!("OUTER_KER T1.P2_x_re=0x{p2re} T1.P2_x_im=0x{p2im}");
+            crate::selkie_trace!("OUTER_KER T2.P1_x_re=0x{q1re} T2.P1_x_im=0x{q1im}");
+            crate::selkie_trace!("OUTER_KER T2.P2_x_re=0x{q2re} T2.P2_x_im=0x{q2im}");
             let (e1re, _e1im) = fp2_hex(&e_u.j_invariant());
             let (e2re, _e2im) = fp2_hex(&e_v.j_invariant());
-            eprintln!("OUTER_KER E1_j_re=0x{e1re}");
-            eprintln!("OUTER_KER E2_j_re=0x{e2re}");
+            crate::selkie_trace!("OUTER_KER E1_j_re=0x{e1re}");
+            crate::selkie_trace!("OUTER_KER E2_j_re=0x{e2re}");
             let (e1a_re, e1a_im) = fp2_hex(e_u.coefficient().as_fp2());
             let (e2a_re, e2a_im) = fp2_hex(e_v.coefficient().as_fp2());
-            eprintln!("OUTER_KER E1_A_re=0x{e1a_re} E1_A_im=0x{e1a_im}");
-            eprintln!("OUTER_KER E2_A_re=0x{e2a_re} E2_A_im=0x{e2a_im}");
-            eprintln!("OUTER_KER exp={e}");
+            crate::selkie_trace!("OUTER_KER E1_A_re=0x{e1a_re} E1_A_im=0x{e1a_im}");
+            crate::selkie_trace!("OUTER_KER E2_A_re=0x{e2a_re} E2_A_im=0x{e2a_im}");
+            crate::selkie_trace!("OUTER_KER exp={e}");
 
             let (kp1_half, kp1_full) = has_order(kp_first, e);
             let (kp2_half, kp2_full) = has_order(kp_second, e);
             let (kq1_half, kq1_full) = has_order(kq_first, e);
             let (kq2_half, kq2_full) = has_order(kq_second, e);
-            eprintln!(
+            crate::selkie_trace!(
                 "[OUTER_KER] on_curve kp=({},{}) kq=({},{}) kpmq=({},{}); order 2^{e}: kp=({kp1_half},{kp1_full})/({kp2_half},{kp2_full}) kq=({kq1_half},{kq1_full})/({kq2_half},{kq2_full})",
                 on_curve(&e_u, &kp_first),
                 on_curve(&e_v, &kp_second),
@@ -1243,19 +1243,19 @@ impl<const N: usize> LeftIdeal<N> {
                 let im: String = b[32..].iter().rev().map(|x| format!("{:02x}", x)).collect();
                 format!("re=0x{re} im=0x{im}")
             };
-            eprintln!(
+            crate::selkie_trace!(
                 "[CHAIN_OUT] codomain.E1.j {}",
                 fp2_hex(&codomain.E1.j_invariant())
             );
-            eprintln!(
+            crate::selkie_trace!(
                 "[CHAIN_OUT] codomain.E2.j {}",
                 fp2_hex(&codomain.E2.j_invariant())
             );
-            eprintln!(
+            crate::selkie_trace!(
                 "[CHAIN_OUT] codomain.E1.A {}",
                 fp2_hex(codomain.E1.coefficient().as_fp2())
             );
-            eprintln!(
+            crate::selkie_trace!(
                 "[CHAIN_OUT] codomain.E2.A {}",
                 fp2_hex(codomain.E2.coefficient().as_fp2())
             );
@@ -1319,7 +1319,7 @@ impl<const N: usize> LeftIdeal<N> {
             let ppq_e2 = images[0].1.differential_add(&images[1].1, &images[2].1);
             let w2 = crate::curves::pairing::weil_pairing(&images[0].1, &images[1].1, &ppq_e2, f);
             let matched_e2 = w2 == expected;
-            eprintln!("[to_isogeny] disamb: E1 match={matched_e1}, E2 match={matched_e2}");
+            crate::selkie_trace!("[to_isogeny] disamb: E1 match={matched_e1}, E2 match={matched_e2}");
         }
         let (e_i, p_chain, q_chain, pmq_chain) = if matched_e1 {
             (codomain.E1, images[0].0, images[1].0, images[2].0)

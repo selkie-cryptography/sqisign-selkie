@@ -402,14 +402,14 @@ impl Kernel {
         let (p1, q1) = match TorsionBasis::from_propagated(P.0, Q.0, PmQ.0).lift(&domain.E1) {
             Some(r) => r,
             None => {
-                eprintln!("    from_montgomery: lift E1 failed");
+                crate::selkie_trace!("    from_montgomery: lift E1 failed");
                 return None;
             }
         };
         let (p2, q2) = match TorsionBasis::from_propagated(P.1, Q.1, PmQ.1).lift(&domain.E2) {
             Some(r) => r,
             None => {
-                eprintln!("    from_montgomery: lift E2 failed");
+                crate::selkie_trace!("    from_montgomery: lift E2 failed");
                 return None;
             }
         };
@@ -489,7 +489,7 @@ impl Kernel {
             };
             let w1f = w1.as_fp2();
             let w2f = w2.as_fp2();
-            eprintln!(
+            crate::selkie_trace!(
                 "[is_isotropic] FAIL e_kernel={} w1={} w2={} prod={} (w1==1: {}, w2==1: {})",
                 e_kernel.value(),
                 fp2_hex(w1f),
@@ -699,14 +699,14 @@ impl Kernel {
                     .collect();
                 format!("0x{re} + i*0x{im}")
             };
-            eprintln!("GLUE_IN T1.0.X={}", fp2_hex(&gluing.T1.0.X));
-            eprintln!("GLUE_IN T1.0.Z={}", fp2_hex(&gluing.T1.0.Z));
-            eprintln!("GLUE_IN T1.1.X={}", fp2_hex(&gluing.T1.1.X));
-            eprintln!("GLUE_IN T1.1.Z={}", fp2_hex(&gluing.T1.1.Z));
-            eprintln!("GLUE_IN T2.0.X={}", fp2_hex(&gluing.T2.0.X));
-            eprintln!("GLUE_IN T2.0.Z={}", fp2_hex(&gluing.T2.0.Z));
-            eprintln!("GLUE_IN T2.1.X={}", fp2_hex(&gluing.T2.1.X));
-            eprintln!("GLUE_IN T2.1.Z={}", fp2_hex(&gluing.T2.1.Z));
+            crate::selkie_trace!("GLUE_IN T1.0.X={}", fp2_hex(&gluing.T1.0.X));
+            crate::selkie_trace!("GLUE_IN T1.0.Z={}", fp2_hex(&gluing.T1.0.Z));
+            crate::selkie_trace!("GLUE_IN T1.1.X={}", fp2_hex(&gluing.T1.1.X));
+            crate::selkie_trace!("GLUE_IN T1.1.Z={}", fp2_hex(&gluing.T1.1.Z));
+            crate::selkie_trace!("GLUE_IN T2.0.X={}", fp2_hex(&gluing.T2.0.X));
+            crate::selkie_trace!("GLUE_IN T2.0.Z={}", fp2_hex(&gluing.T2.0.Z));
+            crate::selkie_trace!("GLUE_IN T2.1.X={}", fp2_hex(&gluing.T2.1.X));
+            crate::selkie_trace!("GLUE_IN T2.1.Z={}", fp2_hex(&gluing.T2.1.Z));
         }
 
         let (gluing_data, _) = gluing.isogeny(&[]);
@@ -727,7 +727,7 @@ impl Kernel {
                 .map(|(n, _)| *n)
                 .collect();
             if !zeros.is_empty() {
-                eprintln!("GLUE CODOMAIN: zero components: {zeros:?}");
+                crate::selkie_trace!("GLUE CODOMAIN: zero components: {zeros:?}");
             }
             let pc = null.precompute();
             let pc_zeros: Vec<&str> = [
@@ -745,7 +745,7 @@ impl Kernel {
             .map(|(n, _)| *n)
             .collect();
             if !pc_zeros.is_empty() {
-                eprintln!("GLUE PRECOMP: zero values: {pc_zeros:?}");
+                crate::selkie_trace!("GLUE PRECOMP: zero values: {pc_zeros:?}");
             }
         }
 
@@ -770,14 +770,14 @@ impl Kernel {
             let (br, bi) = fp2_hex(&null.b);
             let (cr, ci) = fp2_hex(&null.c);
             let (dr, di) = fp2_hex(&null.d);
-            eprintln!("[MODA] glue null.a.re=0x{ar}");
-            eprintln!("[MODA] glue null.a.im=0x{ai}");
-            eprintln!("[MODA] glue null.b.re=0x{br}");
-            eprintln!("[MODA] glue null.b.im=0x{bi}");
-            eprintln!("[MODA] glue null.c.re=0x{cr}");
-            eprintln!("[MODA] glue null.c.im=0x{ci}");
-            eprintln!("[MODA] glue null.d.re=0x{dr}");
-            eprintln!("[MODA] glue null.d.im=0x{di}");
+            crate::selkie_trace!("[MODA] glue null.a.re=0x{ar}");
+            crate::selkie_trace!("[MODA] glue null.a.im=0x{ai}");
+            crate::selkie_trace!("[MODA] glue null.b.re=0x{br}");
+            crate::selkie_trace!("[MODA] glue null.b.im=0x{bi}");
+            crate::selkie_trace!("[MODA] glue null.c.re=0x{cr}");
+            crate::selkie_trace!("[MODA] glue null.c.im=0x{ci}");
+            crate::selkie_trace!("[MODA] glue null.d.re=0x{dr}");
+            crate::selkie_trace!("[MODA] glue null.d.im=0x{di}");
         }
 
         // Push passenger points through the gluing.
@@ -872,14 +872,14 @@ impl Kernel {
                         p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
                     };
                     if any_zero(&R) || any_zero(&S) {
-                        eprintln!(
+                        crate::selkie_trace!(
                             "CHAIN pushdown: after {n} doublings from level {}, R or S is ZERO",
                             k - 1
                         );
                     }
                     let hs = S.squared().hadamard();
                     if hs.X == hs.Z {
-                        eprintln!(
+                        crate::selkie_trace!(
                             "CHAIN pushdown: after {n} dbls from lvl {}, S has H(S²).X==H(S²).Z",
                             k - 1
                         );
@@ -912,7 +912,7 @@ impl Kernel {
                     p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
                 };
                 if any_zero(t1) || any_zero(t2) {
-                    eprintln!("CHAIN step {_step_index}: 8-torsion input is ZERO (k={k})");
+                    crate::selkie_trace!("CHAIN step {_step_index}: 8-torsion input is ZERO (k={k})");
                 }
                 if _step_index == 0 {
                     let fp2_hex = |v: &Fp2| -> String {
@@ -921,7 +921,7 @@ impl Kernel {
                             b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
                         format!("0x{r}")
                     };
-                    eprintln!(
+                    crate::selkie_trace!(
                         "STEP0 T2.X={} T2.Y={} T2.Z={} T2.W={}",
                         fp2_hex(&t2.X),
                         fp2_hex(&t2.Y),
@@ -930,31 +930,31 @@ impl Kernel {
                     );
                     // Check if T2 has Z == 0 or W == 0 component
                     if t2.Z == Fp2::ZERO {
-                        eprintln!("STEP0: T2.Z is ZERO!");
+                        crate::selkie_trace!("STEP0: T2.Z is ZERO!");
                     }
                     if t2.W == Fp2::ZERO {
-                        eprintln!("STEP0: T2.W is ZERO!");
+                        crate::selkie_trace!("STEP0: T2.W is ZERO!");
                     }
                     // Check for X == Z relationship (which causes alpha==gamma)
                     let hs = t2.squared().hadamard();
                     if hs.X == hs.Z {
-                        eprintln!("STEP0: H(T2²).X == H(T2²).Z → will cause alpha==gamma");
+                        crate::selkie_trace!("STEP0: H(T2²).X == H(T2²).Z → will cause alpha==gamma");
                     }
                 }
                 // Check ALL strategy points before eval.
                 for (si, sp) in theta_strat.iter().enumerate() {
                     if any_zero(&sp.0) {
-                        eprintln!("CHAIN step {_step_index}: strat[{si}].0 is ZERO");
+                        crate::selkie_trace!("CHAIN step {_step_index}: strat[{si}].0 is ZERO");
                     }
                     if any_zero(&sp.1) {
-                        eprintln!("CHAIN step {_step_index}: strat[{si}].1 is ZERO");
+                        crate::selkie_trace!("CHAIN step {_step_index}: strat[{si}].1 is ZERO");
                     }
                 }
                 // Check null point.
                 let null = &current_jacobian.null;
                 let null_zero = null.a == Fp2::ZERO && null.b == Fp2::ZERO;
                 if null_zero {
-                    eprintln!("CHAIN step {_step_index}: codomain null is ZERO");
+                    crate::selkie_trace!("CHAIN step {_step_index}: codomain null is ZERO");
                 }
             }
 
@@ -1002,7 +1002,7 @@ impl Kernel {
                         p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
                     };
                     if any_zero(&theta_strat[i].0) || any_zero(&theta_strat[i].1) {
-                        eprintln!("CHAIN step {_step_index}: strat[{i}] became ZERO AFTER eval");
+                        crate::selkie_trace!("CHAIN step {_step_index}: strat[{i}] became ZERO AFTER eval");
                     }
                 }
             }
@@ -1026,7 +1026,7 @@ impl Kernel {
                 .map(|(n, _)| *n)
                 .collect();
                 if !zero_components.is_empty() {
-                    eprintln!(
+                    crate::selkie_trace!(
                         "CHAIN step {_step_index}: null has zero components: {zero_components:?}"
                     );
                 }
@@ -1034,7 +1034,7 @@ impl Kernel {
 
             #[cfg(test)]
             if _step_index < 3 || steps_remaining <= 2 {
-                eprintln!(
+                crate::selkie_trace!(
                     "step {_step_index}: k={k}, orders={orders:?}, remaining={steps_remaining}"
                 );
             }
@@ -1067,14 +1067,14 @@ impl Kernel {
                 } else {
                     "main"
                 };
-                eprintln!("[MODA] {label} {_step_index} null.a.re=0x{ar}");
-                eprintln!("[MODA] {label} {_step_index} null.a.im=0x{ai}");
-                eprintln!("[MODA] {label} {_step_index} null.b.re=0x{br}");
-                eprintln!("[MODA] {label} {_step_index} null.b.im=0x{bi}");
-                eprintln!("[MODA] {label} {_step_index} null.c.re=0x{cr}");
-                eprintln!("[MODA] {label} {_step_index} null.c.im=0x{ci}");
-                eprintln!("[MODA] {label} {_step_index} null.d.re=0x{dr}");
-                eprintln!("[MODA] {label} {_step_index} null.d.im=0x{di}");
+                crate::selkie_trace!("[MODA] {label} {_step_index} null.a.re=0x{ar}");
+                crate::selkie_trace!("[MODA] {label} {_step_index} null.a.im=0x{ai}");
+                crate::selkie_trace!("[MODA] {label} {_step_index} null.b.re=0x{br}");
+                crate::selkie_trace!("[MODA] {label} {_step_index} null.b.im=0x{bi}");
+                crate::selkie_trace!("[MODA] {label} {_step_index} null.c.re=0x{cr}");
+                crate::selkie_trace!("[MODA] {label} {_step_index} null.c.im=0x{ci}");
+                crate::selkie_trace!("[MODA] {label} {_step_index} null.d.re=0x{dr}");
+                crate::selkie_trace!("[MODA] {label} {_step_index} null.d.im=0x{di}");
             }
 
             _step_index += 1;
@@ -1090,7 +1090,7 @@ impl Kernel {
         #[cfg(test)]
         {
             let count = isogeny::get_index_splitting_count(&current_jacobian.null);
-            eprintln!("splitting: zeros={count}");
+            crate::selkie_trace!("splitting: zeros={count}");
             // Print null point in same hex format as C ref for comparison.
             let null = &current_jacobian.null;
             let fp2_hex = |fp2val: &Fp2| {
@@ -1115,8 +1115,8 @@ impl Kernel {
                 ("d", &null.d),
             ] {
                 let (re, im) = fp2_hex(fp2val);
-                eprintln!("SPLIT null_{name}_re=0x{re}");
-                eprintln!("SPLIT null_{name}_im=0x{im}");
+                crate::selkie_trace!("SPLIT null_{name}_re=0x{re}");
+                crate::selkie_trace!("SPLIT null_{name}_im=0x{im}");
             }
         }
 
@@ -1245,14 +1245,14 @@ impl Kernel {
             let (br, bi) = fp2_hex(&n.b);
             let (cr, ci) = fp2_hex(&n.c);
             let (dr, di) = fp2_hex(&n.d);
-            eprintln!("[NOEX] glue null.a.re=0x{ar}");
-            eprintln!("[NOEX] glue null.a.im=0x{ai}");
-            eprintln!("[NOEX] glue null.b.re=0x{br}");
-            eprintln!("[NOEX] glue null.b.im=0x{bi}");
-            eprintln!("[NOEX] glue null.c.re=0x{cr}");
-            eprintln!("[NOEX] glue null.c.im=0x{ci}");
-            eprintln!("[NOEX] glue null.d.re=0x{dr}");
-            eprintln!("[NOEX] glue null.d.im=0x{di}");
+            crate::selkie_trace!("[NOEX] glue null.a.re=0x{ar}");
+            crate::selkie_trace!("[NOEX] glue null.a.im=0x{ai}");
+            crate::selkie_trace!("[NOEX] glue null.b.re=0x{br}");
+            crate::selkie_trace!("[NOEX] glue null.b.im=0x{bi}");
+            crate::selkie_trace!("[NOEX] glue null.c.re=0x{cr}");
+            crate::selkie_trace!("[NOEX] glue null.c.im=0x{ci}");
+            crate::selkie_trace!("[NOEX] glue null.d.re=0x{dr}");
+            crate::selkie_trace!("[NOEX] glue null.d.im=0x{di}");
         }
 
         // Phase 3: main loop — ALL steps use normal hadamard.
@@ -1315,14 +1315,14 @@ impl Kernel {
                 let (br, bi) = fp2_hex(&n.b);
                 let (cr, ci) = fp2_hex(&n.c);
                 let (dr, di) = fp2_hex(&n.d);
-                eprintln!("[NOEX] main {step_idx} null.a.re=0x{ar}");
-                eprintln!("[NOEX] main {step_idx} null.a.im=0x{ai}");
-                eprintln!("[NOEX] main {step_idx} null.b.re=0x{br}");
-                eprintln!("[NOEX] main {step_idx} null.b.im=0x{bi}");
-                eprintln!("[NOEX] main {step_idx} null.c.re=0x{cr}");
-                eprintln!("[NOEX] main {step_idx} null.c.im=0x{ci}");
-                eprintln!("[NOEX] main {step_idx} null.d.re=0x{dr}");
-                eprintln!("[NOEX] main {step_idx} null.d.im=0x{di}");
+                crate::selkie_trace!("[NOEX] main {step_idx} null.a.re=0x{ar}");
+                crate::selkie_trace!("[NOEX] main {step_idx} null.a.im=0x{ai}");
+                crate::selkie_trace!("[NOEX] main {step_idx} null.b.re=0x{br}");
+                crate::selkie_trace!("[NOEX] main {step_idx} null.b.im=0x{bi}");
+                crate::selkie_trace!("[NOEX] main {step_idx} null.c.re=0x{cr}");
+                crate::selkie_trace!("[NOEX] main {step_idx} null.c.im=0x{ci}");
+                crate::selkie_trace!("[NOEX] main {step_idx} null.d.re=0x{dr}");
+                crate::selkie_trace!("[NOEX] main {step_idx} null.d.im=0x{di}");
             }
         }
 
@@ -1354,14 +1354,14 @@ impl Kernel {
             let (br, bi) = fp2_hex(&n.b);
             let (cr, ci) = fp2_hex(&n.c);
             let (dr, di) = fp2_hex(&n.d);
-            eprintln!("[NOEX] tail4 null.a.re=0x{ar}");
-            eprintln!("[NOEX] tail4 null.a.im=0x{ai}");
-            eprintln!("[NOEX] tail4 null.b.re=0x{br}");
-            eprintln!("[NOEX] tail4 null.b.im=0x{bi}");
-            eprintln!("[NOEX] tail4 null.c.re=0x{cr}");
-            eprintln!("[NOEX] tail4 null.c.im=0x{ci}");
-            eprintln!("[NOEX] tail4 null.d.re=0x{dr}");
-            eprintln!("[NOEX] tail4 null.d.im=0x{di}");
+            crate::selkie_trace!("[NOEX] tail4 null.a.re=0x{ar}");
+            crate::selkie_trace!("[NOEX] tail4 null.a.im=0x{ai}");
+            crate::selkie_trace!("[NOEX] tail4 null.b.re=0x{br}");
+            crate::selkie_trace!("[NOEX] tail4 null.b.im=0x{bi}");
+            crate::selkie_trace!("[NOEX] tail4 null.c.re=0x{cr}");
+            crate::selkie_trace!("[NOEX] tail4 null.c.im=0x{ci}");
+            crate::selkie_trace!("[NOEX] tail4 null.d.re=0x{dr}");
+            crate::selkie_trace!("[NOEX] tail4 null.d.im=0x{di}");
         }
 
         // Dedicated ultimate: 2-isogeny.
@@ -1383,14 +1383,14 @@ impl Kernel {
             let (br, bi) = fp2_hex(&n.b);
             let (cr, ci) = fp2_hex(&n.c);
             let (dr, di) = fp2_hex(&n.d);
-            eprintln!("[NOEX] tail2 null.a.re=0x{ar}");
-            eprintln!("[NOEX] tail2 null.a.im=0x{ai}");
-            eprintln!("[NOEX] tail2 null.b.re=0x{br}");
-            eprintln!("[NOEX] tail2 null.b.im=0x{bi}");
-            eprintln!("[NOEX] tail2 null.c.re=0x{cr}");
-            eprintln!("[NOEX] tail2 null.c.im=0x{ci}");
-            eprintln!("[NOEX] tail2 null.d.re=0x{dr}");
-            eprintln!("[NOEX] tail2 null.d.im=0x{di}");
+            crate::selkie_trace!("[NOEX] tail2 null.a.re=0x{ar}");
+            crate::selkie_trace!("[NOEX] tail2 null.a.im=0x{ai}");
+            crate::selkie_trace!("[NOEX] tail2 null.b.re=0x{br}");
+            crate::selkie_trace!("[NOEX] tail2 null.b.im=0x{bi}");
+            crate::selkie_trace!("[NOEX] tail2 null.c.re=0x{cr}");
+            crate::selkie_trace!("[NOEX] tail2 null.c.im=0x{ci}");
+            crate::selkie_trace!("[NOEX] tail2 null.d.re=0x{dr}");
+            crate::selkie_trace!("[NOEX] tail2 null.d.im=0x{di}");
         }
 
         // Phase 4: splitting.

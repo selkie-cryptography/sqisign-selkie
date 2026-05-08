@@ -307,11 +307,11 @@ fn isogeny_no_extra_torsion_matches_extra_torsion() {
     let kernel_b = Kernel::from_montgomery(product, (p_e, p3_e), (q_e, q3_e), (pmq_e, pmq3_e));
     let result_b = kernel_b.and_then(|k| k.isogeny_no_extra_torsion(exp_e, &[], None));
 
-    eprintln!(
+    crate::selkie_trace!(
         "[iso-cross-check] Mode A (extra_torsion=true,  e={E}) succeeded: {}",
         result_a.is_some()
     );
-    eprintln!(
+    crate::selkie_trace!(
         "[iso-cross-check] Mode B (extra_torsion=false, e={E}) succeeded: {}",
         result_b.is_some()
     );
@@ -445,7 +445,7 @@ fn dump_no_extra_torsion_kernel() {
     let path =
         std::env::var("DUMP_NOEX_KERNEL").unwrap_or_else(|_| "/tmp/noex_ker.bin".to_string());
     std::fs::write(&path, &buf).expect("write kernel binary");
-    eprintln!(
+    crate::selkie_trace!(
         "[dump_no_extra_torsion_kernel] wrote {} ({} bytes, e_chain={E})",
         path,
         buf.len()
@@ -484,7 +484,7 @@ fn dump_no_extra_torsion_kernel() {
     let path_a =
         std::env::var("DUMP_EXTRA_KERNEL").unwrap_or_else(|_| "/tmp/extra_ker.bin".to_string());
     std::fs::write(&path_a, &buf_a).expect("write extra kernel binary");
-    eprintln!(
+    crate::selkie_trace!(
         "[dump_no_extra_torsion_kernel] wrote {} ({} bytes, e_chain={E}, kernel at 2^{})",
         path_a,
         buf_a.len(),
@@ -698,12 +698,12 @@ fn print_e0_basis_even_limbs() {
         "0x0017ed1ded6dce3c56831deae1dadeabad269e104cf932fae5b7b99c0128dd27",
         "0x03cdd6007c4f727655ecab154c6425fb0ec882078cca9770b17c2e4640d7234e",
     );
-    eprintln!("E0_P_X.re limbs   = {:#018x?}", p_x.a.0);
-    eprintln!("E0_P_X.im limbs   = {:#018x?}", p_x.b.0);
-    eprintln!("E0_Q_X.re limbs   = {:#018x?}", q_x.a.0);
-    eprintln!("E0_Q_X.im limbs   = {:#018x?}", q_x.b.0);
-    eprintln!("E0_PMQ_X.re limbs = {:#018x?}", pmq_x.a.0);
-    eprintln!("E0_PMQ_X.im limbs = {:#018x?}", pmq_x.b.0);
+    crate::selkie_trace!("E0_P_X.re limbs   = {:#018x?}", p_x.a.0);
+    crate::selkie_trace!("E0_P_X.im limbs   = {:#018x?}", p_x.b.0);
+    crate::selkie_trace!("E0_Q_X.re limbs   = {:#018x?}", q_x.a.0);
+    crate::selkie_trace!("E0_Q_X.im limbs   = {:#018x?}", q_x.b.0);
+    crate::selkie_trace!("E0_PMQ_X.re limbs = {:#018x?}", pmq_x.a.0);
+    crate::selkie_trace!("E0_PMQ_X.im limbs = {:#018x?}", pmq_x.b.0);
 }
 
 /// Print Montgomery-form limbs for `1/2 mod p`, needed for E0's
@@ -713,7 +713,7 @@ fn print_one_half_limbs() {
     use crate::fields::fp::Fp;
     let two = &Fp::ONE + &Fp::ONE;
     let half = two.invert();
-    eprintln!("1/2 limbs (Montgomery) = {:#018x?}", half.0);
+    crate::selkie_trace!("1/2 limbs (Montgomery) = {:#018x?}", half.0);
 }
 
 /// Print Montgomery-form limbs for `-1 mod p`, needed for the
@@ -722,7 +722,7 @@ fn print_one_half_limbs() {
 fn print_minus_one_limbs() {
     use crate::fields::fp::Fp;
     let minus_one = -&Fp::ONE;
-    eprintln!("-1 limbs (Montgomery) = {:#018x?}", minus_one.0);
+    crate::selkie_trace!("-1 limbs (Montgomery) = {:#018x?}", minus_one.0);
 }
 
 /// Diagnostic: are Selkie's `theta_p`, `theta_q`, `theta_pmq` (post-biladder)
@@ -803,7 +803,7 @@ fn selkie_theta_basis_vs_cref_kat0_projective_eq() {
         let lhs = selkie_x * cref_z;
         let rhs = cref_x * selkie_z;
         let eq = lhs == rhs;
-        eprintln!("{name}: projective equal = {eq}");
+        crate::selkie_trace!("{name}: projective equal = {eq}");
 
         // Compute lambda = Selkie_X / C_ref_X. If same lambda matches Z too,
         // they're projectively equivalent with scaling factor lambda.
@@ -823,9 +823,9 @@ fn selkie_theta_basis_vs_cref_kat0_projective_eq() {
             .rev()
             .map(|b| format!("{b:02x}"))
             .collect();
-        eprintln!("  lambda_x = 0x{hex_x}");
-        eprintln!("  lambda_z = 0x{hex_z}");
-        eprintln!("  lambda equal = {}", lambda_x == lambda_z);
+        crate::selkie_trace!("  lambda_x = 0x{hex_x}");
+        crate::selkie_trace!("  lambda_z = 0x{hex_z}");
+        crate::selkie_trace!("  lambda equal = {}", lambda_x == lambda_z);
     }
 }
 
@@ -1153,12 +1153,12 @@ fn kat17_glue_vs_cref_projective_eq_scan() {
     for (si, s) in ours.iter().enumerate() {
         for (cj, (n, c)) in cref.iter().enumerate() {
             if proj_eq(s, c) {
-                eprintln!("MATCH: our chain {si} ≡ C ref chain {cj} (n={n}) projectively");
+                crate::selkie_trace!("MATCH: our chain {si} ≡ C ref chain {cj} (n={n}) projectively");
                 any_match[si] = true;
             }
         }
         if !any_match[si] {
-            eprintln!(
+            crate::selkie_trace!(
                 "NO MATCH for our chain {si} against any of {} C ref chains",
                 cref.len()
             );

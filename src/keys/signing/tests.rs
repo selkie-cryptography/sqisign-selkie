@@ -67,7 +67,7 @@ fn keygen_kat_all() {
         let sk = match SigningKey::generate_derand(&seed) {
             Ok(sk) => sk,
             Err(SignatureError::KeyGenFailed) => {
-                eprintln!("keygen_kat_all: vector {i} exhausted retries (expected)");
+                crate::selkie_trace!("keygen_kat_all: vector {i} exhausted retries (expected)");
                 continue;
             }
             Err(other) => panic!("vector {i}: unexpected keygen error: {other:?}"),
@@ -87,7 +87,7 @@ fn keygen_kat_all() {
             "vector {i}: sk mismatch"
         );
 
-        eprintln!("keygen_kat_all: vector {i} OK");
+        crate::selkie_trace!("keygen_kat_all: vector {i} OK");
     }
 }
 
@@ -111,11 +111,11 @@ fn dump_keygen_kat_sk() {
         .unwrap_or_else(|e| panic!("KAT[{kat_idx}] keygen errored: {e:?}"));
     let ours = sk.to_bytes();
     let cref = hex::decode(sk_hex).expect("valid hex");
-    eprintln!(
+    crate::selkie_trace!(
         "KAT[{kat_idx}] our ideal lattice denom = {:?}",
         sk.ideal.lattice().denom()
     );
-    eprintln!("KAT[{kat_idx}] our gen denom = {:?}", sk.ideal_gen.denom);
+    crate::selkie_trace!("KAT[{kat_idx}] our gen denom = {:?}", sk.ideal_gen.denom);
     fs::write(
         format!("/tmp/keygen_kat_{kat_idx:03}_ours.hex"),
         hex::encode(ours),
@@ -126,7 +126,7 @@ fn dump_keygen_kat_sk() {
         hex::encode(&cref),
     )
     .unwrap();
-    eprintln!(
+    crate::selkie_trace!(
         "dump_keygen_kat_sk: KAT[{kat_idx}] wrote /tmp/keygen_kat_{kat_idx:03}_{{ours,cref}}.hex (sk len={})",
         ours.len()
     );
@@ -682,7 +682,7 @@ fn sign_kat_all() {
         let sig = match sk.sign(&msg, &mut OsRng) {
             Ok(s) => s,
             Err(SignatureError::SigningFailed) => {
-                eprintln!("sign_kat_all: vector {i} SigningFailed (expected)");
+                crate::selkie_trace!("sign_kat_all: vector {i} SigningFailed (expected)");
                 continue;
             }
             Err(other) => panic!("vector {i}: unexpected sign error: {other:?}"),
@@ -690,7 +690,7 @@ fn sign_kat_all() {
 
         vk.verify(&msg, &sig)
             .unwrap_or_else(|_| panic!("vector {i}: signature did not verify"));
-        eprintln!("sign_kat_all: vector {i} OK");
+        crate::selkie_trace!("sign_kat_all: vector {i} OK");
     }
 }
 
@@ -756,12 +756,12 @@ fn sign_kat_zero_only() {
     let sig = sk
         .sign(&msg, &mut OsRng)
         .expect("KAT[0] sign must succeed within retry budget");
-    eprintln!("sign_kat_zero_only: sign OK in {:?}", t0.elapsed());
+    crate::selkie_trace!("sign_kat_zero_only: sign OK in {:?}", t0.elapsed());
 
     let t1 = std::time::Instant::now();
     vk.verify(&msg, &sig)
         .expect("KAT[0] signature must verify against paired pk");
-    eprintln!("sign_kat_zero_only: verify OK in {:?}", t1.elapsed());
+    crate::selkie_trace!("sign_kat_zero_only: verify OK in {:?}", t1.elapsed());
 }
 
 /// Deterministic sign-and-verify probe for `KAT_VECTORS[kat_idx]`.
@@ -783,7 +783,7 @@ fn sign_kat_idx_probe_inner(kat_idx: usize) {
     let elapsed = t0.elapsed();
     vk.verify(&msg, &sig)
         .unwrap_or_else(|e| panic!("KAT[{kat_idx}] verify failed: {e:?}"));
-    eprintln!("sign_kat_derand_{kat_idx:03}: sign={elapsed:?}");
+    crate::selkie_trace!("sign_kat_derand_{kat_idx:03}: sign={elapsed:?}");
 }
 
 /// `KAT_IDX=N`-parametrized deterministic sign-and-verify probe.
@@ -796,7 +796,7 @@ fn sign_kat_idx_probe() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    eprintln!("sign_kat_idx_probe: KAT_IDX={kat_idx}");
+    crate::selkie_trace!("sign_kat_idx_probe: KAT_IDX={kat_idx}");
     sign_kat_idx_probe_inner(kat_idx);
 }
 
@@ -837,13 +837,13 @@ fn sign_kat_zero_dump_for_xverify() {
     fs::write(format!("{dir}/pk.bin"), &pk_bytes).expect("write pk.bin");
     fs::write(format!("{dir}/msg.bin"), &msg).expect("write msg.bin");
     fs::write(format!("{dir}/our_sig.bin"), sig.to_bytes()).expect("write our_sig.bin");
-    eprintln!(
+    crate::selkie_trace!(
         "sign_kat_zero_dump_for_xverify: KAT[{kat_idx}] sign={sign_elapsed:?} dumped to {dir}"
     );
 
     let t1 = std::time::Instant::now();
     let r = vk.verify(&msg, &sig);
-    eprintln!(
+    crate::selkie_trace!(
         "sign_kat_zero_dump_for_xverify: KAT[{kat_idx}] verify result={r:?} in {:?}",
         t1.elapsed()
     );
@@ -1505,21 +1505,21 @@ fn verify_kat_zero_cref_sig() {
     // canonical-basis `to_hint` outputs of curves the deterministic
     // commitment phase hits. M_chl and curve_aux vary with the
     // randomness.
-    eprintln!("[CREF_SIG] curve_aux.A={:?}", sig.curve_aux.coefficient());
-    eprintln!(
+    crate::selkie_trace!("[CREF_SIG] curve_aux.A={:?}", sig.curve_aux.coefficient());
+    crate::selkie_trace!(
         "[CREF_SIG] n_bt={} r_rsp={}",
         sig.n_bt.value(),
         sig.r_rsp.value()
     );
-    eprintln!(
+    crate::selkie_trace!(
         "[CREF_SIG] hint_aux={} hint_chl={}",
         u8::from(sig.hint_aux),
         u8::from(sig.hint_chl)
     );
-    eprintln!("[CREF_SIG] M_chl[0][0]={:?}", sig.M_chl.entries[0][0]);
-    eprintln!("[CREF_SIG] M_chl[0][1]={:?}", sig.M_chl.entries[0][1]);
-    eprintln!("[CREF_SIG] M_chl[1][0]={:?}", sig.M_chl.entries[1][0]);
-    eprintln!("[CREF_SIG] M_chl[1][1]={:?}", sig.M_chl.entries[1][1]);
+    crate::selkie_trace!("[CREF_SIG] M_chl[0][0]={:?}", sig.M_chl.entries[0][0]);
+    crate::selkie_trace!("[CREF_SIG] M_chl[0][1]={:?}", sig.M_chl.entries[0][1]);
+    crate::selkie_trace!("[CREF_SIG] M_chl[1][0]={:?}", sig.M_chl.entries[1][0]);
+    crate::selkie_trace!("[CREF_SIG] M_chl[1][1]={:?}", sig.M_chl.entries[1][1]);
 
     vk.verify(&msg, &sig)
         .expect("C ref's KAT[0] signature must verify against our verifier");
@@ -1538,7 +1538,7 @@ fn sign_fresh() {
     let sig = match sk.sign(&msg, &mut OsRng) {
         Ok(s) => s,
         Err(SignatureError::SigningFailed) => {
-            eprintln!("sign_fresh: SigningFailed (response phase incomplete)");
+            crate::selkie_trace!("sign_fresh: SigningFailed (response phase incomplete)");
             return;
         }
         Err(other) => panic!("unexpected sign error: {other:?}"),
@@ -1567,7 +1567,7 @@ fn sign_with_kat_key() {
     let sig = match sk.sign(&msg, &mut OsRng) {
         Ok(s) => s,
         Err(SignatureError::SigningFailed) => {
-            eprintln!("sign_with_kat_key: SigningFailed (response phase incomplete)");
+            crate::selkie_trace!("sign_with_kat_key: SigningFailed (response phase incomplete)");
             return;
         }
         Err(other) => panic!("unexpected sign error: {other:?}"),
@@ -1612,13 +1612,13 @@ fn keygen_drbg_total_bytes_seed_0() {
     let _sk = match SigningKey::generate_with_rng(&mut drbg) {
         Ok(sk) => sk,
         Err(SignatureError::KeyGenFailed) => {
-            eprintln!("[TOTAL-BYTES] keygen probabilistically failed for seed 0; test skipped");
+            crate::selkie_trace!("[TOTAL-BYTES] keygen probabilistically failed for seed 0; test skipped");
             return;
         }
         Err(other) => panic!("unexpected keygen error: {other:?}"),
     };
     let observed = drbg.bytes_consumed() - before;
-    eprintln!("[TOTAL-BYTES] keygen consumed {observed} DRBG bytes for seed 0");
+    crate::selkie_trace!("[TOTAL-BYTES] keygen consumed {observed} DRBG bytes for seed 0");
 
     // Replace `None` with `Some(...)` once the C-reference
     // `drbg_bytes_consumed` counter is instrumented at the same
@@ -1702,11 +1702,11 @@ fn keygen_target_to_isogeny_seed_0() {
     let computed_a = e_pk.coefficient().to_bytes();
     let expected_a = &pk_bytes[..64];
 
-    eprintln!("[TI] computed e_pk.A = {}", hex::encode(computed_a));
-    eprintln!("[TI] expected   pk.A = {}", hex::encode(expected_a));
+    crate::selkie_trace!("[TI] computed e_pk.A = {}", hex::encode(computed_a));
+    crate::selkie_trace!("[TI] expected   pk.A = {}", hex::encode(expected_a));
 
     let (_, hint_pk) = TorsionBasis::to_hint(&e_pk);
-    eprintln!(
+    crate::selkie_trace!(
         "[TI] computed hint_pk = {:08b}, expected = {:08b}",
         hint_pk.to_byte(),
         pk_bytes[64]
@@ -1786,7 +1786,7 @@ fn survey_keygen_target_to_isogeny_first_10() {
 
         match ideal.to_isogeny(&mut OsRng) {
             None => {
-                eprintln!("[SURVEY] vec={i} to_isogeny=None");
+                crate::selkie_trace!("[SURVEY] vec={i} to_isogeny=None");
                 none_count += 1;
             }
             Some((e_pk, _phi_p, _phi_q, _phi_pmq)) => {
@@ -1798,7 +1798,7 @@ fn survey_keygen_target_to_isogeny_first_10() {
                 }
                 let computed_hex = hex::encode(computed_a);
                 let expected_hex = hex::encode(expected_a);
-                eprintln!(
+                crate::selkie_trace!(
                     "[SURVEY] vec={i} match={is_match} computed={}...  expected={}...",
                     &computed_hex[..32],
                     &expected_hex[..32]
@@ -1807,7 +1807,7 @@ fn survey_keygen_target_to_isogeny_first_10() {
         }
     }
 
-    eprintln!("[SURVEY] total={total} matched={matched} none={none_count}");
+    crate::selkie_trace!("[SURVEY] total={total} matched={matched} none={none_count}");
 }
 
 /// Decode KAT[0]'s SK and print the components our keygen must
@@ -1825,8 +1825,8 @@ fn survey_keygen_target_to_isogeny_first_10() {
 #[ignore]
 fn keygen_target_seed_0() {
     let (seed_hex, pk_hex, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[0];
-    eprintln!("[TARGET] seed_hex (first 32 chars) = {}", &seed_hex[..32]);
-    eprintln!("[TARGET] pk_hex (first 32 chars) = {}", &pk_hex[..32]);
+    crate::selkie_trace!("[TARGET] seed_hex (first 32 chars) = {}", &seed_hex[..32]);
+    crate::selkie_trace!("[TARGET] pk_hex (first 32 chars) = {}", &pk_hex[..32]);
 
     let sk_bytes = hex::decode(sk_hex).expect("valid hex");
     // Parse offsets must match `SigningKey::from_bytes`.
@@ -1838,7 +1838,7 @@ fn keygen_target_seed_0() {
         .map(|b| format!("{b:02x}"))
         .collect();
     pos += FP_ENCODED_BYTES;
-    eprintln!("[TARGET] norm (LE 32 B): 0x{norm_hex}");
+    crate::selkie_trace!("[TARGET] norm (LE 32 B): 0x{norm_hex}");
 
     for (i, label) in ["gen.a (1)", "gen.b (i)", "gen.c (j)", "gen.d (k=ij)"]
         .iter()
@@ -1849,7 +1849,7 @@ fn keygen_target_seed_0() {
             .map(|b| format!("{b:02x}"))
             .collect();
         pos += FP_ENCODED_BYTES;
-        eprintln!("[TARGET] {label} (LE 32 B, signed): 0x{coord_hex}");
+        crate::selkie_trace!("[TARGET] {label} (LE 32 B, signed): 0x{coord_hex}");
         let _ = i;
     }
 
@@ -1859,7 +1859,7 @@ fn keygen_target_seed_0() {
             .map(|b| format!("{b:02x}"))
             .collect();
         pos += TORSION_2POWER_BYTES;
-        eprintln!("[TARGET] M_sk[{r}][{c}] (LE 32 B): 0x{entry_hex}");
+        crate::selkie_trace!("[TARGET] M_sk[{r}][{c}] (LE 32 B): 0x{entry_hex}");
     }
 
     assert_eq!(pos, sk_bytes.len(), "SK byte layout drift");
@@ -1903,8 +1903,8 @@ fn keygen_first_sample_seed_0() {
             bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
         }
         let post_mask: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-        eprintln!("[FIRST_SAMPLE] {label}: pre_mask=0x{pre_mask}");
-        eprintln!("[FIRST_SAMPLE] {label}: post_mask=0x{post_mask}");
+        crate::selkie_trace!("[FIRST_SAMPLE] {label}: pre_mask=0x{pre_mask}");
+        crate::selkie_trace!("[FIRST_SAMPLE] {label}: post_mask=0x{post_mask}");
     }
 }
 
@@ -1949,7 +1949,7 @@ fn keygen_drbg_byte_probe_seed_0() {
         let ideal =
             LeftIdeal::<30>::random_prime_norm_wide(&d_mix_wide, &EXTREMAL_ORDERS[0], &mut drbg);
         let t1 = drbg.bytes_consumed();
-        eprintln!(
+        crate::selkie_trace!(
             "[PROBE] iter={iter} random_prime_norm_wide: {} bytes (Some={})",
             t1 - t0,
             ideal.is_some()
@@ -1958,7 +1958,7 @@ fn keygen_drbg_byte_probe_seed_0() {
 
         let ok = ideal.reduce_to_prime_norm::<30, _>(&mut drbg);
         let t2 = drbg.bytes_consumed();
-        eprintln!(
+        crate::selkie_trace!(
             "[PROBE] iter={iter} reduce_to_prime_norm: {} bytes (ok={ok})",
             t2 - t1
         );
@@ -1967,14 +1967,14 @@ fn keygen_drbg_byte_probe_seed_0() {
         }
 
         let Some(ideal_narrow) = ideal.narrow() else {
-            eprintln!("[PROBE] iter={iter} narrow: None — continue");
+            crate::selkie_trace!("[PROBE] iter={iter} narrow: None — continue");
             continue;
         };
 
         let t_before_iso = drbg.bytes_consumed();
         let iso = ideal_narrow.to_isogeny(&mut drbg);
         let t_after_iso = drbg.bytes_consumed();
-        eprintln!(
+        crate::selkie_trace!(
             "[PROBE] iter={iter} to_isogeny: {} bytes (Some={})",
             t_after_iso - t_before_iso,
             iso.is_some()
@@ -1984,17 +1984,17 @@ fn keygen_drbg_byte_probe_seed_0() {
         }
 
         let gen = ideal_narrow.generator();
-        eprintln!("[PROBE] iter={iter} generator: Some={}", gen.is_some());
+        crate::selkie_trace!("[PROBE] iter={iter} generator: Some={}", gen.is_some());
         if gen.is_none() {
             continue;
         }
-        eprintln!(
+        crate::selkie_trace!(
             "[PROBE] iter={iter} SUCCESS: total {} bytes so far",
             drbg.bytes_consumed()
         );
         return;
     }
-    eprintln!("[PROBE] exhausted 8 attempts");
+    crate::selkie_trace!("[PROBE] exhausted 8 attempts");
 }
 
 /// Lock in byte-stream alignment of `Lattice::random_prime_norm_wide`
@@ -2094,7 +2094,7 @@ fn kat_cref_cross_check_vector_0() {
         Err(other) => panic!("unexpected keygen error: {other:?}"),
     };
     let after_keygen = drbg.bytes_consumed();
-    eprintln!(
+    crate::selkie_trace!(
         "[CROSSCHECK] keygen consumed {} DRBG bytes (seed 0)",
         after_keygen - before_keygen
     );
@@ -2102,7 +2102,7 @@ fn kat_cref_cross_check_vector_0() {
     let sig = match sk.sign_with_rng(&msg, &mut drbg) {
         Ok(s) => s,
         Err(SignatureError::SigningFailed) => {
-            eprintln!(
+            crate::selkie_trace!(
                 "kat_cref_cross_check_vector_0: SigningFailed — outer-chain \
                  bug still present, cross-check of [OUTER_KER] stderr lines \
                  against tests/fixtures/cref_outer_ker_kat_vector_0.txt is \
@@ -2113,7 +2113,7 @@ fn kat_cref_cross_check_vector_0() {
         Err(other) => panic!("unexpected sign error: {other:?}"),
     };
     let after_sign = drbg.bytes_consumed();
-    eprintln!(
+    crate::selkie_trace!(
         "[CROSSCHECK] sign consumed {} DRBG bytes (seed 0)",
         after_sign - after_keygen
     );
@@ -2180,7 +2180,7 @@ fn survey_kat_secret_ideal_coord_magnitudes() {
         }
 
         let max_coord_bits = *coord_bits.iter().max().expect("4 coords");
-        eprintln!(
+        crate::selkie_trace!(
             "[SURVEY] vec={i:02} norm_bits={norm_bits:3} coord_bits=[{}, {}, {}, {}] max={max_coord_bits}",
             coord_bits[0], coord_bits[1], coord_bits[2], coord_bits[3],
         );
@@ -2198,12 +2198,12 @@ fn survey_kat_secret_ideal_coord_magnitudes() {
         }
     }
 
-    eprintln!("[SURVEY] ----- histogram -----");
-    eprintln!("[SURVEY] max_coord_bits ≤ 127        : {max_le_127}");
-    eprintln!("[SURVEY] max_coord_bits ∈ (127, 192] : {max_in_127_192}");
-    eprintln!("[SURVEY] max_coord_bits > 192        : {max_gt_192}");
-    eprintln!("[SURVEY] observed range of max_coord_bits: [{min_observed}, {max_observed}]");
-    eprintln!("[SURVEY] SAFE indices (max ≤ 127): {safe_indices:?}");
+    crate::selkie_trace!("[SURVEY] ----- histogram -----");
+    crate::selkie_trace!("[SURVEY] max_coord_bits ≤ 127        : {max_le_127}");
+    crate::selkie_trace!("[SURVEY] max_coord_bits ∈ (127, 192] : {max_in_127_192}");
+    crate::selkie_trace!("[SURVEY] max_coord_bits > 192        : {max_gt_192}");
+    crate::selkie_trace!("[SURVEY] observed range of max_coord_bits: [{min_observed}, {max_observed}]");
+    crate::selkie_trace!("[SURVEY] SAFE indices (max ≤ 127): {safe_indices:?}");
 }
 
 // ----------------------------------------------------------------------
@@ -2327,5 +2327,5 @@ fn keygen_kat_000_rng_trace() {
 
     let path = "/tmp/drbg_trace_keygen_kat_0.txt";
     std::fs::write(path, &out).expect("write trace");
-    eprintln!("[trace] {total_calls} fill_bytes calls, {total_bytes} bytes total → {path}");
+    crate::selkie_trace!("[trace] {total_calls} fill_bytes calls, {total_bytes} bytes total → {path}");
 }
