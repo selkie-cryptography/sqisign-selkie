@@ -552,3 +552,53 @@ proptest! {
         );
     }
 }
+
+/// `from_hnf_columns` must preserve the column lattice's covolume.
+///
+/// Regression for an earlier non-unimodular bug where the xgcd
+/// accumulation only updated `a[pivot]` (not `a[j]`), silently
+/// shrinking the lattice when xgcd's `u` was not ±1.
+#[test]
+fn from_hnf_columns_preserves_covolume_2x2_simulated() {
+    // We test the 4x4 case with three fixed cols and combine
+    // (a, b) into the first two cols' first row to trigger the
+    // non-trivial xgcd path.
+    //
+    // Cols: (6, 10, 0, 0), (4, 14, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1).
+    // The 2x2 top-left submatrix has det 6·14 - 10·4 = 44.
+    let cols = [
+        V::new(i(6), i(10), i(0), i(0)),
+        V::new(i(4), i(14), i(0), i(0)),
+        V::new(i(0), i(0), i(1), i(0)),
+        V::new(i(0), i(0), i(0), i(1)),
+    ];
+    let original_det = M::from_columns(&cols).det();
+    let hnf = M::from_hnf_columns(&cols);
+    let hnf_det = hnf.det();
+
+    assert_eq!(
+        hnf_det.abs(),
+        original_det.abs(),
+        "from_hnf_columns must preserve |det|: original {original_det:?}, HNF {hnf_det:?}"
+    );
+}
+
+/// Larger non-trivial xgcd case.
+#[test]
+fn from_hnf_columns_preserves_covolume_4x4() {
+    let cols = [
+        V::new(i(15), i(20), i(35), i(0)),
+        V::new(i(12), i(8), i(28), i(0)),
+        V::new(i(0), i(0), i(0), i(7)),
+        V::new(i(0), i(0), i(7), i(0)),
+    ];
+    let original_det = M::from_columns(&cols).det();
+    let hnf = M::from_hnf_columns(&cols);
+    let hnf_det = hnf.det();
+
+    assert_eq!(
+        hnf_det.abs(),
+        original_det.abs(),
+        "from_hnf_columns must preserve |det|: original {original_det:?}, HNF {hnf_det:?}"
+    );
+}
