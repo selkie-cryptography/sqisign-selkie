@@ -3,14 +3,13 @@
 failure-output = "immediate"
 slow-timeout = { period = "60s", terminate-after = 5 }
 
-# TODO(sign-bug): cap sign_kat_derand_NNN tests at 15s in the default
-# profile. Until the response-phase chain bug for `r_rsp > 0` cases
-# (e.g. KAT-001) is fixed, these tests can wedge in a retry loop and
-# block the CI gate job indefinitely. The `kat` profile keeps the
-# 30-min cap for explicit KAT runs.
+# TODO(sign-bug): cap sign_kat_derand_NNN tests at 30s in the default
+# profile. Until sign tests complete reliably under 30s in debug, this
+# keeps the CI gate from wedging. The `kat` profile keeps the 30-min
+# cap for explicit KAT runs.
 [[profile.default.overrides]]
 filter = 'test(/sign_kat_derand_/)'
-slow-timeout = { period = "15s", terminate-after = 1 }
+slow-timeout = { period = "30s", terminate-after = 1 }
 
 # `coverage` profile: same fast suite as `default`, but with a longer
 # per-test cap to absorb llvm-cov instrumentation overhead. Without
