@@ -104,8 +104,8 @@ impl VerifyingKey {
                     .collect();
                 format!("0x{re}+i*0x{im}")
             };
-            eprintln!("VK: j(E_pk)={}", fp2_hex_short(&self.curve.j_invariant()));
-            eprintln!("VK: n_bt={} r_rsp={}", sig.n_bt.value(), sig.r_rsp.value());
+            crate::selkie_trace!("VK: j(E_pk)={}", fp2_hex_short(&self.curve.j_invariant()));
+            crate::selkie_trace!("VK: n_bt={} r_rsp={}", sig.n_bt.value(), sig.r_rsp.value());
         }
 
         // --- Algorithm 4.9, line 6–7: compute e'_rsp ---
@@ -123,7 +123,7 @@ impl VerifyingKey {
         // Compute kernel: P_pk + [chl]Q_pk, then [2^n_bt] of that.
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
         #[cfg(test)]
-        eprintln!("VK: sig.chl = {:?}", sig.chl.as_ref());
+        crate::selkie_trace!("VK: sig.chl = {:?}", sig.chl.as_ref());
 
         #[cfg(test)]
         {
@@ -140,9 +140,9 @@ impl VerifyingKey {
             let R_aff = &basis_pk.R.X * &basis_pk.R.Z.invert();
             let S_aff = &basis_pk.S.X * &basis_pk.S.Z.invert();
             let RS_aff = &basis_pk.RS.X * &basis_pk.RS.Z.invert();
-            eprintln!("VK: R(=P) affine = {}", fp2_hex_short(&R_aff));
-            eprintln!("VK: S(=P-Q) affine = {}", fp2_hex_short(&S_aff));
-            eprintln!("VK: RS(=Q) affine = {}", fp2_hex_short(&RS_aff));
+            crate::selkie_trace!("VK: R(=P) affine = {}", fp2_hex_short(&R_aff));
+            crate::selkie_trace!("VK: S(=P-Q) affine = {}", fp2_hex_short(&S_aff));
+            crate::selkie_trace!("VK: RS(=Q) affine = {}", fp2_hex_short(&RS_aff));
         }
 
         let kernel_gen = basis_pk.scalar_mul_add(sig.chl.as_ref());
@@ -167,12 +167,12 @@ impl VerifyingKey {
                     .collect();
                 format!("0x{re}+i*0x{im}")
             };
-            eprintln!("VK: basis_pk.R.X={}", fp2_hex_short(&basis_pk.R.X));
-            eprintln!("VK: basis_pk.R.Z={}", fp2_hex_short(&basis_pk.R.Z));
-            eprintln!("VK: K_chl.X={}", fp2_hex_short(&K_chl.X));
-            eprintln!("VK: K_chl.Z={}", fp2_hex_short(&K_chl.Z));
+            crate::selkie_trace!("VK: basis_pk.R.X={}", fp2_hex_short(&basis_pk.R.X));
+            crate::selkie_trace!("VK: basis_pk.R.Z={}", fp2_hex_short(&basis_pk.R.Z));
+            crate::selkie_trace!("VK: K_chl.X={}", fp2_hex_short(&K_chl.X));
+            crate::selkie_trace!("VK: K_chl.Z={}", fp2_hex_short(&K_chl.Z));
             let k_aff = &K_chl.X * &K_chl.Z.invert();
-            eprintln!("VK: K_chl affine={}", fp2_hex_short(&k_aff));
+            crate::selkie_trace!("VK: K_chl affine={}", fp2_hex_short(&k_aff));
         }
 
         let (curve_chl, _) = CurveKernel::new(K_chl).isogeny(
@@ -197,7 +197,7 @@ impl VerifyingKey {
                     .collect();
                 format!("0x{re}+i*0x{im}")
             };
-            eprintln!(
+            crate::selkie_trace!(
                 "VK: j(E_chl) after challenge isogeny = {}",
                 fp2_hex_short(&curve_chl.j_invariant())
             );
@@ -226,9 +226,9 @@ impl VerifyingKey {
                 format!("0x{re}+i*0x{im}")
             };
             let aff = |p: &ProjectiveXOnlyPoint| -> String { fp2_hex(&(&p.X * &p.Z.invert())) };
-            eprintln!("TRACE basis_chl.R aff={}", aff(&basis_chl.R));
-            eprintln!("TRACE basis_chl.S aff={}", aff(&basis_chl.S));
-            eprintln!("TRACE basis_aux.R aff={}", aff(&basis_aux.R));
+            crate::selkie_trace!("TRACE basis_chl.R aff={}", aff(&basis_chl.R));
+            crate::selkie_trace!("TRACE basis_chl.S aff={}", aff(&basis_chl.S));
+            crate::selkie_trace!("TRACE basis_aux.R aff={}", aff(&basis_aux.R));
         }
 
         // Algorithm 4.9 line 11:
@@ -282,7 +282,7 @@ impl VerifyingKey {
                 format!("0x{r}")
             };
             let aff = |p: &ProjectiveXOnlyPoint| -> String { fp2_short(&(&p.X * &p.Z.invert())) };
-            eprintln!(
+            crate::selkie_trace!(
                 "VERIFY post-M_chl: R={}, S={}, RS={}, R==S={}, R==RS={}",
                 aff(&P_chl),
                 aff(&Q_chl),
@@ -294,11 +294,11 @@ impl VerifyingKey {
                 let l = s.as_limbs();
                 format!("{:016x}_{:016x}_{:016x}_{:016x}", l[3], l[2], l[1], l[0])
             };
-            eprintln!("VERIFY M_chl[0][0]={}", dump(&sig.M_chl.entries[0][0]));
-            eprintln!("VERIFY M_chl[0][1]={}", dump(&sig.M_chl.entries[0][1]));
-            eprintln!("VERIFY M_chl[1][0]={}", dump(&sig.M_chl.entries[1][0]));
-            eprintln!("VERIFY M_chl[1][1]={}", dump(&sig.M_chl.entries[1][1]));
-            eprintln!(
+            crate::selkie_trace!("VERIFY M_chl[0][0]={}", dump(&sig.M_chl.entries[0][0]));
+            crate::selkie_trace!("VERIFY M_chl[0][1]={}", dump(&sig.M_chl.entries[0][1]));
+            crate::selkie_trace!("VERIFY M_chl[1][0]={}", dump(&sig.M_chl.entries[1][0]));
+            crate::selkie_trace!("VERIFY M_chl[1][1]={}", dump(&sig.M_chl.entries[1][1]));
+            crate::selkie_trace!(
                 "VERIFY basis_chl_scaled (det_chl): R={}, S={}, RS={}",
                 aff(&basis_chl_scaled.R),
                 aff(&basis_chl_scaled.S),
@@ -324,13 +324,13 @@ impl VerifyingKey {
                     .collect();
                 format!("0x{re}")
             };
-            eprintln!(
+            crate::selkie_trace!(
                 "EVEN_RSP: r_rsp={}, first_col_even={}",
                 sig.r_rsp.value(),
                 sig.M_chl.first_column_even()
             );
-            eprintln!("EVEN_RSP: P_chl X_re={}", fp2_hex(&P_chl.X));
-            eprintln!(
+            crate::selkie_trace!("EVEN_RSP: P_chl X_re={}", fp2_hex(&P_chl.X));
+            crate::selkie_trace!(
                 "EVEN_RSP: j(curve_chl) before={}",
                 fp2_hex(&curve_chl.j_invariant())
             );
@@ -370,7 +370,7 @@ impl VerifyingKey {
                         .collect();
                     format!("0x{re}")
                 };
-                eprintln!(
+                crate::selkie_trace!(
                     "EVEN_RSP: j(curve_chl) after={}",
                     fp2_hex(&curve_chl.j_invariant())
                 );
@@ -416,24 +416,24 @@ impl VerifyingKey {
                     .collect();
                 format!("0x{re}+i*0x{im}")
             };
-            eprintln!(
+            crate::selkie_trace!(
                 "VERIFY: e_rsp_prime={e_rsp_prime} n_bt={} r_rsp={}",
                 sig.n_bt.value(),
                 sig.r_rsp.value()
             );
-            eprintln!("VERIFY: curve_chl j={}", fp2_hex(&curve_chl.j_invariant()));
+            crate::selkie_trace!("VERIFY: curve_chl j={}", fp2_hex(&curve_chl.j_invariant()));
             let aux_A = *sig.curve_aux.coefficient().as_fp2();
-            eprintln!("VERIFY: curve_aux A={}", fp2_hex(&aux_A));
-            eprintln!(
+            crate::selkie_trace!("VERIFY: curve_aux A={}", fp2_hex(&aux_A));
+            crate::selkie_trace!(
                 "VERIFY: j(sig.curve_aux)={}",
                 fp2_hex(&sig.curve_aux.j_invariant())
             );
-            eprintln!("VERIFY: P_chl.X={}", fp2_hex(&P_chl.X));
-            eprintln!("VERIFY: P_chl.Z={}", fp2_hex(&P_chl.Z));
-            eprintln!("VERIFY: Q_chl.X={}", fp2_hex(&Q_chl.X));
-            eprintln!("VERIFY: Q_chl.Z={}", fp2_hex(&Q_chl.Z));
-            eprintln!("VERIFY: P_aux.X={}", fp2_hex(&P_aux.X));
-            eprintln!("VERIFY: P_aux.Z={}", fp2_hex(&P_aux.Z));
+            crate::selkie_trace!("VERIFY: P_chl.X={}", fp2_hex(&P_chl.X));
+            crate::selkie_trace!("VERIFY: P_chl.Z={}", fp2_hex(&P_chl.Z));
+            crate::selkie_trace!("VERIFY: Q_chl.X={}", fp2_hex(&Q_chl.X));
+            crate::selkie_trace!("VERIFY: Q_chl.Z={}", fp2_hex(&Q_chl.Z));
+            crate::selkie_trace!("VERIFY: P_aux.X={}", fp2_hex(&P_aux.X));
+            crate::selkie_trace!("VERIFY: P_aux.Z={}", fp2_hex(&P_aux.Z));
         }
 
         let kernel = surfaces::Kernel::from_montgomery(

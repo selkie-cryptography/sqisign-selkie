@@ -415,7 +415,7 @@ fn theta_change_of_basis(
             .filter(|d| **d == &Fp2::ZERO)
             .count();
         if zero_count > 0 {
-            eprintln!("GLUING: {zero_count}/4 delta(s) are ZERO (degenerate ActionByTranslation)");
+            crate::selkie_trace!("GLUING: {zero_count}/4 delta(s) are ZERO (degenerate ActionByTranslation)");
         }
     }
 
@@ -779,7 +779,7 @@ impl SplittingKernel {
         let split_count = count_splitting_indices(&self.domain.null);
         if split_count != 1 {
             #[cfg(test)]
-            eprintln!("    [chain] splitting: zeros={split_count}");
+            crate::selkie_trace!("    [chain] splitting: zeros={split_count}");
             return None;
         }
 
@@ -881,7 +881,7 @@ pub(crate) fn codomain_8torsion(
     #[cfg(test)]
     {
         if alpha == gamma {
-            eprintln!("codomain_8torsion: alpha==gamma → after H: c=d=0!");
+            crate::selkie_trace!("codomain_8torsion: alpha==gamma → after H: c=d=0!");
         }
     }
 
@@ -1618,8 +1618,8 @@ fn dump_step_internal_inputs(
 ) {
     let emit = |label: &str, value: &Fp2| {
         let (re, im) = dump_fp2_hex(value);
-        eprintln!("[CHAIN_DUMP] step=internal {label}.re=0x{re}");
-        eprintln!("[CHAIN_DUMP] step=internal {label}.im=0x{im}");
+        crate::selkie_trace!("[CHAIN_DUMP] step=internal {label}.re=0x{re}");
+        crate::selkie_trace!("[CHAIN_DUMP] step=internal {label}.im=0x{im}");
     };
     emit("T1.x", &T1.X);
     emit("T1.y", &T1.Y);
@@ -1651,8 +1651,8 @@ fn dump_step_internal_inputs(
 fn dump_step_internal_pre_h(alpha: &Fp2, beta: &Fp2, gamma: &Fp2, delta: &Fp2) {
     let emit = |label: &str, value: &Fp2| {
         let (re, im) = dump_fp2_hex(value);
-        eprintln!("[CHAIN_DUMP] step=internal {label}.re=0x{re}");
-        eprintln!("[CHAIN_DUMP] step=internal {label}.im=0x{im}");
+        crate::selkie_trace!("[CHAIN_DUMP] step=internal {label}.re=0x{re}");
+        crate::selkie_trace!("[CHAIN_DUMP] step=internal {label}.im=0x{im}");
     };
     emit("pre_H.null.a", alpha);
     emit("pre_H.null.b", beta);

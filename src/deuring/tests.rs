@@ -364,7 +364,7 @@ fn action_matrix_nontrivial_element() {
     //     c₀ + c₃/2 = 3 → c₀ = 3 - 11 = -8
     //     c₁ + c₂/2 = 5 → c₁ = 5 - 7 = -2
     if let Some(c) = &coords {
-        eprintln!(
+        crate::selkie_trace!(
             "decompose(3+5i+7j+11k) = [{}, {}, {}, {}]",
             c[0], c[1], c[2], c[3]
         );
@@ -372,7 +372,7 @@ fn action_matrix_nontrivial_element() {
         // θ might not be in O₀ — try a different element.
         // Use θ = 1 + i + (i+j)/2 + (1+k)/2 = (3/2) + (3/2)i + (1/2)j + (1/2)k
         // which has denom 2.
-        eprintln!("3+5i+7j+11k not in O₀, trying different element");
+        crate::selkie_trace!("3+5i+7j+11k not in O₀, trying different element");
     }
 
     // Use M_i test as baseline: i is in O₀ and works.
@@ -389,11 +389,11 @@ fn action_matrix_nontrivial_element() {
         .expect("action_matrix should succeed for gen3");
     let m_precomp = &ACTION_MATRICES[0][4]; // gen3
 
-    eprintln!(
+    crate::selkie_trace!(
         "gen3 computed[0][0] == precomp[0][0]: {}",
         m_computed.entry(0, 0) == m_precomp.entry(0, 0)
     );
-    eprintln!(
+    crate::selkie_trace!(
         "gen3 computed[1][0] == precomp[1][0]: {}",
         m_computed.entry(1, 0) == m_precomp.entry(1, 0)
     );

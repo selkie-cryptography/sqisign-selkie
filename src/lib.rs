@@ -14,6 +14,22 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![warn(rust_2018_idioms, unused_lifetimes, unused_qualifications)]
 
+// Diagnostic eprintln gated on the `SELKIE_TRACE` env var, used in
+// place of `#[cfg(test)] eprintln!(...)` to keep CI nextest output
+// quiet by default. Set `SELKIE_TRACE=1` to re-enable verbose
+// per-iteration progress prints during local debugging. Compiles to
+// nothing in non-test builds (the body's `#[cfg(test)]` strips the
+// `if` statement).
+macro_rules! selkie_trace {
+    ($($arg:tt)*) => {{
+        #[cfg(test)]
+        if ::std::env::var_os("SELKIE_TRACE").is_some() {
+            ::std::eprintln!($($arg)*);
+        }
+    }};
+}
+pub(crate) use selkie_trace;
+
 // --- Internal modules (pub(crate) by default, pub with expose-internals) ---
 
 // NIST-I parameter set constants
