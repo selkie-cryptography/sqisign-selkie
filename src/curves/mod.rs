@@ -124,7 +124,7 @@ impl TryFrom<u32> for TorsionExponent {
 /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
 /// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct BasisHint(u8);
+pub struct BasisHint(u8);
 
 impl BasisHint {
     /// The quadratic residuosity flag h_A (0 or 1).
@@ -145,12 +145,12 @@ impl BasisHint {
     }
 
     /// The raw byte representation.
-    pub(crate) fn to_byte(self) -> u8 {
+    pub fn to_byte(self) -> u8 {
         self.0
     }
 
     /// Construct from a raw byte.
-    pub(crate) fn from_byte(b: u8) -> BasisHint {
+    pub fn from_byte(b: u8) -> BasisHint {
         BasisHint(b)
     }
 }
@@ -243,16 +243,16 @@ impl From<ChallengeHint> for u8 {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct TorsionBasis {
     /// First basis element R.
-    pub(crate) R: ProjectiveXOnlyPoint,
+    pub R: ProjectiveXOnlyPoint,
     /// Second basis element S.
-    pub(crate) S: ProjectiveXOnlyPoint,
+    pub S: ProjectiveXOnlyPoint,
     /// Difference R − S (needed for differential addition).
     ///
     /// Must be the actual projective difference of R and S — not
     /// an independently computed point with the same affine x.
     /// The projective representative affects Okeya-Sakurai
     /// y-recovery in [`lift`](Self::lift).
-    pub(crate) RS: ProjectiveXOnlyPoint,
+    pub RS: ProjectiveXOnlyPoint,
 }
 
 /// Construct a [`TorsionBasis`] from two [`ProjectiveXOnlyPoint`]s,
@@ -311,7 +311,7 @@ impl TorsionBasis {
     /// correct affine x-coordinate, its projective representative
     /// will be inconsistent, causing `lift` to recover the wrong
     /// Jacobian y-sign. Use `From<(R, S)>` instead.
-    pub(crate) fn from_propagated(
+    pub fn from_propagated(
         R: ProjectiveXOnlyPoint,
         S: ProjectiveXOnlyPoint,
         RS: ProjectiveXOnlyPoint,
@@ -647,7 +647,7 @@ impl TorsionBasis {
     ///
     /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
-    pub(crate) fn from_hint(curve: &Curve, hint: BasisHint) -> TorsionBasis {
+    pub fn from_hint(curve: &Curve, hint: BasisHint) -> TorsionBasis {
         let _e = TORSION_EVEN_POWER;
         // Normalize the curve's A24/C24 constants so the Montgomery
         // ladder produces the same projective representative as the
@@ -736,7 +736,7 @@ impl TorsionBasis {
     ///
     /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
-    pub(crate) fn to_hint(curve: &Curve) -> (TorsionBasis, BasisHint) {
+    pub fn to_hint(curve: &Curve) -> (TorsionBasis, BasisHint) {
         let _e = TORSION_EVEN_POWER;
         // Normalize the curve's A24/C24 constants so the Montgomery
         // ladder produces the same projective representative as
@@ -873,7 +873,7 @@ impl ChangeOfBasisMatrix {
     /// inconsistent with `P` and `Q`'s y-coordinates).
     ///
     /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
-    pub(crate) fn from_bases(
+    pub fn from_bases(
         canonical: &TorsionBasis,
         reduced: &TorsionBasis,
         e: TorsionExponent,
@@ -912,7 +912,7 @@ impl ChangeOfBasisMatrix {
     /// the input bases don't span E[2^e]).
     ///
     /// [`from_bases`]: ChangeOfBasisMatrix::from_bases
-    pub(crate) fn from_bases_invert(
+    pub fn from_bases_invert(
         canonical: &TorsionBasis,
         reduced: &TorsionBasis,
         e: TorsionExponent,
@@ -956,7 +956,7 @@ impl ChangeOfBasisMatrix {
     ///
     /// The C reference applies by columns, not rows. See the comment
     /// on `ChallengeMatrix` in `keys/mod.rs`.
-    pub(crate) fn mul(&self, basis: &TorsionBasis) -> TorsionBasis {
+    pub fn mul(&self, basis: &TorsionBasis) -> TorsionBasis {
         let a = &self.entries[0][0];
         let b = &self.entries[0][1];
         let c = &self.entries[1][0];

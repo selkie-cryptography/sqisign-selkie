@@ -50,6 +50,7 @@ reqwest = { version = "0.13", features = ["blocking"] }
 [[bench]]
 name = "sqisign"
 harness = false
+required-features = ["expose-internals"]
 
 [[bench]]
 name = "field"

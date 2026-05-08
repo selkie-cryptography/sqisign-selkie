@@ -6,6 +6,8 @@
 //! Requires Valgrind: `apt install valgrind` or `brew install valgrind`.
 //! Run with: `cargo bench --bench iai --features expose-internals`
 
+mod common;
+
 use std::hint::black_box;
 
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
@@ -104,10 +106,8 @@ fn sig_parse() {
 
 #[library_benchmark]
 fn sk_parse() {
-    let sk_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].2;
-    let sk_bytes = hex::decode(sk_hex).unwrap();
-    let sk_arr: &[u8; sqisign_selkie::SIGNING_KEY_BYTES] = sk_bytes.as_slice().try_into().unwrap();
-    let _ = black_box(sqisign_selkie::SigningKey::from_bytes(sk_arr));
+    let sk_arr = common::kat0_sk_bytes();
+    let _ = black_box(sqisign_selkie::SigningKey::from_bytes(&sk_arr));
 }
 
 // --- Top-level operations ---
@@ -115,20 +115,8 @@ fn sk_parse() {
 // KAT vector 0 verification: parse pk + sig, verify.
 #[library_benchmark]
 fn kat_verify() {
-    let pk_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].1;
-    let sm_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].4;
-    let pk_bytes = hex::decode(pk_hex).unwrap();
-    let sm_bytes = hex::decode(sm_hex).unwrap();
-    let sig_bytes: &[u8; sqisign_selkie::SIGNATURE_BYTES] = sm_bytes
-        [..sqisign_selkie::SIGNATURE_BYTES]
-        .try_into()
-        .unwrap();
-    let msg = &sm_bytes[sqisign_selkie::SIGNATURE_BYTES..];
-
-    let vk =
-        sqisign_selkie::VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).unwrap();
-    let sig = sqisign_selkie::Signature::from_bytes(sig_bytes).unwrap();
-    let _ = black_box(vk.verify(msg, &sig));
+    let (vk, sig, msg) = common::kat0_vk_sig_msg();
+    let _ = black_box(vk.verify(&msg, &sig));
 }
 
 // Deterministic keygen from KAT seed 0.
@@ -136,9 +124,7 @@ fn kat_verify() {
 // group below; uncomment in `operations` to run manually.
 #[library_benchmark]
 fn kat_keygen() {
-    let seed_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].0;
-    let seed_bytes = hex::decode(seed_hex).unwrap();
-    let seed: [u8; 48] = seed_bytes.as_slice().try_into().unwrap();
+    let seed = common::kat0_seed();
     let _ = black_box(sqisign_selkie::SigningKey::generate_derand(&seed));
 }
 
@@ -147,13 +133,10 @@ fn kat_keygen() {
 // group below; uncomment in `operations` to run manually.
 #[library_benchmark]
 fn kat_sign() {
-    let sk_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].2;
-    let sk_bytes = hex::decode(sk_hex).unwrap();
-    let sk =
-        sqisign_selkie::SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap()).unwrap();
+    let sk = common::kat0_signing_key();
     let msg = b"iai benchmark message";
-    let seed = [0x42u8; 48];
-    let _ = black_box(sk.sign_derand(msg, &seed));
+    let randomness = [0x42u8; 48];
+    let _ = black_box(sk.sign_derand(msg, &randomness));
 }
 
 library_benchmark_group!(
