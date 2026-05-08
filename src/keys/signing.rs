@@ -16,6 +16,11 @@ use zeroize::ZeroizeOnDrop;
 #[cfg(test)]
 mod tests;
 
+use core::{
+    fmt::{self, Debug},
+    ops::Deref,
+};
+
 #[cfg(test)]
 use crate::fields::fp2::Fp2;
 use crate::{
@@ -81,24 +86,27 @@ pub struct SigningKey {
     mat_sk: SecretKeyMatrix,
 }
 
-/// The secret change-of-basis matrix M_sk (part of the signing key).
+/// The secret change-of-basis matrix `M_sk` (part of the signing key).
 ///
-/// No `PartialEq`/`Eq`/`ConstantTimeEq`: comparing secret key
+/// `M_sk` is the 2×2 matrix mod `2^f` (full even torsion) such that
+/// `(φ_sk(P₀), φ_sk(Q₀)) = M_sk · (P_pk, Q_pk)` ([Algorithm 4.1][Alg. 4.1],
+/// line 9). The "full torsion" is intrinsic — every constructor
+/// ([`SecretKeyMatrix::new`], [`SecretKeyMatrix::from_bases`],
+/// [`From<ChangeOfBasisMatrix>`]) fixes the torsion exponent at
+/// [`TorsionExponent::FULL`].
+///
+/// No `PartialEq` / `Eq` / `ConstantTimeEq`: comparing secret key
 /// material is a code smell.
+///
+/// [Alg. 4.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.1
 #[derive(Clone)]
 pub(crate) struct SecretKeyMatrix(ChangeOfBasisMatrix);
 
-impl core::ops::Deref for SecretKeyMatrix {
-    type Target = ChangeOfBasisMatrix;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 impl SecretKeyMatrix {
-    /// Construct from raw 2×2 scalar entries. Always uses the full
-    /// torsion exponent f = [`TORSION_EVEN_POWER`] since M_sk entries
-    /// are mod 2^f.
+    /// Constructs a [`SecretKeyMatrix`] from raw 2×2 scalar entries.
+    ///
+    /// Always uses the full torsion exponent `f` ([`TORSION_EVEN_POWER`])
+    /// since `M_sk` entries are mod `2^f`.
     pub(crate) fn new(entries: [[Scalar; 2]; 2]) -> Self {
         Self(ChangeOfBasisMatrix {
             entries,
@@ -106,19 +114,36 @@ impl SecretKeyMatrix {
         })
     }
 
-    /// Compute M_sk via the Tate pairing ([Algorithm 2.5][Alg. 2.5]).
+    /// Computes `M_sk` via the Tate pairing ([Algorithm 2.5][Alg. 2.5]).
     ///
-    /// Used in key generation ([Algorithm 4.1][Alg. 4.1], line 9):
-    /// `M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk, Q_pk))`.
+    /// `M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk,
+    /// Q_pk))` per [Algorithm 4.1][Alg. 4.1] line 9. The torsion
+    /// exponent is fixed at [`TorsionExponent::FULL`] (`2^f`) — see the
+    /// type-level documentation on [`SecretKeyMatrix`].
+    ///
+    /// Returns `None` when [`ChangeOfBasisMatrix::from_bases`] cannot
+    /// invert the source basis matrix mod `2^f` — the caller (keygen)
+    /// retries with a fresh ideal.
     ///
     /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
     /// [Alg. 4.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.1
-    pub(crate) fn encode(full_basis: &TorsionBasis, target_basis: &TorsionBasis) -> Option<Self> {
+    pub(crate) fn from_bases(
+        full_basis: &TorsionBasis,
+        target_basis: &TorsionBasis,
+    ) -> Option<Self> {
         Some(Self(ChangeOfBasisMatrix::from_bases(
             full_basis,
             target_basis,
             TorsionExponent::FULL,
         )?))
+    }
+}
+
+impl Deref for SecretKeyMatrix {
+    type Target = ChangeOfBasisMatrix;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -129,7 +154,7 @@ impl From<ChangeOfBasisMatrix> for SecretKeyMatrix {
 }
 
 impl SigningKey {
-    /// Construct a `SigningKey` from validated components.
+    /// Constructs a [`SigningKey`] from validated components.
     ///
     /// Enforces the invariant that `ideal_gen` generates `ideal`:
     /// `LeftIdeal::new(&ideal_gen, &norm, order)` must produce the
@@ -163,7 +188,7 @@ impl SigningKey {
         }
     }
 
-    /// Generate a new random signing key.
+    /// Generates a new random signing key.
     ///
     /// Corresponds to `SQIsign.KeyGen` ([§4.3], Algorithm 4.1):
     ///
@@ -207,11 +232,12 @@ impl SigningKey {
         Self::generate_derand(&randomness)
     }
 
-    /// Derandomized keygen from a 48-byte seed. The seed is used to
-    /// instantiate an AES256-CTR-DRBG (NIST SP 800-90A), which in
-    /// turn drives every random sampling step in key generation.
-    /// Passing the same seed yields the same key; useful for KATs
-    /// and reproducible tests.
+    /// Generates a signing key deterministically from a 48-byte seed.
+    ///
+    /// The seed instantiates an AES256-CTR-DRBG (NIST SP 800-90A) that
+    /// drives every random sampling step in key generation. Passing
+    /// the same seed yields the same key; useful for KATs and
+    /// reproducible tests.
     pub fn generate_derand(
         randomness: &[u8; crate::drbg::SEEDLEN],
     ) -> Result<SigningKey, SignatureError> {
@@ -219,7 +245,7 @@ impl SigningKey {
         Self::generate_with_rng(&mut drbg)
     }
 
-    /// Key generation driven by a caller-owned RNG.
+    /// Generates a signing key from a caller-owned RNG.
     ///
     /// Same algorithm as [`SigningKey::generate_derand`], but the
     /// caller supplies the RNG instead of this method instantiating
@@ -294,7 +320,7 @@ impl SigningKey {
 
             // Line 9: M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk, Q_pk)).
             let eval_basis = TorsionBasis::from_propagated(phi_p, phi_pmq, phi_q);
-            let Some(mat_sk) = SecretKeyMatrix::encode(&eval_basis, &basis_pk) else {
+            let Some(mat_sk) = SecretKeyMatrix::from_bases(&eval_basis, &basis_pk) else {
                 continue; // basis lift failed — retry with fresh ideal
             };
 
@@ -323,7 +349,7 @@ impl SigningKey {
         Err(SignatureError::KeyGenFailed)
     }
 
-    /// Construct a signing key from its byte representation.
+    /// Constructs a signing key from its byte representation.
     ///
     /// The first [`VERIFYING_KEY_BYTES`] bytes must be a valid verifying
     /// key. The remaining bytes encode the secret ideal I_sk and the
@@ -401,7 +427,7 @@ impl SigningKey {
         Ok(Self::from_parts(verifying_key, ideal, gen, mat_sk))
     }
 
-    /// Serialize this signing key to bytes.
+    /// Serializes this signing key to bytes.
     ///
     /// Layout: `[pk (65 B) | norm (32 B) | gen[0..3] (4×32 B) | M_sk (4×32
     /// B)]`.
@@ -491,35 +517,38 @@ impl SigningKey {
         out
     }
 
-    /// Get the verifying key corresponding to this signing key.
+    /// Returns the verifying key corresponding to this signing key.
     pub fn verifying_key(&self) -> &VerifyingKey {
         &self.verifying_key
     }
 
-    /// Sign a message, producing a detached signature.
+    /// Signs a message, producing a detached signature.
     ///
-    /// Corresponds to `SQIsign.Sign` ([§4.4], Algorithm 4.2):
+    /// Implements [SQIsign.Sign][Alg. 4.2] ([Algorithm 4.2][Alg. 4.2]):
     ///
     /// **Commitment** (lines 4–9):
-    /// 1. Sample a random commitment ideal I_com of norm D_mix
-    /// 2. Translate to the commitment isogeny φ_com : E₀ → E_com via
-    ///    `IdealToIsogeny` ([§3.2.3])
+    /// 1. Sample a random commitment ideal `I_com` of norm `D_mix`.
+    /// 2. Translate to the commitment isogeny `φ_com: E₀ → E_com` via
+    ///    `IdealToIsogeny` ([§3.2.3]).
     ///
     /// **Challenge** (line 10):
-    /// 3. Compute chl ← HASH(pk ‖ j(E_com) ‖ msg)
+    ///
+    /// 3. Compute `chl ← HASH(pk ‖ j(E_com) ‖ msg)`.
     ///
     /// **Response** (lines 11–38):
-    /// 4. Convert chl to the challenge ideal I_chl via M_sk and
-    ///    `KernelDecomposedToIdeal` ([§3.2.6])
-    /// 5. Sample response quaternion α_rsp from the intersection lattice via
-    ///    `RandomEquivalentQuaternion` ([§4.4.3])
-    /// 6. Compute backtracking via `ComputeBacktrackingAndNormalize` ([§4.4.3])
+    ///
+    /// 4. Convert `chl` to the challenge ideal `I_chl` via `M_sk` and
+    ///    `KernelDecomposedToIdeal` ([§3.2.6]).
+    /// 5. Sample response quaternion `α_rsp` from the intersection lattice via
+    ///    `RandomEquivalentQuaternion` ([§4.4.3]).
+    /// 6. Compute backtracking via `ComputeBacktrackingAndNormalize`
+    ///    ([§4.4.3]).
     /// 7. Compute the response isogeny, split into odd and even parts, using
     ///    `SplitAuxiliaryIsogeny` ([§4.4.3]) or `IdealToIsogeny` depending on
-    ///    e'_rsp
+    ///    `e'_rsp`.
     /// 8. Compute the challenge isogeny via `ComputeChallengeIsogeny`
-    ///    ([§4.4.2])
-    /// 9. Encode σ = (E_aux, n_bt, r_rsp, M_chl, chl, hint_aux, hint_chl)
+    ///    ([§4.4.2]).
+    /// 9. Encode `σ = (E_aux, n_bt, r_rsp, M_chl, chl, hint_aux, hint_chl)`.
     ///
     /// This is probabilistic: several sub-algorithms may fail,
     /// requiring a restart with fresh randomness.
@@ -529,10 +558,6 @@ impl SigningKey {
     /// [§4.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
     /// [§4.4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
     /// [§4.4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
-    /// Sign a message.
-    ///
-    /// Implements [SQIsign.Sign][Alg. 4.2] ([Algorithm 4.2][Alg. 4.2]).
-    ///
     /// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
     pub fn sign<R: rand_core::CryptoRngCore>(
         &self,
@@ -544,14 +569,15 @@ impl SigningKey {
         self.sign_derand(msg, &randomness)
     }
 
-    /// Derandomized sign from a 48-byte seed. The seed is used to
-    /// instantiate an AES256-CTR-DRBG (NIST SP 800-90A), which in
-    /// turn drives every random sampling step in the commitment
-    /// and response phases. For a fixed `(self, msg, randomness)`
-    /// triple the output is deterministic, so this is the entry
-    /// point used for KATs and reproducible tests. Different
-    /// signing keys (or different messages) yield different
-    /// signatures even when seeded with the same 48 bytes.
+    /// Signs a message deterministically from a 48-byte seed.
+    ///
+    /// The seed instantiates an AES256-CTR-DRBG (NIST SP 800-90A) that
+    /// drives every random sampling step in the commitment and
+    /// response phases. For a fixed `(self, msg, randomness)` triple
+    /// the output is deterministic, so this is the entry point used
+    /// for KATs and reproducible tests. Different signing keys (or
+    /// different messages) yield different signatures even when
+    /// seeded with the same 48 bytes.
     pub fn sign_derand(
         &self,
         msg: &[u8],
@@ -561,7 +587,7 @@ impl SigningKey {
         self.sign_with_rng(msg, &mut drbg)
     }
 
-    /// Signing driven by a caller-owned RNG.
+    /// Signs using a caller-owned RNG.
     ///
     /// Same algorithm as [`SigningKey::sign_derand`], but the RNG is
     /// provided by the caller rather than instantiated from a 48-byte
@@ -663,12 +689,17 @@ impl SigningKey {
             let (e_com, p_com, q_com, pmq_com) = match i_com_narrow.to_isogeny(rng) {
                 Some(r) => {
                     #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] commitment OK ({:?})", _iter_start.elapsed());
+                    crate::selkie_trace!(
+                        "[sign {_iter}] commitment OK ({:?})",
+                        _iter_start.elapsed()
+                    );
                     r
                 }
                 None => {
                     #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: commitment i_com_narrow.to_isogeny None");
+                    crate::selkie_trace!(
+                        "[sign {_iter}] DROP: commitment i_com_narrow.to_isogeny None"
+                    );
                     continue;
                 }
             };
@@ -1108,7 +1139,9 @@ impl SigningKey {
                         Some(h) => h,
                         None => {
                             #[cfg(test)]
-                            crate::selkie_trace!("[sign {_iter}] DROP: i_inter intersection_via_kernel None");
+                            crate::selkie_trace!(
+                                "[sign {_iter}] DROP: i_inter intersection_via_kernel None"
+                            );
                             continue;
                         }
                     };
@@ -1296,7 +1329,9 @@ impl SigningKey {
                     Some(a) => a,
                     None => {
                         #[cfg(test)]
-                        crate::selkie_trace!("[sign {_iter}] DROP: reduced_w.narrow_to::<4>() None");
+                        crate::selkie_trace!(
+                            "[sign {_iter}] DROP: reduced_w.narrow_to::<4>() None"
+                        );
                         continue;
                     }
                 };
@@ -1451,7 +1486,9 @@ impl SigningKey {
                 Some(m) => m,
                 None => {
                     #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: ChangeOfBasisMatrix::from_bases (m_chl) None");
+                    crate::selkie_trace!(
+                        "[sign {_iter}] DROP: ChangeOfBasisMatrix::from_bases (m_chl) None"
+                    );
                     continue;
                 }
             };
@@ -1591,8 +1628,8 @@ impl TryFrom<&[u8]> for SigningKey {
     }
 }
 
-impl core::fmt::Debug for SigningKey {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl Debug for SigningKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SigningKey")
             .field("verifying_key", &self.verifying_key)
             .finish_non_exhaustive()
