@@ -306,7 +306,6 @@ fn keygen_kat_028() {
 }
 
 #[test]
-#[ignore]
 fn keygen_kat_029() {
     keygen_kat_idx_inner(29);
 }
