@@ -374,47 +374,47 @@ impl ExtremalOrder<8> {
                 //   - Verifying the chain for [3] (correct: splits)
                 //   - Discovering nrd(theta) = 4*m via Python norm computation
                 //   - Tracing back to normalize() vs make_primitive
-                // Skip rather than panic when γ doesn't fit in
-                // `BigInt<4>`: for the multi-order-enumeration path
-                // the target M can be wide enough to push γ past
-                // 256 bits. The represent_integer outer retry loop
-                // will re-sample a (z, t) pair.
-                let Some(g0) = gamma_coords[0].narrow_to::<4>() else {
-                    continue;
-                };
-                let Some(g1) = gamma_coords[1].narrow_to::<4>() else {
-                    continue;
-                };
-                let Some(g2) = gamma_coords[2].narrow_to::<4>() else {
-                    continue;
-                };
-                let Some(g3) = gamma_coords[3].narrow_to::<4>() else {
-                    continue;
-                };
-                let Some(gd) = common_d.narrow_to::<4>() else {
-                    continue;
-                };
-                let gamma = Element::<4>::new(
-                    Coordinate::from_bigint(g0),
-                    Coordinate::from_bigint(g1),
-                    Coordinate::from_bigint(g2),
-                    Coordinate::from_bigint(g3),
-                    Denominator::from_bigint_unchecked(gd),
-                );
-
-                // Decompose gamma on the order basis to find the content
+                // Decompose γ on the order basis to find the content
                 // (GCD of the order-basis coefficients), matching the C
                 // ref's `quat_alg_make_primitive`.
-                // Use the narrow (BigInt<4>) order for decomposition.
-                // The extremal order at width 8 wraps the same lattice;
-                // we narrow it to width 4 for the decompose call.
-                // Find the matching narrow order by q value.
-                let Some(narrow_order) = EXTREMAL_ORDERS.iter().find(|o| o.q() == self.q()) else {
-                    continue;
+                //
+                // Run at width 20 (1280 bits): for p-extremal orders
+                // with `q ≥ 5` the basis entries reach ~250 bits
+                // (e.g. q=97 row 1 col 3 ≈ 2^250), and
+                // `Lattice::decompose` computes a 4×4 adjugate whose
+                // 3×3 minors accumulate up to ~3·250 = 750 bits.
+                // Then `adjugate · rhs` (with rhs ≈ basis_entry size
+                // ≈ 250 bits) reaches ~1000 bits before the final
+                // `/ det`. Width 8 (512 bits) and even width 12
+                // (768 bits) overflow silently → wrong coefficients
+                // → wrong content check → spurious `represent_integer`
+                // failures and silently-wrong successes (the latter
+                // produced a γ with wrong nrd in KAT 29 iter 0 t=1
+                // before this widening). Width 20 leaves comfortable
+                // margin for all NIST-I orders.
+                let gamma_w = Element::<20>::new(
+                    Coordinate::from_bigint(gamma_coords[0].widen::<20>()),
+                    Coordinate::from_bigint(gamma_coords[1].widen::<20>()),
+                    Coordinate::from_bigint(gamma_coords[2].widen::<20>()),
+                    Coordinate::from_bigint(gamma_coords[3].widen::<20>()),
+                    Denominator::from_bigint_unchecked(common_d.widen::<20>()),
+                );
+                let order_lattice_w: Lattice<20> = {
+                    let lat4: &Lattice<4> = EXTREMAL_ORDERS
+                        .iter()
+                        .find(|o| o.q() == self.q())
+                        .map(|o| o.order().lattice())?;
+                    let basis4 = lat4.basis();
+                    let mut basis_w = Matrix::<20>::ZERO;
+                    for row in 0..4 {
+                        for col in 0..4 {
+                            basis_w[row][col] = basis4[row][col].widen::<20>();
+                        }
+                    }
+                    Lattice::new(basis_w, lat4.denom().widen::<20>())
                 };
-                let order_lattice: &Lattice<4> = narrow_order.order();
-                let Some(basis_coeffs) = order_lattice.decompose(&gamma) else {
-                    // gamma not in the order — skip.
+                let Some(basis_coeffs) = order_lattice_w.decompose(&gamma_w) else {
+                    // γ not in the order — skip.
                     continue;
                 };
 
@@ -432,45 +432,48 @@ impl ExtremalOrder<8> {
                 // is `q == 1` (the order containing
                 // `(1+j)/2` rather than `(1+ωj)/2`).
                 let expected_content = if isogeny_cond || q_val == 1 {
-                    BigInt::TWO
+                    BigInt::<20>::from_u64(2)
                 } else {
-                    BigInt::ONE
+                    BigInt::<20>::from_u64(1)
                 };
                 if content != expected_content {
                     continue;
                 }
                 _parity_ok += 1;
 
-                // Return gamma / content by dividing the
-                // order-basis coefficients and reconstructing the
-                // quaternion element. Dividing the {1,i,j,k} coords
-                // by `content` is NOT equivalent to dividing the
-                // order-basis coefficients (unless the basis is
-                // diagonal); reconstruct from the divided
-                // coefficients: γ/d = Σ (c_k/d) · basis_col_k / denom.
-                let final_coeffs: [BigInt<4>; 4] = core::array::from_fn(|k| {
+                // γ / content via order-basis coefficients (matches
+                // C ref's `quat_alg_make_primitive` followed by the
+                // `ibz_mat_4x4_eval(coeffs, basis, coeffs)` mapback
+                // at `normeq.c:234`).
+                let final_coeffs: [BigInt<20>; 4] = core::array::from_fn(|k| {
                     let (q, _) = basis_coeffs[k].div_rem(&content);
                     q
                 });
-
-                // Reconstruct: γ/content = Σ (c_k/content) · basis_col_k / denom
-                let basis = order_lattice.basis();
-                let denom = *order_lattice.denom();
-                let mut result_coords = [BigInt::<4>::ZERO; 4];
+                let basis = order_lattice_w.basis();
+                let denom_w = *order_lattice_w.denom();
+                let mut result_coords_w = [BigInt::<20>::ZERO; 4];
                 for j in 0..4 {
                     for k in 0..4 {
-                        result_coords[j] =
-                            result_coords[j].ct_add(&final_coeffs[k].ct_mul(&basis[j][k]));
+                        result_coords_w[j] =
+                            result_coords_w[j].ct_add(&final_coeffs[k].ct_mul(&basis[j][k]));
                     }
                 }
 
-                // The result has denom = order_lattice.denom().
+                // Narrow to `Element<4>` for the return. Skip if the
+                // result doesn't fit (extremely rare: the result
+                // norm equals the caller's `m`, which fits in
+                // `BigInt<4>` for FDI inputs).
+                let r0 = result_coords_w[0].narrow_to::<4>()?;
+                let r1 = result_coords_w[1].narrow_to::<4>()?;
+                let r2 = result_coords_w[2].narrow_to::<4>()?;
+                let r3 = result_coords_w[3].narrow_to::<4>()?;
+                let denom4 = denom_w.narrow_to::<4>()?;
                 let result = Element::<4>::new(
-                    Coordinate::from_bigint(result_coords[0]),
-                    Coordinate::from_bigint(result_coords[1]),
-                    Coordinate::from_bigint(result_coords[2]),
-                    Coordinate::from_bigint(result_coords[3]),
-                    Denominator::from_bigint_unchecked(denom),
+                    Coordinate::from_bigint(r0),
+                    Coordinate::from_bigint(r1),
+                    Coordinate::from_bigint(r2),
+                    Coordinate::from_bigint(r3),
+                    Denominator::from_bigint_unchecked(denom4),
                 );
 
                 return Some(result);
@@ -1906,14 +1909,26 @@ impl<const N: usize> LeftIdeal<N> {
         // embed the lattice in a coarser sublattice (failing
         // enumerate's divisor check).
         const W2: usize = 60;
-        let mut conj_reduced_state: Option<(Lattice<W2>, BigInt<W2>, BigInt<W2>)> = None;
+        // (conj_lat, k_norm, n_self, denom_self, conj_delta) — extended
+        // to also carry `denom_self_w2` and `conj_delta` for the
+        // cross-order beta post-processing below (C ref's
+        // `dim2id2iso.c:651-672` `quat_alg_mul(beta, &delta, beta)
+        // + quat_alg_normalize + quat_alg_conj` for `j != 0`).
+        let mut conj_reduced_state: Option<(
+            Lattice<W2>,
+            BigInt<W2>,
+            BigInt<W2>,
+            BigInt<W2>,
+            Element<W2>,
+        )> = None;
 
         for t in 0..NUM_EXTREMAL_ORDERS {
             // Build the parent ideal for this order.
             let parent_ideal_t = if t == 0 {
                 *self
             } else {
-                let Some((ref conj_lat, ref k_norm, ref n_self_w2)) = conj_reduced_state else {
+                let Some((ref conj_lat, ref k_norm, ref n_self_w2, _, _)) = conj_reduced_state
+                else {
                     continue;
                 };
                 let j_t_lat: Lattice<W2> = {
@@ -2155,7 +2170,13 @@ impl<const N: usize> LeftIdeal<N> {
                     .alg_elem_mul_with_modulus(&conj_delta, &modulus_inner)
                     .reduce_denom();
                 let reduced_id_lat: Lattice<W2> = reduced_id_lat_hnf.into();
-                conj_reduced_state = Some((reduced_id_lat.conjugate(), k_norm, norm_t0_w2));
+                conj_reduced_state = Some((
+                    reduced_id_lat.conjugate(),
+                    k_norm,
+                    norm_t0_w2,
+                    denom_t0_w2,
+                    conj_delta,
+                ));
             }
         }
 
@@ -2223,6 +2244,73 @@ impl<const N: usize> LeftIdeal<N> {
                                         result.factor2.beta.denom.as_bigint(),
                                         result.factor2.degree.to_bigint(),
                                     );
+                                }
+                            }
+                            // Cross-order beta post-processing
+                            // (C ref `dim2id2iso.c:651-672`):
+                            //
+                            //   if (j_i != 0) {
+                            //       beta_i = delta · beta_i  (quaternion mul)
+                            //       beta_i = normalize(beta_i)
+                            //       beta_i = conj(beta_i)
+                            //   }
+                            //
+                            // where `delta` is `conj_delta` with denom
+                            // adjusted to `denom_self · k_norm`. This
+                            // maps `beta_i ∈ conj(reduced_id) · J_t`
+                            // (where it was enumerated) back to `O_t`
+                            // (where downstream `action_matrix(O_t)`
+                            // expects it). Without this, the
+                            // alternate-order action_matrix call
+                            // returns None and keygen retries with
+                            // wrong DRBG offset.
+                            //
+                            // No transformation when both `s == 0`
+                            // and `t == 0` (the special-order path
+                            // already produces β in O_0).
+                            let mut result = result;
+                            if (s != 0 || t != 0) && conj_reduced_state.is_some() {
+                                let (_, k_norm, _n_self_w2, denom_self_w2, conj_delta) =
+                                    conj_reduced_state.as_ref().unwrap();
+                                // delta_pp: same coords as conj_delta,
+                                // denom = denom_self · k_norm
+                                // (instead of denom_self · n_self).
+                                let mut delta_pp = *conj_delta;
+                                let denom_pp = denom_self_w2.ct_mul(k_norm);
+                                delta_pp.denom = Denominator::from_bigint_unchecked(denom_pp);
+
+                                let transform = |beta4: &Element<4>| -> Option<Element<4>> {
+                                    let beta_w = Element::<W2>::new(
+                                        Coordinate::from_bigint(
+                                            beta4.a.as_bigint().widen::<W2>(),
+                                        ),
+                                        Coordinate::from_bigint(
+                                            beta4.b.as_bigint().widen::<W2>(),
+                                        ),
+                                        Coordinate::from_bigint(
+                                            beta4.c.as_bigint().widen::<W2>(),
+                                        ),
+                                        Coordinate::from_bigint(
+                                            beta4.d.as_bigint().widen::<W2>(),
+                                        ),
+                                        Denominator::from_bigint_unchecked(
+                                            BigInt::<4>::from(beta4.denom).widen::<W2>(),
+                                        ),
+                                    );
+                                    let prod = delta_pp.mul_direct(&beta_w);
+                                    let mut prod = prod;
+                                    prod.normalize();
+                                    let conjugated = prod.conjugate();
+                                    conjugated.narrow_to::<4>()
+                                };
+
+                                if s != 0 {
+                                    let new_beta = transform(&result.factor1.beta.0)?;
+                                    result.factor1.beta = ShortVector(new_beta);
+                                }
+                                if t != 0 {
+                                    let new_beta = transform(&result.factor2.beta.0)?;
+                                    result.factor2.beta = ShortVector(new_beta);
                                 }
                             }
                             return Some(result);

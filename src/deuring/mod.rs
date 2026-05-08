@@ -36,7 +36,7 @@ use crate::{
     },
     params::QUAT_REPRES_BOUND_INPUT,
     quaternions::{
-        algebra::Element,
+        algebra::{Coordinate, Denominator, Element},
         bigint::BigInt,
         lattice::{ExtremalOrder, Lattice, LeftIdeal},
         precomputed::{CONNECTING_IDEAL_NORMS, EXTREMAL_ORDERS},
@@ -265,7 +265,38 @@ fn action_matrix(
     gen_matrices: &[ActionMatrix; 3],
     f: TorsionExponent,
 ) -> Option<ActionMatrix> {
-    let coords = order.decompose(elem)?;
+    // Decompose at width 20 — for p-extremal orders with `q ≥ 5`
+    // the basis entries reach ~250 bits (e.g. q=97 row 1 col 3 ≈
+    // 2^250), and `Lattice::decompose` computes a 4×4 adjugate whose
+    // 3×3 minors accumulate up to ~3·250 = 750 bits. Then
+    // `adjugate · rhs` (rhs ≈ basis_entry ≈ 250 bits) reaches ~1000
+    // bits before `/ det`. Width 8 silently overflows; width 20 is
+    // comfortable margin for all NIST-I orders. Same width pitfall
+    // as `ExtremalOrder::represent_integer`.
+    let elem_w = Element::<20>::new(
+        Coordinate::from_bigint(elem.a.as_bigint().widen::<20>()),
+        Coordinate::from_bigint(elem.b.as_bigint().widen::<20>()),
+        Coordinate::from_bigint(elem.c.as_bigint().widen::<20>()),
+        Coordinate::from_bigint(elem.d.as_bigint().widen::<20>()),
+        Denominator::from_bigint_unchecked(BigInt::<4>::from(elem.denom).widen::<20>()),
+    );
+    let order_w: Lattice<20> = {
+        let basis4 = order.basis();
+        let mut basis_w = crate::quaternions::linear::Matrix::<20>::ZERO;
+        for row in 0..4 {
+            for col in 0..4 {
+                basis_w[row][col] = basis4[row][col].widen::<20>();
+            }
+        }
+        Lattice::new(basis_w, order.denom().widen::<20>())
+    };
+    let coords_w = order_w.decompose(&elem_w)?;
+    let coords: [BigInt<4>; 4] = [
+        coords_w[0].narrow_to::<4>()?,
+        coords_w[1].narrow_to::<4>()?,
+        coords_w[2].narrow_to::<4>()?,
+        coords_w[3].narrow_to::<4>()?,
+    ];
     #[cfg(test)]
     {
         eprintln!("CREF_FDI coeffs[0]={}", coords[0]);
@@ -820,38 +851,74 @@ impl<const N: usize> LeftIdeal<N> {
         // on the first component, which already handles the per-order
         // embedding. See [§3.1.7.2].
         //
-        // For `t = 0`, `CONNECTING_IDEAL_NORMS[0] = 2`, which is even
-        // and would invalidate `invmod(·, 2^f)`. Gate on
-        // `t_index > 0` to skip the extra factor in the single-order
-        // path.
+        // For `t = 0`, `CONNECTING_IDEAL_NORMS[0] = 1` (J_0 is O₀
+        // itself), so multiplying by it is a no-op. The gate on
+        // `t_index > 0` matches C ref's `find_uv` (`dim2id2iso.c:651`)
+        // skipping the extra `nrd(J_t)` factor when both sides came
+        // from the special order.
         //
         // [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
         let modulus = BigInt::<4>::ONE.shl(f.value());
         let s_index = EXTREMAL_ORDERS
             .iter()
             .position(|o| o.q() == sui.factor1.order.q())?;
-        let gen_matrices_s = [
-            ACTION_MATRICES[s_index][3],
-            ACTION_MATRICES[s_index][4],
-            ACTION_MATRICES[s_index][5],
-        ];
         let t_index = EXTREMAL_ORDERS
             .iter()
             .position(|o| o.q() == sui.factor2.order.q())?;
-        let gen_matrices_t = [
-            ACTION_MATRICES[t_index][3],
-            ACTION_MATRICES[t_index][4],
-            ACTION_MATRICES[t_index][5],
-        ];
+        // After `suitable_ideals`'s cross-order post-processing
+        // (`ideal.rs` `(j_i != 0) ? beta_i = conj(delta · beta_i)`),
+        // beta_i ∈ I ⊆ O₀ regardless of which alternate order it
+        // came from. Always decompose on O₀ for cross-order pairs,
+        // matching C ref's `endomorphism_application_even_basis(...,
+        // index_alternate_curve=0, ...)` at `dim2id2iso.c:1054, 1156`.
+        // For the pure-special path (s = t = 0) decompose on O₀ too
+        // — equivalent.
+        let cross_order = s_index != 0 || t_index != 0;
+        let gen_matrices_s = if cross_order {
+            [
+                ACTION_MATRICES[0][3],
+                ACTION_MATRICES[0][4],
+                ACTION_MATRICES[0][5],
+            ]
+        } else {
+            [
+                ACTION_MATRICES[s_index][3],
+                ACTION_MATRICES[s_index][4],
+                ACTION_MATRICES[s_index][5],
+            ]
+        };
+        let gen_matrices_t = if cross_order {
+            [
+                ACTION_MATRICES[0][3],
+                ACTION_MATRICES[0][4],
+                ACTION_MATRICES[0][5],
+            ]
+        } else {
+            [
+                ACTION_MATRICES[t_index][3],
+                ACTION_MATRICES[t_index][4],
+                ACTION_MATRICES[t_index][5],
+            ]
+        };
+        let order_for_decompose_s: &Lattice<4> = if cross_order {
+            EXTREMAL_ORDERS[0].order()
+        } else {
+            sui.factor1.order.order()
+        };
+        let order_for_decompose_t: &Lattice<4> = if cross_order {
+            EXTREMAL_ORDERS[0].order()
+        } else {
+            sui.factor2.order.order()
+        };
         let m_beta1 = action_matrix(
             &sui.factor1.beta,
-            sui.factor1.order.order(),
+            order_for_decompose_s,
             &gen_matrices_s,
             f,
         )?;
         let m_beta2 = action_matrix(
             &sui.factor2.beta,
-            sui.factor2.order.order(),
+            order_for_decompose_t,
             &gen_matrices_t,
             f,
         )?;

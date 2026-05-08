@@ -1498,4 +1498,209 @@ correctly will still fail the KAT comparison and the implementor
 will have no way to discover the discrepancy without reading the
 C reference's \texttt{splitting\_compute}.
 
+% =====================================================================
+\section{\textsc{SuitableIdeals} multi-order optimization: the
+  cross-order $\beta$ transport step}
+\label{sec:specrev-suitable-multi-order-transport}
+
+\finding{Affects \algo{3.16} (\textsc{SuitableIdeals}) when extended
+  with the multi-order optimization, and any caller that expects
+  $\beta_i \in I$ (the input ideal).  Causes \algo{3.13}
+  (\textsc{IdealToIsogeny}) to silently fail
+  when the special-order pair is unavailable.}{\high}
+
+\algo{3.16} as written enumerates short vectors only in the input
+ideal~$I$ (or its LLL-reduced equivalent~$I'$).  When this
+single-lattice search exhausts without finding a viable
+$(\beta_s, \beta_t)$ pair, the C reference falls back to the
+\emph{multi-order} optimization
+(\texttt{dim2id2iso.c:534--666}): it enumerates short vectors in
+six additional pushforward lattices
+\[
+  L_t \;=\; \overline{I'} \cdot J_t,
+  \qquad t = 1, \ldots, 6,
+\]
+where $J_t$ is the precomputed connecting ideal from $\mathcal{O}_0$
+to a maximal order $\mathcal{O}_t$ (the right order of $J_t$ is
+conjugate to~$\mathcal{O}_t$).  This more-than-doubles the
+candidate pool and rescues KATs whose hypercube enumeration would
+otherwise exhaust.
+
+A short vector $\beta_t \in L_t$ is an element of
+$\overline{I'} \cdot J_t \subseteq B$, \emph{not} of~$I$.  Every
+downstream caller of \textsc{SuitableIdeals} (\algo{3.13},
+\algo{3.17}, \algo{4.6}) expects the returned $\beta_i$ to live
+in the original ideal lattice~$I$ so they can compute
+$\theta = \beta_2 \cdot \overline{\beta_1} / \mathrm{nrd}(I)$ and
+treat it as an endomorphism of the protocol's reference curve.
+The multi-order optimization therefore needs an explicit transport
+step from $L_t$ back to~$I$ before returning $\beta_i$.
+
+\paragraph{What the C reference does.}
+\texttt{dim2id2iso.c:651--672}, after \texttt{find\_uv\_from\_lists}
+selects an $(i_1, i_2)$ pair, applies the following transformation
+when either index $j_1$ or $j_2$ is non-zero (i.e., the chosen
+$\beta$ came from an alternate-order lattice):
+\begin{enumerate}
+  \item Adjust \texttt{delta.denom}, where \texttt{delta} is the
+    conjugated LLL-first vector $\overline{\delta}$ of $I'$:
+\begin{verbatim}
+ibz_div(&delta.denom, &remain, &delta.denom, &lideal->norm);
+ibz_mul(&delta.denom, &delta.denom, &conj_ideal.norm);
+\end{verbatim}
+    so that \texttt{delta} ends up at denom $d_{I'} \cdot
+    \mathrm{nrd}(\overline{I'})$.
+  \item For each $j_i \neq 0$:
+\begin{verbatim}
+quat_alg_mul(beta_i, &delta, beta_i, Bpoo);
+quat_alg_normalize(beta_i);
+quat_alg_conj(beta_i, beta_i);
+\end{verbatim}
+\end{enumerate}
+Algebraically: $\beta_i \leftarrow \overline{\,\overline{\delta}
+\cdot \beta_i\,}$.  The post-condition asserted at
+\texttt{dim2id2iso.c:690} is
+$\beta_i \in I$ (i.e., \texttt{quat\_lattice\_contains(\&I,
+beta\_i)}).
+
+This step is not in \algo{3.16}'s pseudocode at all.  An
+implementor reading the spec will write \textsc{SuitableIdeals}
+without this transport, observe that 99\% of NIST-I KATs pass
+(because \textsc{SuitableIdeals} usually finds a special-order
+pair on the first try), and only discover the bug on a KAT that
+forces the multi-order branch.  In the published NIST-I lvl1 KAT
+file, that's count~29: every other count from~0 through~99 finds a
+special-order pair within the
+\texttt{FINDUV\_box\_size = 2} hypercube.
+
+\paragraph{Concrete impact (Selkie experience).}
+Without the transport, our $\beta_2$ from $L_1 = \overline{I'}
+\cdot J_1$ flowed into the downstream
+$\texttt{action\_matrix}(\beta_2, \mathcal{O}_1)$ call, whose
+\texttt{decompose} step rejects $\beta_2$ as ``not in the
+lattice'' and aborts the entire \algo{3.13} flow with no error
+signal --- key generation transparently retries from the next
+random commitment, eventually picks an $(s, t) = (0, 0)$ pair on
+some later iter, and produces a public key that fails the KAT
+byte comparison.
+
+\paragraph{Recommendation.}
+\algo{3.16} should be extended to describe the multi-order
+optimization explicitly, including the post-search transport.
+Concretely:
+\begin{enumerate}
+  \item \textbf{Search step.} Define
+    $L_0 = I'$ and
+    $L_t = \overline{I'} \cdot J_t$ for $t = 1, \ldots, 6$, where
+    $J_t$ is the connecting ideal from $\mathcal{O}_0$ to
+    $\mathcal{O}_t$.
+    Enumerate short vectors in each $L_t$ separately; sort each
+    list by reduced norm.
+  \item \textbf{Pair selection.} Run the line-walk in
+    \texttt{find\_uv\_from\_lists} over the cross product of
+    sorted lists.  First valid $(\beta_s \in L_s,
+    \beta_t \in L_t)$ wins.
+  \item \textbf{Transport step.} If $s \neq 0$, replace
+    $\beta_s \leftarrow \overline{\overline{\delta} \cdot \beta_s}$;
+    if $t \neq 0$, replace
+    $\beta_t \leftarrow \overline{\overline{\delta} \cdot \beta_t}$.
+    Here $\overline{\delta}$ is the conjugate of the LLL-first
+    vector of~$I'$, with denominator $d_{I'} \cdot N(\overline{I'})$
+    after the modular adjustment described above.
+\end{enumerate}
+The transport's algebraic role is to map an
+$\overline{I'} \cdot J_t$-element back to an $I$-element via the
+$\overline{I'} \cdot \overline{\delta} = N(\overline{I'}) \cdot
+\overline{I}$ identity (and then conjugate to flip back to a
+left-$\mathcal{O}_0$ element).
+
+The spec's silence on this transport is part of a broader pattern:
+the multi-order optimization is invoked extensively by the C
+reference but is not modeled in \algo{3.16} at all.  Implementations
+that follow the spec literally end up with a single-lattice
+\textsc{SuitableIdeals} that fails on KATs where the multi-order
+search is needed.
+
+% =====================================================================
+\section{\textsc{IdealToIsogeny} action-matrix order index after
+  cross-order $\beta$ transport}
+\label{sec:specrev-action-matrix-index}
+
+\finding{Affects \algo{3.13} (\textsc{IdealToIsogeny}) when its
+  caller-provided $(\beta_1, \beta_2)$ came from the multi-order
+  optimization in \textsc{SuitableIdeals}.}{\medium}
+
+After the transport described in
+\S\ref{sec:specrev-suitable-multi-order-transport}, both $\beta_1$
+and $\beta_2$ live in $I \subseteq \mathcal{O}_0$, regardless of
+which alternate-order lattice they originated from.  An
+implementor reading \algo{3.13} naturally writes
+\textsc{ActionByTranslation} (line~7) to decompose $\beta_i$ on
+the basis of $\mathcal{O}_{s}$ (resp.\ $\mathcal{O}_{t}$), since
+the algorithm associates $\beta_1$ with the curve~$E_s$ and
+$\beta_2$ with~$E_t$.  This decomposition fails: $\beta_i$ is
+in~$I \subseteq \mathcal{O}_0$, not in $\mathcal{O}_s$
+(or $\mathcal{O}_t$) when $s \neq 0$ (or $t \neq 0$).
+
+\paragraph{What the C reference does.}
+\texttt{endomorphism\_application\_even\_basis}
+(\texttt{id2iso.c:140}) takes an explicit
+\texttt{index\_alternate\_curve} argument selecting which
+order's basis to decompose on.  In every call from
+\textsc{IdealToIsogeny}, regardless of which alternate order
+$\beta_i$ originated from, the C reference passes \texttt{0}
+(see \texttt{dim2id2iso.c:1054} and \texttt{:1156}):
+\begin{verbatim}
+endomorphism_application_even_basis(
+    &bas2, 0, &Fv_codomain.E1, &theta, TORSION_EVEN_POWER);
+\end{verbatim}
+i.e., always decompose on $\mathcal{O}_0$.  This is consistent
+with the post-transport invariant
+$\beta_i \in I \subseteq \mathcal{O}_0$.
+
+The two conventions
+(decompose on $\mathcal{O}_s$ vs.\ decompose on $\mathcal{O}_0$)
+are mathematically equivalent for $\beta \in
+\mathcal{O}_0 \cap \mathcal{O}_s$.  But for cross-order
+$\beta$, only the $\mathcal{O}_0$ decomposition succeeds; an
+implementer who reads ``$M_\beta$ is the action of $\beta$ on
+$E_s$'' as ``decompose $\beta$ on $\mathcal{O}_s$'' has the
+right idea for the $s = 0$ case and the wrong idea for $s \neq 0$.
+
+\paragraph{Recommendation.}
+\algo{3.13} should specify that the action-matrix decomposition
+is taken on $\mathcal{O}_0$ regardless of the source order.
+Equivalently: the \textsc{ActionByTranslation} subroutine should
+take both the curve and the order as arguments, and \algo{3.13}
+should always pass $(\mathcal{O}_0, E_*)$ for some target
+curve~$E_*$.  A one-line addition of the form
+\begin{quote}\itshape
+  In line~7, the action-matrix decomposition
+  $M_{\beta_i} = \sum_k c_k\, M_{b_k}$ is taken on the basis
+  $(b_0, \ldots, b_3)$ of $\mathcal{O}_0$, where $\beta_i =
+  \sum_k c_k b_k$ (which is well-defined because the
+  multi-order \textsc{SuitableIdeals} returns $\beta_i \in I
+  \subseteq \mathcal{O}_0$).
+\end{quote}
+suffices.
+
+\paragraph{Why this is hard to catch.}
+The two-decomposition factoring
+$M_{\beta_2} \cdot \mathrm{adj}(M_{\beta_1})$ that some
+implementations (including ours) use as an alternative to
+computing $\theta = \beta_2 \cdot \overline{\beta_1} /
+\mathrm{nrd}(I)$ as a quaternion does \emph{not} work for
+cross-order pairs: it requires both $M_{\beta_i}$ to be
+well-defined relative to a common torsion basis, which the
+$\mathcal{O}_s, \mathcal{O}_t$ decompositions are not.  An
+implementer who chooses this factoring will pass every
+single-order KAT and hit the cross-order path as a hard
+\textsc{Decompose}-returns-\texttt{None} error rather than a
+quiet wrong-result; this is a comparatively kind failure mode,
+but only because both bugs cancel.  An implementer who instead
+follows \algo{3.13}'s natural reading and decomposes on
+$\mathcal{O}_s, \mathcal{O}_t$ directly hits the same error.
+Either way, the spec sends the implementer to the C reference
+to discover the always-decompose-on-$\mathcal{O}_0$ convention.
+
 \end{document}

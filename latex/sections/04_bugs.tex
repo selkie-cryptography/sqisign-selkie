@@ -1533,3 +1533,400 @@ $\det(M_{\beta_1}) \pmod{2^f}$ to $d_1 \cdot \mathrm{nrd}(\cdot)
 \pmod{2^f}$ on every call in test builds: a mismatch catches this
 immediately and the check costs one matrix determinant.
 
+\subsection{Connecting-ideal norm: leading basis entry vs.\
+  reduced norm}
+\label{sec:bug-connecting-ideal-norm}
+
+The seven extremal maximal orders $\mathcal{O}_t$ ($t = 0, \ldots, 6$
+for NIST-I) come with precomputed connecting ideals
+$J_t \subseteq \mathcal{O}_0$ whose right order is conjugate to
+$\mathcal{O}_t$.  Each $J_t$ is stored as
+\begin{itemize}
+\item a basis matrix $B_t \in M_4(\mathbb{Z})$,
+\item a denominator $d_t \in \mathbb{Z}_{>0}$ (with $d_t = 2$ for
+  the NIST-I orders),
+\item a labelled norm $N_t \in \mathbb{Z}_{>0}$,
+\end{itemize}
+where the rational basis vectors are the columns of $B_t / d_t$.
+The labelled norm $N_t$ is supposed to be the \emph{reduced norm}
+$N(J_t) = \sqrt{[\mathcal{O}_0 : J_t]}$; the C reference's
+\texttt{quat\_lideal\_norm}
+(\texttt{quaternion/ref/generic/ideal.c:7}) computes it from the
+lattice index.  For our HNF shape
+$B_t = \mathrm{diag}(2N_t,\, 2N_t,\, 1,\, 1)$ at $d_t = 2$, the
+reduced norm is $N_t$ and the leading basis entry is $2 N_t$;
+the two differ by exactly the denominator.
+
+\paragraph{Symptom.}  Our extraction script
+\texttt{scripts/precomp/extract\_connecting\_ideals.sage}
+computed
+\begin{lstlisting}[language=Python]
+norm_row = int_mat.row_space(ZZ).intersection(
+    (ZZ**4).submodule([[1, 0, 0, 0]])
+).basis()[0]
+norm = ZZ(abs(norm_row[0]))
+\end{lstlisting}
+which returns the leading first-coordinate entry of the integer
+HNF row space---i.e., $2 N_t$, not $N_t$.  Every entry of
+\texttt{CONNECTING\_IDEAL\_NORMS[\textit{t}]} for
+$t = 0, \ldots, 6$ was therefore exactly twice the C reference's
+labelled norm.
+
+This was latent for 99 of the 100 NIST-I lvl1 KATs because
+\textsc{SuitableIdeals} usually finds a viable $(\beta_s, \beta_t)$
+pair with $s = t = 0$ (the special-order path), which never reads
+\texttt{CONNECTING\_IDEAL\_NORMS}.  KAT~29 was the first KAT
+whose hypercube enumeration at $m = 2$ exhausted the special
+order and forced the cross-order branch with $t = 1$, where the
+doubled norm flowed into two downstream divergences:
+\begin{enumerate}
+  \item \textbf{\texttt{enumerate\_short\_vectors} divisor
+    doubled.}  The ideal-membership integrality check uses
+    $\mathrm{divisor} = N_t \cdot d_t^2$.  With $N_t$ doubled,
+    half of the hypercube candidates fail integrality (those
+    with odd isogeny degree are rejected; those with even
+    degree are accepted with the degree silently halved).  The
+    sorted batch then differs from the C ref's, and
+    \texttt{try\_find\_uv} picks a different
+    $(d_s, d_t)$ pair.
+  \item \textbf{\textsc{IdealToIsogeny} scale\_denom doubled.}
+    The outer-chain scaling
+    $1 / (\mathrm{nrd}(I) \cdot d_1 \cdot N(J_t))$ is multiplied
+    by~$N_t$ for $t \neq 0$ (\texttt{deuring/mod.rs:895}).  With
+    $N_t$ doubled the scale is also doubled, breaking the
+    $\theta$-on-the-second-component matrix entries
+    mod~$2^f$.
+\end{enumerate}
+
+\paragraph{Fix.}  Replace the leading-entry extraction with a
+direct lattice-index computation that matches
+\texttt{quat\_lideal\_norm}:
+\[
+  N(J_t)^2 \;=\; \frac{|\det(B_t)|}{|\det(B_{\mathcal{O}_0})|}
+  \cdot
+  \left(\frac{d_{\mathcal{O}_0}}{d_t}\right)^4
+\]
+where $B_{\mathcal{O}_0}$ and $d_{\mathcal{O}_0} = 2$ are the
+standard order's basis and denominator.  This is also what
+Sage's \texttt{QuaternionFractionalIdeal.norm()} returns; we use
+the explicit formula because the script holds only the basis
+matrix at this point.  After regeneration, all seven entries
+match the C reference's
+\texttt{CONNECTING\_IDEALS[\textit{t}].norm}
+byte-for-byte.  The \texttt{connecting\_ideal()} runtime
+constructor was simultaneously updated to use $2 \cdot N_t$ as
+the leading basis entry, keeping the constructed lattice
+byte-unchanged while the labelled norm is corrected.
+
+\paragraph{Catching this earlier.}  A self-consistency assertion
+in \texttt{connecting\_ideal()} comparing the labelled norm to
+$\sqrt{[\mathcal{O}_0 : J_t]}$ (computable from the basis at
+construction time) would have flagged this immediately.  None
+of our 99 working keygen KATs exercised the cross-order code
+path, so unit tests on individual algorithms didn't catch it
+either.
+
+\noindent
+\textbf{Advice for implementers:} For Hermite Normal Form
+representations of fractional ideals, the leading basis entry
+is the \emph{ideal generator} (e.g., $N$ in $N \cdot
+\mathcal{O}_0 + \cdots$), not the reduced norm in general.
+The two coincide only at denominator~1.  When porting from a
+representation with $d > 1$, compute the reduced norm via the
+lattice index, not by reading off a basis pivot.
+
+\subsection{Width-4 silent overflow in \texttt{Lattice::decompose}
+  for $q \geq 5$ orders}
+\label{sec:bug-decompose-width}
+
+Algorithm~3.12 (\textsc{RepresentInteger}) and the action-matrix
+construction in Algorithm~3.13 both decompose a quaternion
+element $\gamma \in B$ on the basis of an extremal maximal order
+$\mathcal{O}_t$:
+\[
+  \gamma \;=\; c_0 b_0 \,+\, c_1 b_1 \,+\, c_2 b_2 \,+\, c_3 b_3
+  \qquad (c_i \in \mathbb{Z}).
+\]
+Our \texttt{Lattice::decompose} (\texttt{quaternions/lattice.rs:520})
+solves for the integer coefficients $c_i$ via Cramer's rule:
+\begin{equation*}
+  c_i \;=\; \frac{(\mathrm{adj}(B) \cdot v)_i}{\det(B)}
+\end{equation*}
+where $B$ is the lattice basis matrix (with rows = coordinate
+components, columns = basis vectors), $v$ is the target's
+coordinate vector scaled to a common denominator, and
+$\mathrm{adj}(B)$ is the $4 \times 4$ adjugate.
+
+\paragraph{Width budget.}  Each entry of $\mathrm{adj}(B)$ is a
+signed sum of six $3 \times 3$ minors, each a product of three
+basis entries.  For $q = 1$ (the standard order $\mathcal{O}_0$
+with basis $\{1, i, (i+j)/2, (1+k)/2\}$ at denom~$2$), the basis
+entries fit in $u64$, so each minor is at most $\sim\!200$ bits
+and the full computation fits comfortably in $\mathtt{BigInt\langle
+4\rangle}$ (256 bits).  For $q \geq 5$, the iso-transformed
+basis matrices have entries up to $\sim 2^{250}$
+(e.g.~$\mathcal{O}_6$ at $q = 97$, row~1 col~3, $\sim 2^{253}$).
+Then:
+\begin{itemize}
+\item Each $3 \times 3$ minor reaches $\sim 750$ bits;
+\item $\mathrm{adj}(B)_{ij}$ is bounded by
+  $6 \cdot 2^{750} \approx 2^{753}$;
+\item $(\mathrm{adj}(B) \cdot v)_i$ adds four products
+  $\mathrm{adj}_{ij} \cdot v_j$ where
+  $|v_j| \lesssim 2^{256+125} = 2^{381}$, reaching
+  $\sim\! 2^{1136}$ before the final division by
+  $\det(B) \sim 2^{750}$.
+\end{itemize}
+$\mathtt{BigInt\langle 4\rangle}$ wraps silently on overflow; the
+adjugate values are numerically wrong while the divisibility
+check $\bmod \det(B)$ may still succeed by coincidence,
+producing a $\gamma$ whose nominal coefficients $c_i$ do not
+satisfy $\gamma = \sum c_i b_i$.  Two distinct symptoms:
+\begin{enumerate}
+  \item \textsc{RepresentInteger} silently returns a $\gamma$
+    with $\mathrm{nrd}(\gamma) \neq m$.  Verifiable by computing
+    $(a^2 + b^2 + p (c^2 + d^2)) / r^2$ from the returned
+    coordinates and comparing to the requested~$m$.
+  \item $\texttt{action\_matrix}(\beta, \mathcal{O}_t)$ returns
+    \texttt{None} (the divisibility check fails for some
+    $\beta$ that mathematically lives in~$\mathcal{O}_t$),
+    aborting the outer-chain construction.
+\end{enumerate}
+
+\paragraph{Fix.}  Widen both call sites to
+$\mathtt{BigInt\langle 20 \rangle}$ (1280 bits) before invoking
+\texttt{decompose}, then narrow the resulting coefficients back
+to $\mathtt{BigInt\langle 4\rangle}$.  Width 12 (768 bits)
+suffices for the adjugate alone but not for
+$\mathrm{adj} \cdot v$ at $q \geq 41$; width 20 leaves
+comfortable margin.  The widening is local to the decomposition
+and adds no asymptotic cost (decomposition runs once per
+$\gamma$).
+
+\paragraph{Catching this earlier.}  We added the regression test
+\texttt{action\_matrix\_scalar\_three\_alternate\_orders}
+(\texttt{deuring/tests.rs}) which calls
+$\texttt{action\_matrix}(3 \cdot 1, \mathcal{O}_t)$ for every $t$
+and asserts the result equals $3 I$.  The test panics on the
+narrow-width path for the first $q \geq 5$ order whose adjugate
+intermediates overflow.  An equivalent check at
+\textsc{RepresentInteger} time would compute
+$\sum c_i b_i$ from the returned coefficients and verify it
+equals~$\gamma$.
+
+\noindent
+\textbf{Advice for implementers:} Cramer's rule's intermediate
+sizes scale with $\binom{n}{k}$ products of basis entries; for
+$n = 4$ this is $4 \cdot 6 = 24$ summed triples plus a
+multiplication by~$v$ before division by~$\det(B)$.  Pick the
+working width to absorb $4 \cdot \log_2(\max |B_{ij}|) +
+\log_2(|v|)$, not just $\log_2(\max |B_{ij}|^4)$.  The
+overflow is silent because \texttt{BigInt} wraps on multiply;
+test \texttt{decompose} with synthetic elements at every
+extremal order's full width.
+
+\subsection{Cross-order $\beta$ post-processing missing in
+  \textsc{SuitableIdeals}}
+\label{sec:bug-cross-order-pp}
+
+When \textsc{SuitableIdeals} extends Algorithm~3.16 with the
+multi-order optimization (\texttt{dim2id2iso.c:534--566}), it
+enumerates short vectors in \emph{seven} different lattices:
+\begin{itemize}
+\item $t = 0$: the input ideal $I'$ (LLL-reduced equivalent of
+  the caller's~$I$).
+\item $t \geq 1$: the cross-order pushforward
+  $\overline{I'} \cdot J_t$, where $J_t$ is the precomputed
+  connecting ideal to the alternate order $\mathcal{O}_t$.
+\end{itemize}
+A short vector $\beta_t$ in lattice $t \geq 1$ is an element of
+$\overline{I'} \cdot J_t \subseteq B$, but downstream code in
+\textsc{IdealToIsogeny} expects $\beta_t \in I$ (the caller's
+original ideal) so it can compute $\theta = \beta_2 \cdot
+\overline{\beta_1} / \mathrm{nrd}(I)$ and apply the
+endomorphism via $\mathcal{O}_0$'s action matrices.
+
+The C reference does this transport explicitly at
+\texttt{dim2id2iso.c:651--672}:
+\begin{lstlisting}[language=C]
+if (j1 != 0 || j2 != 0) {
+    ibz_div(&delta.denom, &remain, &delta.denom, &lideal->norm);
+    ibz_mul(&delta.denom, &delta.denom, &conj_ideal.norm);
+}
+if (j1 != 0) {
+    quat_alg_mul(beta1, &delta, beta1, Bpoo);
+    quat_alg_normalize(beta1);
+    quat_alg_conj(beta1, beta1);
+}
+// (analogous for beta2)
+\end{lstlisting}
+where \texttt{delta} is the LLL-first vector $\delta$ of $I'$
+conjugated, with denominator adjusted to $d_{I'} \cdot
+\mathrm{nrd}(\overline{I'})$.  After this transformation,
+$\beta_i \in I' \subseteq \mathcal{O}_0$.  The post-condition
+asserted at \texttt{dim2id2iso.c:690} is
+$\mathtt{quat\_lattice\_contains}(I', \beta_i)$.
+
+Our \texttt{try\_find\_uv} returned \texttt{factor\_i.beta =
+sv\_i.elem} directly, with no transport.  For 99 of the 100
+NIST-I lvl1 KATs the cross-order branch is never taken
+($s = t = 0$, both $j_i = 0$), so the missing transport is a
+no-op.  KAT~29 forces $(s, t) = (0, 1)$, and the untransported
+$\beta_2 \in \overline{I'} \cdot J_1$ then fails the
+downstream \texttt{action\_matrix} call (which decomposes on
+$\mathcal{O}_1$).
+
+\paragraph{Fix.}  Extend \texttt{conj\_reduced\_state} to carry
+$\delta$ (specifically: its conjugate \texttt{conj\_delta}, with
+the original denominator $d_{I'} \cdot \mathrm{nrd}(I')$) and
+$d_{I'}$.  After \texttt{try\_find\_uv} returns a successful
+$(\beta_s, \beta_t)$ pair in \texttt{suitable\_ideals},
+construct
+\[
+  \delta_{\mathrm{pp}} \;=\; \overline{\delta} \,\Big/\,
+  \bigl( d_{I'} \cdot \mathrm{nrd}(\overline{I'}) \bigr),
+\]
+and for each $j_i \neq 0$ replace
+\[
+  \beta_i \;\longleftarrow\;
+  \overline{\,\delta_{\mathrm{pp}} \cdot \beta_i\,}
+  \quad\text{(quaternion product, then normalize, then conjugate).}
+\]
+Because $\delta_{\mathrm{pp}}$ has wide coordinates (the
+LLL-first vector at the commitment ideal's working width), the
+intermediate quaternion product runs at
+$\mathtt{Element\langle 60 \rangle}$ (matching the
+\texttt{conj\_reduced\_state} working width
+\texttt{W2 = 60}); the final result narrows to
+$\mathtt{Element\langle 4\rangle}$ for return.
+
+\paragraph{Catching this earlier.}  An assertion
+\[
+  \beta_i \in I' \quad\text{(via } \texttt{lattice.contains(beta\_i)}\text{)}
+\]
+on every \textsc{SuitableIdeals} return value would have
+fired the first time the cross-order branch was exercised.
+This is the same assertion the C reference makes at
+\texttt{dim2id2iso.c:690}.
+
+\noindent
+\textbf{Advice for implementers:}  Multi-order short-vector
+search enumerates in different lattices than the caller's
+ideal.  The transport
+$\beta \to \overline{\delta \cdot \beta}$ is invisible at the
+algorithm-box level (Algorithm~3.16 says only ``return
+$\beta_i$'') but is required for downstream callers that
+operate on the original ideal.  Make this part of the
+\textsc{SuitableIdeals} contract, not the
+\texttt{find\_uv\_from\_lists} caller's responsibility.
+
+\subsection{Action-matrix order index for cross-order $\beta$}
+\label{sec:bug-action-matrix-order-index}
+
+After the cross-order $\beta$ transport
+(\S\ref{sec:bug-cross-order-pp}), $\beta_i$ lives in
+$I' \subseteq \mathcal{O}_0$, regardless of which alternate
+order $\mathcal{O}_{t}$ the original short-vector lattice
+came from.  The downstream \textsc{IdealToIsogeny}
+construction needs the action matrix of $\beta_i$ on a
+torsion basis of an elliptic curve.
+
+\paragraph{Two equivalent conventions.}  The action matrix
+$M_\beta$ depends on a choice of \emph{which} extremal order's
+generators to decompose $\beta$ on:
+\begin{itemize}
+\item Decompose $\beta = \sum c_i b_i^{(s)}$ on
+  $\mathcal{O}_s$'s basis $\{b_0^{(s)}, \ldots, b_3^{(s)}\}$
+  and combine with \texttt{ACTION\_MATRICES[\textit{s}]} (the
+  precomputed action of $\mathcal{O}_s$'s generators on
+  $E_s[2^f]$).  This requires $\beta \in \mathcal{O}_s$.
+\item Decompose $\beta$ on $\mathcal{O}_0$'s basis and combine
+  with \texttt{ACTION\_MATRICES[0]}.  This requires
+  $\beta \in \mathcal{O}_0$.
+\end{itemize}
+Both conventions yield mathematically equivalent images on
+the curve when the corresponding membership condition holds.
+
+The C reference's
+\texttt{endomorphism\_application\_even\_basis}
+(\texttt{id2iso/ref/lvlx/id2iso.c:140}) takes an explicit
+\texttt{index\_alternate\_curve} argument selecting which
+order to decompose on.  Inside
+\textsc{IdealToIsogeny} (\texttt{dim2id2iso.c:1054, 1156})
+the C reference \emph{always} passes \texttt{0} for this
+argument:
+\begin{lstlisting}[language=C]
+endomorphism_application_even_basis(
+    &bas2, 0, &Fv_codomain.E1, &theta, TORSION_EVEN_POWER);
+\end{lstlisting}
+That is, both special-order ($s = t = 0$) and cross-order
+($s \neq 0 \lor t \neq 0$) flows decompose on $\mathcal{O}_0$.
+This is consistent with the post-transport invariant
+$\beta_i \in \mathcal{O}_0$.
+
+\paragraph{What we did wrong.}  Our \texttt{to\_isogeny}
+selected the action-matrix table by the order's $q$-index:
+\begin{lstlisting}[language=Rust]
+let s_index = EXTREMAL_ORDERS.iter()
+    .position(|o| o.q() == sui.factor1.order.q())?;
+let gen_matrices_s = [
+    ACTION_MATRICES[s_index][3],
+    ACTION_MATRICES[s_index][4],
+    ACTION_MATRICES[s_index][5],
+];
+let m_beta1 = action_matrix(
+    &sui.factor1.beta,
+    sui.factor1.order.order(),  // = O_s
+    &gen_matrices_s,
+    f,
+)?;
+\end{lstlisting}
+For $s = 0$ this is fine.  For $s \neq 0$, after the cross-order
+transport $\beta_1 \in \mathcal{O}_0$, not $\mathcal{O}_s$, so
+$\texttt{action\_matrix}(\beta_1, \mathcal{O}_s, \ldots)$'s
+\texttt{decompose} step rejects $\beta_1$ as ``not in the
+lattice'' and the whole \textsc{IdealToIsogeny} call returns
+\texttt{None}.
+
+\paragraph{Fix.}  Gate the order and gen-matrices selection on
+$\texttt{cross\_order} = (s \neq 0 \lor t \neq 0)$, picking
+$\mathcal{O}_0$ and \texttt{ACTION\_MATRICES[0]} when set:
+\begin{lstlisting}[language=Rust]
+let cross_order = s_index != 0 || t_index != 0;
+let order_for_decompose_s = if cross_order {
+    EXTREMAL_ORDERS[0].order()
+} else {
+    sui.factor1.order.order()
+};
+let gen_matrices_s = if cross_order {
+    [ACTION_MATRICES[0][3], ACTION_MATRICES[0][4], ACTION_MATRICES[0][5]]
+} else {
+    [ACTION_MATRICES[s_index][3], ACTION_MATRICES[s_index][4], ACTION_MATRICES[s_index][5]]
+};
+// (analogous for t)
+\end{lstlisting}
+
+\paragraph{Catching this earlier.}  Two checks would have
+flagged this:
+\begin{itemize}
+\item Same membership assertion as
+  \S\ref{sec:bug-cross-order-pp} (\texttt{lattice.contains(beta\_i)}
+  for the order being decomposed on).
+\item Determinant cross-check: $\det(M_\beta) \pmod{2^f}
+  \stackrel{?}{=} \mathrm{nrd}(\beta) \pmod{2^f}$ on every
+  \texttt{action\_matrix} return.  When this fails, the
+  decomposition is on the wrong order or has overflowed.
+\end{itemize}
+
+\noindent
+\textbf{Advice for implementers:}  When a multi-order
+optimization produces $\beta$ in a transported form, the
+downstream action-matrix call should specify ``decompose on
+the order $\beta$ now lives in,'' not ``decompose on the
+order $\beta$ originated from.''  The action of an
+endomorphism on a curve does not depend on which integral
+maximal order we choose to expand it in, but
+\texttt{decompose}-then-recombine \emph{does}: the
+recombination matrices must come from the same maximal order
+the decomposition is taken in.
+

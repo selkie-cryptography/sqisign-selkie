@@ -194,27 +194,38 @@ pub const STANDARD_ORDER: &ExtremalOrder<4> = &EXTREMAL_ORDERS[0];
 
 /// Connecting ideal data for each extremal order.
 ///
-/// `CONNECTING_IDEAL_NORMS[t]` is the norm of the connecting ideal
-/// I_t (a left O₀-ideal with right order conjugate to O_t). All
-/// ideals have HNF basis of the form:
+/// `CONNECTING_IDEAL_NORMS[t]` is the reduced norm of the connecting
+/// ideal I_t (a left O₀-ideal with right order conjugate to O_t).
+/// "Reduced norm" here matches C ref's [`quat_lideal_norm`]
+/// (`quaternion/ref/generic/ideal.c:7`), which is `sqrt([O_0 : I])`
+/// computed from the lattice index. This equals Sage's
+/// `QuaternionFractionalIdeal.norm()`.
+///
+/// All ideals have HNF basis of the form:
 ///
 /// ```text
-///   [N, 0, 0, 0]
-///   [0, N, 0, 0]    / denom = 2
-///   [0, x, 1, 0]
-///   [y, 0, 0, 1]
+///   [2N, 0, 0, 0]
+///   [0, 2N, 0, 0]    / denom = 2
+///   [0, x,  1, 0]
+///   [y, 0,  0, 1]
 /// ```
 ///
-/// where N = norm, x = `CONNECTING_IDEAL_X[t]`, y = `CONNECTING_IDEAL_Y[t]`.
+/// (Pre-denom diagonal `(2N, 2N, 1, 1)` divided by 2 gives the affine
+/// elements `(N, N·i, (x·i + j)/2, (y + k)/2)`. The reduced norm is
+/// `N`, half the leading basis entry.)
 ///
-/// For t=0 the connecting ideal is O₀ itself (N=2, x=1, y=1).
+/// For t=0 the connecting ideal is O₀ itself (norm 1, x=1, y=1).
 ///
-/// Extracted from the C ref via Sage and independently verified.
+/// Originally extracted via the Sage script
+/// `scripts/precomp/extract_connecting_ideals.sage`, which returns
+/// the leading basis entry rather than the reduced norm — these are
+/// off by a factor of 2 for the denom-2 representation. Values below
+/// were halved to match C ref's labeled `CONNECTING_IDEALS[t].norm`.
 pub const CONNECTING_IDEAL_NORMS: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
     BigInt::from_sign_and_limbs(
         0,
         [
-            0x0000000000000002,
+            0x0000000000000001,
             0x0000000000000000,
             0x0000000000000000,
             0x0000000000000000,
@@ -223,8 +234,8 @@ pub const CONNECTING_IDEAL_NORMS: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
     BigInt::from_sign_and_limbs(
         0,
         [
-            0x0000000000000002,
-            0x6000000000000000,
+            0x0000000000000001,
+            0x3000000000000000,
             0x0000000000000000,
             0x0000000000000000,
         ],
@@ -232,8 +243,8 @@ pub const CONNECTING_IDEAL_NORMS: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
     BigInt::from_sign_and_limbs(
         0,
         [
-            0x7F90157B8673F5FE,
-            0x78F4A646D00BD2C5,
+            0xBFC80ABDC339FAFF,
+            0x3C7A53236805E962,
             0x0000000000000000,
             0x0000000000000000,
         ],
@@ -241,8 +252,8 @@ pub const CONNECTING_IDEAL_NORMS: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
     BigInt::from_sign_and_limbs(
         0,
         [
-            0x3C6FA8E67715E5E2,
-            0x17949BEC872B9078,
+            0x1E37D4733B8AF2F1,
+            0x0BCA4DF64395C83C,
             0x0000000000000000,
             0x0000000000000000,
         ],
@@ -250,8 +261,8 @@ pub const CONNECTING_IDEAL_NORMS: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
     BigInt::from_sign_and_limbs(
         0,
         [
-            0xDE33C5116DEEAFA2,
-            0x2DF94F97C89EC8CE,
+            0x6F19E288B6F757D1,
+            0x16FCA7CBE44F6467,
             0x0000000000000000,
             0x0000000000000000,
         ],
@@ -259,8 +270,8 @@ pub const CONNECTING_IDEAL_NORMS: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
     BigInt::from_sign_and_limbs(
         0,
         [
-            0x52A2EE77559419F2,
-            0xB348218745C9F459,
+            0xA951773BAACA0CF9,
+            0x59A410C3A2E4FA2C,
             0x0000000000000000,
             0x0000000000000000,
         ],
@@ -268,8 +279,8 @@ pub const CONNECTING_IDEAL_NORMS: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
     BigInt::from_sign_and_limbs(
         0,
         [
-            0xD0316AD767CFAA3A,
-            0x2996D852EBCA0701,
+            0xE818B56BB3E7D51D,
+            0x14CB6C2975E50380,
             0x0000000000000000,
             0x0000000000000000,
         ],
@@ -419,10 +430,16 @@ pub const CONNECTING_IDEAL_Y: [BigInt<4>; NUM_EXTREMAL_ORDERS] = [
 /// [`From<Lattice<4>>`] conversion to [`HnfLattice<4>`] is idempotent
 /// here; computing the HNF again just re-validates it.
 ///
-/// For `t = 0` the returned ideal is `O_0` itself (norm 2,
+/// For `t = 0` the returned ideal is `O_0` itself (norm 1,
 /// `x = y = 1`), which lets the alternate-order search in
 /// [`LeftIdeal::suitable_ideals`] treat `t = 0` uniformly with
 /// `t > 0`.
+///
+/// The basis HNF leading entries are `2·N` (not `N`): at denom 2
+/// this gives the affine elements `α₀ = N` and `α₁ = N·i`. Halving
+/// these would represent `N/2`, which is not in O₀ for an odd-norm
+/// ideal. Compare with [`CONNECTING_IDEAL_NORMS`] (which stores
+/// the reduced norm `N`).
 ///
 /// See [§3.1.7.2] of the spec for the connecting-ideal construction.
 ///
@@ -435,12 +452,14 @@ pub fn connecting_ideal(t: usize) -> LeftIdeal<4> {
     let y = CONNECTING_IDEAL_Y[t];
     // Columns are basis vectors (α₀, α₁, α₂, α₃) in the {1, i, j, k}
     // basis; rows are components. Pre-denom basis:
-    //   α₀ = N,     α₁ = N·i,     α₂ = x·i + j,   α₃ = y + k,
-    // after dividing by denom = 2. For t = 0 this is the standard
-    // order basis (1, i, (i+j)/2, (1+k)/2).
+    //   α₀ = 2N,    α₁ = 2N·i,    α₂ = x·i + j,   α₃ = y + k,
+    // after dividing by denom = 2 yields (N, N·i, (x·i + j)/2, (y + k)/2).
+    // For t = 0 (N = 1) this is the standard order basis
+    // (1, i, (i+j)/2, (1+k)/2).
+    let two_norm = norm.ct_add(&norm);
     let basis = Matrix::from_rows(
-        Vector::new(norm, BigInt::ZERO, BigInt::ZERO, y),
-        Vector::new(BigInt::ZERO, norm, x, BigInt::ZERO),
+        Vector::new(two_norm, BigInt::ZERO, BigInt::ZERO, y),
+        Vector::new(BigInt::ZERO, two_norm, x, BigInt::ZERO),
         Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ONE, BigInt::ZERO),
         Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ZERO, BigInt::ONE),
     );
