@@ -124,7 +124,7 @@ impl<const N: usize> Lattice<N> {
     /// See [§3.1.5.2] of the spec.
     ///
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
-    fn dual(&self) -> Self {
+    pub(crate) fn dual(&self) -> Self {
         // L^{-1} = adj(L) / det(L), so L^{-T} = adj(L)^T / det(L).
         // Dual basis = denom · adj(basis)^T, with new denom = det(basis).
         let adj_t = self.basis.adjugate().transpose();
@@ -368,6 +368,144 @@ impl<const N: usize> Lattice<N> {
         })
     }
 
+    /// Lattice intersection via the dual approach:
+    /// `L1 ∩ L2 = (L1* + L2*)*`.
+    ///
+    /// This is the algorithm C-ref's `quat_lattice_intersect`
+    /// uses (`lattice.c:127`). It avoids the column-op edge cases
+    /// that bite [`Lattice::intersection_via_kernel`] for inputs
+    /// with very imbalanced magnitudes (KAT-1 sign iter 2 with
+    /// ~520-bit `i_chl_sk` vs ~140-bit `conj(I_com)`).
+    ///
+    /// `W` is the working width; entry sizes can grow cubically
+    /// through the two duals (each dual takes adjugate, which is
+    /// a 3-product of basis entries). For a max input entry size
+    /// of `B` bits and max input denom `D` bits, intermediate
+    /// entries reach ~`3·B + max(B+D, 4·B)` bits. Pick `W` to
+    /// accommodate.
+    ///
+    /// Returns `None` if any of the intermediate basis entries or
+    /// the final lattice does not narrow back to `BigInt<N>`.
+    pub fn intersection_via_dual_sum_dual<const W: usize>(
+        &self,
+        other: &Self,
+    ) -> Option<HnfLattice<N>> {
+        const { assert!(W >= N, "intersection_via_dual_sum_dual: W must be >= N") };
+
+        // Widen self and other to working width.
+        let widen_lat = |lat: &Self| -> Lattice<W> {
+            let mut basis = Matrix::<W>::ZERO;
+            for r in 0..4 {
+                for c in 0..4 {
+                    basis[r][c] = lat.basis[r][c].widen::<W>();
+                }
+            }
+            Lattice::<W>::new(basis, lat.denom.widen::<W>())
+        };
+
+        let l1_w = widen_lat(self);
+        let l2_w = widen_lat(other);
+
+        // Step 1: dual(L1), dual(L2).
+        let d1 = l1_w.dual();
+        let d2 = l2_w.dual();
+
+        // Step 2: sum(dual(L1), dual(L2)).
+        let sum_hnf = d1.sum(&d2);
+        let sum_lat = Lattice::<W>::from(sum_hnf);
+
+        // Step 3: dual of sum.
+        let result_w = sum_lat.dual();
+
+        // Step 4: reduce gcd of basis entries with denom. The
+        // double-dual (mathematically self-inverse) leaves a `d^3`
+        // factor in basis numerators and `d^4` in the denom; we
+        // need to factor that out before narrowing, otherwise the
+        // basis entries don't fit in `BigInt<N>`.
+        let mut basis_w = result_w.basis;
+        let denom_w = result_w.denom;
+        let mut g = denom_w.abs();
+        for r in 0..4 {
+            for c in 0..4 {
+                g = g.gcd(&basis_w[r][c].abs());
+                if g == BigInt::<W>::ONE {
+                    break;
+                }
+            }
+            if g == BigInt::<W>::ONE {
+                break;
+            }
+        }
+        let denom_reduced = if g == BigInt::<W>::ONE {
+            denom_w
+        } else {
+            for r in 0..4 {
+                for c in 0..4 {
+                    let (q, _) = basis_w[r][c].div_rem(&g);
+                    basis_w[r][c] = q;
+                }
+            }
+            let (q, _) = denom_w.div_rem(&g);
+            q
+        };
+
+        let reduced_lat = Lattice::<W> {
+            basis: basis_w,
+            denom: denom_reduced,
+        };
+        let result_hnf = reduced_lat.hnf();
+        let result_hnf = result_hnf.canonicalize();
+
+        // Second-pass gcd reduction. The HNF and canonicalize
+        // may leave a residual common factor between the (now
+        // reduced) basis entries and denom that the first pass
+        // didn't catch (e.g., when the dual-of-sum's redundant
+        // factor distributes unevenly across cols).
+        let mut basis2 = result_hnf.basis;
+        let denom2 = *result_hnf.denom();
+        let mut g2 = denom2.abs();
+        for r in 0..4 {
+            for c in 0..4 {
+                g2 = g2.gcd(&basis2[r][c].abs());
+                if g2 == BigInt::<W>::ONE {
+                    break;
+                }
+            }
+            if g2 == BigInt::<W>::ONE {
+                break;
+            }
+        }
+        let denom_final = if g2 == BigInt::<W>::ONE {
+            denom2
+        } else {
+            for r in 0..4 {
+                for c in 0..4 {
+                    let (q, _) = basis2[r][c].div_rem(&g2);
+                    basis2[r][c] = q;
+                }
+            }
+            let (q, _) = denom2.div_rem(&g2);
+            q
+        };
+        let result_hnf = HnfLattice::<W> {
+            basis: basis2,
+            denom: denom_final,
+        };
+
+        let mut basis_n = Matrix::<N>::ZERO;
+        for r in 0..4 {
+            for c in 0..4 {
+                basis_n[r][c] = result_hnf.basis()[r][c].narrow_to::<N>()?;
+            }
+        }
+        let denom_n: BigInt<N> = result_hnf.denom().narrow_to::<N>()?;
+
+        Some(HnfLattice {
+            basis: basis_n,
+            denom: denom_n,
+        })
+    }
+
     // Lattice product: `self · other`.
     //
     // The product of two lattices L₁L₂ is the lattice generated by
@@ -395,7 +533,7 @@ impl<const N: usize> Lattice<N> {
     /// See [§3.1.5.2] (Sum) of the spec.
     ///
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
-    fn sum(&self, other: &Self) -> HnfLattice<N> {
+    pub(crate) fn sum(&self, other: &Self) -> HnfLattice<N> {
         if self.denom == other.denom {
             let cols_a = self.basis.columns();
             let cols_b = other.basis.columns();

@@ -816,6 +816,16 @@ impl<const N: usize> Matrix<N> {
 
             // Lines 1-7: Accumulate gcd into a[pivot][pivot] by combining
             // column pivot with columns j < pivot (spec Algorithm 3.2).
+            //
+            // Unimodular two-column xgcd: the transformation
+            //   [a[pivot]_new]   [u,         v       ] [a[pivot]_old]
+            //   [a[j]_new    ] = [-val_j/g,  val_i/g ] [a[j]_old    ]
+            // has determinant `(u·val_i + v·val_j)/g = g/g = 1`, so
+            // the column lattice spanned is preserved. Earlier this
+            // code only updated `a[pivot]` (leaving `a[j]` at its
+            // old data), which is NOT unimodular and changes the
+            // lattice covolume — silent corruption of the Z-span
+            // when xgcd's `u` is not ±1.
             if pivot > 0 {
                 let mut j = pivot;
                 while j > 0 {
@@ -823,11 +833,16 @@ impl<const N: usize> Matrix<N> {
                     let val_i = a[pivot][pivot];
                     let val_j = a[j][pivot];
                     if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
-                        let (_g, u, v) = val_i.xgcd(&val_j);
+                        let (g, u, v) = val_i.xgcd(&val_j);
+                        let (val_i_over_g, _) = val_i.div_rem(&g);
+                        let (val_j_over_g, _) = val_j.div_rem(&g);
                         let old_i = a[pivot];
                         let old_j = a[j];
                         for r in 0..d {
                             a[pivot][r] = u.ct_mul(&old_i[r]).ct_add(&v.ct_mul(&old_j[r]));
+                            a[j][r] = val_i_over_g
+                                .ct_mul(&old_j[r])
+                                .ct_sub(&val_j_over_g.ct_mul(&old_i[r]));
                         }
                     }
                 }
@@ -835,17 +850,23 @@ impl<const N: usize> Matrix<N> {
 
             // For non-square input (c > d): also XGCD with extra columns
             // j >= d to fold their contributions into the pivot.
+            // Same unimodular tracking as above.
             {
                 let mut j = d;
                 while j < c {
                     let val_i = a[pivot][pivot];
                     let val_j = a[j][pivot];
                     if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
-                        let (_g, u, v) = val_i.xgcd(&val_j);
+                        let (g, u, v) = val_i.xgcd(&val_j);
+                        let (val_i_over_g, _) = val_i.div_rem(&g);
+                        let (val_j_over_g, _) = val_j.div_rem(&g);
                         let old_i = a[pivot];
                         let old_j = a[j];
                         for r in 0..d {
                             a[pivot][r] = u.ct_mul(&old_i[r]).ct_add(&v.ct_mul(&old_j[r]));
+                            a[j][r] = val_i_over_g
+                                .ct_mul(&old_j[r])
+                                .ct_sub(&val_j_over_g.ct_mul(&old_i[r]));
                         }
                     }
                     j += 1;

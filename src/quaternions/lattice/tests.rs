@@ -767,6 +767,49 @@ fn intersection_via_kernel_large_power_of_two() {
     assert_eq!(*ideal.norm(), expected, "expected N(2^60·O0) = 2^120");
 }
 
+/// `intersection_via_dual_sum_dual` parity with `intersection_via_kernel`
+/// on simple inputs.
+///
+/// For diagonal lattices the two methods must produce the same
+/// lattice (up to HNF basis equivalence; covolume is the
+/// equivalence-class invariant we check).
+#[test]
+fn intersection_via_dual_sum_dual_diagonal_coprime() {
+    let basis_3 = Matrix::from_columns(&[
+        V::new(i(3), i(0), i(0), i(0)),
+        V::new(i(0), i(3), i(0), i(0)),
+        V::new(i(0), i(0), i(3), i(0)),
+        V::new(i(0), i(0), i(0), i(3)),
+    ]);
+    let basis_5 = Matrix::from_columns(&[
+        V::new(i(5), i(0), i(0), i(0)),
+        V::new(i(0), i(5), i(0), i(0)),
+        V::new(i(0), i(0), i(5), i(0)),
+        V::new(i(0), i(0), i(0), i(5)),
+    ]);
+    let l1 = Lattice::<4>::new(basis_3, i(1));
+    let l2 = Lattice::<4>::new(basis_5, i(1));
+
+    let inter = l1
+        .intersection_via_dual_sum_dual::<8>(&l2)
+        .expect("dual-sum-dual must succeed");
+    let inter_lat: Lattice<4> = Lattice::from(inter);
+
+    let det = inter_lat.basis().det().abs();
+    let denom = *inter_lat.denom();
+    let denom4 = {
+        let d2 = denom.ct_mul(&denom);
+        d2.ct_mul(&d2)
+    };
+    let expected = i(50625); // 15^4
+    let expected_scaled = expected.ct_mul(&denom4);
+
+    assert_eq!(
+        det, expected_scaled,
+        "L1 ∩ L2 via dual-sum-dual: expected covolume 15^4 (det={det:?}, denom={denom:?})"
+    );
+}
+
 /// Intersection of two diagonal lattices with non-coprime scalars.
 ///
 /// L1 = 4·Z^4, L2 = 6·Z^4. lcm = 12, so intersection = 12·Z^4
