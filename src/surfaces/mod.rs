@@ -458,20 +458,40 @@ impl Kernel {
         let w1 = weil_pairing(&p1, &q1, &ppq1, e_kernel);
         let w2 = weil_pairing(&p2, &q2, &ppq2, e_kernel);
         // Product polarization on E_1 × E_2: a strictly Lagrangian
-        // kernel satisfies e_1(P_1, Q_1) · e_2(P_2, Q_2) = 1 in
-        // μ_{2^e_kernel}. Sign-side chain entries pass kernels with
-        // 2 extra torsion bits on top of a Lagrangian subgroup, so
-        // the actual condition the chain enforces (after the
-        // hadamard_bool absorption of those 2 bits) is that
-        // `(4P, 4Q)` is Lagrangian under the 2^e-Weil pairing —
-        // equivalently `e_{2^(e+2)}(P, Q)^4 = 1`, i.e. the product
-        // sits in `μ_4 = {1, -1, i, -i}`. Empirically all sign-side
-        // KAT trajectories produce `prod ∈ {-1, -i}` here. Accept
-        // any `μ_4` element so the assert fires only on genuinely
-        // non-Lagrangian kernels (`prod^4 ≠ 1`).
+        // kernel of order 2^e_kernel satisfies
+        //   `e_{2^e_kernel}(P_1, Q_1) · e_{2^e_kernel}(P_2, Q_2) = 1`
+        // in μ_{2^e_kernel}.
+        //
+        // Sign-side chain entries pass kernels of order 2^(e+2) with
+        // 2 extra torsion bits on top of a Lagrangian subgroup of
+        // order 2^e (the chain absorbs those 2 bits via
+        // `hadamard_bool` in its last 2 steps). The chain's effective
+        // requirement, post-absorption, is that `(4P, 4Q)` is
+        // Lagrangian under the 2^e-Weil pairing:
+        //
+        //   e_{2^e}(4P, 4Q) = 1  iff  e_{2^(e+2)}(4P, 4Q)^4 = 1
+        //                        iff  ζ^{16·4} = ζ^{64} = 1
+        //                        iff  ζ ∈ μ_64
+        //
+        // where `ζ = e_{2^(e+2)}(P, Q)` and the second step uses the
+        // Weil pairing compatibility `e_m(X, Y) = e_n(X, Y)^{n/m}`
+        // for `m | n` and `X, Y` of order `m`.
+        //
+        // Empirically:
+        //   - r_rsp = 0 trajectories produce `ζ ∈ μ_4`.
+        //   - r_rsp = 1 trajectories (e.g. KAT-001 sign iter 1)
+        //     produce `ζ ∈ μ_16`.
+        //   - Both subsets of `μ_64`; the chain handles both
+        //     identically.
+        //
+        // Verification-path (`extra_torsion = false`) callers consume
+        // a strictly-Lagrangian kernel of order 2^e_kernel, where
+        // `prod = 1` — also satisfies `prod^64 = 1`, so the same
+        // check works for both call sites.
         let prod = w1.as_fp2() * w2.as_fp2();
-        let prod4 = prod.square().square();
-        let ok = prod4 == Fp2::ONE;
+        // ζ^64 = ((ζ^2)^4)^4·... — six squarings: ζ^2, ζ^4, ζ^8, ζ^16, ζ^32, ζ^64.
+        let prod64 = prod.square().square().square().square().square().square();
+        let ok = prod64 == Fp2::ONE;
         #[cfg(test)]
         if !ok {
             // Dump the two component pairings + their product so the
