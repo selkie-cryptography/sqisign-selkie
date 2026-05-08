@@ -526,22 +526,39 @@ impl<const N: usize> Element<N> {
     ///
     /// [Alg. 4.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.4
     pub fn compute_backtracking(&self) -> (Self, u32) {
-        // Convert to O₀ basis: for O₀ = Z⟨1, i, (i+j)/2, (1+k)/2⟩,
-        // if α = (a + bi + cj + dk)/r in {1,i,j,k}, then in O₀:
-        //   α'₀ = a - d,  α'₁ = b - c,  α'₂ = c,  α'₃ = d
-        // (all divided by r, which must give integers).
+        // Convert to O0 basis. For O0 = Z<1, i, (i+j)/2, (1+k)/2>,
+        // if α = (a + bi + cj + dk)/r in {1, i, j, k}, then setting
+        // α = α'0 · 1 + α'1 · i + α'2 · (i+j)/2 + α'3 · (1+k)/2 and
+        // matching coefficients gives
+        //   a = α'0 + α'3/2  ->  α'3 = 2d, α'0 = a - d
+        //   b = α'1 + α'2/2  ->  α'2 = 2c, α'1 = b - c
+        //   c = α'2/2        (consistent: α'2/2 = c)
+        //   d = α'3/2        (consistent: α'3/2 = d)
+        //
+        // (all divided by r, which must give integers -- guaranteed
+        // when α is in O0.) Earlier this code used `α'2 = c,
+        // α'3 = d`, which under-counts the 2-adic valuation: the gcd
+        // then missed factors of 2 contributed by α'2 = 2c and
+        // α'3 = 2d whenever (a-d), (b-c) were both even but c, d odd.
+        //
+        // Divide α by the *full* gcd of its O0-basis coords (not
+        // just the 2-adic part), matching C-ref's
+        // `quat_alg_make_primitive` (`algebra.c:184`). The returned
+        // `n` is the 2-adic valuation of the gcd, which is what
+        // `compute_backtracking_signature` uses to remove the
+        // 2-power from `lattice_content`.
         let mut elem = self.normalized();
         let a = &elem.a.0;
         let b = &elem.b.0;
         let c = &elem.c.0;
         let d = &elem.d.0;
 
-        let c0 = a.ct_sub(d); // α'₀ = a - d
-        let c1 = b.ct_sub(c); // α'₁ = b - c
-        let c2 = *c; // α'₂ = c
-        let c3 = *d; // α'₃ = d
+        let c0 = a.ct_sub(d); // α'0 = a - d
+        let c1 = b.ct_sub(c); // α'1 = b - c
+        let c2 = c.ct_add(c); // α'2 = 2c
+        let c3 = d.ct_add(d); // α'3 = 2d
 
-        // g = gcd(α'₀, α'₁, α'₂, α'₃)
+        // g = gcd(α'0, α'1, α'2, α'3)
         let g = c0.abs().gcd(&c1.abs()).gcd(&c2.abs()).gcd(&c3.abs());
 
         // n = 2-adic valuation of g
@@ -551,10 +568,10 @@ impl<const N: usize> Element<N> {
             g.two_adic_val()
         };
 
-        // Divide α by 2^n: scale the denominator up by 2^n.
-        if n > 0 {
-            let divisor = BigInt::<N>::ONE.shl(n);
-            let new_denom = elem.denom.0.ct_mul(&divisor);
+        // Divide α by g (full gcd, including odd part): scale denom
+        // up by g.
+        if !bool::from(g.is_zero()) && g != BigInt::<N>::ONE {
+            let new_denom = elem.denom.0.ct_mul(&g);
             elem.denom = Denominator::new(new_denom).expect("denom > 0");
             elem.normalize();
         }

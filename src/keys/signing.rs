@@ -733,6 +733,14 @@ impl SigningKey {
             let i_com_w = i_com.widen::<N_RESP>();
             let i_chl_prime_w = i_chl_prime.widen::<N_RESP>();
 
+            #[cfg(test)]
+            crate::selkie_trace!(
+                "[sign {_iter}] norms: N(I_sk)={} bits, N(I_com)={} bits, N(I_chl')={} bits",
+                i_sk_w.norm().bitsize(),
+                i_com_w.norm().bitsize(),
+                i_chl_prime_w.norm().bitsize(),
+            );
+
             // Line 14: α_rsp ← RandomEquivalentQuaternion(I_com ∩ I_sk · I_chl)
             //
             // The spec (Algorithm 4.3) uses a sampling radius of
@@ -930,6 +938,13 @@ impl SigningKey {
             // actual ideal.
             let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
             let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
+            #[cfg(test)]
+            crate::selkie_trace!(
+                "[sign {_iter}] backtracking: n_bt={}, nrd_num bits={}, nrd_den bits={}",
+                n_bt,
+                nrd_num_w.bitsize(),
+                nrd_den_w.bitsize(),
+            );
 
             // Lines 16–20: degree computations — C-ref formula.
             //
@@ -962,7 +977,17 @@ impl SigningKey {
             // refresh-derived value is what `nrd(α)` is divisible
             // by, so use it for the divisibility check too (not
             // just for the radius).
-            let lattice_content: BigInt<N_RESP> = lattice_content_r;
+            //
+            // Mirror C-ref's `compute_backtracking_signature`
+            // (`sign.c:166-169`): after `quat_alg_make_primitive`
+            // divides α's coordinates by their gcd `tmp`, divide
+            // `lattice_content` by `2^backtracking` where
+            // `backtracking = ν_2(tmp)`. Without this, the
+            // divisibility check `nrd(α) ÷ lattice_content` fails
+            // whenever `n_bt > 0`, because `nrd(α_primitive) =
+            // nrd(α) / tmp²` shrinks faster than `lattice_content`
+            // does — the missing `2^backtracking` factor is the gap.
+            let lattice_content: BigInt<N_RESP> = lattice_content_r.shr(n_bt);
 
             let d_rsp_wide = {
                 let (q1, r1) = nrd_num_w.div_rem(&nrd_den_w);
