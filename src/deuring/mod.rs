@@ -731,11 +731,19 @@ impl<const N: usize> LeftIdeal<N> {
             crate::selkie_trace!("[KEYGEN_PROBE] s={s_idx} t={t_idx}");
             crate::selkie_trace!(
                 "[KEYGEN_PROBE] beta_s coord=[{}, {}, {}, {}] denom={}",
-                b1.a, b1.b, b1.c, b1.d, b1.denom
+                b1.a,
+                b1.b,
+                b1.c,
+                b1.d,
+                b1.denom
             );
             crate::selkie_trace!(
                 "[KEYGEN_PROBE] beta_t coord=[{}, {}, {}, {}] denom={}",
-                b2.a, b2.b, b2.c, b2.d, b2.denom
+                b2.a,
+                b2.b,
+                b2.c,
+                b2.d,
+                b2.denom
             );
             let d_s = BigInt::<4>::from(sui.factor1.degree);
             let d_t = BigInt::<4>::from(sui.factor2.degree);
@@ -910,18 +918,8 @@ impl<const N: usize> LeftIdeal<N> {
         } else {
             sui.factor2.order.order()
         };
-        let m_beta1 = action_matrix(
-            &sui.factor1.beta,
-            order_for_decompose_s,
-            &gen_matrices_s,
-            f,
-        )?;
-        let m_beta2 = action_matrix(
-            &sui.factor2.beta,
-            order_for_decompose_t,
-            &gen_matrices_t,
-            f,
-        )?;
+        let m_beta1 = action_matrix(&sui.factor1.beta, order_for_decompose_s, &gen_matrices_s, f)?;
+        let m_beta2 = action_matrix(&sui.factor2.beta, order_for_decompose_t, &gen_matrices_t, f)?;
         let m_beta1_adj = m_beta1.adjugate_mod(f.value());
         let m_prod = m_beta2.mat_mul_mod(&m_beta1_adj, f.value());
 
@@ -1319,7 +1317,9 @@ impl<const N: usize> LeftIdeal<N> {
             let ppq_e2 = images[0].1.differential_add(&images[1].1, &images[2].1);
             let w2 = crate::curves::pairing::weil_pairing(&images[0].1, &images[1].1, &ppq_e2, f);
             let matched_e2 = w2 == expected;
-            crate::selkie_trace!("[to_isogeny] disamb: E1 match={matched_e1}, E2 match={matched_e2}");
+            crate::selkie_trace!(
+                "[to_isogeny] disamb: E1 match={matched_e1}, E2 match={matched_e2}"
+            );
         }
         let (e_i, p_chain, q_chain, pmq_chain) = if matched_e1 {
             (codomain.E1, images[0].0, images[1].0, images[2].0)

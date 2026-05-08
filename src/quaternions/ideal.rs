@@ -190,7 +190,9 @@ impl ExtremalOrder<8> {
         if std::env::var("REPI_TRACE").is_ok() {
             crate::selkie_trace!(
                 "[REPI] init bound={} counter={} adjusted_n_gamma={}",
-                z_max_big, counter_big, four_m
+                z_max_big,
+                counter_big,
+                four_m
             );
             crate::selkie_trace!(
                 "[REPI] init q={} p={} non_diag={} standard_order={}",
@@ -1927,8 +1929,7 @@ impl<const N: usize> LeftIdeal<N> {
             let parent_ideal_t = if t == 0 {
                 *self
             } else {
-                let Some((ref conj_lat, ref k_norm, ref n_self_w2, _, _)) = conj_reduced_state
-                else {
+                let Some((ref conj_lat, ref k_norm, ref n_self_w2, ..)) = conj_reduced_state else {
                     continue;
                 };
                 let j_t_lat: Lattice<W2> = {
@@ -2269,8 +2270,10 @@ impl<const N: usize> LeftIdeal<N> {
                             // and `t == 0` (the special-order path
                             // already produces β in O_0).
                             let mut result = result;
-                            if let (true, Some((_, k_norm, _n_self_w2, denom_self_w2, conj_delta))) =
-                                (s != 0 || t != 0, conj_reduced_state.as_ref())
+                            if let (
+                                true,
+                                Some((_, k_norm, _n_self_w2, denom_self_w2, conj_delta)),
+                            ) = (s != 0 || t != 0, conj_reduced_state.as_ref())
                             {
                                 // delta_pp: same coords as conj_delta,
                                 // denom = denom_self · k_norm
@@ -2281,18 +2284,10 @@ impl<const N: usize> LeftIdeal<N> {
 
                                 let transform = |beta4: &Element<4>| -> Option<Element<4>> {
                                     let beta_w = Element::<W2>::new(
-                                        Coordinate::from_bigint(
-                                            beta4.a.as_bigint().widen::<W2>(),
-                                        ),
-                                        Coordinate::from_bigint(
-                                            beta4.b.as_bigint().widen::<W2>(),
-                                        ),
-                                        Coordinate::from_bigint(
-                                            beta4.c.as_bigint().widen::<W2>(),
-                                        ),
-                                        Coordinate::from_bigint(
-                                            beta4.d.as_bigint().widen::<W2>(),
-                                        ),
+                                        Coordinate::from_bigint(beta4.a.as_bigint().widen::<W2>()),
+                                        Coordinate::from_bigint(beta4.b.as_bigint().widen::<W2>()),
+                                        Coordinate::from_bigint(beta4.c.as_bigint().widen::<W2>()),
+                                        Coordinate::from_bigint(beta4.d.as_bigint().widen::<W2>()),
                                         Denominator::from_bigint_unchecked(
                                             BigInt::<4>::from(beta4.denom).widen::<W2>(),
                                         ),
@@ -2701,7 +2696,9 @@ mod tests {
             }
         }
         let Some(ideal) = ideal else {
-            crate::selkie_trace!("[composite-norm smoke] no composite fixture buildable — skipping");
+            crate::selkie_trace!(
+                "[composite-norm smoke] no composite fixture buildable — skipping"
+            );
             return;
         };
 

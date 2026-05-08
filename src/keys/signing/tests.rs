@@ -1621,7 +1621,9 @@ fn keygen_drbg_total_bytes_seed_0() {
     let _sk = match SigningKey::generate_with_rng(&mut drbg) {
         Ok(sk) => sk,
         Err(SignatureError::KeyGenFailed) => {
-            crate::selkie_trace!("[TOTAL-BYTES] keygen probabilistically failed for seed 0; test skipped");
+            crate::selkie_trace!(
+                "[TOTAL-BYTES] keygen probabilistically failed for seed 0; test skipped"
+            );
             return;
         }
         Err(other) => panic!("unexpected keygen error: {other:?}"),
@@ -2191,7 +2193,10 @@ fn survey_kat_secret_ideal_coord_magnitudes() {
         let max_coord_bits = *coord_bits.iter().max().expect("4 coords");
         crate::selkie_trace!(
             "[SURVEY] vec={i:02} norm_bits={norm_bits:3} coord_bits=[{}, {}, {}, {}] max={max_coord_bits}",
-            coord_bits[0], coord_bits[1], coord_bits[2], coord_bits[3],
+            coord_bits[0],
+            coord_bits[1],
+            coord_bits[2],
+            coord_bits[3],
         );
 
         min_observed = min_observed.min(max_coord_bits);
@@ -2211,7 +2216,9 @@ fn survey_kat_secret_ideal_coord_magnitudes() {
     crate::selkie_trace!("[SURVEY] max_coord_bits ≤ 127        : {max_le_127}");
     crate::selkie_trace!("[SURVEY] max_coord_bits ∈ (127, 192] : {max_in_127_192}");
     crate::selkie_trace!("[SURVEY] max_coord_bits > 192        : {max_gt_192}");
-    crate::selkie_trace!("[SURVEY] observed range of max_coord_bits: [{min_observed}, {max_observed}]");
+    crate::selkie_trace!(
+        "[SURVEY] observed range of max_coord_bits: [{min_observed}, {max_observed}]"
+    );
     crate::selkie_trace!("[SURVEY] SAFE indices (max ≤ 127): {safe_indices:?}");
 }
 
@@ -2336,5 +2343,7 @@ fn keygen_kat_000_rng_trace() {
 
     let path = "/tmp/drbg_trace_keygen_kat_0.txt";
     std::fs::write(path, &out).expect("write trace");
-    crate::selkie_trace!("[trace] {total_calls} fill_bytes calls, {total_bytes} bytes total → {path}");
+    crate::selkie_trace!(
+        "[trace] {total_calls} fill_bytes calls, {total_bytes} bytes total → {path}"
+    );
 }

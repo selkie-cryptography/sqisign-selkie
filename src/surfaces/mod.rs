@@ -912,7 +912,9 @@ impl Kernel {
                     p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
                 };
                 if any_zero(t1) || any_zero(t2) {
-                    crate::selkie_trace!("CHAIN step {_step_index}: 8-torsion input is ZERO (k={k})");
+                    crate::selkie_trace!(
+                        "CHAIN step {_step_index}: 8-torsion input is ZERO (k={k})"
+                    );
                 }
                 if _step_index == 0 {
                     let fp2_hex = |v: &Fp2| -> String {
@@ -938,7 +940,9 @@ impl Kernel {
                     // Check for X == Z relationship (which causes alpha==gamma)
                     let hs = t2.squared().hadamard();
                     if hs.X == hs.Z {
-                        crate::selkie_trace!("STEP0: H(T2²).X == H(T2²).Z → will cause alpha==gamma");
+                        crate::selkie_trace!(
+                            "STEP0: H(T2²).X == H(T2²).Z → will cause alpha==gamma"
+                        );
                     }
                 }
                 // Check ALL strategy points before eval.
@@ -1002,7 +1006,9 @@ impl Kernel {
                         p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
                     };
                     if any_zero(&theta_strat[i].0) || any_zero(&theta_strat[i].1) {
-                        crate::selkie_trace!("CHAIN step {_step_index}: strat[{i}] became ZERO AFTER eval");
+                        crate::selkie_trace!(
+                            "CHAIN step {_step_index}: strat[{i}] became ZERO AFTER eval"
+                        );
                     }
                 }
             }

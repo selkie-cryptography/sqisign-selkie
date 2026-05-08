@@ -366,7 +366,10 @@ fn action_matrix_nontrivial_element() {
     if let Some(c) = &coords {
         crate::selkie_trace!(
             "decompose(3+5i+7j+11k) = [{}, {}, {}, {}]",
-            c[0], c[1], c[2], c[3]
+            c[0],
+            c[1],
+            c[2],
+            c[3]
         );
     } else {
         // θ might not be in O₀ — try a different element.

@@ -1153,7 +1153,9 @@ fn kat17_glue_vs_cref_projective_eq_scan() {
     for (si, s) in ours.iter().enumerate() {
         for (cj, (n, c)) in cref.iter().enumerate() {
             if proj_eq(s, c) {
-                crate::selkie_trace!("MATCH: our chain {si} ≡ C ref chain {cj} (n={n}) projectively");
+                crate::selkie_trace!(
+                    "MATCH: our chain {si} ≡ C ref chain {cj} (n={n}) projectively"
+                );
                 any_match[si] = true;
             }
         }
