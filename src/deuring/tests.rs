@@ -456,6 +456,30 @@ fn action_matrix_scalar_three() {
     assert_eq!(*m.entry(1, 0), Scalar::ZERO, "m10 should be 0");
 }
 
+/// Action matrix for θ=3 (scalar element) on O_t (t > 0) should
+/// also produce 3·I. Probes whether the q ≥ 5 paths in
+/// `action_matrix` (decompose at width 8) and `ACTION_MATRICES[t]`
+/// (the `gen_matrices` table) are correct.
+#[test]
+fn action_matrix_scalar_three_alternate_orders() {
+    for t in 1..crate::quaternions::precomputed::NUM_EXTREMAL_ORDERS {
+        let order = &EXTREMAL_ORDERS[t];
+        let elem = Element::<4>::from_i64(3, 0, 0, 0);
+        let gen_matrices = [
+            ACTION_MATRICES[t][3],
+            ACTION_MATRICES[t][4],
+            ACTION_MATRICES[t][5],
+        ];
+        let m = action_matrix(&elem, order.order(), &gen_matrices, TorsionExponent::FULL)
+            .expect("decompose should succeed for scalar element");
+        let three = Scalar::from_u64(3);
+        assert_eq!(*m.entry(0, 0), three, "t={t}: m00 should be 3");
+        assert_eq!(*m.entry(1, 1), three, "t={t}: m11 should be 3");
+        assert_eq!(*m.entry(0, 1), Scalar::ZERO, "t={t}: m01 should be 0");
+        assert_eq!(*m.entry(1, 0), Scalar::ZERO, "t={t}: m10 should be 0");
+    }
+}
+
 /// Compare Montgomery ladder vs biladder for [3]*P.
 #[test]
 fn ladder_vs_biladder_agree() {
