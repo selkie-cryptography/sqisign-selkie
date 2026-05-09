@@ -193,27 +193,24 @@ fn ideal_from_generator(bencher: divan::Bencher) {
 fn intersection_via_kernel_w60(bencher: divan::Bencher) {
     let lat1: Lattice<4> = *EXTREMAL_ORDERS[0].order().lattice();
     let lat2: Lattice<4> = *EXTREMAL_ORDERS[1].order().lattice();
-    bencher.bench(|| {
-        divan::black_box(&lat1).intersection_via_kernel::<60>(divan::black_box(&lat2))
-    });
+    bencher
+        .bench(|| divan::black_box(&lat1).intersection_via_kernel::<60>(divan::black_box(&lat2)));
 }
 
 #[divan::bench(sample_count = 20)]
 fn intersection_via_kernel_w120(bencher: divan::Bencher) {
     let lat1: Lattice<4> = *EXTREMAL_ORDERS[0].order().lattice();
     let lat2: Lattice<4> = *EXTREMAL_ORDERS[1].order().lattice();
-    bencher.bench(|| {
-        divan::black_box(&lat1).intersection_via_kernel::<120>(divan::black_box(&lat2))
-    });
+    bencher
+        .bench(|| divan::black_box(&lat1).intersection_via_kernel::<120>(divan::black_box(&lat2)));
 }
 
 #[divan::bench(sample_count = 10)]
 fn intersection_via_kernel_w150(bencher: divan::Bencher) {
     let lat1: Lattice<4> = *EXTREMAL_ORDERS[0].order().lattice();
     let lat2: Lattice<4> = *EXTREMAL_ORDERS[1].order().lattice();
-    bencher.bench(|| {
-        divan::black_box(&lat1).intersection_via_kernel::<150>(divan::black_box(&lat2))
-    });
+    bencher
+        .bench(|| divan::black_box(&lat1).intersection_via_kernel::<150>(divan::black_box(&lat2)));
 }
 
 /// `sample_from_ball` — the dual-LLL sampling at the heart of the
