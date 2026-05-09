@@ -188,20 +188,14 @@ fn torsion_basis_to_hint(bencher: divan::Bencher) {
 #[divan::bench(sample_count = 30)]
 fn cross_pairings(bencher: divan::Bencher) {
     let (_, canonical, reduced, e) = kat0_basis_pair();
-    bencher.bench(|| {
-        divan::black_box(&canonical).cross_pairings(divan::black_box(&reduced), e)
-    });
+    bencher.bench(|| divan::black_box(&canonical).cross_pairings(divan::black_box(&reduced), e));
 }
 
 #[divan::bench(sample_count = 30)]
 fn change_of_basis_from_bases(bencher: divan::Bencher) {
     let (_, canonical, reduced, e) = kat0_basis_pair();
     bencher.bench(|| {
-        ChangeOfBasisMatrix::from_bases(
-            divan::black_box(&canonical),
-            divan::black_box(&reduced),
-            e,
-        )
+        ChangeOfBasisMatrix::from_bases(divan::black_box(&canonical), divan::black_box(&reduced), e)
     });
 }
 

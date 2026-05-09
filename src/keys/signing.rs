@@ -804,7 +804,7 @@ impl SigningKey {
 
             #[cfg(test)]
             let _t_int2 = std::time::Instant::now();
-            let intersection = match i_chl_sk_lat.intersection_via_kernel::<150>(&i_com_conj_lat) {
+            let intersection = match i_chl_sk_lat.intersection_via_kernel::<500>(&i_com_conj_lat) {
                 Some(l) => l,
                 None => {
                     #[cfg(test)]
@@ -819,31 +819,6 @@ impl SigningKey {
                 _iter_start.elapsed()
             );
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
-
-            #[cfg(test)]
-            {
-                let cols = intersection_lat.basis().columns();
-                crate::selkie_trace!(
-                    "[sign {_iter}] intersection_lat: denom bits={}, col bits=[{},{},{},{}]/[{},{},{},{}]/[{},{},{},{}]/[{},{},{},{}]",
-                    intersection_lat.denom().bitsize(),
-                    cols[0][0].bitsize(),
-                    cols[0][1].bitsize(),
-                    cols[0][2].bitsize(),
-                    cols[0][3].bitsize(),
-                    cols[1][0].bitsize(),
-                    cols[1][1].bitsize(),
-                    cols[1][2].bitsize(),
-                    cols[1][3].bitsize(),
-                    cols[2][0].bitsize(),
-                    cols[2][1].bitsize(),
-                    cols[2][2].bitsize(),
-                    cols[2][3].bitsize(),
-                    cols[3][0].bitsize(),
-                    cols[3][1].bitsize(),
-                    cols[3][2].bitsize(),
-                    cols[3][3].bitsize(),
-                );
-            }
 
             // Sampling radius — C-ref formula, not spec.
             //

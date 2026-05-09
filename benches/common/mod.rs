@@ -19,13 +19,19 @@
 
 #![allow(dead_code)]
 
-use sqisign_selkie::keys::kat_data::KAT_VECTORS;
 use sqisign_selkie::{
     SIGNATURE_BYTES, SIGNING_KEY_BYTES, Signature, SigningKey, VERIFYING_KEY_BYTES, VerifyingKey,
+    keys::kat_data::KAT_VECTORS,
 };
 
 /// KAT[0] tuple: `(seed, pk, sk, msg, sm)`.
-fn kat0() -> (&'static str, &'static str, &'static str, &'static str, &'static str) {
+fn kat0() -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
     KAT_VECTORS[0]
 }
 

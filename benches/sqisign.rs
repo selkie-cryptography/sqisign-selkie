@@ -106,5 +106,10 @@ fn sign_derand(bencher: divan::Bencher) {
     let sk = common::kat0_signing_key();
     let msg = b"benchmark message";
     let randomness = [0x42u8; 48];
-    bencher.bench(|| sk.sign_derand(divan::black_box(msg.as_slice()), divan::black_box(&randomness)));
+    bencher.bench(|| {
+        sk.sign_derand(
+            divan::black_box(msg.as_slice()),
+            divan::black_box(&randomness),
+        )
+    });
 }

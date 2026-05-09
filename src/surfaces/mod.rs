@@ -479,10 +479,8 @@ impl Kernel {
         //
         // Empirically:
         //   - r_rsp = 0 trajectories produce `ζ ∈ μ_4`.
-        //   - r_rsp = 1 trajectories (e.g. KAT-001 sign iter 1)
-        //     produce `ζ ∈ μ_16`.
-        //   - Both subsets of `μ_64`; the chain handles both
-        //     identically.
+        //   - r_rsp = 1 trajectories (e.g. KAT-001 sign iter 1) produce `ζ ∈ μ_16`.
+        //   - Both subsets of `μ_64`; the chain handles both identically.
         //
         // Verification-path (`extra_torsion = false`) callers consume
         // a strictly-Lagrangian kernel of order 2^e_kernel, where
