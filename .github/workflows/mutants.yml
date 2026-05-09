@@ -1,8 +1,7 @@
 name: Mutation testing
 
 on:
-  push:
-    branches: [main]
+  pull_request:
     paths:
       - 'src/**'
       - 'tests/**'
@@ -11,7 +10,14 @@ on:
       - '.cargo/mutants.toml'
       - '.github/scripts/**'
       - '.github/workflows/mutants.yml'
+  schedule:
+    - cron: '0 12 * * *'  # 12:00 UTC every day
   workflow_dispatch:
+
+concurrency:
+  group: mutants-${{ github.ref }}
+  # Cancel PR runs aggressively; let nightly/main runs complete
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
