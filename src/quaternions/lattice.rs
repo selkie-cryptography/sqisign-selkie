@@ -45,6 +45,9 @@ use dpe::DoublePlusExponent;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod intersection_kat1_iter0_tests;
+
 // ---------------------------------------------------------------------------
 // Lattice<N>: quaternion lattice (not necessarily in HNF)
 // ---------------------------------------------------------------------------
@@ -410,9 +413,49 @@ impl<const N: usize> Lattice<N> {
         let d1 = l1_w.dual();
         let d2 = l2_w.dual();
 
-        // Step 2: sum(dual(L1), dual(L2)).
-        let sum_hnf = d1.sum(&d2);
-        let sum_lat = Lattice::<W>::from(sum_hnf);
+        // Step 2: sum(dual(L1), dual(L2)) via *modular* HNF.
+        //
+        // We must mirror C-ref's `quat_lattice_add` recipe (`lattice.c:85`)
+        // here rather than calling `Lattice::sum` directly, because
+        // the non-modular [`Matrix::from_hnf_columns`] used by `sum`
+        // produces a strict superlattice of the true Z-module
+        // span on inputs with large per-column common factors against
+        // the denom — exactly the shape `dual()` outputs (basis entries
+        // ~ `denom · adj(B)^T` share large gcds with `det(B)`).
+        // Modular HNF is correct on these inputs because the explicit
+        // modulus generators it appends drive the canonical pivot gcds.
+        // See `quaternions/lattice/intersection_kat1_iter0_tests.rs::dsd_step_by_step`
+        // for the regression case (kernel<500> agrees with this path
+        // but disagrees with the `sum`-based path by 2^971 in covol).
+        //
+        // C-ref recipe (`lattice.c:85`):
+        //   - tmp_a = d2.denom · d1.basis;  det1 = |det(tmp_a)|
+        //   - tmp_b = d1.denom · d2.basis;  det2 = |det(tmp_b)|
+        //   - modulus = gcd(det1, det2)
+        //   - HNF mod modulus over the 8 cols (tmp_a ∪ tmp_b)
+        //   - sum.denom = d1.denom · d2.denom
+        let scale_basis = |basis: &Matrix<W>, s: BigInt<W>| -> Matrix<W> {
+            let mut out = Matrix::<W>::ZERO;
+            for r in 0..4 {
+                for c in 0..4 {
+                    out[r][c] = basis[r][c].ct_mul(&s);
+                }
+            }
+            out
+        };
+        let tmp_a = scale_basis(d1.basis(), *d2.denom());
+        let tmp_b = scale_basis(d2.basis(), *d1.denom());
+        let det1 = tmp_a.det().abs();
+        let det2 = tmp_b.det().abs();
+        let modulus = det1.gcd(&det2);
+        let cols_a = tmp_a.columns();
+        let cols_b = tmp_b.columns();
+        let all_cols = [
+            cols_a[0], cols_a[1], cols_a[2], cols_a[3], cols_b[0], cols_b[1], cols_b[2], cols_b[3],
+        ];
+        let common_denom = d1.denom().ct_mul(d2.denom());
+        let sum_basis = Matrix::<W>::from_hnf_columns_mod::<W>(&all_cols, &modulus);
+        let sum_lat = Lattice::<W>::new(sum_basis, common_denom);
 
         // Step 3: dual of sum.
         let result_w = sum_lat.dual();
