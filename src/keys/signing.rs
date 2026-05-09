@@ -884,50 +884,61 @@ impl SigningKey {
             // The intersection lattice has entries up to ~1920 bits
             // (BigInt<30>). The gram computation squares these:
             // ~3840 bits ≈ 60 limbs. Use W=64 for margin.
+            //
+            // In-iter rejection sampling: Selkie's
+            // `intersection_via_kernel` and C-ref's
+            // `quat_lattice_intersect` produce the same lattice as a
+            // Z-module but different basis representations. Sample
+            // distributions therefore differ, and Selkie's α from
+            // the kernel-method basis often fails the post-
+            // backtracking divisibility check `nrd(α/tmp) %
+            // (lc_pre/2^bt) == 0` even though α is genuinely in the
+            // abstract intersection. Resample up to a small number
+            // of times within one iter before giving up.
             #[cfg(test)]
             let _t_sample = std::time::Instant::now();
-            let alpha_rsp_w = match intersection_lat.sample_from_ball::<64, _>(&radius, rng) {
-                Some(a) => {
+
+            let mut sample_result: Option<(_, u32, BigInt<N_RESP>, BigInt<N_RESP>)> = None;
+            for _try in 0..8u32 {
+                let alpha_try = match intersection_lat.sample_from_ball::<64, _>(&radius, rng) {
+                    Some(a) => a,
+                    None => continue,
+                };
+                let (alpha_norm, n_bt_try) = alpha_try.compute_backtracking();
+                let (num_w, den_sq_w) = alpha_norm.norm_w::<N_RESP>();
+                let (q1, r1) = num_w.div_rem(&den_sq_w);
+                if !bool::from(r1.is_zero()) {
+                    continue;
+                }
+                let lc_post: BigInt<N_RESP> = lattice_content_r.shr(n_bt_try);
+                let (_q2, r2) = q1.div_rem(&lc_post);
+                if !bool::from(r2.is_zero()) {
+                    continue;
+                }
+                sample_result = Some((alpha_norm, n_bt_try, num_w, den_sq_w));
+                break;
+            }
+
+            let (alpha_rsp_w, n_bt, nrd_num_w, nrd_den_w) = match sample_result {
+                Some(t) => t,
+                None => {
                     #[cfg(test)]
                     crate::selkie_trace!(
-                        "[sign {_iter}] sample: {:?} (cumul {:?})",
+                        "[sign {_iter}] DROP: 8 samples failed divisibility ({:?} cumul {:?})",
                         _t_sample.elapsed(),
                         _iter_start.elapsed()
                     );
-                    a
-                }
-                None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: sample_from_ball None");
                     continue;
                 }
             };
-
-            // Line 15: α_rsp, n_bt ← ComputeBacktrackingAndNormalize(α_rsp).
-            // Keep `alpha_rsp_w` at `Element<N_RESP>` for the wide
-            // degree-computation and ideal construction below.
-            //
-            // Earlier attempts also primitivized α's odd integer
-            // content here (matching the C ref's
-            // `quat_alg_make_primitive`). That was wrong: the spec
-            // formula `d_rsp = nrd(α) / (D²_mix · 2^{f-n_bt})` holds
-            // only for the *un-primitivized* α. Dividing α by an odd
-            // `g` shrinks `nrd(α)` by `g²`; if `g` shares a factor
-            // with `D_mix` (513-bit prime, so `g ≥ D_mix` occurs for
-            // α coordinates with that magnitude), the division is no
-            // longer exact. `refresh_norm` below derives the true
-            // `n(I)` from the lattice covolume, so we do not need
-            // primitivization to align the stored norm with the
-            // actual ideal.
-            let (alpha_rsp_w, n_bt) = alpha_rsp_w.compute_backtracking();
-            let (nrd_num_w, nrd_den_w) = alpha_rsp_w.norm_w::<N_RESP>();
-
             #[cfg(test)]
             crate::selkie_trace!(
-                "[sign {_iter}] backtracking: n_bt={}, nrd_num bits={}, nrd_den bits={}",
+                "[sign {_iter}] sample+bt OK: n_bt={}, nrd_num bits={}, nrd_den bits={} ({:?} cumul {:?})",
                 n_bt,
                 nrd_num_w.bitsize(),
                 nrd_den_w.bitsize(),
+                _t_sample.elapsed(),
+                _iter_start.elapsed()
             );
 
             // Lines 16–20: degree computations — C-ref formula.
