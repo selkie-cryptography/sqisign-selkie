@@ -30,10 +30,13 @@ fn main() -> io::Result<()> {
     // gh needs -R to identify the repo when persist-credentials: false
     // is used in the checkout step (no .git/config remote).
     let repo = env::var("GITHUB_REPOSITORY").unwrap_or_default();
+    // The platform matrix in ci.yml emits jobs named
+    // `lib + doc + KAT tests (<target>, <bits>[, <variant>])`. Match that
+    // prefix; the older `Test (...)` filter no longer matches anything.
     let mut args = vec![
         "run", "view", run_id,
         "--json", "jobs",
-        "-q", ".jobs[] | select(.name | startswith(\"Test\")) | .name + \"|\" + .conclusion",
+        "-q", ".jobs[] | select(.name | startswith(\"lib + doc + KAT tests\")) | .name + \"|\" + .conclusion",
     ];
     if !repo.is_empty() {
         args.push("-R");

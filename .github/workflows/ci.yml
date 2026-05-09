@@ -279,6 +279,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: hashFiles('kat.json') != ''
+      - name: Verify kat payload has data
+        if: hashFiles('kat.json') != ''
+        run: jq -e '(.suites | length > 0) and ([.suites[].total] | add > 0)' kat.json > /dev/null || { echo "::error::kat.json has no test suites or zero tests across all suites"; cat kat.json >&2; exit 1; }
       - name: Upload to CI site
         if: hashFiles('kat.json') != ''
         env:
@@ -302,6 +305,8 @@ jobs:
           rustc -O .github/scripts/platform-report.rs -o /tmp/platform-report
           /tmp/platform-report "${{ github.run_id }}" "${{ github.sha }}" > platform.json
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Verify platform payload has data
+        run: jq -e '.platforms | length > 0' platform.json > /dev/null || { echo "::error::platform.json has no platforms"; cat platform.json >&2; exit 1; }
       - name: Upload
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

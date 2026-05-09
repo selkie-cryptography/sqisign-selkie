@@ -36,6 +36,11 @@ fn main() {
     let mut json_contents = fs::read_to_string(json_path)
         .unwrap_or_else(|e| { eprintln!("cannot read {json_path}: {e}"); std::process::exit(1); });
 
+    // Refuse to upload obviously-broken payloads. This is the bare-minimum
+    // structural sanity (file is JSON-shaped, has the fields the dashboard
+    // and index require). Per-kind data checks live in the workflows.
+    validate_payload(kind, json_path, &json_contents, sha);
+
     // Inject run_id from GITHUB_RUN_ID so the dashboard can link
     // directly to the Actions run. Inserted after the opening `{`.
     if let Ok(run_id) = env::var("GITHUB_RUN_ID") {
@@ -285,6 +290,46 @@ fn fetch_url(url: &str) -> Option<String> {
 fn write_tmp(name: &str, contents: &str) {
     let path = format!("/tmp/{name}");
     fs::write(&path, contents).unwrap_or_else(|e| { eprintln!("write {path}: {e}"); std::process::exit(1); });
+}
+
+/// Reject obviously-broken payloads before we touch the dashboard.
+/// Catches: empty file, non-JSON file, missing required keys, sha mismatch
+/// (e.g. workflow uploads stale data from a different commit).
+///
+/// This is intentionally minimal — per-kind checks ("did the bench actually
+/// run", "did at least one mutant get caught") belong in the workflows.
+fn validate_payload(kind: &str, path: &str, json: &str, expected_sha: &str) {
+    let trimmed = json.trim();
+    if trimmed.is_empty() {
+        die(kind, path, "file is empty");
+    }
+    if !trimmed.starts_with('{') {
+        die(kind, path, "file does not start with `{` (not a JSON object)");
+    }
+    if !trimmed.ends_with('}') {
+        die(kind, path, "file does not end with `}` (truncated or malformed)");
+    }
+    if trimmed.len() < 30 {
+        die(kind, path, &format!("file is suspiciously small ({} bytes)", trimmed.len()));
+    }
+    if !trimmed.contains("\"sha\"") {
+        die(kind, path, "missing required `sha` field");
+    }
+    if !trimmed.contains("\"updated_at\"") {
+        die(kind, path, "missing required `updated_at` field");
+    }
+    let in_file_sha = extract_string(trimmed, "sha");
+    if in_file_sha != expected_sha {
+        die(kind, path, &format!(
+            "sha in file ({}) does not match argv sha ({}) — likely stale or wrong-commit data",
+            in_file_sha, expected_sha,
+        ));
+    }
+}
+
+fn die(kind: &str, path: &str, reason: &str) -> ! {
+    eprintln!("::error::ci-upload[{kind}]: refusing to upload {path}: {reason}");
+    std::process::exit(1);
 }
 
 // --- JSON helpers ---

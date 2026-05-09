@@ -48,6 +48,8 @@ jobs:
           /tmp/iai-to-json iai-output.txt "${{ github.sha }}" > iai.json
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Verify iai payload has data
+        run: jq -e '.total > 0 and (.results | length > 0)' iai.json > /dev/null || { echo "::error::iai.json has no benchmark results"; cat iai.json >&2; exit 1; }
       - name: Upload to CI site
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
