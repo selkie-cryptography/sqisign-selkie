@@ -765,21 +765,55 @@ fn sign_kat_zero_only() {
 }
 
 /// Deterministic sign-and-verify probe for `KAT_VECTORS[kat_idx]`.
+///
+/// **Mirrors C-ref's KAT byte-consumption pattern:** one DRBG seeded
+/// from the KAT seed, consumed first by keygen and then by sign. C-ref
+/// (`apps/PQCgenKAT_sign.c:125`) does:
+///
+/// ```c
+/// randombytes_init(seed, NULL, 256);
+/// crypto_sign_keypair(pk, sk);
+/// crypto_sign(sm, &smlen, m, mlen, sk);
+/// ```
+///
+/// — i.e. sign reads from the DRBG *mid-stream* after keygen has
+/// already consumed bytes, so its first prime sample is a different
+/// value than keygen's first prime sample. Loading `sk` from KAT
+/// bytes and seeding sign's DRBG fresh from the same seed (the
+/// previous test setup) made Selkie's sign read from offset 0 — the
+/// SAME starting point as keygen — so its first prime sample equalled
+/// keygen's `N(I_sk)` instead of C-ref's `N(I_com)`.
 fn sign_kat_idx_probe_inner(kat_idx: usize) {
     let (seed_hex, pk_hex, sk_hex, msg_hex, _) = crate::keys::kat_data::KAT_VECTORS[kat_idx];
     let seed_bytes = hex::decode(seed_hex).expect("valid hex");
     let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
-    let sk_bytes = hex::decode(sk_hex).expect("valid hex");
-    let pk_bytes = hex::decode(pk_hex).expect("valid hex");
+    let sk_bytes_kat = hex::decode(sk_hex).expect("valid hex");
+    let pk_bytes_kat = hex::decode(pk_hex).expect("valid hex");
     let msg = hex::decode(msg_hex).expect("valid hex");
+
+    // One DRBG, threaded through keygen then sign — the same
+    // sequential consumption pattern C-ref uses for KAT generation.
+    let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
     let sk =
-        SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap()).expect("sk should parse");
-    let vk =
-        VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).expect("pk should parse");
+        SigningKey::generate_with_rng(&mut drbg).expect("keygen must succeed within retry budget");
+
+    // Sanity-check that keygen byte-eq with C-ref still holds — the
+    // generated `sk` must serialize to the KAT's `sk_hex` bytes. If
+    // this assertion fires, keygen has regressed and the sign-side
+    // alignment we're trying to fix is moot.
+    let sk_bytes_gen = sk.to_bytes();
+    assert_eq!(
+        sk_bytes_gen.as_ref(),
+        sk_bytes_kat.as_slice(),
+        "KAT[{kat_idx}]: generated sk does not match KAT sk"
+    );
+    let vk = VerifyingKey::from_bytes(pk_bytes_kat.as_slice().try_into().unwrap())
+        .expect("pk should parse");
+
     let t0 = std::time::Instant::now();
     let sig = sk
-        .sign_derand(&msg, &seed)
-        .expect("sign_derand must succeed within retry budget");
+        .sign_with_rng(&msg, &mut drbg)
+        .expect("sign_with_rng must succeed within retry budget");
     let elapsed = t0.elapsed();
     vk.verify(&msg, &sig)
         .unwrap_or_else(|e| panic!("KAT[{kat_idx}] verify failed: {e:?}"));
