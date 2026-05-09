@@ -528,50 +528,64 @@ impl<const N: usize> Element<N> {
     pub fn compute_backtracking(&self) -> (Self, u32) {
         // Convert to O0 basis. For O0 = Z<1, i, (i+j)/2, (1+k)/2>,
         // if α = (a + bi + cj + dk)/r in {1, i, j, k}, then setting
-        // α = α'0 · 1 + α'1 · i + α'2 · (i+j)/2 + α'3 · (1+k)/2 and
+        // α = β0 · 1 + β1 · i + β2 · (i+j)/2 + β3 · (1+k)/2 and
         // matching coefficients gives
-        //   a = α'0 + α'3/2  ->  α'3 = 2d, α'0 = a - d
-        //   b = α'1 + α'2/2  ->  α'2 = 2c, α'1 = b - c
-        //   c = α'2/2        (consistent: α'2/2 = c)
-        //   d = α'3/2        (consistent: α'3/2 = d)
+        //   a/r = β0 + β3/2  ->  β3 = 2d/r,  β0 = (a - d)/r
+        //   b/r = β1 + β2/2  ->  β2 = 2c/r,  β1 = (b - c)/r
+        //   c/r = β2/2       (consistent: β2/2 = c/r)
+        //   d/r = β3/2       (consistent: β3/2 = d/r)
         //
-        // (all divided by r, which must give integers -- guaranteed
-        // when α is in O0.) Earlier this code used `α'2 = c,
-        // α'3 = d`, which under-counts the 2-adic valuation: the gcd
-        // then missed factors of 2 contributed by α'2 = 2c and
-        // α'3 = 2d whenever (a-d), (b-c) were both even but c, d odd.
+        // (all divisions by r are exact when α ∈ O0.) Earlier this
+        // code worked with the *unscaled* differences (c0 = a - d,
+        // c2 = 2c, etc.), which equal `r · βi`. The gcd of those is
+        // `r · tmp` where `tmp = gcd(β0, β1, β2, β3)` is the actual
+        // primitive content. Dividing α by `r · tmp` instead of just
+        // `tmp` puts α at denom `r · r · tmp` and pushes it OUTSIDE
+        // O0 whenever `tmp` is odd. C-ref's `quat_alg_make_primitive`
+        // (`algebra.c:184`) computes the gcd of the actual O0-coords
+        // (`βi`), not their `r`-scaled versions.
         //
-        // Divide α by the *full* gcd of its O0-basis coords (not
-        // just the 2-adic part), matching C-ref's
-        // `quat_alg_make_primitive` (`algebra.c:184`). The returned
-        // `n` is the 2-adic valuation of the gcd, which is what
-        // `compute_backtracking_signature` uses to remove the
-        // 2-power from `lattice_content`.
+        // Fix: compute `g = gcd(r·βi)` as before, then strip the `r`
+        // factor to recover `tmp = g / r`. The `r`-scaled gcd is
+        // exactly divisible by `r` whenever α ∈ O0 (each `r·βi` has `r`
+        // as a factor). The returned `n` is `ν2(tmp)`, which is what
+        // `compute_backtracking_signature` uses to remove the 2-power
+        // from `lattice_content`.
         let mut elem = self.normalized();
         let a = &elem.a.0;
         let b = &elem.b.0;
         let c = &elem.c.0;
         let d = &elem.d.0;
+        let r = &elem.denom.0;
 
-        let c0 = a.ct_sub(d); // α'0 = a - d
-        let c1 = b.ct_sub(c); // α'1 = b - c
-        let c2 = c.ct_add(c); // α'2 = 2c
-        let c3 = d.ct_add(d); // α'3 = 2d
+        let c0 = a.ct_sub(d); // r · β0
+        let c1 = b.ct_sub(c); // r · β1
+        let c2 = c.ct_add(c); // r · β2 = 2c (since β2 = 2c/r)
+        let c3 = d.ct_add(d); // r · β3 = 2d
 
-        // g = gcd(α'0, α'1, α'2, α'3)
-        let g = c0.abs().gcd(&c1.abs()).gcd(&c2.abs()).gcd(&c3.abs());
+        // gcd(r·β0, r·β1, r·β2, r·β3) = r · gcd(β0, β1, β2, β3)
+        let g_scaled = c0.abs().gcd(&c1.abs()).gcd(&c2.abs()).gcd(&c3.abs());
 
-        // n = 2-adic valuation of g
-        let n = if bool::from(g.is_zero()) {
-            0
+        // tmp = gcd(β0, β1, β2, β3) — the actual primitive content of α
+        // in the O0 basis. For α = 0 (g_scaled = 0) leave tmp = 0.
+        let tmp = if bool::from(g_scaled.is_zero()) {
+            BigInt::<N>::ZERO
         } else {
-            g.two_adic_val()
+            let (q, _rem) = g_scaled.div_rem(r);
+            q
         };
 
-        // Divide α by g (full gcd, including odd part): scale denom
-        // up by g.
-        if !bool::from(g.is_zero()) && g != BigInt::<N>::ONE {
-            let new_denom = elem.denom.0.ct_mul(&g);
+        // n = 2-adic valuation of tmp.
+        let n = if bool::from(tmp.is_zero()) {
+            0
+        } else {
+            tmp.two_adic_val()
+        };
+
+        // Divide α by tmp (full gcd, including odd part): scale denom
+        // up by tmp. New denom = r · tmp.
+        if !bool::from(tmp.is_zero()) && tmp != BigInt::<N>::ONE {
+            let new_denom = elem.denom.0.ct_mul(&tmp);
             elem.denom = Denominator::new(new_denom).expect("denom > 0");
             elem.normalize();
         }
