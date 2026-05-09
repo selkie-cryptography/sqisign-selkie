@@ -72,6 +72,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify coverage payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '(.total.total // 0) > 0 and (.modules | length > 0)' coverage-out/coverage.json > /dev/null || { echo "::error::coverage.json has no module data"; head -c 2000 coverage-out/coverage.json >&2; exit 1; }
       - name: Upload coverage to CI site
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:

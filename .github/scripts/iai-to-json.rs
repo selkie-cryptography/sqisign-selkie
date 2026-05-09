@@ -15,66 +15,112 @@ use std::time::SystemTime;
 struct BenchResult {
     name: String,
     instructions: Option<u64>,
+    /// L1 cache misses, derived from `LL Hits + RAM Hits` (any access that
+    /// failed L1 went on to hit LL or fall through to RAM).
     l1_misses: Option<u64>,
+    /// LL cache misses, equivalent to `RAM Hits` (any access that failed
+    /// the last-level cache went to RAM).
     l2_misses: Option<u64>,
+    /// Branch mispredictions. Not collected by default in iai-callgrind
+    /// (requires `--branch-sim=yes`); reported as null when absent.
     branch_misses: Option<u64>,
+    /// Callgrind's estimated CPU cycles (instructions + memory penalties).
+    estimated_cycles: Option<u64>,
 }
 
+/// Strip ANSI CSI escape sequences (`ESC [ ... letter`) from a line.
+/// iai-callgrind colorizes output and `tee` preserves the codes, so the
+/// captured `iai-output.txt` contains them and would otherwise foil
+/// prefix matching.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for c2 in chars.by_ref() {
+                if c2.is_ascii_alphabetic() { break; }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+const METRIC_PREFIXES: &[&str] = &[
+    "Instructions:", "L1 Hits:", "LL Hits:", "RAM Hits:",
+    "Total read+write:", "Estimated Cycles:",
+    // Older / alternative names kept so we don't regress if the format swings back.
+    "L1 Misses:", "L2 Misses:", "Branch Misses:", "Branches Misses:",
+];
+
 fn parse_output(contents: &str) -> Vec<BenchResult> {
-    let mut results = Vec::new();
-    let mut current_name = String::new();
-    let mut current = BenchResult {
-        name: String::new(),
-        instructions: None,
-        l1_misses: None,
-        l2_misses: None,
-        branch_misses: None,
+    let mut results: Vec<BenchResult> = Vec::new();
+    let mut current: Option<BenchResult> = None;
+    let mut ll_hits: Option<u64> = None;
+    let mut ram_hits: Option<u64> = None;
+
+    let finalize = |bench: &mut BenchResult, ll: Option<u64>, ram: Option<u64>| {
+        // L1 miss = anything that didn't hit L1 → went to LL or RAM.
+        // LL miss = anything that didn't hit LL → went to RAM.
+        if let (Some(l), Some(r)) = (ll, ram) {
+            bench.l1_misses.get_or_insert(l + r);
+            bench.l2_misses.get_or_insert(r);
+        }
     };
 
-    for line in contents.lines() {
-        let line = line.trim();
+    for raw_line in contents.lines() {
+        let line = strip_ansi(raw_line);
+        let trimmed = line.trim();
 
-        // Benchmark name lines end with ':'
-        // e.g., "field::fp_mul" or "  fp_mul:"
-        if line.ends_with(':') && !line.contains('|') && !line.starts_with("Instructions")
-            && !line.starts_with("L1") && !line.starts_with("L2")
-            && !line.starts_with("Ram") && !line.starts_with("Branch")
-            && !line.starts_with("Total")
-        {
-            if !current.name.is_empty() {
-                results.push(current);
+        // Benchmark name: a `<binary>::<group>::<bench>` path. iai-callgrind
+        // 0.16 emits these without a trailing colon, e.g. `iai::field::fp_mul`.
+        // Distinguish from metric lines (which start with one of METRIC_PREFIXES)
+        // by requiring the `::` separator and the absence of any metric prefix.
+        let is_metric = METRIC_PREFIXES.iter().any(|p| trimmed.starts_with(p));
+        if !is_metric && trimmed.contains("::") && !trimmed.is_empty() {
+            if let Some(mut bench) = current.take() {
+                finalize(&mut bench, ll_hits, ram_hits);
+                results.push(bench);
             }
-            current_name = line.trim_end_matches(':').trim().to_string();
-            current = BenchResult {
-                name: current_name.clone(),
+            ll_hits = None;
+            ram_hits = None;
+            current = Some(BenchResult {
+                name: trimmed.to_string(),
                 instructions: None,
                 l1_misses: None,
                 l2_misses: None,
                 branch_misses: None,
-            };
+                estimated_cycles: None,
+            });
             continue;
         }
 
-        // Parse metric lines.
-        // Format varies but typically:
-        //   Instructions:  1234|N/A (No previous results)
-        //   L1 Hits:       1200|N/A
-        //   L1 Misses:     34|N/A
-        if let Some(val) = extract_metric(line, "Instructions:") {
-            current.instructions = Some(val);
-        } else if let Some(val) = extract_metric(line, "L1 Misses:") {
-            current.l1_misses = Some(val);
-        } else if let Some(val) = extract_metric(line, "L2 Misses:") {
-            current.l2_misses = Some(val);
-        } else if let Some(val) = extract_metric(line, "Branches Misses:") {
-            current.branch_misses = Some(val);
-        } else if let Some(val) = extract_metric(line, "Branch Misses:") {
-            current.branch_misses = Some(val);
+        let Some(bench) = current.as_mut() else { continue };
+
+        if let Some(v) = extract_metric(trimmed, "Instructions:") {
+            bench.instructions = Some(v);
+        } else if let Some(v) = extract_metric(trimmed, "LL Hits:") {
+            ll_hits = Some(v);
+        } else if let Some(v) = extract_metric(trimmed, "RAM Hits:") {
+            ram_hits = Some(v);
+        } else if let Some(v) = extract_metric(trimmed, "Estimated Cycles:") {
+            bench.estimated_cycles = Some(v);
+        } else if let Some(v) = extract_metric(trimmed, "L1 Misses:") {
+            bench.l1_misses = Some(v);
+        } else if let Some(v) = extract_metric(trimmed, "L2 Misses:") {
+            bench.l2_misses = Some(v);
+        } else if let Some(v) = extract_metric(trimmed, "Branch Misses:")
+            .or_else(|| extract_metric(trimmed, "Branches Misses:"))
+        {
+            bench.branch_misses = Some(v);
         }
     }
 
-    if !current.name.is_empty() {
-        results.push(current);
+    if let Some(mut bench) = current {
+        finalize(&mut bench, ll_hits, ram_hits);
+        results.push(bench);
     }
 
     results
@@ -85,7 +131,7 @@ fn extract_metric(line: &str, prefix: &str) -> Option<u64> {
         return None;
     }
     let rest = line[prefix.len()..].trim();
-    // Take digits before any '|' or space.
+    // Take digits before any '|' or whitespace.
     let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     num_str.parse().ok()
 }
@@ -153,6 +199,7 @@ fn main() -> io::Result<()> {
         if let Some(v) = r.l1_misses { write!(w, ", \"l1_misses\": {}", v)?; }
         if let Some(v) = r.l2_misses { write!(w, ", \"l2_misses\": {}", v)?; }
         if let Some(v) = r.branch_misses { write!(w, ", \"branch_misses\": {}", v)?; }
+        if let Some(v) = r.estimated_cycles { write!(w, ", \"estimated_cycles\": {}", v)?; }
         write!(w, "}}")?;
         if i + 1 < results.len() { writeln!(w, ",")?; } else { writeln!(w)?; }
     }

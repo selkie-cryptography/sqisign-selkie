@@ -73,6 +73,10 @@ jobs:
 
       # Upload both to the CI site under separate paths.
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Verify dudect/tacet payloads have data
+        run: |
+          jq -e '.total > 0' dudect.json > /dev/null || { echo "::error::dudect.json has no test results"; cat dudect.json >&2; exit 1; }
+          jq -e '.total > 0' tacet.json > /dev/null || { echo "::error::tacet.json has no test results"; cat tacet.json >&2; exit 1; }
       - name: Upload to CI site
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -99,6 +103,9 @@ jobs:
           /tmp/ctgrind-report "${{ github.sha }}" > ctgrind.json
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify ctgrind payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.tests > 0 and (.results | length > 0)' ctgrind.json > /dev/null || { echo "::error::ctgrind.json has no test results"; cat ctgrind.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:

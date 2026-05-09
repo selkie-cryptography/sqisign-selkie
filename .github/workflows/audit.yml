@@ -40,6 +40,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify deny payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.status != null and .status != ""' deny.json > /dev/null || { echo "::error::deny.json missing status field"; cat deny.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -62,6 +65,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify unsafe payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.modules | length > 0' unsafe.json > /dev/null || { echo "::error::unsafe.json has no modules"; cat unsafe.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -91,6 +97,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify panic payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e 'has("total") and (.total | type) == "number"' panic.json > /dev/null || { echo "::error::panic.json missing total field"; cat panic.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -116,6 +125,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify zeroize payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.status != null and .status != ""' zeroize.json > /dev/null || { echo "::error::zeroize.json missing status field"; cat zeroize.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -144,6 +156,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify size payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.binary.total_bytes > 0' size.json > /dev/null || { echo "::error::size.json missing binary.total_bytes"; cat size.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -173,6 +188,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify alloc payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.status != null and .status != ""' alloc.json > /dev/null || { echo "::error::alloc.json missing status field"; cat alloc.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -197,6 +215,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify docs payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.status != null and .status != ""' docs.json > /dev/null || { echo "::error::docs.json missing status field"; cat docs.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -221,6 +242,9 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify msrv payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.msrv != null and .msrv != ""' msrv.json > /dev/null || { echo "::error::msrv.json missing msrv field"; cat msrv.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -245,6 +269,9 @@ jobs:
           /tmp/stack-depth "${{ github.sha }}" > stack.json
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify stack payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.peak_stack_bytes > 0' stack.json > /dev/null || { echo "::error::stack.json has zero peak_stack_bytes"; cat stack.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -270,6 +297,9 @@ jobs:
           /tmp/api-surface "${{ github.sha }}" > api.json
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify api payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '.total > 0' api.json > /dev/null || { echo "::error::api.json has zero items"; cat api.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:

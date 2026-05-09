@@ -59,7 +59,10 @@ jobs:
               dudect-*|tacet-*|iai-*|iai_slow-*) continue ;; # CT/iai benches run separately
             esac
             echo "=== Running $(basename "$bin") ===" >&2
-            timeout 300 "$bin" --color never >> bench-raw.txt 2>&1 || true
+            # `--bench` is the flag cargo passes when running via `cargo bench`;
+            # without it, divan prints only the benchmark tree and exits without
+            # running anything (silent exit 0), producing an empty results file.
+            timeout 300 "$bin" --bench --color never >> bench-raw.txt 2>&1 || true
           done
           /tmp/divan-to-json < bench-raw.txt > bench-output.json
 
@@ -86,6 +89,21 @@ jobs:
                 }
             ]
           }' > bench-out/bench.json
+
+      - name: Verify upload payload is non-empty
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          groups=$(jq '.groups | length' bench-out/bench.json)
+          benches=$(jq '[.groups[].benchmarks[]] | length' bench-out/bench.json)
+          echo "bench-out/bench.json: $groups groups, $benches benchmarks."
+          if [ "$groups" -eq 0 ] || [ "$benches" -eq 0 ]; then
+            echo "::error::bench-out/bench.json has no benchmark data — refusing to upload."
+            echo "--- bench-out/bench.json ---" >&2
+            cat bench-out/bench.json >&2 || true
+            echo "--- first 200 lines of bench-raw.txt ---" >&2
+            head -200 bench-raw.txt >&2 || true
+            exit 1
+          fi
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
