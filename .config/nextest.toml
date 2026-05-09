@@ -32,3 +32,10 @@ slow-timeout = { period = "60s", terminate-after = 30 }
 test-threads = "num-cpus"
 slow-timeout = { period = "60s", terminate-after = 30 }
 fail-fast = false
+
+# Override the default profile's 30s cap on sign tests for the kat
+# profile — kat is for explicit long-running KAT debugging, where
+# we want the full 30-min budget.
+[[profile.kat.overrides]]
+filter = 'test(/sign_kat_derand_/)'
+slow-timeout = { period = "60s", terminate-after = 30 }
