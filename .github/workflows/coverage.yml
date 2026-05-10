@@ -13,6 +13,12 @@ on:
       - '.github/workflows/coverage.yml'
   workflow_dispatch:
 
+# Coverage only runs on main pushes and we only care about the
+# latest snapshot — cancel a superseded run if a newer commit lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

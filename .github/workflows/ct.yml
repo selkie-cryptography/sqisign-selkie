@@ -1,18 +1,18 @@
 name: Constant-Time
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'Cargo.toml'
-      - '.config/nextest.toml'
-      - '.github/scripts/**'
-      - '.github/workflows/ct.yml'
+  # CT runs on a weekly schedule and on demand only — DudeCT/Tacet
+  # are slow and not needed on every push. Push trigger removed in
+  # favor of the weekly cron + manual dispatch.
   schedule:
     - cron: "0 7 * * 1"   # weekly, Monday 07:00 UTC (after mutants)
   workflow_dispatch:
+
+# Cancel a superseded run if a newer commit lands before the prior
+# CT run finishes — the latest signal is the only one that matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

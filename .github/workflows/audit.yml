@@ -14,6 +14,12 @@ on:
       - '.github/workflows/audit.yml'
   workflow_dispatch:
 
+# Audit only runs on main pushes; cancel a superseded run if a newer
+# commit lands before the previous one finishes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

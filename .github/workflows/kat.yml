@@ -1,12 +1,14 @@
 name: KAT (manual)
 
-# Manually-triggerable run of the full KAT test suite.
+# Manually-triggerable run of the full KAT test suite against any
+# branch with a custom filter. Useful for iterating on KAT
+# byte-equality work without churning the PR queue.
 #
-# CI's `platform` job (in ci.yml) already runs the same tests on
-# every push/PR via the cross-platform matrix, but those runs are
-# tied to commits landing on the branch. This workflow lets us
-# kick off a KAT pass on demand against any branch — useful when
-# iterating on byte-interop work without churning the PR.
+# Routine push/PR coverage of these tests lives in ci.yml's `kat`
+# job: that one runs on every push to main + nightly schedule
+# across the full Tier 1 matrix, plus a slim linux-x64 row on PR.
+# This workflow is the on-demand escape hatch for ad-hoc filters /
+# branches not yet covered by the standard CI signal.
 #
 # Covers (the per-KAT tests, one nextest process per vector):
 #   - `verify_kat_NNN`        (KAT signature verification, fast)
@@ -20,29 +22,9 @@ name: KAT (manual)
 #
 # Per-test budget comes from the `kat` nextest profile (30 min);
 # the job cap is 6 h to absorb 8-way parallel contention on the
-# slowest sign KATs (matching the platform job in ci.yml).
+# slowest sign KATs.
 
 on:
-  # Triggered on the same push/PR paths as ci.yml. Yes, this duplicates
-  # ci.yml's `platform` job, which already runs the same KAT tests across
-  # the cross-platform matrix. The duplication is intentional for now:
-  # we're iterating heavily on KAT byte-equality and want a faster
-  # single-platform signal in addition to the matrix. Once KAT progress
-  # stabilizes, fold this back into ci.yml and drop the workflow.
-  push:
-    branches: [main]
-    paths: &rust-paths
-      - 'src/**'
-      - 'tests/**'
-      - 'benches/**'
-      - 'Cargo.toml'
-      - 'rustfmt.toml'
-      - '.config/nextest.toml'
-      - '.github/scripts/**'
-      - '.github/workflows/kat.yml'
-  pull_request:
-    branches: [main]
-    paths: *rust-paths
   workflow_dispatch:
     inputs:
       filter:

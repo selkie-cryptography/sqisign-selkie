@@ -10,21 +10,38 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      cref_ref:
+        description: 'C ref commit to benchmark (overrides default pin)'
+        required: false
+        default: ''
+      verify_reps:
+        description: 'Verify iterations (default 100)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 env:
-  # Pin upstream so timing comparisons are reproducible.
+  # Pin upstream so timing comparisons are reproducible. Default pin
+  # can be overridden per-run via the workflow_dispatch input.
   CREF_REPO: SQIsign/the-sqisign
-  CREF_REF: dd133d7aca576c361a270c8e6434832535b42ecc
+  CREF_REF: ${{ inputs.cref_ref || 'dd133d7aca576c361a270c8e6434832535b42ecc' }}
   # Iteration counts. Sign + keygen are slow and rejection-sampled, so
   # we run a handful of repetitions; verify is ~ms-scale, run more.
   KEYGEN_REPS: "5"
   SIGN_REPS: "5"
-  VERIFY_REPS: "100"
+  VERIFY_REPS: ${{ inputs.verify_reps || '100' }}
   CARGO_TERM_COLOR: always
 
+# The C side is pinned by CREF_REF, so its build artifacts are
+# reproducible across runs. Cache the build tree to skip clone +
+# patch + configure + compile on every push.
+#
+# Cache miss happens when CREF_REF changes (manual dispatch with a
+# new pin, or future bump of the default), or when the cache key's
+# version salt is bumped after a configure-flag change.
 jobs:
   baseline:
     name: C ref vs Rust (NIST-I)
@@ -36,7 +53,15 @@ jobs:
           persist-credentials: false
 
       # ---------------- C reference ----------------
+      - name: Restore C ref build cache
+        id: cref-cache
+        uses: actions/cache@v4
+        with:
+          path: cref/build
+          key: cref-build-${{ runner.os }}-${{ env.CREF_REF }}-mini-gmp-ref-v1
+
       - name: Clone C reference at pinned commit
+        if: steps.cref-cache.outputs.cache-hit != 'true'
         run: |
           git clone --no-checkout https://github.com/${CREF_REPO}.git cref
           git -C cref checkout "${CREF_REF}"
@@ -46,6 +71,7 @@ jobs:
         # the MINI_GMP toggle that intbig.h uses. Mirror the toggle so
         # the build can find the right type definitions when system
         # libgmp is absent.
+        if: steps.cref-cache.outputs.cache-hit != 'true'
         run: |
           set -o pipefail
           file=cref/src/quaternion/ref/generic/hnf/ibz_division.c
@@ -70,6 +96,7 @@ jobs:
           grep -A4 'MINI_GMP' "$file" | head -8
 
       - name: Configure C ref (mini-gmp + ref GF, NIST-I, Release)
+        if: steps.cref-cache.outputs.cache-hit != 'true'
         run: |
           cmake -S cref -B cref/build \
             -DCMAKE_BUILD_TYPE=Release \
@@ -79,6 +106,7 @@ jobs:
             -DENABLE_STRICT=OFF
 
       - name: Build C ref benchmark
+        if: steps.cref-cache.outputs.cache-hit != 'true'
         run: cmake --build cref/build -j --target benchmark_lvl1
 
       - name: Run C ref benchmark
