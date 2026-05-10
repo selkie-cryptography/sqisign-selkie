@@ -95,7 +95,14 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      # Shared cache key across the stable-toolchain x86_64-linux
+      # default-features jobs (gate, proptest, doc). Without it, each
+      # job uses ${{ github.job }} as the implicit key and pays the
+      # dep-build cost independently. With it, all three read/write
+      # the same cache and the dep build amortizes across jobs.
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: linux-x64-default-stable
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
           tool: cargo-nextest
@@ -114,6 +121,8 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: linux-x64-default-stable
       - name: Run property tests
         run: cargo test --lib -- proptest
 
@@ -127,6 +136,8 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: linux-x64-default-stable
 
       - name: Build docs
         run: cargo doc --no-deps --document-private-items
@@ -215,6 +226,13 @@ jobs:
   #   - PR: x86_64-linux only (single representative platform).
   #   - push to main / nightly schedule / manual dispatch: full
   #     Tier 1 matrix + no-default-features variant.
+  #
+  # Each platform row is exploded into SHARDS partitions; nextest's
+  # `--partition hash:N/M` deals out tests to shard N of M by
+  # binary+test-name hash, balancing load across shards regardless
+  # of per-test runtime variance. Set SHARDS=1 to disable sharding.
+  # Trade-off: each shard pays the cargo-build cost (rust-cache
+  # hits keep this cheap on warm cache; cold cache duplicates work).
   kat-matrix:
     name: Compute KAT matrix
     runs-on: ubuntu-24.04
@@ -228,6 +246,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os
+          SHARDS = 4
           full = [
               {"os": "ubuntu-24.04", "target": "x86_64-unknown-linux-gnu", "bits": 64},
               {"os": "ubuntu-24.04", "target": "i686-unknown-linux-gnu", "bits": 32, "multilib": True},
@@ -241,7 +260,11 @@ jobs:
           slim = [
               {"os": "ubuntu-24.04", "target": "x86_64-unknown-linux-gnu", "bits": 64},
           ]
-          rows = slim if os.environ["EVENT"] == "pull_request" else full
+          base = slim if os.environ["EVENT"] == "pull_request" else full
+          rows = []
+          for r in base:
+              for s in range(1, SHARDS + 1):
+                  rows.append({**r, "shard": s, "shards": SHARDS})
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"matrix={json.dumps({'include': rows})}\n")
           PY
@@ -254,10 +277,12 @@ jobs:
   # seed's rejection rate. With nextest parallelism + per-test
   # timeouts via the `kat` profile, 6 h covers the long tail.
   kat:
-    name: "KAT tests (${{ matrix.target }}, ${{ matrix.bits }}-bit${{ matrix.variant && format(', {0}', matrix.variant) || '' }})"
+    name: "KAT tests (${{ matrix.target }}, ${{ matrix.bits }}-bit${{ matrix.variant && format(', {0}', matrix.variant) || '' }}, shard ${{ matrix.shard }}/${{ matrix.shards }})"
     needs: [gate, kat-matrix]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 360
+    # Per-shard timeout. With SHARDS=4 this is enough headroom for
+    # the slowest single-shard tail under release-mode build.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.kat-matrix.outputs.matrix) }}
@@ -271,6 +296,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # Cache key is shared across shards on the same target+variant
+      # so shard 1 populates the cache and shards 2..N read it. Build
+      # artifacts are identical across shards (same toolchain, same
+      # cargo profile, same target).
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           key: kat-${{ matrix.target }}-${{ matrix.variant || 'default' }}
@@ -278,7 +307,18 @@ jobs:
         with:
           tool: cargo-nextest
       # --run-ignored=all picks up the per-KAT keygen + sign tests.
-      - run: cargo nextest run --profile kat --run-ignored=all --target ${{ matrix.target }} ${{ matrix.flags || '' }}
+      # --cargo-profile kat: optimized build (like release) but keeps
+      # debug_assertions + overflow checks live, so invariants still
+      # trip during long-running KAT trajectories. Defined in
+      # Cargo.toml's [profile.kat]. Debug-mode `BigInt`/`Fp` is
+      # 10-100× slower than release, which dilates the rejection-
+      # sampling tail to hours; the 30-min `slow-timeout` in
+      # `.config/nextest.toml` `[profile.kat]` was sized assuming
+      # release-grade runtime.
+      # --partition hash:N/M splits tests across shards by hash of
+      # binary+test-name, balancing load regardless of per-test
+      # runtime variance. Each shard runs a disjoint subset.
+      - run: cargo nextest run --profile kat --run-ignored=all --cargo-profile kat --partition hash:${{ matrix.shard }}/${{ matrix.shards }} --target ${{ matrix.target }} ${{ matrix.flags || '' }}
 
   # Tier 3 — Informational
   #

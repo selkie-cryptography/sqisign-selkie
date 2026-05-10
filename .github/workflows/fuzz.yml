@@ -50,6 +50,24 @@ jobs:
         with:
           tool: cargo-fuzz
 
+      # Persist the fuzz corpus across runs. libFuzzer's coverage-
+      # guided exploration is most effective when seeded with inputs
+      # that hit new edges in prior runs; without a cache, every
+      # 10-min run restarts from a near-empty corpus and re-discovers
+      # the same surface paths. The unique-per-run key with a
+      # restore-keys fallback means each run saves its own snapshot
+      # and inherits the most-recent prior snapshot for the same
+      # target. Crash inputs are still PR'd separately by the "Open
+      # PR on crash" step below — that's the durable record; this
+      # cache is the working corpus.
+      - name: Restore fuzz corpus
+        uses: actions/cache@v5
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
       # cargo-fuzz on x86_64 Linux defaults to `--target
       # x86_64-unknown-linux-musl` (static-link convenience), but the
       # ubuntu-24.04 runner ships no musl C++ toolchain
