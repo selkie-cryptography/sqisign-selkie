@@ -11,6 +11,12 @@ on:
       - '.github/workflows/fuzz.yml'
   workflow_dispatch:
 
+# Fuzz runs on main pushes only; cancel any superseded run when a
+# newer commit lands so the 4-target matrix doesn't pile up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
