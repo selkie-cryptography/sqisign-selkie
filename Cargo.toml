@@ -108,3 +108,13 @@ required-features = ["expose-internals"]
 name = "iai"
 harness = false
 required-features = ["expose-internals"]
+
+# Build profile used by KAT tests in CI's `kat` job and the manual
+# `kat.yml` workflow. Optimized like `release`, but keeps
+# `debug_assertions` and overflow checks live so invariant violations
+# in `BigInt`/curve/lattice code still trip during long-running KAT
+# trajectories. Selected via `cargo nextest run --cargo-profile kat`.
+[profile.kat]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
