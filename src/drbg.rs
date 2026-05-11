@@ -159,14 +159,15 @@ impl RngCore for Aes256CtrDrbg {
 
 impl CryptoRng for Aes256CtrDrbg {}
 
-/// Test-only byte-offset checkpoint helpers for tracing keygen-from-seed
-/// divergence against the C reference (Bug 2 debug).
+/// Test-only byte-offset checkpoint helpers for tracing DRBG-stream
+/// alignment between Selkie and the SQIsign C reference.
 ///
 /// `TracingDrbg` (see `keys::signing::tests`) updates [`debug::set`]
-/// on every `fill_bytes` call. Code anywhere in the keygen pipeline
-/// can call [`debug::offset`] to query the current cumulative DRBG
-/// byte offset and `eprintln!` it as a checkpoint, without having to
-/// thread the wrapper through generic `R: CryptoRngCore` arguments.
+/// on every `fill_bytes` call. Code anywhere in the keygen / sign
+/// pipeline can call [`debug::offset`] to query the current cumulative
+/// DRBG byte offset and `selkie_trace!` it as a checkpoint, without
+/// having to thread the wrapper through generic `R: CryptoRngCore`
+/// arguments.
 ///
 /// Compiled out of release builds (`#[cfg(test)]`).
 #[cfg(test)]
