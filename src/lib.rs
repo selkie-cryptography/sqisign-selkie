@@ -38,6 +38,21 @@ pub(crate) mod params;
 #[cfg(feature = "expose-internals")]
 pub mod params;
 
+/// Thread-local flag for gating L² LLL traces to specific call sites.
+/// Set to `true` by `sample_from_ball` around its LLL call so we can
+/// byte-diff just that one call against C-ref.
+#[cfg(test)]
+pub mod l2_trace_active {
+    use std::cell::Cell;
+    thread_local! {
+        static ACTIVE: Cell<bool> = const { Cell::new(false) };
+    }
+    /// Set the active flag.
+    pub fn set(v: bool) { ACTIVE.with(|c| c.set(v)); }
+    /// Read the active flag.
+    pub fn get() -> bool { ACTIVE.with(|c| c.get()) }
+}
+
 // Finite field arithmetic (F_p and F_{p^2})
 #[cfg(not(feature = "expose-internals"))]
 pub(crate) mod fields;
