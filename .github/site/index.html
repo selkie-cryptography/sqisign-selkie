@@ -2471,11 +2471,11 @@
     // per-vector test into the `wire` catch-all.
     const KAT_FAMILIES = [
       { key: 'verify', name: 'Verify',                 desc: 'C-ref signature verification',           expected: 100,
-        match: (n) => /(?:^|::)verify_kat_\d{3}$/.test(n) || /(?:^|::)kat_verify_all$/.test(n) },
+        match: (n) => /(?:^|::)verify_kat_\d{3}$/.test(n) },
       { key: 'keygen', name: 'Keygen byte-equality',    desc: 'pk + sk reproduce C ref byte-for-byte', expected: 100,
-        match: (n) => /(?:^|::)keygen_kat_\d{3}$/.test(n) || /(?:^|::)keygen_kat_all$/.test(n) },
+        match: (n) => /(?:^|::)keygen_kat_\d{3}$/.test(n) },
       { key: 'sign',   name: 'Sign trajectory',         desc: 'End-to-end sign with parsed KAT sk',    expected: 100,
-        match: (n) => /(?:^|::)sign_kat_/.test(n) },
+        match: (n) => /(?:^|::)sign_kat_derand_\d{3}$/.test(n) },
       { key: 'wire',   name: 'Wire format & negative',  desc: 'Roundtrip and rejection paths',         expected: null,
         match: () => true /* catch-all for the kat suite */ },
     ];

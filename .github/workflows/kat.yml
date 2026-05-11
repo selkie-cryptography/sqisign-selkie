@@ -10,15 +10,21 @@ name: KAT (manual)
 # This workflow is the on-demand escape hatch for ad-hoc filters /
 # branches not yet covered by the standard CI signal.
 #
-# Covers (the per-KAT tests, one nextest process per vector):
+# Covers the per-vector KAT tests (one nextest process per KAT):
 #   - `verify_kat_NNN`        (KAT signature verification, fast)
 #   - `keygen_kat_NNN`        (deterministic keygen vs KAT vector)
 #   - `sign_kat_derand_NNN`   (deterministic sign + verify roundtrip)
-#   - `c_ref_kat_cross_check` (verify our sigs against the C ref)
 #
-# The aggregate `kat_verify_all` / `keygen_kat_all` / `sign_kat_all`
-# tests loop over the same 100 vectors in a single process; the
-# default filter excludes them so each KAT runs exactly once.
+# The whole-suite `kat_verify_all` / `keygen_kat_all` / `sign_kat_all`
+# aggregates loop over the same 100 vectors in one process — redundant
+# under the per-vector partitioning and they defeat per-test timeouts
+# (one slow KAT stalls the aggregate), so they're not included here.
+#
+# Other tests whose name happens to contain "kat" (e.g.
+# `from_hnf_columns_mod_cref_kat1_o_alpha`, `kat_cref_cross_check_*`,
+# `signature_to_bytes_matches_kat_input`, `kat_sk_pk_match_all`,
+# `keygen_kat_NNN_rng_trace`, …) are plumbing / regression / fixture
+# tests, not KAT-vector coverage, and are also excluded.
 #
 # Per-test budget comes from the `kat` nextest profile (30 min);
 # the job cap is 6 h to absorb 8-way parallel contention on the
@@ -63,9 +69,10 @@ jobs:
           set -o pipefail
           FILTER='${{ inputs.filter }}'
           if [ -z "$FILTER" ]; then
-            # Per-KAT tests + cheap aggregates, minus the redundant
-            # whole-suite loops that re-run every vector in one process.
-            FILTER='test(/kat/) - test(=kat_verify_all) - test(=keygen_kat_all) - test(=sign_kat_all)'
+            # Per-vector KAT tests only (`{verify,keygen,sign_kat_derand}_NNN`).
+            # The `$`-anchored `\d{3}` patterns reject look-alikes like
+            # `keygen_kat_NNN_rng_trace` or `kat_cref_cross_check_vector_0`.
+            FILTER='test(/sign_kat_derand_\d{3}$/) + test(/keygen_kat_\d{3}$/) + test(/verify_kat_\d{3}$/)'
           fi
           ARGS=(nextest run --profile kat --run-ignored=all --status-level=fail --hide-progress-bar -E "$FILTER")
           if [ "${{ inputs.release }}" = "true" ]; then
