@@ -729,14 +729,47 @@ impl SigningKey {
             // --- Response (lines 11–38) ---
 
             // Line 11: (c₁, c₂) ← M_sk · (1, chl)
+            //
+            // `kernel_to_ideal` mirrors C-ref's
+            // `id2iso_kernel_dlogs_to_ideal_even`, which expects
+            // (c₁, c₂) computed from C-ref's *wire-format* M_sk
+            // (normal P/Q slot convention). Our internal M_sk is
+            // stored in the swapped-slot convention
+            // (matching scalar_mul_add's ladder3pt semantics — see
+            // `from_bytes`), so for this kernel-to-ideal computation
+            // we must undo the T = [[1, 1], [0, −1]] transform to
+            // recover the wire M_sk. `T = T⁻¹`, so wire = T · internal.
             let chl_scalar: Scalar = chl.into();
             let m = &self.mat_sk.entries;
-            let c1 = m[0][0].add_mod2k(&m[0][1].mul_mod2k(&chl_scalar, f), f);
-            let c2 = m[1][0].add_mod2k(&m[1][1].mul_mod2k(&chl_scalar, f), f);
+            let m_wire = [
+                [
+                    m[0][0].add_mod2k(&m[1][0], f),
+                    m[0][1].add_mod2k(&m[1][1], f),
+                ],
+                [
+                    Scalar::ZERO.sub_mod2k(&m[1][0], f),
+                    Scalar::ZERO.sub_mod2k(&m[1][1], f),
+                ],
+            ];
+            let c1 = m_wire[0][0].add_mod2k(&m_wire[0][1].mul_mod2k(&chl_scalar, f), f);
+            let c2 = m_wire[1][0].add_mod2k(&m_wire[1][1].mul_mod2k(&chl_scalar, f), f);
+            #[cfg(test)]
+            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
+                crate::selkie_trace!("[M_SK_SELKIE] M_sk[0][0] = {:?}", m[0][0]);
+                crate::selkie_trace!("[M_SK_SELKIE] M_sk[0][1] = {:?}", m[0][1]);
+                crate::selkie_trace!("[M_SK_SELKIE] M_sk[1][0] = {:?}", m[1][0]);
+                crate::selkie_trace!("[M_SK_SELKIE] M_sk[1][1] = {:?}", m[1][1]);
+                crate::selkie_trace!("[M_SK_SELKIE] chl_scalar = {:?}", chl_scalar);
+            }
 
             // Line 12: I'_chl ← KernelDecomposedToIdeal(c₁, c₂)
             let c1_big = BigInt::<4>::from(c1);
             let c2_big = BigInt::<4>::from(c2);
+            #[cfg(test)]
+            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
+                crate::selkie_trace!("[CHL_SCALARS_SELKIE] c1 = {}", c1_big);
+                crate::selkie_trace!("[CHL_SCALARS_SELKIE] c2 = {}", c2_big);
+            }
             let i_chl_prime =
                 match TorsionBasis::kernel_to_ideal(&c1_big, &c2_big, TorsionExponent::FULL) {
                     Some(ideal) => ideal,
@@ -804,6 +837,21 @@ impl SigningKey {
             let i_chl_lat = Lattice::<N_RESP>::from(*i_chl_prime_w.lattice());
             let i_sk_lat = Lattice::<N_RESP>::from(*i_sk_w.lattice());
             #[cfg(test)]
+            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
+                crate::selkie_trace!("[INPUT_CHL_SELKIE] denom = {}", i_chl_lat.denom());
+                for i in 0..4 {
+                    for j in 0..4 {
+                        crate::selkie_trace!("[INPUT_CHL_SELKIE] basis[{i}][{j}] = {}", i_chl_lat.basis()[i][j]);
+                    }
+                }
+                crate::selkie_trace!("[INPUT_SK_SELKIE] denom = {}", i_sk_lat.denom());
+                for i in 0..4 {
+                    for j in 0..4 {
+                        crate::selkie_trace!("[INPUT_SK_SELKIE] basis[{i}][{j}] = {}", i_sk_lat.basis()[i][j]);
+                    }
+                }
+            }
+            #[cfg(test)]
             let _t_int = std::time::Instant::now();
             // W=60: entries start at ~60 limbs (d*B products); xgcd
             // elimination may grow them. W=120 is the safe Hadamard
@@ -818,6 +866,16 @@ impl SigningKey {
                 }
             };
             #[cfg(test)]
+            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
+                let l1 = Lattice::<N_RESP>::from(i_chl_sk);
+                crate::selkie_trace!("[INTER1_SELKIE] denom = {}", l1.denom());
+                for i in 0..4 {
+                    for j in 0..4 {
+                        crate::selkie_trace!("[INTER1_SELKIE] basis[{i}][{j}] = {}", l1.basis()[i][j]);
+                    }
+                }
+            }
+            #[cfg(test)]
             crate::selkie_trace!(
                 "[sign {_iter}] intersection 1: {:?} (cumul {:?})",
                 _t_int.elapsed(),
@@ -830,11 +888,18 @@ impl SigningKey {
 
             #[cfg(test)]
             let _t_int2 = std::time::Instant::now();
-            let intersection = match i_chl_sk_lat.intersection_via_kernel::<500>(&i_com_conj_lat) {
+            // C-ref's `quat_lattice_intersect` (lattice.c:127) uses the
+            // dual-sum-dual identity `L1 ∩ L2 = (L1* + L2*)*`. The
+            // kernel-of-quotient method produces the same covolume but
+            // a different Z-module when inputs have very imbalanced
+            // magnitudes (KAT-1 sign iter 0: ~520-bit i_chl_sk vs
+            // ~140-bit conj(I_com)). For byte-equality with C-ref we
+            // must use the dual-sum-dual path here.
+            let intersection = match i_chl_sk_lat.intersection_via_dual_sum_dual::<500>(&i_com_conj_lat) {
                 Some(l) => l,
                 None => {
                     #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: intersection_via_kernel 2 None");
+                    crate::selkie_trace!("[sign {_iter}] DROP: intersection_via_dual_sum_dual 2 None");
                     continue;
                 }
             };
@@ -845,6 +910,17 @@ impl SigningKey {
                 _iter_start.elapsed()
             );
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
+            #[cfg(test)]
+            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
+                let b = intersection_lat.basis();
+                let d = intersection_lat.denom();
+                crate::selkie_trace!("[INTER_SELKIE] denom = {d}");
+                for i in 0..4 {
+                    for j in 0..4 {
+                        crate::selkie_trace!("[INTER_SELKIE] basis[{i}][{j}] = {}", b[i][j]);
+                    }
+                }
+            }
 
             // Sampling radius — C-ref formula, not spec.
             //
