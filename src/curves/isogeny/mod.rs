@@ -426,11 +426,22 @@ impl TwoIsogenySingular {
     }
 
     pub(crate) fn eval(&self, Q: &ProjectiveXOnlyPoint) -> ProjectiveXOnlyPoint {
+        // Mirrors C ref's `xeval_2_singular` (`xeval.c:25`):
+        //   R.x = Q.z² + K.x · Q.x · Q.z + Q.x²
+        //   R.z = Q.x · Q.z · K.z
+        //
+        // where C ref's K.x = A (affine A coefficient of the domain) and
+        // K.z = −√(A² − 4) — see `xisog_2_singular` (`xisog.c:20`).
+        //
+        // Selkie's `from_curve` stores c1 = A and c0 = −√(A² − 4) (the
+        // structural invariant `c0² = c1² − 4` is checked by
+        // `two_isogeny_singular_structural`), so c1 corresponds to C ref's
+        // K.x and c0 to K.z. Use them accordingly here.
         let t0 = &Q.X * &Q.Z;
-        let t1 = &Q.X + &(&self.c0 * &Q.Z);
+        let t1 = &Q.X + &(&self.c1 * &Q.Z);
         let t1 = &t1 * &Q.X;
         let XQ = &Q.Z.square() + &t1;
-        let ZQ = &t0 * &self.c1;
+        let ZQ = &t0 * &self.c0;
         ProjectiveXOnlyPoint::from_XZ(XQ, ZQ, &self.codomain)
     }
 }

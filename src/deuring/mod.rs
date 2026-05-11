@@ -232,6 +232,40 @@ pub fn compute_even_response(
     let e_prime = e_prime.value();
     let r_rsp = r_rsp.value();
 
+    #[cfg(test)]
+    if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
+        let fp2_hex = |v: &crate::fields::fp2::Fp2| -> String {
+            let bytes = v.to_bytes();
+            let mut a = bytes[..32].to_vec();
+            a.reverse();
+            let mut b = bytes[32..].to_vec();
+            b.reverse();
+            format!("0x{} + i*0x{}", hex::encode(a), hex::encode(b))
+        };
+        eprintln!(
+            "[compute_even_response inline] basis.P.x  = {}",
+            fp2_hex(&P.to_affine_x().as_fp2())
+        );
+        eprintln!(
+            "[compute_even_response inline] basis.Q.x  = {}",
+            fp2_hex(&Q.to_affine_x().as_fp2())
+        );
+        eprintln!(
+            "[compute_even_response inline] basis.PmQ.x= {}",
+            fp2_hex(&PmQ.to_affine_x().as_fp2())
+        );
+        eprintln!(
+            "[compute_even_response inline] r_rsp={r_rsp}, e_prime={e_prime}, shift={}",
+            e_prime + 2
+        );
+        let mut curve_norm = *_curve;
+        curve_norm.normalize();
+        eprintln!(
+            "[compute_even_response inline] E_chl_2.A_aff = {}",
+            fp2_hex(curve_norm.coefficient().as_fp2())
+        );
+    }
+
     // Step 1: I = O₀·conj(α) + O₀·(2^r)
     //
     // C-ref's sign.c line 401 conjugates `resp_quat` in place before
@@ -341,26 +375,69 @@ pub fn compute_even_response(
         b: Scalar::from(t),
     };
 
-    // Step 3: K = [2^(e'+2) · s]P + [2^(e'+2) · t]Q
+    // Step 3: Double the basis down to order 2^r_rsp, then compute
+    // K = [s]P + [t]Q on the reduced basis.
+    //
+    // C ref (`compute_small_chain_isogeny_signature`, sign.c:627–632):
+    //   ec_dbl_iter_basis(B_chall_2, pow_dim2_deg_resp + HD_extra_torsion,
+    //                     B_chall_2, E_chall_2);
+    //   ec_biscalar_mul_ibz_vec(&ker, &vec_resp_two, /* f = */ length,
+    //                           B_chall_2, E_chall_2);
+    //
+    // Equivalent mathematically to `[s · 2^(e' + 2)]P + [t · 2^(e' + 2)]Q`
+    // on the un-reduced basis (the prior implementation), but the
+    // 3-pt ladder's projective (X : Z) representative depends on the
+    // *path*: a long ladder at order 2^reduced_order versus a short
+    // ladder at order 2^r_rsp produces byte-different reps of the
+    // same abstract point. Downstream `isogeny_small` is sensitive to
+    // the projective rep (same kernel subgroup, different (X : Z) →
+    // different chain codomain rep).
     let shift = e_prime + 2;
-    let s_shifted = Scalar::from_limbs(*decomp.a.as_limbs()).mul_mod2k(
-        &Scalar::from_limbs(*BigInt::<4>::ONE.shl(shift).as_limbs()),
-        256,
+    let basis_reduced = {
+        let mut Pr = *P;
+        let mut Qr = *Q;
+        let mut Rr = *PmQ;
+        for _ in 0..shift {
+            Pr = Pr.double();
+            Qr = Qr.double();
+            Rr = Rr.double();
+        }
+        TorsionBasis::from_propagated(Pr, Qr, Rr)
+    };
+    let s_scalar = Scalar::from(s);
+    let t_scalar = Scalar::from(t);
+    let K = basis_reduced.biscalar_mul(
+        &s_scalar,
+        &t_scalar,
+        TorsionExponent::try_from(r_rsp).ok()?,
     );
-    let t_shifted = Scalar::from_limbs(*decomp.b.as_limbs()).mul_mod2k(
-        &Scalar::from_limbs(*BigInt::<4>::ONE.shl(shift).as_limbs()),
-        256,
-    );
-
-    // Compute K = [s_shifted]P + [t_shifted]Q using the biladder
-    // with the propagated `PmQ` from the caller — never recompute via
-    // `projective_difference` here.
-    let basis = TorsionBasis::from_propagated(*P, *Q, *PmQ);
-    let K = basis.biscalar_mul(
-        &s_shifted,
-        &t_shifted,
-        TorsionExponent::try_from(r_rsp + shift).ok()?,
-    );
+    #[cfg(test)]
+    if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
+        let fp2_hex = |v: &crate::fields::fp2::Fp2| -> String {
+            let bytes = v.to_bytes();
+            let mut a = bytes[..32].to_vec();
+            a.reverse();
+            let mut b = bytes[32..].to_vec();
+            b.reverse();
+            format!("0x{} + i*0x{}", hex::encode(a), hex::encode(b))
+        };
+        eprintln!(
+            "[compute_even_response inline] basis_red.P.x   = {}",
+            fp2_hex(basis_reduced.R.to_affine_x().as_fp2())
+        );
+        eprintln!(
+            "[compute_even_response inline] basis_red.Q.x   = {}",
+            fp2_hex(basis_reduced.S.to_affine_x().as_fp2())
+        );
+        eprintln!(
+            "[compute_even_response inline] basis_red.PmQ.x = {}",
+            fp2_hex(basis_reduced.RS.to_affine_x().as_fp2())
+        );
+        eprintln!(
+            "[compute_even_response inline] kernel K.x      = {}",
+            fp2_hex(K.to_affine_x().as_fp2())
+        );
+    }
 
     // Step 4: E', {P', Q', PmQ'} ← TwoisogenyChainSmall(K, E, r, {P, Q, PmQ}, true)
     //
