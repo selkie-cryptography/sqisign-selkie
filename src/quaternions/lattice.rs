@@ -1107,6 +1107,24 @@ impl<const N: usize> Lattice<N> {
                 all_zero = false;
             }
         }
+        #[cfg(test)]
+        if std::env::var("SELKIE_DUMP_BOUNDS").is_ok() {
+            eprintln!(
+                "[sample_from_ball] rad bits={} det_G bits={}",
+                rad.bitsize(),
+                det_g.bitsize(),
+            );
+            eprintln!(
+                "[sample_from_ball] dualG_red diag bits=[{}, {}, {}, {}]",
+                reduced_dual[0][0].bitsize(),
+                reduced_dual[1][1].bitsize(),
+                reduced_dual[2][2].bitsize(),
+                reduced_dual[3][3].bitsize(),
+            );
+            for (i, b) in bounds.iter().enumerate() {
+                eprintln!("[sample_from_ball] bounds[{i}] = {b}");
+            }
+        }
         if all_zero {
             #[cfg(test)]
             eprintln!(
@@ -1147,26 +1165,28 @@ impl<const N: usize> Lattice<N> {
         let mut _best_nrd_over_rad_bits: i64 = 0;
         for _ in 0..200_000 {
             // y[i] uniform in [−bounds[i], bounds[i]].
+            //
+            // Mirrors C ref's `quat_lattice_sample_from_ball`
+            // (`lat_ball.c:97-106`): for each coordinate, draw via
+            // `ibz_rand_interval(x, 0, 2·box[i])`, then subtract box[i].
+            // Must use `BigInt::rand_interval` (not an inline byte read)
+            // because that function applies the top-byte mask that
+            // matches `ibz_rand_interval` byte-for-byte. An earlier
+            // version read `bitlen.div_ceil(8)` bytes unmasked and
+            // rejected samples whose bit-length exceeded `bitlen` —
+            // every such rejection consumed bytes from the DRBG without
+            // a matching consumption in C ref's masked path, breaking
+            // the byte-stream parity used by the deterministic KAT
+            // signatures.
             let mut y = [BigInt::<W>::ZERO; 4];
+            let _ = byte_cap;
             for i in 0..4 {
                 if bool::from(bounds[i].is_zero()) {
                     continue;
                 }
                 let two_b = bounds[i].ct_add(&bounds[i]);
-                let bitlen = two_b.bitsize();
-                loop {
-                    let mut bytes = vec![0u8; byte_cap];
-                    let needed = (bitlen as usize).div_ceil(8);
-                    rng.fill_bytes(&mut bytes[..needed]);
-                    let val = BigInt::<W>::from_bytes_le_unsigned(&bytes[..needed]).abs();
-                    if val.bitsize() <= bitlen {
-                        let diff = val.ct_sub(&two_b);
-                        if bool::from(diff.is_negative()) || bool::from(diff.is_zero()) {
-                            y[i] = val.ct_sub(&bounds[i]);
-                            break;
-                        }
-                    }
-                }
+                let raw = BigInt::<W>::rand_interval(rng, &BigInt::<W>::ZERO, &two_b);
+                y[i] = raw.ct_sub(&bounds[i]);
             }
 
             // x = U_inv^T · y, i.e., coords in the original lattice basis.
