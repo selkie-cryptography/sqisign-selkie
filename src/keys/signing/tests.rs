@@ -90,47 +90,6 @@ fn keygen_kat_all() {
     }
 }
 
-/// One-shot debug helper: dump our `sk.to_bytes()` and the KAT's sk
-/// to `/tmp/keygen_kat_<idx>_{ours,cref}.hex` for byte-diff inspection.
-/// Used to localize sk encoding divergence on pk-equal-but-sk-different
-/// KAT seeds (e.g. KAT[3]). `KAT_IDX=N cargo test --release --lib
-/// dump_keygen_kat_sk -- --ignored --nocapture`.
-#[test]
-#[ignore]
-fn dump_keygen_kat_sk() {
-    use std::fs;
-    let kat_idx: usize = std::env::var("KAT_IDX")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3);
-    let (seed_hex, _pk, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[kat_idx];
-    let seed_bytes = hex::decode(seed_hex).expect("valid hex");
-    let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
-    let sk = SigningKey::generate_derand(&seed)
-        .unwrap_or_else(|e| panic!("KAT[{kat_idx}] keygen errored: {e:?}"));
-    let ours = sk.to_bytes();
-    let cref = hex::decode(sk_hex).expect("valid hex");
-    crate::selkie_trace!(
-        "KAT[{kat_idx}] our ideal lattice denom = {:?}",
-        sk.ideal.lattice().denom()
-    );
-    crate::selkie_trace!("KAT[{kat_idx}] our gen denom = {:?}", sk.ideal_gen.denom);
-    fs::write(
-        format!("/tmp/keygen_kat_{kat_idx:03}_ours.hex"),
-        hex::encode(ours),
-    )
-    .unwrap();
-    fs::write(
-        format!("/tmp/keygen_kat_{kat_idx:03}_cref.hex"),
-        hex::encode(&cref),
-    )
-    .unwrap();
-    crate::selkie_trace!(
-        "dump_keygen_kat_sk: KAT[{kat_idx}] wrote /tmp/keygen_kat_{kat_idx:03}_{{ours,cref}}.hex (sk len={})",
-        ours.len()
-    );
-}
-
 /// Deterministic keygen on `KAT_VECTORS[idx]`: must match the KAT pk and sk.
 fn keygen_kat_idx_inner(idx: usize) {
     let (seed_hex, pk_hex, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[idx];
@@ -819,69 +778,6 @@ fn sign_kat_idx_probe_inner(kat_idx: usize) {
     vk.verify(&msg, &sig)
         .unwrap_or_else(|e| panic!("KAT[{kat_idx}] verify failed: {e:?}"));
     crate::selkie_trace!("sign_kat_derand_{kat_idx:03}: sign={elapsed:?}");
-}
-
-/// `KAT_IDX=N`-parametrized deterministic sign-and-verify probe.
-/// Used to confirm `sign_derand` is genuinely deterministic and to
-/// localize response-phase hangs on specific trajectories.
-#[test]
-#[ignore]
-fn sign_kat_idx_probe() {
-    let kat_idx: usize = std::env::var("KAT_IDX")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    crate::selkie_trace!("sign_kat_idx_probe: KAT_IDX={kat_idx}");
-    sign_kat_idx_probe_inner(kat_idx);
-}
-
-/// `KAT_IDX=N`-parametrized sign + verify that **also writes**
-/// `pk.bin / msg.bin / our_sig.bin` to `$DUMP_DIR` (default
-/// `/tmp/cross_verify/`). Pair with C ref's
-/// `sqisign_verify_external_lvl1` to confirm C ref accepts our
-/// signature byte-for-byte. Required by
-/// `/tmp/cross_verify/cross_verify_our_sigs.sh`.
-#[test]
-#[ignore]
-fn sign_kat_zero_dump_for_xverify() {
-    use std::fs;
-
-    let kat_idx: usize = std::env::var("KAT_IDX")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let dir = std::env::var("DUMP_DIR").unwrap_or_else(|_| "/tmp/cross_verify".to_string());
-
-    let (seed_hex, pk_hex, sk_hex, msg_hex, _) = crate::keys::kat_data::KAT_VECTORS[kat_idx];
-    let seed_bytes = hex::decode(seed_hex).expect("valid hex");
-    let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
-    let sk_bytes = hex::decode(sk_hex).expect("valid hex");
-    let pk_bytes = hex::decode(pk_hex).expect("valid hex");
-    let msg = hex::decode(msg_hex).expect("valid hex");
-
-    let sk = SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap()).expect("sk parses");
-    let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap()).expect("pk parses");
-
-    let t0 = std::time::Instant::now();
-    let sig = sk
-        .sign_derand(&msg, &seed)
-        .expect("sign_derand within retry budget");
-    let sign_elapsed = t0.elapsed();
-
-    fs::create_dir_all(&dir).expect("mkdir dump dir");
-    fs::write(format!("{dir}/pk.bin"), &pk_bytes).expect("write pk.bin");
-    fs::write(format!("{dir}/msg.bin"), &msg).expect("write msg.bin");
-    fs::write(format!("{dir}/our_sig.bin"), sig.to_bytes()).expect("write our_sig.bin");
-    crate::selkie_trace!(
-        "sign_kat_zero_dump_for_xverify: KAT[{kat_idx}] sign={sign_elapsed:?} dumped to {dir}"
-    );
-
-    let t1 = std::time::Instant::now();
-    let r = vk.verify(&msg, &sig);
-    crate::selkie_trace!(
-        "sign_kat_zero_dump_for_xverify: KAT[{kat_idx}] verify result={r:?} in {:?}",
-        t1.elapsed()
-    );
 }
 
 // Per-KAT deterministic sign+verify tests (one per `KAT_VECTORS`
@@ -1994,188 +1890,18 @@ fn random_prime_norm_wide_byte_aligned_with_cref_kat0() {
     assert_eq!(*ideal.norm(), d_mix_wide);
 }
 
-/// Reproduce the SQIsign C reference's byte consumption for a KAT
-/// seed by threading a single AES-CTR-DRBG through both keygen and
-/// signing, matching `randombytes_init(seed); crypto_sign_keypair;
-/// crypto_sign` in `PQCgenKAT_sign.c`.
+/// DRBG wrapper that publishes the cumulative byte offset to a
+/// thread-local on every `fill_bytes` call.
 ///
-/// This is the cross-check partner for
-/// `scripts/cref_outer_ker.sh` and
-/// `tests/fixtures/cref_outer_ker_kat_vector_0.txt`: stderr lines
-/// emitted by the `[OUTER_KER]` diagnostic in `to_isogeny` should
-/// agree with the C reference's `OUTER_KER` block bit-for-bit for
-/// a correct implementation. If they diverge, our kernel is wrong
-/// upstream of the chain; if they agree but our chain still fails
-/// to split, the bug is in `Kernel::from_montgomery` or the
-/// `(2,2)`-chain internals.
-///
-/// Run with:
-/// ```text
-/// cargo test --lib --release \
-///   kat_cref_cross_check_vector_0 -- --ignored --nocapture \
-///   2> /tmp/rust-outer-ker.log
-/// scripts/cref_outer_ker.sh --vector 0 > /tmp/cref-outer-ker.txt
-/// diff <(grep '^\[OUTER_KER\]' /tmp/rust-outer-ker.log) \
-///      /tmp/cref-outer-ker.txt
-/// ```
-#[test]
-fn kat_cref_cross_check_vector_0() {
-    let (seed_hex, _pk_hex, _sk_hex, msg_hex, sm_hex) = crate::keys::kat_data::KAT_VECTORS[0];
-    let seed: [u8; 48] = hex::decode(seed_hex)
-        .expect("valid seed hex")
-        .as_slice()
-        .try_into()
-        .expect("seed is 48 bytes");
-    let msg = hex::decode(msg_hex).expect("valid msg hex");
-
-    let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
-    let before_keygen = drbg.bytes_consumed();
-    let sk = match SigningKey::generate_with_rng(&mut drbg) {
-        Ok(sk) => sk,
-        Err(SignatureError::KeyGenFailed) => return, // probabilistic skip
-        Err(other) => panic!("unexpected keygen error: {other:?}"),
-    };
-    let after_keygen = drbg.bytes_consumed();
-    crate::selkie_trace!(
-        "[CROSSCHECK] keygen consumed {} DRBG bytes (seed 0)",
-        after_keygen - before_keygen
-    );
-
-    let sig = match sk.sign_with_rng(&msg, &mut drbg) {
-        Ok(s) => s,
-        Err(SignatureError::SigningFailed) => {
-            crate::selkie_trace!(
-                "kat_cref_cross_check_vector_0: SigningFailed — outer-chain \
-                 bug still present, cross-check of [OUTER_KER] stderr lines \
-                 against tests/fixtures/cref_outer_ker_kat_vector_0.txt is \
-                 the reason we wrote this test."
-            );
-            return;
-        }
-        Err(other) => panic!("unexpected sign error: {other:?}"),
-    };
-    let after_sign = drbg.bytes_consumed();
-    crate::selkie_trace!(
-        "[CROSSCHECK] sign consumed {} DRBG bytes (seed 0)",
-        after_sign - after_keygen
-    );
-
-    // Full byte-for-byte match: `sm` in the rsp file is `sig || msg`,
-    // so the signature prefix must equal the first CRYPTO_BYTES of
-    // the KAT's `sm` field.
-    let sm = hex::decode(sm_hex).expect("valid sm hex");
-    let sig_bytes = sig.to_bytes();
-    assert_eq!(
-        &sig_bytes[..],
-        &sm[..sig_bytes.len()],
-        "signature must match KAT `sm` prefix byte-for-byte"
-    );
-}
-
-/// Survey the bit-magnitudes of every KAT secret-ideal `(norm, gen)`.
-///
-/// For each KAT vector index 0..99, decode `sk_bytes[65..97]` as the
-/// unsigned norm and the next four 32-byte chunks as signed generator
-/// coordinates `gen.{a, b, c, d}` (two's complement LE). Print the
-/// bit-size of the norm and of each `|coord|`, plus
-/// `max_coord_bits = max(|a|, |b|, |c|, |d|)`. Bucket the maxima
-/// against the `LeftIdeal::<4>::new` width-8 product safety bound
-/// (≤ 127 bits).
-///
-/// Run with:
-/// ```text
-/// cargo test --lib --release \
-///     survey_kat_secret_ideal_coord_magnitudes -- --ignored --nocapture
-/// ```
-#[test]
-fn survey_kat_secret_ideal_coord_magnitudes() {
-    let mut max_le_127 = 0usize;
-    let mut max_in_127_192 = 0usize;
-    let mut max_gt_192 = 0usize;
-    let mut min_observed: u32 = u32::MAX;
-    let mut max_observed: u32 = 0;
-    let mut safe_indices: Vec<usize> = Vec::new();
-
-    for (i, &(_, _, sk_hex, ..)) in crate::keys::kat_data::KAT_VECTORS.iter().enumerate() {
-        let sk_bytes = hex::decode(sk_hex).expect("valid hex");
-
-        let mut pos = VERIFYING_KEY_BYTES;
-        let norm_bytes: &[u8; FP_ENCODED_BYTES] = sk_bytes[pos..pos + FP_ENCODED_BYTES]
-            .try_into()
-            .expect("32-byte norm");
-        let norm_bigint = BigInt::<4>::from_bytes_le_unsigned(norm_bytes);
-        let norm_bits = norm_bigint.bitsize();
-        pos += FP_ENCODED_BYTES;
-
-        let mut coord_bits = [0u32; 4];
-        for slot in &mut coord_bits {
-            let coord = BigInt::<4>::from_bytes_le_signed(
-                sk_bytes[pos..pos + FP_ENCODED_BYTES]
-                    .try_into()
-                    .expect("32-byte coord"),
-            );
-            // `bitsize` works on the magnitude (limbs), independent of
-            // the sign bit, so |coord|.bitsize() == coord.bitsize().
-            *slot = coord.bitsize();
-            pos += FP_ENCODED_BYTES;
-        }
-
-        let max_coord_bits = *coord_bits.iter().max().expect("4 coords");
-        crate::selkie_trace!(
-            "[SURVEY] vec={i:02} norm_bits={norm_bits:3} coord_bits=[{}, {}, {}, {}] max={max_coord_bits}",
-            coord_bits[0],
-            coord_bits[1],
-            coord_bits[2],
-            coord_bits[3],
-        );
-
-        min_observed = min_observed.min(max_coord_bits);
-        max_observed = max_observed.max(max_coord_bits);
-
-        if max_coord_bits <= 127 {
-            max_le_127 += 1;
-            safe_indices.push(i);
-        } else if max_coord_bits <= 192 {
-            max_in_127_192 += 1;
-        } else {
-            max_gt_192 += 1;
-        }
-    }
-
-    crate::selkie_trace!("[SURVEY] ----- histogram -----");
-    crate::selkie_trace!("[SURVEY] max_coord_bits ≤ 127        : {max_le_127}");
-    crate::selkie_trace!("[SURVEY] max_coord_bits ∈ (127, 192] : {max_in_127_192}");
-    crate::selkie_trace!("[SURVEY] max_coord_bits > 192        : {max_gt_192}");
-    crate::selkie_trace!(
-        "[SURVEY] observed range of max_coord_bits: [{min_observed}, {max_observed}]"
-    );
-    crate::selkie_trace!("[SURVEY] SAFE indices (max ≤ 127): {safe_indices:?}");
-}
-
-// ----------------------------------------------------------------------
-// RNG byte-trace for keygen-from-seed divergence debug (Bug 2).
-//
-// Our DRBG is bit-correct against the C ref (verified by
-// `drbg::tests::matches_cref_seed_zero_first_128_bytes`). So if
-// `keygen_kat_all` produces a wrong `e_pk`, the divergence is in
-// *which* DRBG bytes are consumed at *which* algorithmic step — not
-// in DRBG output itself.
-//
-// `TracingDrbg` wraps an underlying RNG and logs every `fill_bytes`
-// call: cumulative byte offset before the call, length, and the
-// returned bytes. Run `keygen_kat_000_rng_trace` to dump our
-// consumption pattern for KAT[0]'s seed; instrument the C ref
-// equivalently and diff. The first divergent line (different length,
-// or different bytes for the same offset+length) localizes which
-// algorithmic step has a different RNG-consumption pattern.
-// ----------------------------------------------------------------------
-
+/// Used by [`sign_kat_idx_probe_inner`] so that
+/// [`crate::drbg::debug::offset`] checkpoint reads in `signing.rs` /
+/// `deuring/mod.rs` report a meaningful byte position into the DRBG
+/// output stream rather than 0. The wrapper itself is otherwise a
+/// transparent forwarder.
 #[derive(Debug)]
 struct TracingDrbg<R: rand_core::RngCore> {
     inner: R,
     cumulative: usize,
-    /// Each entry: `(cumulative_offset_before_call, returned_bytes)`.
-    log: Vec<(usize, Vec<u8>)>,
 }
 
 impl<R: rand_core::RngCore> TracingDrbg<R> {
@@ -2183,7 +1909,6 @@ impl<R: rand_core::RngCore> TracingDrbg<R> {
         Self {
             inner,
             cumulative: 0,
-            log: Vec::new(),
         }
     }
 }
@@ -2203,11 +1928,7 @@ impl<R: rand_core::RngCore> rand_core::RngCore for TracingDrbg<R> {
 
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         self.inner.fill_bytes(dest);
-        self.log.push((self.cumulative, dest.to_vec()));
         self.cumulative += dest.len();
-        // Publish to the thread-local so checkpoint sites in keygen
-        // can read the cumulative offset without threading the
-        // wrapper through generic `R: CryptoRngCore` arguments.
         crate::drbg::debug::set(self.cumulative);
     }
 
@@ -2218,61 +1939,3 @@ impl<R: rand_core::RngCore> rand_core::RngCore for TracingDrbg<R> {
 }
 
 impl<R: rand_core::CryptoRng + rand_core::RngCore> rand_core::CryptoRng for TracingDrbg<R> {}
-
-/// Capture our DRBG byte-consumption pattern during keygen-from-seed
-/// for KAT vector 0. Writes the trace to
-/// `/tmp/drbg_trace_keygen_kat_0.txt` for diff against an
-/// instrumented C ref run.
-///
-/// Output format: one line per `fill_bytes` call:
-///
-///     [offset_hex] len=NNN bytes=hexhexhex...
-///
-/// where `offset_hex` is the cumulative byte offset before this call
-/// (i.e., the byte position into the DRBG output stream where this
-/// call's first byte landed).
-///
-/// `#[ignore]` because keygen takes minutes even in release mode. Run with:
-/// `cargo test --lib --release keygen_kat_000_rng_trace -- --include-ignored
-/// --nocapture`
-#[test]
-fn keygen_kat_000_rng_trace() {
-    let seed_hex = crate::keys::kat_data::KAT_VECTORS[0].0;
-    let seed_bytes = hex::decode(seed_hex).expect("valid hex");
-    let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
-
-    let inner = crate::drbg::Aes256CtrDrbg::new(&seed);
-    let mut tracing = TracingDrbg::new(inner);
-
-    // Reset the byte-offset thread-local so checkpoint sites in
-    // keygen log offsets relative to this run, not whatever was
-    // accumulated by previous tests on this thread.
-    crate::drbg::debug::reset();
-
-    // Run keygen; we don't care about success/failure, only the trace.
-    let _ = SigningKey::generate_with_rng(&mut tracing);
-
-    let total_calls = tracing.log.len();
-    let total_bytes = tracing.cumulative;
-
-    let mut out = String::new();
-    out.push_str(&format!(
-        "# DRBG byte-trace for keygen_kat_000\n# {total_calls} fill_bytes calls, {total_bytes} total bytes\n"
-    ));
-    for (offset, bytes) in &tracing.log {
-        let mut hex_buf = String::with_capacity(bytes.len() * 2);
-        for b in bytes {
-            hex_buf.push_str(&format!("{b:02x}"));
-        }
-        out.push_str(&format!(
-            "[{offset:08x}] len={:>4} bytes={hex_buf}\n",
-            bytes.len()
-        ));
-    }
-
-    let path = "/tmp/drbg_trace_keygen_kat_0.txt";
-    std::fs::write(path, &out).expect("write trace");
-    crate::selkie_trace!(
-        "[trace] {total_calls} fill_bytes calls, {total_bytes} bytes total → {path}"
-    );
-}
