@@ -119,45 +119,84 @@ impl IdealKernel for LeftIdeal<4> {
         basis_matrices: &[ActionMatrix; 4],
         e: TorsionExponent,
     ) -> Option<KernelDecomposition> {
+        // Mirrors C-ref's `id2iso_ideal_to_kernel_dlogs_even`
+        // (`id2iso.c:29-86`):
+        //
+        //   1. α = lideal_generator(I).
+        //   2. α := conj(α).             ← Selkie was MISSING this step.
+        //   3. Express α in O₀-basis coords c₀, c₁, c₂, c₃.
+        //   4. Build 2×2 matrix:
+        //        mat[i][j] = c₀·δ_{i,j}  +  c₁·GEN2[i][j]
+        //                                 +  c₂·GEN3[i][j]
+        //                                 +  c₃·GEN4[i][j]
+        //   5. (s, t) ← column 0 of mat (mod norm). If gcd(s, t) is even,
+        //      use column 1 instead.   ← Selkie was finding the KERNEL of
+        //                                M_α, which is the wrong operation.
+        //                                C-ref takes a column directly.
+        //
         // Step 1: Find α ∈ O₀ such that I = O₀⟨α, 2^e⟩.
-        let alpha = self.generator()?;
+        let alpha = match self.generator() {
+            Some(a) => a,
+            None => {
+                #[cfg(test)]
+                eprintln!("[to_kernel] DROP: self.generator() returned None");
+                return None;
+            }
+        };
 
-        // Step 2: Compute M_α mod 2^e.
-        let m_alpha = alpha.action_matrix(basis_matrices, e);
+        // Step 2: Conjugate.
+        let alpha_conj = alpha.conjugate();
+        #[cfg(test)]
+        if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
+            eprintln!(
+                "[to_kernel] conj(α): a={:?} b={:?} c={:?} d={:?} denom={:?}",
+                alpha_conj.a.as_bigint(),
+                alpha_conj.b.as_bigint(),
+                alpha_conj.c.as_bigint(),
+                alpha_conj.d.as_bigint(),
+                alpha_conj.denom.as_bigint()
+            );
+        }
 
-        // Step 3: Find [a, b]^T in the right kernel of M_α mod 2^e.
-        // For a 2×2 matrix, the kernel is spanned by (-m01, m00)^T.
+        // Steps 3-4: Compute M_{conj(α)} mod norm = 2^e.
+        let m_alpha = alpha_conj.action_matrix(basis_matrices, e);
+        #[cfg(test)]
+        if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
+            eprintln!(
+                "[to_kernel] M_conj(α) mod 2^{} = [[{:?}, {:?}], [{:?}, {:?}]]",
+                e.value(),
+                m_alpha.entry(0, 0),
+                m_alpha.entry(0, 1),
+                m_alpha.entry(1, 0),
+                m_alpha.entry(1, 1)
+            );
+        }
+
+        // Step 5: Pick column 0; if gcd(s, t) is even, use column 1.
         let modulus = BigInt::<4>::ONE.shl(e.value());
-
-        // Try first row: kernel direction = (-m01, m00).
-        let a_big = BigInt::<4>::from(*m_alpha.entry(0, 1))
-            .wrapping_neg()
-            .ct_mod(&modulus);
-        let b_big = BigInt::<4>::from(*m_alpha.entry(0, 0)).ct_mod(&modulus);
-
-        let (check0, check1) = m_alpha.eval_mod(&a_big, &b_big, e.value());
-        if bool::from(check0.is_zero()) && bool::from(check1.is_zero()) {
-            return Some(KernelDecomposition {
-                a: Scalar::from(a_big),
-                b: Scalar::from(b_big),
-            });
+        let s0 = BigInt::<4>::from(*m_alpha.entry(0, 0)).ct_mod(&modulus);
+        let t0 = BigInt::<4>::from(*m_alpha.entry(1, 0)).ct_mod(&modulus);
+        let g0 = s0.gcd(&t0);
+        // `ibz_is_even`: low bit zero.
+        let g0_is_even = g0.as_limbs()[0] & 1 == 0;
+        let (s, t) = if g0_is_even {
+            let s1 = BigInt::<4>::from(*m_alpha.entry(0, 1)).ct_mod(&modulus);
+            let t1 = BigInt::<4>::from(*m_alpha.entry(1, 1)).ct_mod(&modulus);
+            (s1, t1)
+        } else {
+            (s0, t0)
+        };
+        #[cfg(test)]
+        if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
+            eprintln!(
+                "[to_kernel] g0={:?} even={} → (s, t)=({:?}, {:?})",
+                g0, g0_is_even, s, t
+            );
         }
-
-        // If first row was zero, try second row.
-        let a_big = BigInt::<4>::from(*m_alpha.entry(1, 1))
-            .wrapping_neg()
-            .ct_mod(&modulus);
-        let b_big = BigInt::<4>::from(*m_alpha.entry(1, 0)).ct_mod(&modulus);
-
-        let (check0, check1) = m_alpha.eval_mod(&a_big, &b_big, e.value());
-        if bool::from(check0.is_zero()) && bool::from(check1.is_zero()) {
-            return Some(KernelDecomposition {
-                a: Scalar::from(a_big),
-                b: Scalar::from(b_big),
-            });
-        }
-
-        None
+        Some(KernelDecomposition {
+            a: Scalar::from(s),
+            b: Scalar::from(t),
+        })
     }
 }
 
@@ -193,18 +232,114 @@ pub fn compute_even_response(
     let e_prime = e_prime.value();
     let r_rsp = r_rsp.value();
 
-    // Step 1: I = O₀·α + O₀·(2^r)
+    // Step 1: I = O₀·conj(α) + O₀·(2^r)
+    //
+    // C-ref's sign.c line 401 conjugates `resp_quat` in place before
+    // calling `quat_lideal_create(lideal_resp_two, resp_quat, 2^r, O₀)`
+    // at line 616. So `lideal_resp_two = O₀·conj(α_response) + O₀·(2^r)`.
+    // We construct the same lattice here so that `ideal.generator()`
+    // enumerates over the same basis as C-ref's `quat_lideal_generator`.
     let norm = BigInt::<4>::ONE.shl(r_rsp);
-    let ideal = LeftIdeal::new(alpha, &norm, EXTREMAL_ORDERS[0].order());
+    let alpha_for_ideal = alpha.conjugate();
+    let ideal = LeftIdeal::new(&alpha_for_ideal, &norm, EXTREMAL_ORDERS[0].order());
 
     // Step 2: (s, t) ← IdealToKernel(I)
     let basis_mats = [
-        ACTION_MATRICES[0][3], // gen2
-        ACTION_MATRICES[0][4], // gen3
-        ACTION_MATRICES[0][5], // gen4
-        ACTION_MATRICES[0][0], // i (for the kernel computation)
+        ACTION_MATRICES[0][3], // gen2 = action of i
+        ACTION_MATRICES[0][4], // gen3 = action of (i+j)/2
+        ACTION_MATRICES[0][5], // gen4 = action of (1+k)/2
     ];
-    let decomp = ideal.to_kernel(&basis_mats, TorsionExponent::try_from(r_rsp).ok()?)?;
+    // Inline C-ref's `id2iso_ideal_to_kernel_dlogs_even` (id2iso.c:29-86).
+    //
+    // C-ref calls `quat_lideal_generator(lideal_resp_two)` to pick a
+    // SMALL generator α of the response ideal by enumerating
+    // (a, b, c, d) with |a|+|b|+|c|+|d| = n increasing. We must do
+    // the SAME to match — the kernel of `α | E[2^r]` is NOT invariant
+    // under α → α·u for non-trivial units u ∈ O_R(I)* (which include
+    // ±i in O₀), so a different generator yields a different kernel
+    // subgroup and thus a different `j(E_chl_3)`.
+    //
+    // `ideal.generator()` mirrors C-ref's `quat_lideal_generator`.
+    let alpha_for_kernel = match ideal.generator() {
+        Some(g) => g,
+        None => {
+            #[cfg(test)]
+            eprintln!("[compute_even_response] DROP: ideal.generator() None");
+            return None;
+        }
+    };
+    let alpha_conj = alpha_for_kernel.conjugate();
+    #[cfg(test)]
+    if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
+        eprintln!(
+            "[compute_even_response inline] alpha_input canonical: a={} b={} c={} d={} denom={}",
+            alpha.a.as_bigint(),
+            alpha.b.as_bigint(),
+            alpha.c.as_bigint(),
+            alpha.d.as_bigint(),
+            BigInt::<4>::from(alpha.denom),
+        );
+        eprintln!(
+            "[compute_even_response inline] alpha_gen canonical: a={} b={} c={} d={} denom={}",
+            alpha_for_kernel.a.as_bigint(),
+            alpha_for_kernel.b.as_bigint(),
+            alpha_for_kernel.c.as_bigint(),
+            alpha_for_kernel.d.as_bigint(),
+            BigInt::<4>::from(alpha_for_kernel.denom),
+        );
+        eprintln!(
+            "[compute_even_response inline] alpha_conj canonical: a={} b={} c={} d={} denom={}",
+            alpha_conj.a.as_bigint(),
+            alpha_conj.b.as_bigint(),
+            alpha_conj.c.as_bigint(),
+            alpha_conj.d.as_bigint(),
+            BigInt::<4>::from(alpha_conj.denom),
+        );
+        if let Some(coords) = EXTREMAL_ORDERS[0].order().decompose(&alpha_conj) {
+            eprintln!(
+                "[compute_even_response inline] alpha_conj O0-coords: c0={} c1={} c2={} c3={}",
+                coords[0], coords[1], coords[2], coords[3],
+            );
+        } else {
+            eprintln!("[compute_even_response inline] alpha_conj decompose: None");
+        }
+    }
+    let m_alpha = action_matrix(
+        &alpha_conj,
+        EXTREMAL_ORDERS[0].order(),
+        &basis_mats,
+        TorsionExponent::try_from(r_rsp).ok()?,
+    )?;
+    let modulus = BigInt::<4>::ONE.shl(r_rsp);
+    let s0 = BigInt::<4>::from(*m_alpha.entry(0, 0)).ct_mod(&modulus);
+    let t0 = BigInt::<4>::from(*m_alpha.entry(1, 0)).ct_mod(&modulus);
+    let g0 = s0.gcd(&t0);
+    let g0_is_even = g0.as_limbs()[0] & 1 == 0;
+    let (s, t) = if g0_is_even {
+        let s1 = BigInt::<4>::from(*m_alpha.entry(0, 1)).ct_mod(&modulus);
+        let t1 = BigInt::<4>::from(*m_alpha.entry(1, 1)).ct_mod(&modulus);
+        (s1, t1)
+    } else {
+        (s0, t0)
+    };
+    #[cfg(test)]
+    if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
+        eprintln!(
+            "[compute_even_response inline] M_conj(α) mod 2^{r_rsp} = [[{:?}, {:?}], [{:?}, {:?}]]",
+            m_alpha.entry(0, 0),
+            m_alpha.entry(0, 1),
+            m_alpha.entry(1, 0),
+            m_alpha.entry(1, 1)
+        );
+        eprintln!(
+            "[compute_even_response inline] g0={:?} even={} → (s, t)=({:?}, {:?})",
+            g0, g0_is_even, s, t
+        );
+    }
+    let decomp = KernelDecomposition {
+        a: Scalar::from(s),
+        b: Scalar::from(t),
+    };
 
     // Step 3: K = [2^(e'+2) · s]P + [2^(e'+2) · t]Q
     let shift = e_prime + 2;
@@ -233,13 +368,20 @@ pub fn compute_even_response(
     // carries a propagated difference; downstream
     // `compute_challenge_isogeny` and `ChangeOfBasisMatrix::from_bases`
     // require `PmQ` consistent with `P` and `Q`'s evaluation history.
-    let (new_curve, images) = CurveKernel::new(K)
+    let isogeny_res = CurveKernel::new(K)
         .isogeny_small(
             TorsionExponent::try_from(r_rsp).ok()?,
             &[*P, *Q, *PmQ],
             true,
-        )
-        .ok()?;
+        );
+    let (new_curve, images) = match isogeny_res {
+        Ok(r) => r,
+        Err(e) => {
+            #[cfg(test)]
+            eprintln!("[compute_even_response] DROP: isogeny_small err: {e:?}, r_rsp={r_rsp}, e_prime={e_prime}");
+            return None;
+        }
+    };
 
     Some((new_curve, images[0], images[1], images[2]))
 }

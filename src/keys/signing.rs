@@ -637,7 +637,18 @@ impl SigningKey {
         );
 
         // Line 3: while true do
-        for _iter in 0..1000 {
+        //
+        // Debug short-cut: when `SELKIE_MAX_SIGN_ITERS=N` is set, abort
+        // after the Nth iter regardless of progress. Used to keep
+        // debugging cycles tight while diagnostics are noisy.
+        #[cfg(test)]
+        let max_iters: u32 = std::env::var("SELKIE_MAX_SIGN_ITERS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1000);
+        #[cfg(not(test))]
+        let max_iters: u32 = 1000;
+        for _iter in 0..max_iters {
             #[cfg(test)]
             let _iter_start = std::time::Instant::now();
 
@@ -693,6 +704,14 @@ impl SigningKey {
                         "[sign {_iter}] commitment OK ({:?})",
                         _iter_start.elapsed()
                     );
+                    #[cfg(test)]
+                    {
+                        let j = r.0.j_invariant();
+                        crate::selkie_trace!(
+                            "[sign {_iter}] E_com.j = {}",
+                            hex::encode(j.to_bytes())
+                        );
+                    }
                     r
                 }
                 None => {
@@ -739,6 +758,13 @@ impl SigningKey {
                 i_sk_w.norm().bitsize(),
                 i_com_w.norm().bitsize(),
                 i_chl_prime_w.norm().bitsize(),
+            );
+            #[cfg(test)]
+            crate::selkie_trace!(
+                "[sign {_iter}] N(I_com) limbs = {:016x}{:016x}{:016x}",
+                i_com.norm().as_limbs()[2],
+                i_com.norm().as_limbs()[1],
+                i_com.norm().as_limbs()[0],
             );
 
             // Line 14: α_rsp ← RandomEquivalentQuaternion(I_com ∩ I_sk · I_chl)
@@ -898,12 +924,105 @@ impl SigningKey {
             #[cfg(test)]
             let _t_sample = std::time::Instant::now();
 
+            #[cfg(test)]
+            crate::selkie_trace!(
+                "[sign {_iter}] before sample_from_ball: drbg_offset=0x{:x}",
+                crate::drbg::debug::offset()
+            );
+
             let mut sample_result: Option<(_, u32, BigInt<N_RESP>, BigInt<N_RESP>)> = None;
             for _try in 0..8u32 {
                 let alpha_try = match intersection_lat.sample_from_ball::<64, _>(&radius, rng) {
                     Some(a) => a,
                     None => continue,
                 };
+                // Debug-only override: replace sampled alpha with C-ref's
+                // KAT-1 iter 0 alpha (alpha_pre_bt). Lets us test whether
+                // Selkie's intersection lattice contains C-ref's element.
+                #[cfg(test)]
+                let alpha_try = if std::env::var("SELKIE_INJECT_CREF_ALPHA_KAT1").is_ok() {
+                    crate::selkie_trace!("[sign {_iter}] INJECTING C-ref KAT-1 alpha_pre_bt");
+                    let parse_be_hex = |s: &str| -> BigInt<N_RESP> {
+                        let s = s.strip_prefix("0x").unwrap_or(s);
+                        let pad_len = N_RESP * 16; // 16 hex chars per limb
+                        let s = if s.len() < pad_len {
+                            format!("{:0>1$}", s, pad_len)
+                        } else {
+                            s.to_string()
+                        };
+                        let mut limbs = [0u64; N_RESP];
+                        for (i, limb_chunk) in s.as_bytes().rchunks(16).enumerate() {
+                            if i >= N_RESP {
+                                break;
+                            }
+                            let limb_hex = std::str::from_utf8(limb_chunk).unwrap();
+                            limbs[i] = u64::from_str_radix(limb_hex, 16).unwrap_or(0);
+                        }
+                        BigInt::<N_RESP>::from_limbs(limbs)
+                    };
+                    // C-ref's KAT-1 α_pre_bt values (sign-aware, from
+                    // sign-aware sqisign_dump_ibz):
+                    //   coord[0] = +0x339de458... (positive)
+                    //   coord[1] = +0x11d7d24b... (positive)
+                    //   coord[2] = -0x20e8f218... (NEGATIVE!)
+                    //   coord[3] = +0x19389040... (positive)
+                    // Earlier injection used all-positive values which
+                    // caused EVERY downstream divergence we were chasing.
+                    let a = parse_be_hex(
+                        "339de45818a8dcad1962ce0fabad5d66ddd0f321bcb2c9e4e982adb63e429421d5c85d3a06eee1986",
+                    );
+                    let b = parse_be_hex(
+                        "11d7d24b11727d3922e1992446850b60c7cac60a57a5bd61f5eb9ef19b7b557f3bae970e2d1d325634",
+                    );
+                    let c_pos = parse_be_hex(
+                        "20e8f2187a69ac25e8976218b1fe895350547aa192d2fba8ba",
+                    );
+                    let c = c_pos.wrapping_neg();
+                    let d = parse_be_hex("1938904070736ee61b443e069f76cf0a9dd44bbab8af7d9694");
+                    Element::<N_RESP> {
+                        a: Coordinate::from_bigint(a),
+                        b: Coordinate::from_bigint(b),
+                        c: Coordinate::from_bigint(c),
+                        d: Coordinate::from_bigint(d),
+                        denom: Denominator::from_bigint_unchecked(BigInt::<N_RESP>::ONE),
+                    }
+                } else {
+                    alpha_try
+                };
+                #[cfg(test)]
+                if std::env::var("SELKIE_DUMP_ALPHA").is_ok() {
+                    let limbs_hex = |bi: &BigInt<N_RESP>| {
+                        bi.as_limbs()
+                            .iter()
+                            .rev()
+                            .flat_map(|l| l.to_be_bytes())
+                            .collect::<Vec<_>>()
+                    };
+                    crate::selkie_trace!(
+                        "[sign {_iter}] alpha_pre_bt: denom={:?} a_bits={} b_bits={} c_bits={} d_bits={}",
+                        alpha_try.denom.as_bigint().as_limbs()[0],
+                        alpha_try.a.as_bigint().bitsize(),
+                        alpha_try.b.as_bigint().bitsize(),
+                        alpha_try.c.as_bigint().bitsize(),
+                        alpha_try.d.as_bigint().bitsize(),
+                    );
+                    crate::selkie_trace!(
+                        "[sign {_iter}] alpha_pre_bt: a={}",
+                        hex::encode(limbs_hex(alpha_try.a.as_bigint())),
+                    );
+                    crate::selkie_trace!(
+                        "[sign {_iter}] alpha_pre_bt: b={}",
+                        hex::encode(limbs_hex(alpha_try.b.as_bigint())),
+                    );
+                    crate::selkie_trace!(
+                        "[sign {_iter}] alpha_pre_bt: c={}",
+                        hex::encode(limbs_hex(alpha_try.c.as_bigint())),
+                    );
+                    crate::selkie_trace!(
+                        "[sign {_iter}] alpha_pre_bt: d={}",
+                        hex::encode(limbs_hex(alpha_try.d.as_bigint())),
+                    );
+                }
                 let (alpha_norm, n_bt_try) = alpha_try.compute_backtracking();
                 let (num_w, den_sq_w) = alpha_norm.norm_w::<N_RESP>();
                 let (q1, r1) = num_w.div_rem(&den_sq_w);
@@ -1048,6 +1167,19 @@ impl SigningKey {
             let q_rsp_wide: BigInt<N_RESP> = q_rsp.widen();
             let i_com_norm_w: BigInt<N_RESP> = i_com.norm().widen();
             let i_com_rsp_norm_w = i_com_norm_w.ct_mul(&q_rsp_wide);
+            // KNOWN BUG: this `from_generator_mod_hnf` produces a
+            // lattice whose canonical HNF differs from C-ref's
+            // `quat_lideal_create` output for the same (α, N) inputs.
+            // Diagnosed via `[I_COM_RESP_CREF]` byte-diff vs Selkie's
+            // i_com_rsp dump (`SELKIE_DUMP_I_COM_RSP=1`): same norm,
+            // same diagonal, different off-diagonal cols ⇒ different
+            // lattices. The `from_generator` (classical-HNF) variant
+            // overflows at width 30 (`Lattice::sum` Hadamard bound
+            // exceeds the working width when α has denom > 1 and norm
+            // ≈ 2^260). Suspect bug source is in either `mul_direct`
+            // (`O·α` step) or `sum_mod`'s HNF reduction; needs a
+            // bytewise diff against C-ref's `quat_lattice_alg_elem_mul`
+            // and `quat_lattice_add` to localize.
             let mut i_com_rsp_w = match LeftIdeal::<30>::from_generator_mod_hnf(
                 &alpha_rsp_conj,
                 &i_com_rsp_norm_w,
@@ -1119,6 +1251,76 @@ impl SigningKey {
                         continue;
                     }
                 };
+                // Debug-only: replace sampled i_aux with C-ref's KAT-1
+                // iter 0 i_aux (HNF basis bytes from `[I_AUX_CREF]` dump).
+                #[cfg(test)]
+                let i_aux = if std::env::var("SELKIE_INJECT_CREF_I_AUX_KAT1").is_ok() {
+                    crate::selkie_trace!("[sign {_iter}] INJECTING C-ref KAT-1 i_aux");
+                    let parse = |s: &str| -> BigInt<4> {
+                        let s = s.strip_prefix("0x").unwrap_or(s);
+                        let pad_len = 64;
+                        let s = if s.len() < pad_len {
+                            format!("{:0>1$}", s, pad_len)
+                        } else {
+                            s.to_string()
+                        };
+                        let mut limbs = [0u64; 4];
+                        for (i, chunk) in s.as_bytes().rchunks(16).enumerate() {
+                            if i >= 4 {
+                                break;
+                            }
+                            let limb_hex = std::str::from_utf8(chunk).unwrap();
+                            limbs[i] = u64::from_str_radix(limb_hex, 16).unwrap_or(0);
+                        }
+                        BigInt::<4>::from_limbs(limbs)
+                    };
+                    use crate::quaternions::{
+                        lattice::{HnfLattice, Lattice},
+                        linear::{Matrix, Vector},
+                    };
+                    let zero = BigInt::<4>::ZERO;
+                    let one = BigInt::<4>::ONE;
+                    let diag = parse("5032829004b4219c196f6c8d0662a9e");
+                    let col0 = Vector::<4>::new(diag, zero, zero, zero);
+                    let col1 = Vector::<4>::new(zero, diag, zero, zero);
+                    let col2 = Vector::<4>::new(
+                        parse("2574b0eebc9830ca9abd14380bdfdaa"),
+                        parse("1300d9486bf72484f64f54da7e12d65"),
+                        one,
+                        zero,
+                    );
+                    let col3 = Vector::<4>::new(
+                        parse("3d31a94798bcfd17232017b2884fd39"),
+                        parse("2574b0eebc9830ca9abd14380bdfdaa"),
+                        zero,
+                        one,
+                    );
+                    let basis = Matrix::<4>::from_columns(&[col0, col1, col2, col3]);
+                    let denom = parse("2");
+                    let lattice: HnfLattice<4> = Lattice::<4>::new(basis, denom).into();
+                    let norm = parse("28194148025a10ce0cb7b646833154f");
+                    LeftIdeal::<4>::from_parts(lattice, norm, *EXTREMAL_ORDERS[0].order())
+                } else {
+                    i_aux
+                };
+                #[cfg(test)]
+                if std::env::var("SELKIE_DUMP_I_AUX").is_ok() {
+                    crate::selkie_trace!("[sign {_iter}] i_aux norm = {:?}", i_aux.norm());
+                    crate::selkie_trace!(
+                        "[sign {_iter}] i_aux denom = {:?}",
+                        i_aux.lattice().denom()
+                    );
+                    let m = i_aux.lattice().basis();
+                    let cols = m.columns();
+                    for j in 0..4 {
+                        for i in 0..4 {
+                            crate::selkie_trace!(
+                                "[sign {_iter}] i_aux basis row={i} col={j} = {:?}",
+                                cols[j][i]
+                            );
+                        }
+                    }
+                }
                 #[cfg(test)]
                 crate::selkie_trace!(
                     "[sign {_iter}] i_aux done, norm={} bits (cumul {:?})",
@@ -1151,16 +1353,40 @@ impl SigningKey {
                 // and intersect at width 8.
                 let i_aux_w: LeftIdeal<8> = i_aux.widen::<8>();
                 let i_com_rsp_lat_w: Lattice<8> = (*i_com_rsp.lattice()).into();
+                #[cfg(test)]
+                if std::env::var("SELKIE_DUMP_I_COM_RSP").is_ok() {
+                    crate::selkie_trace!("[sign {_iter}] i_com_rsp norm = {:?}", i_com_rsp.norm());
+                    crate::selkie_trace!(
+                        "[sign {_iter}] i_com_rsp denom = {:?}",
+                        i_com_rsp.lattice().denom()
+                    );
+                    let cols = i_com_rsp.lattice().basis().columns();
+                    for j in 0..4 {
+                        for i in 0..4 {
+                            crate::selkie_trace!(
+                                "[sign {_iter}] i_com_rsp basis row={i} col={j} = {:?}",
+                                cols[j][i]
+                            );
+                        }
+                    }
+                }
                 let i_aux_lat_w: Lattice<8> = (*i_aux_w.lattice()).into();
                 #[cfg(test)]
                 let _t_inter = std::time::Instant::now();
+                // Use dual-sum-dual intersection — `intersection_via_kernel`
+                // produces a wrong lattice for sign's i_inter inputs
+                // (i_com_rsp norm ≈ 2^263 ∩ i_aux norm ≈ 2^122),
+                // diagnosed via `[I_INTER_CREF]` byte-diff vs C-ref's
+                // `quat_lideal_inter`. Same-norm, same-diagonal HNF, but
+                // off-diagonal cols disagree — distinct canonical HNFs =
+                // distinct lattices. dual-sum-dual matches C-ref.
                 let inter_hnf_w8 =
-                    match i_com_rsp_lat_w.intersection_via_kernel::<150>(&i_aux_lat_w) {
+                    match i_com_rsp_lat_w.intersection_via_dual_sum_dual::<200>(&i_aux_lat_w) {
                         Some(h) => h,
                         None => {
                             #[cfg(test)]
                             crate::selkie_trace!(
-                                "[sign {_iter}] DROP: i_inter intersection_via_kernel None"
+                                "[sign {_iter}] DROP: i_inter intersection_via_dual_sum_dual None"
                             );
                             continue;
                         }
@@ -1178,6 +1404,76 @@ impl SigningKey {
                 let o0_w8 = EXTREMAL_ORDERS[0].widen::<8>();
                 let mut i_inter_w =
                     LeftIdeal::<8>::from_parts(inter_hnf_w8, inter_norm_w8, *o0_w8.order());
+                // Debug: replace Selkie's computed i_inter with C-ref's
+                // KAT-1 iter 0 i_inter (HNF basis bytes from
+                // `[I_INTER_CREF]` dump). If chain accepts, we know
+                // EVERYTHING downstream of i_inter is correct in
+                // Selkie. If chain still rejects, bug is in
+                // i_inter.to_isogeny() or below.
+                #[cfg(test)]
+                let i_inter_w = if std::env::var("SELKIE_INJECT_CREF_I_INTER_KAT1").is_ok() {
+                    crate::selkie_trace!("[sign {_iter}] INJECTING C-ref KAT-1 i_inter");
+                    use crate::quaternions::lattice::HnfLattice;
+                    let parse_8 = |s: &str| -> BigInt<8> {
+                        let s = s.strip_prefix("0x").unwrap_or(s);
+                        let pad_len = 128;
+                        let s = if s.len() < pad_len {
+                            format!("{:0>1$}", s, pad_len)
+                        } else {
+                            s.to_string()
+                        };
+                        let mut limbs = [0u64; 8];
+                        for (i, chunk) in s.as_bytes().rchunks(16).enumerate() {
+                            if i >= 8 {
+                                break;
+                            }
+                            let limb_hex = std::str::from_utf8(chunk).unwrap();
+                            limbs[i] = u64::from_str_radix(limb_hex, 16).unwrap_or(0);
+                        }
+                        BigInt::<8>::from_limbs(limbs)
+                    };
+                    let zero8 = BigInt::<8>::ZERO;
+                    let one8 = BigInt::<8>::ONE;
+                    let diag = parse_8(
+                        "22be3518abb8190fbaa0eeb4cc34faa4c4a4eb304ef57783620865462fd3b5790bec193bf5ab56e00e63c2ac0ca4baf6",
+                    );
+                    use crate::quaternions::linear::Vector;
+                    let col0 = Vector::<8>::new(diag, zero8, zero8, zero8);
+                    let col1 = Vector::<8>::new(zero8, diag, zero8, zero8);
+                    let col2 = Vector::<8>::new(
+                        parse_8(
+                            "21a08a1849cc5cd714cc713e9ade56933be051d9be169fdbb7597bb6783ae9c4e59b97769dd683c53d38a42250e74110",
+                        ),
+                        parse_8(
+                            "c250d95dbccc252a3a80fe7be39110a67f2ffb3186b701a23a0aece58aea94e5878f971cbab099b88344400e87ea0ad",
+                        ),
+                        one8,
+                        zero8,
+                    );
+                    let col3 = Vector::<8>::new(
+                        parse_8(
+                            "16992782cfeb56bd16f8decd0dfbe99a5cb1eb7d368a07693e67b677d7250c2ab3731fca2a004d44862f7eab24261a49",
+                        ),
+                        parse_8(
+                            "21a08a1849cc5cd714cc713e9ade56933be051d9be169fdbb7597bb6783ae9c4e59b97769dd683c53d38a42250e74110",
+                        ),
+                        zero8,
+                        one8,
+                    );
+                    use crate::quaternions::lattice::Lattice as Lat;
+                    let basis = crate::quaternions::linear::Matrix::<8>::from_columns(&[
+                        col0, col1, col2, col3,
+                    ]);
+                    let denom = parse_8("2");
+                    let lattice: HnfLattice<8> = Lat::<8>::new(basis, denom).into();
+                    let norm = parse_8(
+                        "115f1a8c55dc0c87dd50775a661a7d5262527598277abbc1b10432a317e9dabc85f60c9dfad5ab700731e15606525d7b",
+                    );
+                    LeftIdeal::<8>::from_parts(lattice, norm, *o0_w8.order())
+                } else {
+                    i_inter_w
+                };
+                let mut i_inter_w = i_inter_w; // re-mut for refresh_norm
                 #[cfg(test)]
                 let _t_refresh = std::time::Instant::now();
                 if i_inter_w.refresh_norm::<40>().is_none() {
@@ -1192,6 +1488,23 @@ impl SigningKey {
                     i_inter_w.norm().bitsize(),
                     _iter_start.elapsed()
                 );
+                #[cfg(test)]
+                if std::env::var("SELKIE_DUMP_I_INTER").is_ok() {
+                    crate::selkie_trace!("[sign {_iter}] i_inter norm = {:?}", i_inter_w.norm());
+                    crate::selkie_trace!(
+                        "[sign {_iter}] i_inter denom = {:?}",
+                        i_inter_w.lattice().denom()
+                    );
+                    let cols = i_inter_w.lattice().basis().columns();
+                    for j in 0..4 {
+                        for i in 0..4 {
+                            crate::selkie_trace!(
+                                "[sign {_iter}] i_inter basis row={i} col={j} = {:?}",
+                                cols[j][i]
+                            );
+                        }
+                    }
+                }
                 if *i_inter_w.norm() == BigInt::<8>::ONE {
                     #[cfg(test)]
                     crate::selkie_trace!("[sign {_iter}] DROP: i_inter collapsed to O_0");
@@ -1231,14 +1544,27 @@ impl SigningKey {
                         }
                     };
 
+                // Debug-only: experimentally swap P/Q on the aux side
+                // to test the hypothesis that `i_inter.to_isogeny` returns
+                // (P, Q) in opposite ordering vs C-ref's
+                // `dim2id2iso_arbitrary_isogeny_evaluation`.
+                #[cfg(test)]
+                let swap_aux = std::env::var("SELKIE_SWAP_AUX_PQ").is_ok();
+                #[cfg(not(test))]
+                let swap_aux = false;
+                let (p_aux_used, q_aux_used) = if swap_aux {
+                    (&q_aux_prime, &p_aux_prime)
+                } else {
+                    (&p_aux_prime, &q_aux_prime)
+                };
                 let split = match split_auxiliary_isogeny(
                     &e_com,
                     &e_aux_prime,
                     &p_com,
                     &q_com,
                     &pmq_com,
-                    &p_aux_prime,
-                    &q_aux_prime,
+                    p_aux_used,
+                    q_aux_used,
                     &pmq_aux_prime,
                     q_rsp,
                     e_rsp_prime_te,
@@ -1355,6 +1681,24 @@ impl SigningKey {
                         continue;
                     }
                 };
+                #[cfg(test)]
+                crate::selkie_trace!(
+                    "[sign {_iter}] alpha_narrow: a={:?} b={:?} c={:?} d={:?} denom={:?}",
+                    alpha_narrow.a.as_bigint(),
+                    alpha_narrow.b.as_bigint(),
+                    alpha_narrow.c.as_bigint(),
+                    alpha_narrow.d.as_bigint(),
+                    alpha_narrow.denom.as_bigint()
+                );
+                #[cfg(test)]
+                crate::selkie_trace!(
+                    "[sign {_iter}] alpha_rsp_w (before mod): a={:?} b={:?} c={:?} d={:?} denom={:?}",
+                    alpha_rsp_w.a.as_bigint(),
+                    alpha_rsp_w.b.as_bigint(),
+                    alpha_rsp_w.c.as_bigint(),
+                    alpha_rsp_w.d.as_bigint(),
+                    alpha_rsp_w.denom.as_bigint()
+                );
                 let (ec, pc, qc, pc_pmq) = match deuring::compute_even_response(
                     &e_chl,
                     &p_chl,
@@ -1400,6 +1744,49 @@ impl SigningKey {
                 "[sign {_iter}] entering compute_challenge_isogeny (n_bt={})",
                 n_bt_te.value()
             );
+            #[cfg(test)]
+            if std::env::var("SELKIE_DUMP_CHALL_INPUTS").is_ok() {
+                let fp2_hex = |v: &Fp2| -> String {
+                    let b = v.to_bytes();
+                    let re: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                    let im: String = b[32..].iter().rev().map(|x| format!("{:02x}", x)).collect();
+                    format!("0x{re} + i*0x{im}")
+                };
+                let chl_scalar: Scalar = chl.into();
+                let chl_limbs = chl_scalar.as_limbs();
+                let chl_hex: String = chl_limbs
+                    .iter()
+                    .rev()
+                    .map(|l| format!("{:016x}", l))
+                    .collect::<String>();
+                crate::selkie_trace!("[CHALL_INPUTS_SELKIE] chl_scalar = 0x{chl_hex}");
+                crate::selkie_trace!(
+                    "[CHALL_INPUTS_SELKIE] basis_pk.R.x = {}",
+                    fp2_hex(basis_pk.R.to_affine_x().as_fp2())
+                );
+                crate::selkie_trace!(
+                    "[CHALL_INPUTS_SELKIE] basis_pk.S.x = {}",
+                    fp2_hex(basis_pk.S.to_affine_x().as_fp2())
+                );
+                crate::selkie_trace!(
+                    "[CHALL_INPUTS_SELKIE] basis_pk.RS.x = {}",
+                    fp2_hex(basis_pk.RS.to_affine_x().as_fp2())
+                );
+                crate::selkie_trace!(
+                    "[CHALL_INPUTS_SELKIE] e_pk.j = {}",
+                    fp2_hex(&e_pk.j_invariant())
+                );
+                let mut e_pk_norm = *e_pk;
+                e_pk_norm.normalize();
+                crate::selkie_trace!(
+                    "[CHALL_INPUTS_SELKIE] e_pk.A_aff = {}",
+                    fp2_hex(e_pk_norm.coefficient().as_fp2())
+                );
+                crate::selkie_trace!(
+                    "[CHALL_INPUTS_SELKIE] hint = 0x{:02x}",
+                    u8::from(self.verifying_key.hint)
+                );
+            }
             let (e_chl_final, p_chl_final, q_chl_final, pmq_chl_final) =
                 match compute_challenge_isogeny(
                     &basis_pk, &chl, &e_chl, &p_chl, &q_chl, &pmq_chl, n_bt_te,
@@ -1777,6 +2164,23 @@ type SplitResult = (
     ProjectiveXOnlyPoint,
 );
 
+/// Returns the smallest `k` such that `x^(2^k) = 1`, capped at `max`.
+///
+/// Used by [`split_auxiliary_isogeny`]'s pairing diagnostics to
+/// quantify how non-Lagrangian a kernel is.
+#[cfg(test)]
+fn log2_order_fp2(x: &Fp2, max: u32) -> i32 {
+    use subtle::ConstantTimeEq;
+    let mut y = *x;
+    for k in 0..=max {
+        if bool::from(y.ct_eq(&Fp2::ONE)) {
+            return k as i32;
+        }
+        y = y.square();
+    }
+    -1
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn split_auxiliary_isogeny(
     e1: &Curve,
@@ -1791,9 +2195,32 @@ pub(crate) fn split_auxiliary_isogeny(
     e_prime: TorsionExponent,
     r_rsp: TorsionExponent,
 ) -> Option<SplitResult> {
+    #[cfg(test)]
+    use crate::curves::pairing::weil_pairing;
+    #[cfg(test)]
+    let trace_pairings = std::env::var("SELKIE_TRACE_PAIRINGS").is_ok();
+
     let f = TORSION_EVEN_POWER;
     let e_prime_val = e_prime.value();
     let r_val = r_rsp.value();
+
+    // Stage (a): raw to_isogeny output, before any reduce/scale/double.
+    // Pairings should equal e_n(P0, Q0)^N(I_com) on E1 and
+    // e_n(P0, Q0)^(N(I_com_rsp) · N(I_aux)) on E2 (mod 2^FULL).
+    #[cfg(test)]
+    if trace_pairings {
+        let e_full = TorsionExponent::FULL;
+        let w1 = weil_pairing(p1, q1, pmq1, e_full);
+        let w2 = weil_pairing(p2, q2, pmq2, e_full);
+        let prod = w1.as_fp2() * w2.as_fp2();
+        crate::selkie_trace!(
+            "[pairing-trace] stage_a (raw to_isogeny @2^{}): w1={:?} w2={:?} prod_log2_ord={}",
+            e_full.value(),
+            hex::encode(w1.as_fp2().to_bytes()),
+            hex::encode(w2.as_fp2().to_bytes()),
+            log2_order_fp2(&prod, e_full.value() + 4),
+        );
+    }
 
     // Kernel construction follows the C reference's
     // `compute_dim2_isogeny_challenge` (sign.c:578-590, 240-256).
@@ -1873,6 +2300,22 @@ pub(crate) fn split_auxiliary_isogeny(
         pmq2_red = pmq2_red.double();
     }
 
+    // Stage (b): post-reduce. Order should be 2^reduced_order.
+    #[cfg(test)]
+    if trace_pairings {
+        let e_red = TorsionExponent::try_from(reduced_order).ok()?;
+        let w1 = weil_pairing(&p1_red, &q1_red, &pmq1_red, e_red);
+        let w2 = weil_pairing(&p2_red, &q2_red, &pmq2_red, e_red);
+        let prod = w1.as_fp2() * w2.as_fp2();
+        crate::selkie_trace!(
+            "[pairing-trace] stage_b (post-reduce @2^{}): w1={} w2={} prod_log2_ord={}",
+            reduced_order,
+            hex::encode(w1.as_fp2().to_bytes()),
+            hex::encode(w2.as_fp2().to_bytes()),
+            log2_order_fp2(&prod, reduced_order + 4),
+        );
+    }
+
     // q_inv ← q^{-1} (mod 2^reduced_order). C ref uses
     // `degree_resp_inv = degree_odd_resp^{-1} mod 2^(reduced_order)`
     // (computed in compute_random_aux_norm_and_helpers).
@@ -1905,6 +2348,23 @@ pub(crate) fn split_auxiliary_isogeny(
     let q2_qinv = &q_inv * &q2_red;
     let pmq2_qinv = &q_inv * &pmq2_red;
 
+    // Stage (c): post-q_inv mul on E2. E1 unchanged; E2 pairing
+    // scales by q_inv² (Weil pairing on doubled basis).
+    #[cfg(test)]
+    if trace_pairings {
+        let e_red = TorsionExponent::try_from(reduced_order).ok()?;
+        let w1 = weil_pairing(&p1_red, &q1_red, &pmq1_red, e_red);
+        let w2 = weil_pairing(&p2_qinv, &q2_qinv, &pmq2_qinv, e_red);
+        let prod = w1.as_fp2() * w2.as_fp2();
+        crate::selkie_trace!(
+            "[pairing-trace] stage_c (post-q_inv @2^{}): w1={} w2={} prod_log2_ord={}",
+            reduced_order,
+            hex::encode(w1.as_fp2().to_bytes()),
+            hex::encode(w2.as_fp2().to_bytes()),
+            log2_order_fp2(&prod, reduced_order + 4),
+        );
+    }
+
     let two_r_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(r_val).as_limbs());
     let p1_ker = &two_r_scalar * &p1_red;
     let q1_ker = &two_r_scalar * &q1_red;
@@ -1912,6 +2372,24 @@ pub(crate) fn split_auxiliary_isogeny(
     let p2_ker = &two_r_scalar * &p2_qinv;
     let q2_ker = &two_r_scalar * &q2_qinv;
     let pmq2_ker = &two_r_scalar * &pmq2_qinv;
+
+    // Stage (d): post-r-double. Order should be 2^(e_prime + 2).
+    // Lagrangian condition: prod has order 4 (= product is `i`).
+    #[cfg(test)]
+    if trace_pairings {
+        let final_e = e_prime_val + 2;
+        let e_final = TorsionExponent::try_from(final_e).ok()?;
+        let w1 = weil_pairing(&p1_ker, &q1_ker, &pmq1_ker, e_final);
+        let w2 = weil_pairing(&p2_ker, &q2_ker, &pmq2_ker, e_final);
+        let prod = w1.as_fp2() * w2.as_fp2();
+        crate::selkie_trace!(
+            "[pairing-trace] stage_d (post-r-double @2^{}): w1={} w2={} prod_log2_ord={} (Lagrangian iff =2)",
+            final_e,
+            hex::encode(w1.as_fp2().to_bytes()),
+            hex::encode(w2.as_fp2().to_bytes()),
+            log2_order_fp2(&prod, final_e + 4),
+        );
+    }
 
     // (2,2)-isogeny chain on E_com × E_aux.
     let product = surfaces::EllipticProduct::new(*e1, *e2);
@@ -1940,16 +2418,44 @@ pub(crate) fn split_auxiliary_isogeny(
     // makes `lift_basis` recover an inconsistent y, breaking
     // `compute_challenge_isogeny`'s subsequent isomorphism eval and
     // the `ChangeOfBasisMatrix::from_bases` lift.
-    let (codomain, images) = match kernel.isogeny(
-        e_chain,
-        &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
-        // TODO(byte-eq): C reference's sign uses
-        // `theta_chain_compute_and_eval_randomized` here too
-        // (`sign.c:274`). For sign-side KAT byte-equality this needs to
-        // be `Some(rng)` threaded through, matching keygen's outer
-        // chain. Keygen byte-eq does not depend on this.
-        None,
-    ) {
+    // Debug-only: try `isogeny_no_extra_torsion` (Mode B) instead of
+    // `isogeny` (Mode A) in case Selkie's Mode A is buggy. Per resume
+    // note 2026-05-04 Day-15, Mode A has known divergences from C-ref's
+    // `extra_torsion=true` chain.
+    #[cfg(test)]
+    let mode_b = std::env::var("SELKIE_SPLIT_AUX_MODE_B").is_ok();
+    #[cfg(not(test))]
+    let mode_b = false;
+    let (codomain, images) = match if mode_b {
+        // Mode B uses chain length e and points at order 2^e (no
+        // extra torsion). Our kernel is at order 2^(e+2); double by 2
+        // more to reduce to 2^e (halve twice).
+        let kernel_e = match surfaces::Kernel::from_montgomery(
+            product,
+            (p1_ker.double().double(), p2_ker.double().double()),
+            (q1_ker.double().double(), q2_ker.double().double()),
+            (pmq1_ker.double().double(), pmq2_ker.double().double()),
+        ) {
+            Some(k) => k,
+            None => return None,
+        };
+        kernel_e.isogeny_no_extra_torsion(
+            e_chain,
+            &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
+            None,
+        )
+    } else {
+        kernel.isogeny(
+            e_chain,
+            &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
+            // TODO(byte-eq): C reference's sign uses
+            // `theta_chain_compute_and_eval_randomized` here too
+            // (`sign.c:274`). For sign-side KAT byte-equality this needs to
+            // be `Some(rng)` threaded through, matching keygen's outer
+            // chain. Keygen byte-eq does not depend on this.
+            None,
+        )
+    } {
         Some(r) => r,
         None => {
             #[cfg(test)]
