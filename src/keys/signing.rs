@@ -1569,6 +1569,7 @@ impl SigningKey {
                     q_rsp,
                     e_rsp_prime_te,
                     r_rsp,
+                    rng,
                 ) {
                     Some(r) => r,
                     None => {
@@ -2111,11 +2112,24 @@ pub(crate) fn compute_challenge_isogeny(
     // serialization but verify rejects at the (2,2)-chain step.
     if e_prime.j_invariant() != curve_chl.j_invariant() {
         #[cfg(test)]
-        crate::selkie_trace!(
-            "[compute_challenge_isogeny] DROP: j(e_prime)={:?} ≠ j(curve_chl)={:?}",
-            e_prime.j_invariant(),
-            curve_chl.j_invariant(),
-        );
+        {
+            let fp2_hex = |v: &Fp2| -> String {
+                let bytes = v.to_bytes();
+                let mut a = bytes[..32].to_vec();
+                a.reverse();
+                let mut b = bytes[32..].to_vec();
+                b.reverse();
+                format!("0x{} + i*0x{}", hex::encode(a), hex::encode(b))
+            };
+            crate::selkie_trace!(
+                "[compute_challenge_isogeny] DROP: j(e_prime)   ={}",
+                fp2_hex(&e_prime.j_invariant()),
+            );
+            crate::selkie_trace!(
+                "[compute_challenge_isogeny] DROP: j(curve_chl)={}",
+                fp2_hex(&curve_chl.j_invariant()),
+            );
+        }
         return None;
     }
     let iso = e_prime.isomorphism(&curve_chl)?;
@@ -2182,7 +2196,7 @@ fn log2_order_fp2(x: &Fp2, max: u32) -> i32 {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn split_auxiliary_isogeny(
+pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     e1: &Curve,
     e2: &Curve,
     p1: &ProjectiveXOnlyPoint,
@@ -2194,6 +2208,7 @@ pub(crate) fn split_auxiliary_isogeny(
     q_rsp: BigInt<4>,
     e_prime: TorsionExponent,
     r_rsp: TorsionExponent,
+    rng: &mut R,
 ) -> Option<SplitResult> {
     #[cfg(test)]
     use crate::curves::pairing::weil_pairing;
@@ -2445,15 +2460,21 @@ pub(crate) fn split_auxiliary_isogeny(
             None,
         )
     } else {
+        // C ref's sign uses `theta_chain_compute_and_eval_randomized`
+        // here (`sign.c:274` and chain dispatch via
+        // `theta_isogenies.c`'s `splitting_compute` with
+        // `randomize=true`). The randomized variant picks a level-2
+        // normalization matrix index from `[0, 6)` by consuming 4 bytes
+        // from the DRBG — without this, our (2,2)-chain codomain lands
+        // on a different (but isomorphic) Montgomery model than C-ref's,
+        // basis points pushed through diverge, and `compute_even_response`
+        // produces a different `j(E_chl_3)`. With `Some(rng)`, both
+        // implementations consume the same DRBG bytes and produce the
+        // same projective representative of the codomain product surface.
         kernel.isogeny(
             e_chain,
             &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
-            // TODO(byte-eq): C reference's sign uses
-            // `theta_chain_compute_and_eval_randomized` here too
-            // (`sign.c:274`). For sign-side KAT byte-equality this needs to
-            // be `Some(rng)` threaded through, matching keygen's outer
-            // chain. Keygen byte-eq does not depend on this.
-            None,
+            Some(rng),
         )
     } {
         Some(r) => r,
