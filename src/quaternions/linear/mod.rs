@@ -6,7 +6,7 @@
 //! quaternion algebra B_{p,∞}.
 
 use core::{
-    fmt,
+    array, fmt,
     ops::{Add, Index, IndexMut, Mul, Neg, Sub},
 };
 
@@ -724,6 +724,606 @@ impl<const N: usize> Matrix<N> {
                 narrow(&a[3][2]),
                 narrow(&a[3][3]),
             ),
+        ])
+    }
+}
+
+impl<const N: usize> Matrix<N> {
+    /// Modular HNF mirroring C-ref's `ibz_mat_4xn_hnf_mod_core`
+    /// (`hnf.c:116`) byte-for-byte.
+    ///
+    /// Differs from [`Matrix::from_hnf_columns_mod`] in convention:
+    ///
+    /// - **Decreasing modulus**: `m /= d` after each pivot, peeling off the
+    ///   gcd. The original `from_hnf_columns_mod` uses a constant modulus
+    ///   throughout.
+    /// - **Separate output array**: `w[0..3]` accumulates output columns,
+    ///   distinct from the input/working `a[]`.
+    /// - **Pivot col tracking**: `k = n-1, n-2, ..., n-4` (the last 4 cols
+    ///   become output), separate from the row pivot `i = 3, 2, 1, 0`.
+    ///
+    /// Used by [`Lattice::sum_mod_cref`] (sign-side response phase).
+    /// The original `from_hnf_columns_mod` is still used by keygen's
+    /// `build_equiv_from_delta`, where its convention coincides with
+    /// canonical HNF for keygen-shaped inputs.
+    pub fn from_hnf_columns_mod_cref<const W: usize>(
+        cols: &[Vector<N>],
+        modulus: &BigInt<N>,
+    ) -> Self {
+        const {
+            assert!(
+                W >= N,
+                "Matrix::from_hnf_columns_mod_cref: working width W must be >= storage width N"
+            )
+        };
+        let n = cols.len();
+        assert!(n >= 4, "need at least 4 columns for rank-4 HNF");
+
+        #[cfg(test)]
+        if std::env::var("SELKIE_HNF_TRACE").is_ok() {
+            eprintln!(
+                "[HNF_CREF] called with n={n} modulus_bits={}",
+                modulus.bitsize()
+            );
+        }
+
+        let mut a: Vec<[BigInt<W>; 4]> = cols
+            .iter()
+            .map(|v| {
+                [
+                    v[0].widen::<W>(),
+                    v[1].widen::<W>(),
+                    v[2].widen::<W>(),
+                    v[3].widen::<W>(),
+                ]
+            })
+            .collect();
+
+        let mut m: BigInt<W> = modulus.widen();
+        let mut w: [[BigInt<W>; 4]; 4] = [[BigInt::<W>::ZERO; 4]; 4];
+
+        let lin_comb = |c1: &BigInt<W>,
+                        v1: &[BigInt<W>; 4],
+                        c2: &BigInt<W>,
+                        v2: &[BigInt<W>; 4]|
+         -> [BigInt<W>; 4] {
+            [
+                c1.ct_mul(&v1[0]).ct_add(&c2.ct_mul(&v2[0])),
+                c1.ct_mul(&v1[1]).ct_add(&c2.ct_mul(&v2[1])),
+                c1.ct_mul(&v1[2]).ct_add(&c2.ct_mul(&v2[2])),
+                c1.ct_mul(&v1[3]).ct_add(&c2.ct_mul(&v2[3])),
+            ]
+        };
+
+        // Two mod variants matching C-ref:
+        //
+        // - `centered_mod`: result in `(-m/2, m/2]`. Used in inner gcd-combine loop
+        //   (`ibz_vec_4_linear_combination_mod` → `ibz_centered_mod` in `hnf.c`).
+        // - `positive_mod`: result in `[0, |m|)`. Used in output store
+        //   (`ibz_vec_4_scalar_mul_mod` → `ibz_mod`).
+        let centered_mod = |x: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
+            let mut r = x.ct_mod(m);
+            if bool::from(r.is_negative()) {
+                r = r.ct_add(m);
+            }
+            let two_r = r.ct_add(&r);
+            if bool::from(two_r.ct_sub(m).is_positive()) {
+                r.ct_sub(m)
+            } else {
+                r
+            }
+        };
+        let positive_mod = |x: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
+            let r = x.ct_mod(m);
+            if bool::from(r.is_negative()) {
+                r.ct_add(m)
+            } else {
+                r
+            }
+        };
+        let vec_centered_mod_m = |v: &[BigInt<W>; 4], m: &BigInt<W>| -> [BigInt<W>; 4] {
+            [
+                centered_mod(&v[0], m),
+                centered_mod(&v[1], m),
+                centered_mod(&v[2], m),
+                centered_mod(&v[3], m),
+            ]
+        };
+        let vec_positive_mod_m = |v: &[BigInt<W>; 4], m: &BigInt<W>| -> [BigInt<W>; 4] {
+            [
+                positive_mod(&v[0], m),
+                positive_mod(&v[1], m),
+                positive_mod(&v[2], m),
+                positive_mod(&v[3], m),
+            ]
+        };
+
+        // Truncated division matching C `mpz_tdiv_qr` / `ibz_div`:
+        // quotient rounds toward zero, remainder takes sign of dividend.
+        // Selkie's `BigInt::div_rem` is Euclidean (floor for positive
+        // divisor, with positive remainder), which differs from C-ref
+        // on negative dividends. The HNF algorithm passes negative
+        // intermediate values to `ibz_div` in multiple places
+        // (coeff_1 = a[k][i]/d, coeff_2 = a[j][i]/d, and inside
+        // `ibz_xgcd_with_u_not_0`), so matching `mpz_tdiv_qr` semantics
+        // is required to produce the same canonical HNF as C-ref.
+        let trunc_div_rem = |a: &BigInt<W>, b: &BigInt<W>| -> (BigInt<W>, BigInt<W>) {
+            let (q_eu, r_eu) = a.div_rem(b);
+            if bool::from(a.is_negative()) && !bool::from(r_eu.is_zero()) {
+                // Euclidean→truncated conversion for a<0 with nonzero remainder:
+                //   trunc rounds toward 0 → |q_trunc| = |q_eu| - 1.
+                //   sign(q_trunc) = sign(a)⊕sign(b) = sign(q_eu).
+                //   So q_trunc = q_eu + sign(b) (when sign(q_eu) = −sign(b),
+                //   moves q_eu one step toward 0).
+                // Examples: (−7, 3) Eu=(−3, 2), trunc=(−2, −1); add +1=sign(3).
+                //           (−7, −3) Eu=(3, 2), trunc=(2, −1); add −1=sign(−3).
+                let b_abs = b.abs();
+                let r_trunc = r_eu.ct_sub(&b_abs);
+                let sign_b = if bool::from(b.is_negative()) {
+                    BigInt::<W>::ONE.wrapping_neg()
+                } else {
+                    BigInt::<W>::ONE
+                };
+                let q_trunc = q_eu.ct_add(&sign_b);
+                (q_trunc, r_trunc)
+            } else {
+                (q_eu, r_eu)
+            }
+        };
+
+        // Helper: xgcd with u != 0 guarantee AND `u·x > 0`, mirroring
+        // C-ref's `ibz_xgcd_with_u_not_0`. The "u·x > 0" loop
+        // (`hnf_internal.c:90-112`) is critical for the downstream HNF
+        // gcd-combine step to produce canonical off-diagonal entries.
+        // Without it, Selkie's HNF mod gives a "valid HNF" of the same
+        // lattice but with different off-diagonal values than C-ref.
+        // Euclidean xgcd giving CANONICAL cofactors matching GMP's
+        // `mpz_gcdext` semantics (|u| ≤ y/(2·gcd)). Used in place of
+        // Selkie's Stein-based `BigInt::xgcd`, whose cofactors may be
+        // far outside the canonical range — even after the C-ref
+        // "u·x > 0" loop, the LOOP-NORMALIZED u depends on the initial
+        // magnitude, and Stein's output isn't guaranteed close enough
+        // to the canonical to land at the same value. Matching
+        // `mpz_gcdext` byte-for-byte is the surest way to make the
+        // HNF mod algorithm produce canonical upper-triangular form
+        // matching C-ref's `ibz_mat_4xn_hnf_mod_core`.
+        let euclidean_xgcd = |x: &BigInt<W>, y: &BigInt<W>| -> (BigInt<W>, BigInt<W>, BigInt<W>) {
+            #[cfg(test)]
+            if std::env::var("SELKIE_DEBUG_EUCLIDEAN").is_ok() {
+                eprintln!("[euclidean_xgcd] called with x.bits={} y.bits={}", x.bitsize(), y.bitsize());
+            }
+            // Returns (gcd, u, v) with u·x + v·y = gcd, gcd ≥ 0, and
+            // |u| ≤ |y|/(2·gcd), matching mpz_gcdext.
+            if bool::from(x.is_zero()) && bool::from(y.is_zero()) {
+                return (BigInt::<W>::ZERO, BigInt::<W>::ZERO, BigInt::<W>::ZERO);
+            }
+            // Handle signed inputs by running on absolute values and
+            // adjusting cofactors at the end.
+            let x_neg = bool::from(x.is_negative());
+            let y_neg = bool::from(y.is_negative());
+            let mut a = x.abs();
+            let mut b = y.abs();
+            // (a, b) initial. Track Bezout coefficients (u_a, v_a) and
+            // (u_b, v_b) such that a = u_a·|x| + v_a·|y|,
+            // b = u_b·|x| + v_b·|y|. Start: a = |x|, b = |y|.
+            let mut u_a = BigInt::<W>::ONE;
+            let mut v_a = BigInt::<W>::ZERO;
+            let mut u_b = BigInt::<W>::ZERO;
+            let mut v_b = BigInt::<W>::ONE;
+            // Euclidean: while b != 0, (a, b) = (b, a mod b). Carry
+            // coefficients along.
+            while !bool::from(b.is_zero()) {
+                let (q, r) = a.div_rem(&b);
+                a = b;
+                b = r;
+                let new_u_a = u_b;
+                let new_v_a = v_b;
+                let new_u_b = u_a.ct_sub(&q.ct_mul(&u_b));
+                let new_v_b = v_a.ct_sub(&q.ct_mul(&v_b));
+                u_a = new_u_a;
+                v_a = new_v_a;
+                u_b = new_u_b;
+                v_b = new_v_b;
+            }
+            // gcd = a, with a = u_a·|x| + v_a·|y|.
+            // Adjust cofactor signs to match the SIGNED inputs.
+            let u_final = if x_neg { u_a.wrapping_neg() } else { u_a };
+            let v_final = if y_neg { v_a.wrapping_neg() } else { v_a };
+            (a, u_final, v_final)
+        };
+
+        let xgcd_with_u_not_0 =
+            |x: &BigInt<W>, y: &BigInt<W>| -> (BigInt<W>, BigInt<W>, BigInt<W>) {
+                // Special case: both zero.
+                if bool::from(x.is_zero()) && bool::from(y.is_zero()) {
+                    return (BigInt::<W>::ONE, BigInt::<W>::ONE, BigInt::<W>::ZERO);
+                }
+                let (d, mut u, mut v) = euclidean_xgcd(x, y);
+
+                // Step 1: ensure u != 0. If u == 0 (= y divides x), shift
+                // to u = 1 by setting v -= x/y.
+                if bool::from(u.is_zero()) && !bool::from(x.is_zero()) {
+                    let y_use = if bool::from(y.is_zero()) {
+                        BigInt::<W>::ONE
+                    } else {
+                        *y
+                    };
+                    // C-ref uses `ibz_div` (truncated). For negative x,
+                    // Selkie's Euclidean `div_rem` would differ.
+                    let (q, _) = trunc_div_rem(x, &y_use);
+                    v = v.ct_sub(&q);
+                    u = BigInt::<W>::ONE;
+                }
+
+                // Step 2: ensure u·x > 0 (and as small as possible),
+                // matching C-ref `hnf_internal.c:90-112`. Each step
+                // adds ±y/d to u and ∓x/d to v, preserving the Bezout
+                // identity `u·x + v·y = d`.
+                if !bool::from(x.is_zero()) {
+                    let xy = x.ct_mul(y);
+                    let neg = bool::from(xy.is_negative());
+                    let (q_y_d_sgn, _) = trunc_div_rem(y, &d);
+                    let q_y_d = if neg { q_y_d_sgn.wrapping_neg() } else { q_y_d_sgn };
+                    let (q_x_d_sgn, _) = trunc_div_rem(x, &d);
+                    let q_x_d = if neg { q_x_d_sgn.wrapping_neg() } else { q_x_d_sgn };
+                    // First, run C-ref's "while u·x ≤ 0" loop to ensure
+                    // u·x > 0. Each step: u += sign·y/d, v -= sign·x/d.
+                    let mut ux = x.ct_mul(&u);
+                    while !bool::from(ux.is_positive()) {
+                        u = u.ct_add(&q_y_d);
+                        v = v.ct_sub(&q_x_d);
+                        ux = x.ct_mul(&u);
+                    }
+                    // Then minimize |u|: while subtracting one offset
+                    // (u -= sign·y/d) keeps ux > 0 AND reduces |u|, do
+                    // so. Matches GMP `mpz_gcdext`'s |u| ≤ |y|/(2g)
+                    // bound. Without this, Selkie's Stein-based xgcd
+                    // (whose initial |u| can be far from canonical)
+                    // leaves us with non-canonical cofactors after
+                    // the upward "u·x > 0" loop, producing a
+                    // different HNF mod result than C-ref.
+                    loop {
+                        let try_u = u.ct_sub(&q_y_d);
+                        let try_ux = x.ct_mul(&try_u);
+                        if !bool::from(try_ux.is_positive()) {
+                            break;
+                        }
+                        if !bool::from(u.abs().ct_sub(&try_u.abs()).is_positive()) {
+                            break;
+                        }
+                        u = try_u;
+                        v = v.ct_add(&q_x_d);
+                    }
+                }
+                (d, u, v)
+            };
+
+        let mut i: i32 = 3;
+        let mut k: usize = n - 1;
+        let mut j: usize = n - 1;
+
+        #[cfg(test)]
+        let trace = std::env::var("SELKIE_TRACE_HNF").is_ok();
+        #[cfg(not(test))]
+        let trace = false;
+        #[cfg(test)]
+        let dump_vec = |label: &str, v: &[BigInt<W>; 4]| {
+            if trace {
+                eprintln!(
+                    "  {}: ({} bits, sign={}; {} bits; {} bits; {} bits)",
+                    label,
+                    v[0].bitsize(), if bool::from(v[0].is_negative()) { '-' } else { '+' },
+                    v[1].bitsize(), v[2].bitsize(), v[3].bitsize()
+                );
+            }
+        };
+        #[cfg(not(test))]
+        let dump_vec = |_label: &str, _v: &[BigInt<W>; 4]| {};
+        if trace {
+            eprintln!("[HNF_TRACE] entering outer loop, n={n}, modulus.bits={}", m.bitsize());
+        }
+
+        while i != -1 {
+            if trace {
+                eprintln!("[HNF_TRACE] === outer i={i}, k={k}, m.bits={} ===", m.bitsize());
+                dump_vec("a[k] (before inner)", &a[k]);
+            }
+            // Inner loop: accumulate gcd of row-i entries into a[k][i].
+            while j != 0 {
+                j -= 1;
+                if !bool::from(a[j][i as usize].is_zero()) {
+                    let val_k = a[k][i as usize];
+                    let val_j = a[j][i as usize];
+                    if trace {
+                        eprintln!(
+                            "[HNF_TRACE]  inner j={j}: val_k.bits={} (sign {}), val_j.bits={} (sign {})",
+                            val_k.bitsize(), if bool::from(val_k.is_negative()) { '-' } else { '+' },
+                            val_j.bitsize(), if bool::from(val_j.is_negative()) { '-' } else { '+' },
+                        );
+                    }
+                    let (d, u, v) = xgcd_with_u_not_0(&val_k, &val_j);
+                    if trace {
+                        eprintln!(
+                            "[HNF_TRACE]    xgcd: d.bits={}, u.bits={} (sign {}), v.bits={} (sign {})",
+                            d.bitsize(),
+                            u.bitsize(), if bool::from(u.is_negative()) { '-' } else { '+' },
+                            v.bitsize(), if bool::from(v.is_negative()) { '-' } else { '+' },
+                        );
+                    }
+                    let c = lin_comb(&u, &a[k], &v, &a[j]);
+                    // C-ref uses `ibz_div` (truncated) for coeff_1 and coeff_2.
+                    // a[k][i] or a[j][i] may be negative (post centered_mod),
+                    // so truncated vs Euclidean div gives different coeffs.
+                    let (coeff_1, _) = trunc_div_rem(&val_k, &d);
+                    let (coeff_2_pos, _) = trunc_div_rem(&val_j, &d);
+                    let coeff_2 = coeff_2_pos.wrapping_neg();
+                    let new_j = lin_comb(&coeff_1, &a[j], &coeff_2, &a[k]);
+                    a[j] = vec_centered_mod_m(&new_j, &m);
+                    a[k] = vec_centered_mod_m(&c, &m);
+                    if trace {
+                        dump_vec("    new a[k]", &a[k]);
+                        dump_vec("    new a[j]", &a[j]);
+                    }
+                }
+            }
+
+            // xgcd col-k's pivot entry with modulus → final pivot.
+            let val_k_i = a[k][i as usize];
+            let (d, u, _v) = xgcd_with_u_not_0(&val_k_i, &m);
+            if trace {
+                eprintln!(
+                    "[HNF_TRACE]  pivot xgcd: a[k][i].bits={}, d.bits={}, u.bits={} (sign {})",
+                    val_k_i.bitsize(), d.bitsize(),
+                    u.bitsize(), if bool::from(u.is_negative()) { '-' } else { '+' },
+                );
+            }
+
+            // Output: positive mod (matches C-ref's `ibz_vec_4_scalar_mul_mod`).
+            let mul_k_u: [BigInt<W>; 4] = array::from_fn(|r| u.ct_mul(&a[k][r]));
+            w[i as usize] = vec_positive_mod_m(&mul_k_u, &m);
+
+            if bool::from(w[i as usize][i as usize].is_zero()) {
+                w[i as usize][i as usize] = m;
+            }
+            if trace {
+                dump_vec("  w[i] (after set)", &w[i as usize]);
+            }
+
+            let pivot = w[i as usize][i as usize];
+            for h in (i as usize + 1)..4 {
+                // Floor division (per C-ref `ibz_div_floor`). Selkie's
+                // `div_rem` is truncated; using Euclidean (positive)
+                // remainder gives floor q for negative entries.
+                let entry = w[h][i as usize];
+                let r = positive_mod(&entry, &pivot);
+                let (q, _) = entry.ct_sub(&r).div_rem(&pivot);
+                let neg_q = q.wrapping_neg();
+                let w_i = w[i as usize];
+                let updated = lin_comb(&BigInt::<W>::ONE, &w[h], &neg_q, &w_i);
+                w[h] = updated;
+            }
+
+            let (new_m, _r) = m.div_rem(&d);
+            m = new_m;
+
+            if i != 0 {
+                k -= 1;
+                i -= 1;
+                j = k;
+                if bool::from(a[k][i as usize].is_zero()) {
+                    a[k][i as usize] = m;
+                }
+            } else {
+                break;
+            }
+        }
+
+        let narrow = |x: &BigInt<W>| -> BigInt<N> {
+            x.narrow_to::<N>()
+                .expect("mod-HNF output fits in N: entries are bounded by modulus < 2^(64 N)")
+        };
+        Self::from_columns(&[
+            Vector::new(
+                narrow(&w[0][0]),
+                narrow(&w[0][1]),
+                narrow(&w[0][2]),
+                narrow(&w[0][3]),
+            ),
+            Vector::new(
+                narrow(&w[1][0]),
+                narrow(&w[1][1]),
+                narrow(&w[1][2]),
+                narrow(&w[1][3]),
+            ),
+            Vector::new(
+                narrow(&w[2][0]),
+                narrow(&w[2][1]),
+                narrow(&w[2][2]),
+                narrow(&w[2][3]),
+            ),
+            Vector::new(
+                narrow(&w[3][0]),
+                narrow(&w[3][1]),
+                narrow(&w[3][2]),
+                narrow(&w[3][3]),
+            ),
+        ])
+    }
+
+    /// V2 fresh literal port of C-ref's `ibz_mat_4xn_hnf_mod_core`.
+    /// Used for cross-validation against `from_hnf_columns_mod_cref`
+    /// (which has a known bug for KAT-1 sign's inputs). Calls Selkie's
+    /// `BigInt::xgcd` directly (= Stein binary) rather than a custom
+    /// Euclidean, and uses literal truncated-division and centered-mod
+    /// translations from the C source.
+    pub fn from_hnf_columns_mod_cref_v2<const W: usize>(
+        cols: &[Vector<N>],
+        modulus: &BigInt<N>,
+    ) -> Self {
+        const {
+            assert!(
+                W >= N,
+                "from_hnf_columns_mod_cref_v2: working width W must be >= storage width N"
+            )
+        };
+
+        // Truncated division (mpz_tdiv_qr / ibz_div): trunc toward 0,
+        // remainder has sign of dividend.
+        let t_div_rem = |a: &BigInt<W>, b: &BigInt<W>| -> (BigInt<W>, BigInt<W>) {
+            let abs_a = a.abs();
+            let abs_b = b.abs();
+            let (q_mag, r_mag) = abs_a.div_rem(&abs_b);
+            let a_neg = bool::from(a.is_negative());
+            let b_neg = bool::from(b.is_negative());
+            let q_sign_negative = a_neg ^ b_neg;
+            let q = if q_sign_negative { q_mag.wrapping_neg() } else { q_mag };
+            let r = if a_neg { r_mag.wrapping_neg() } else { r_mag };
+            (q, r)
+        };
+        // Floor division (mpz_fdiv_qr / ibz_div_floor): only used on
+        // positive divisor in HNF, where Selkie's Euclidean div_rem
+        // gives the floor result directly.
+        let f_div_rem = |a: &BigInt<W>, b: &BigInt<W>| -> (BigInt<W>, BigInt<W>) {
+            a.div_rem(b)
+        };
+        // Centered mod (hnf_internal.c:21-36).
+        let centered_mod = |a: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
+            let tmp = a.ct_mod(m);
+            let tmp = if bool::from(tmp.is_zero()) { *m } else { tmp };
+            let two = BigInt::<W>::ONE.ct_add(&BigInt::<W>::ONE);
+            let (d, _) = f_div_rem(m, &two);
+            let cmp = tmp.ct_sub(&d);
+            if bool::from(cmp.is_positive()) {
+                tmp.ct_sub(m)
+            } else {
+                tmp
+            }
+        };
+        let vec4_lin_comb = |ca: &BigInt<W>, va: &[BigInt<W>; 4], cb: &BigInt<W>, vb: &[BigInt<W>; 4]| -> [BigInt<W>; 4] {
+            let mut out = [BigInt::<W>::ZERO; 4];
+            for i in 0..4 {
+                out[i] = ca.ct_mul(&va[i]).ct_add(&cb.ct_mul(&vb[i]));
+            }
+            out
+        };
+        let vec4_lin_comb_mod = |ca: &BigInt<W>, va: &[BigInt<W>; 4], cb: &BigInt<W>, vb: &[BigInt<W>; 4], m: &BigInt<W>| -> [BigInt<W>; 4] {
+            let mut sums = [BigInt::<W>::ZERO; 4];
+            for i in 0..4 {
+                let s = ca.ct_mul(&va[i]).ct_add(&cb.ct_mul(&vb[i]));
+                sums[i] = centered_mod(&s, m);
+            }
+            sums
+        };
+        let vec4_copy_mod = |v: &[BigInt<W>; 4], m: &BigInt<W>| -> [BigInt<W>; 4] {
+            let mut out = [BigInt::<W>::ZERO; 4];
+            for i in 0..4 {
+                out[i] = centered_mod(&v[i], m);
+            }
+            out
+        };
+        let vec4_scalar_mul_mod = |s: &BigInt<W>, v: &[BigInt<W>; 4], m: &BigInt<W>| -> [BigInt<W>; 4] {
+            let mut out = [BigInt::<W>::ZERO; 4];
+            for i in 0..4 {
+                out[i] = v[i].ct_mul(s).ct_mod(m);
+            }
+            out
+        };
+        let ibz_xgcd_with_u_not_0 = |x: &BigInt<W>, y: &BigInt<W>| -> (BigInt<W>, BigInt<W>, BigInt<W>) {
+            if bool::from(x.is_zero()) && bool::from(y.is_zero()) {
+                return (BigInt::<W>::ONE, BigInt::<W>::ONE, BigInt::<W>::ZERO);
+            }
+            let x1 = *x;
+            let y1 = *y;
+            let (d, mut u, mut v) = x1.xgcd(&y1);
+            if bool::from(u.is_zero()) {
+                if !bool::from(x1.is_zero()) {
+                    let y_use = if bool::from(y1.is_zero()) { BigInt::<W>::ONE } else { y1 };
+                    let (q, _r) = t_div_rem(&x1, &y_use);
+                    v = v.ct_sub(&q);
+                }
+                u = BigInt::<W>::ONE;
+            }
+            if !bool::from(x1.is_zero()) {
+                let r = x1.ct_mul(&y1);
+                let neg = bool::from(r.is_negative());
+                let mut q = x1.ct_mul(&u);
+                while !bool::from(q.is_positive()) {
+                    let (mut q_y, _r_y) = t_div_rem(&y1, &d);
+                    if neg { q_y = q_y.wrapping_neg(); }
+                    u = u.ct_add(&q_y);
+                    let (mut q_x, _r_x) = t_div_rem(&x1, &d);
+                    if neg { q_x = q_x.wrapping_neg(); }
+                    v = v.ct_sub(&q_x);
+                    q = x1.ct_mul(&u);
+                }
+            }
+            (d, u, v)
+        };
+
+        let n = cols.len();
+        assert!(n > 3, "generator_number must be > 3");
+        let mut i: i32 = 3;
+        let mut j: usize = n - 1;
+        let mut k: usize = n - 1;
+        let mut a: Vec<[BigInt<W>; 4]> = cols.iter().map(|c| [
+            c[0].widen::<W>(), c[1].widen::<W>(), c[2].widen::<W>(), c[3].widen::<W>(),
+        ]).collect();
+        let mut w: [[BigInt<W>; 4]; 4] = [[BigInt::<W>::ZERO; 4]; 4];
+        assert!(bool::from(modulus.is_positive()), "modulus must be > 0");
+        let mut m: BigInt<W> = modulus.widen::<W>();
+
+        while i != -1 {
+            while j != 0 {
+                j -= 1;
+                if !bool::from(a[j][i as usize].is_zero()) {
+                    let val_k_i = a[k][i as usize];
+                    let val_j_i = a[j][i as usize];
+                    let (d, u, v) = ibz_xgcd_with_u_not_0(&val_k_i, &val_j_i);
+                    let c = vec4_lin_comb(&u, &a[k], &v, &a[j]);
+                    let (coeff_1, _r1) = t_div_rem(&val_k_i, &d);
+                    let (coeff_2_pre, _r2) = t_div_rem(&val_j_i, &d);
+                    let coeff_2 = coeff_2_pre.wrapping_neg();
+                    let new_a_j = vec4_lin_comb_mod(&coeff_1, &a[j], &coeff_2, &a[k], &m);
+                    a[j] = new_a_j;
+                    a[k] = vec4_copy_mod(&c, &m);
+                }
+            }
+            let val_k_i = a[k][i as usize];
+            let (d, u, _v) = ibz_xgcd_with_u_not_0(&val_k_i, &m);
+            w[i as usize] = vec4_scalar_mul_mod(&u, &a[k], &m);
+            if bool::from(w[i as usize][i as usize].is_zero()) {
+                w[i as usize][i as usize] = m;
+            }
+            let pivot = w[i as usize][i as usize];
+            for h in ((i as usize) + 1)..4 {
+                let w_h_i = w[h][i as usize];
+                let (q_pre, _r) = f_div_rem(&w_h_i, &pivot);
+                let q = q_pre.wrapping_neg();
+                let w_h = w[h];
+                let w_i = w[i as usize];
+                w[h] = vec4_lin_comb(&BigInt::<W>::ONE, &w_h, &q, &w_i);
+            }
+            let (new_m, _r) = t_div_rem(&m, &d);
+            m = new_m;
+            if i != 0 {
+                k -= 1;
+                i -= 1;
+                j = k;
+                if bool::from(a[k][i as usize].is_zero()) {
+                    a[k][i as usize] = m;
+                }
+            } else {
+                i -= 1;
+            }
+        }
+        let narrow = |x: &BigInt<W>| -> BigInt<N> {
+            x.narrow_to::<N>().expect("HNF output fits in N")
+        };
+        Self::from_columns(&[
+            Vector::new(narrow(&w[0][0]), narrow(&w[0][1]), narrow(&w[0][2]), narrow(&w[0][3])),
+            Vector::new(narrow(&w[1][0]), narrow(&w[1][1]), narrow(&w[1][2]), narrow(&w[1][3])),
+            Vector::new(narrow(&w[2][0]), narrow(&w[2][1]), narrow(&w[2][2]), narrow(&w[2][3])),
+            Vector::new(narrow(&w[3][0]), narrow(&w[3][1]), narrow(&w[3][2]), narrow(&w[3][3])),
         ])
     }
 }

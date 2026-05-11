@@ -602,3 +602,504 @@ fn from_hnf_columns_preserves_covolume_4x4() {
         "from_hnf_columns must preserve |det|: original {original_det:?}, HNF {hnf_det:?}"
     );
 }
+
+/// `from_hnf_columns_mod_cref` must produce the same canonical HNF
+/// as classical `from_hnf_columns` when modulus = |det|.
+///
+/// Both should give the unique upper-triangular HNF for the same
+/// 4-col rank-4 input lattice.
+#[test]
+fn from_hnf_columns_mod_cref_matches_classical_4cols() {
+    let cols = [
+        V::new(i(10), i(0), i(0), i(0)),
+        V::new(i(3), i(4), i(0), i(0)),
+        V::new(i(5), i(7), i(8), i(0)),
+        V::new(i(1), i(2), i(3), i(4)),
+    ];
+    let det = M::from_columns(&cols).det().abs();
+    let hnf_classical = M::from_hnf_columns(&cols);
+    let hnf_mod_cref = M::from_hnf_columns_mod_cref::<8>(&cols, &det);
+    let cols_classical = hnf_classical.columns();
+    let cols_mod_cref = hnf_mod_cref.columns();
+    for j in 0..4 {
+        for r in 0..4 {
+            assert_eq!(
+                cols_classical[j][r], cols_mod_cref[j][r],
+                "col={j} row={r}: classical={:?}, mod_cref={:?}",
+                cols_classical[j][r], cols_mod_cref[j][r]
+            );
+        }
+    }
+}
+
+/// Same as above but with negative entries, which exercise different
+/// xgcd cofactor sign-handling paths.
+#[test]
+fn from_hnf_columns_mod_cref_with_negatives_4cols() {
+    let cols = [
+        V::new(i(7), i(-3), i(-5), i(2)),
+        V::new(i(-1), i(11), i(0), i(-4)),
+        V::new(i(0), i(0), i(13), i(-1)),
+        V::new(i(0), i(0), i(0), i(17)),
+    ];
+    let det = M::from_columns(&cols).det().abs();
+    let hnf_classical = M::from_hnf_columns(&cols);
+    let hnf_mod_cref = M::from_hnf_columns_mod_cref::<8>(&cols, &det);
+    let cols_classical = hnf_classical.columns();
+    let cols_mod_cref = hnf_mod_cref.columns();
+    for j in 0..4 {
+        for r in 0..4 {
+            assert_eq!(
+                cols_classical[j][r], cols_mod_cref[j][r],
+                "col={j} row={r}: classical={:?}, mod_cref={:?}",
+                cols_classical[j][r], cols_mod_cref[j][r]
+            );
+        }
+    }
+}
+
+/// Exposes a SIGN-SIDE BUG: Selkie's three HNF variants
+/// (`from_hnf_columns` classical, `from_hnf_columns_mod` constant-mod,
+/// `from_hnf_columns_mod_cref` decreasing-mod) give DIFFERENT output
+/// for ~600-bit inputs at width 30. They should all give the same
+/// canonical upper-triangular HNF since they describe the same
+/// lattice. This is the root cause of KAT-1 sign's wrong i_com_rsp
+/// (see `project_sign_kat_001_pre_hnf_lattice_2026-05-10.md`).
+///
+/// Marked `#[ignore]` until fixed. Re-enable once HNF impls agree.
+#[test]
+#[ignore = "exposes Selkie HNF variant disagreement bug for large inputs"]
+fn from_hnf_columns_mod_cref_large_values_4cols() {
+    use crate::quaternions::bigint::BigInt;
+    // Construct a 4×4 lattice with ~600-bit values, with some negatives.
+    let mut limbs0 = [0u64; 30];
+    limbs0[9] = 1;
+    let _big = BigInt::<30>::from_limbs(limbs0);
+    let mut limbs_a = [0u64; 30];
+    limbs_a[9] = 0x1234_5678_9ABC_DEF0;
+    limbs_a[5] = 0x1111_2222_3333_4444;
+    let mut limbs_b = [0u64; 30];
+    limbs_b[8] = 0xFEDC_BA98_7654_3210;
+    let mut limbs_c = [0u64; 30];
+    limbs_c[7] = 0xABCD_EF01_2345_6789;
+    let big_a = BigInt::<30>::from_limbs(limbs_a);
+    let big_b = BigInt::<30>::from_limbs(limbs_b);
+    let big_c = BigInt::<30>::from_limbs(limbs_c);
+    let zero = BigInt::<30>::ZERO;
+    let cols = [
+        Vector::<30>::new(big_a, big_b.wrapping_neg(), big_c.wrapping_neg(), zero),
+        Vector::<30>::new(big_b, big_a, zero, big_c.wrapping_neg()),
+        Vector::<30>::new(big_c, zero, big_a, big_b),
+        Vector::<30>::new(zero, big_c, big_b.wrapping_neg(), big_a),
+    ];
+    let det = Matrix::from_columns(&cols).det().abs();
+    let hnf_classical = Matrix::from_hnf_columns(&cols);
+    let hnf_mod_cref = Matrix::from_hnf_columns_mod_cref::<60>(&cols, &det);
+    let hnf_mod = Matrix::from_hnf_columns_mod::<60>(&cols, &det);
+    let cols_classical = hnf_classical.columns();
+    let cols_mod_cref = hnf_mod_cref.columns();
+    let cols_mod = hnf_mod.columns();
+    let mut all_match = true;
+    for j in 0..4 {
+        for r in 0..4 {
+            if cols_classical[j][r] != cols_mod_cref[j][r] {
+                eprintln!(
+                    "MISMATCH classical vs mod_cref col={j} row={r}: classical={:?}, mod_cref={:?}",
+                    cols_classical[j][r], cols_mod_cref[j][r]
+                );
+                all_match = false;
+            }
+            if cols_classical[j][r] != cols_mod[j][r] {
+                eprintln!(
+                    "MISMATCH classical vs mod col={j} row={r}: classical={:?}, mod={:?}",
+                    cols_classical[j][r], cols_mod[j][r]
+                );
+                all_match = false;
+            }
+        }
+    }
+    assert!(all_match, "HNF variants give different outputs");
+}
+
+/// Sanity check: HNF of a 4×4 matrix where the answer is known.
+/// All three Selkie HNF variants should give the same canonical
+/// upper-triangular form.
+#[test]
+fn from_hnf_columns_predictable_4cols() {
+    // 4 cols with det = 7·11·13·17 = 17017. HNF should be diagonal
+    // (since cols are already independent) with pivots 7, 11, 13, 17.
+    let cols = [
+        V::new(i(7), i(0), i(0), i(0)),
+        V::new(i(2), i(11), i(0), i(0)),
+        V::new(i(3), i(5), i(13), i(0)),
+        V::new(i(1), i(4), i(7), i(17)),
+    ];
+    let det = M::from_columns(&cols).det().abs();
+    eprintln!("det = {:?}", det);
+    let hnf_classical = M::from_hnf_columns(&cols);
+    let hnf_mod = M::from_hnf_columns_mod::<8>(&cols, &det);
+    let hnf_mod_cref = M::from_hnf_columns_mod_cref::<8>(&cols, &det);
+
+    eprintln!("\nclassical HNF columns:");
+    for (j, col) in hnf_classical.columns().iter().enumerate() {
+        eprintln!(
+            "  col {}: ({:?}, {:?}, {:?}, {:?})",
+            j, col[0], col[1], col[2], col[3]
+        );
+    }
+    eprintln!("\nmod HNF columns:");
+    for (j, col) in hnf_mod.columns().iter().enumerate() {
+        eprintln!(
+            "  col {}: ({:?}, {:?}, {:?}, {:?})",
+            j, col[0], col[1], col[2], col[3]
+        );
+    }
+    eprintln!("\nmod_cref HNF columns:");
+    for (j, col) in hnf_mod_cref.columns().iter().enumerate() {
+        eprintln!(
+            "  col {}: ({:?}, {:?}, {:?}, {:?})",
+            j, col[0], col[1], col[2], col[3]
+        );
+    }
+    // All three should match. Diagonals (7, 11, 13, 17), off-diagonals reduced.
+    assert_eq!(hnf_classical, hnf_mod_cref, "classical vs mod_cref");
+    assert_eq!(hnf_classical, hnf_mod, "classical vs mod");
+}
+
+/// Take the predictable test inputs and shift left by 200 bits.
+/// HNF should still agree across all three Selkie variants — but at
+/// width 30 with large entries this exposes the bug.
+#[test]
+fn from_hnf_columns_predictable_4cols_shifted() {
+    use crate::quaternions::bigint::BigInt;
+    let shift = 200;
+    let big = |v: i64| -> BigInt<30> {
+        let bi: BigInt<30> = BigInt::<30>::from(v);
+        bi.shl(shift)
+    };
+    let z = BigInt::<30>::ZERO;
+    let cols = [
+        Vector::<30>::new(big(7), z, z, z),
+        Vector::<30>::new(big(2), big(11), z, z),
+        Vector::<30>::new(big(3), big(5), big(13), z),
+        Vector::<30>::new(big(1), big(4), big(7), big(17)),
+    ];
+    let det = Matrix::from_columns(&cols).det().abs();
+    eprintln!("det bits = {}", det.bitsize());
+    let hnf_classical = Matrix::from_hnf_columns(&cols);
+    let hnf_mod = Matrix::from_hnf_columns_mod::<60>(&cols, &det);
+    let hnf_mod_cref = Matrix::from_hnf_columns_mod_cref::<60>(&cols, &det);
+
+    eprintln!(
+        "classical col 0 row 0 = {:?}",
+        hnf_classical.columns()[0][0]
+    );
+    eprintln!("mod       col 0 row 0 = {:?}", hnf_mod.columns()[0][0]);
+    eprintln!("mod_cref  col 0 row 0 = {:?}", hnf_mod_cref.columns()[0][0]);
+
+    // The HNF should be diagonal with diagonals 7, 11, 13, 17 each
+    // shifted by 200 bits (since cols are scaled but linearly independent).
+    // Off-diagonals SHOULD match the original `from_hnf_columns_predictable_4cols`
+    // shifted by 200 bits.
+    assert_eq!(hnf_classical, hnf_mod_cref, "classical vs mod_cref");
+    assert_eq!(hnf_classical, hnf_mod, "classical vs mod");
+}
+
+/// Minimal reproducer for the HNF bug — non-triangular 4×4 with small
+/// values, similar shape to KAT-1's mul output.
+#[test]
+fn from_hnf_columns_quaternion_shape_small() {
+    let cols = [
+        V::new(i(11), i(-7), i(-3), i(2)),
+        V::new(i(7), i(11), i(2), i(-3)),
+        V::new(i(3), i(-2), i(11), i(7)),
+        V::new(i(-2), i(3), i(-7), i(11)),
+    ];
+    let det = M::from_columns(&cols).det().abs();
+    eprintln!("det = {:?}", det);
+    let hnf_classical = M::from_hnf_columns(&cols);
+    let hnf_mod = M::from_hnf_columns_mod::<8>(&cols, &det);
+    let hnf_mod_cref = M::from_hnf_columns_mod_cref::<8>(&cols, &det);
+
+    eprintln!("\nclassical:");
+    for (j, col) in hnf_classical.columns().iter().enumerate() {
+        eprintln!(
+            "  col {}: ({:?}, {:?}, {:?}, {:?})",
+            j, col[0], col[1], col[2], col[3]
+        );
+    }
+    eprintln!("\nmod:");
+    for (j, col) in hnf_mod.columns().iter().enumerate() {
+        eprintln!(
+            "  col {}: ({:?}, {:?}, {:?}, {:?})",
+            j, col[0], col[1], col[2], col[3]
+        );
+    }
+    eprintln!("\nmod_cref:");
+    for (j, col) in hnf_mod_cref.columns().iter().enumerate() {
+        eprintln!(
+            "  col {}: ({:?}, {:?}, {:?}, {:?})",
+            j, col[0], col[1], col[2], col[3]
+        );
+    }
+    assert_eq!(hnf_classical, hnf_mod_cref, "classical vs mod_cref");
+    assert_eq!(hnf_classical, hnf_mod, "classical vs mod");
+}
+
+/// Same quaternion-shape inputs at width 30 with 100-bit entries.
+/// Tests if the bug is width-related or value-magnitude related.
+#[test]
+fn from_hnf_columns_quaternion_shape_med_w30() {
+    use crate::quaternions::bigint::BigInt;
+    let to30 = |v: i64| -> BigInt<30> { BigInt::<30>::from(v) };
+    let a = to30(0x123456789ABCDEF0_i64);
+    let b = to30(0x0FEDCBA987654321_i64);
+    let c = to30(0x1111222233334444_i64);
+    let d = to30(0x55556666_i64);
+    let neg = |x: BigInt<30>| -> BigInt<30> { x.wrapping_neg() };
+    let z = BigInt::<30>::ZERO;
+    let cols = [
+        Vector::<30>::new(a, neg(b), neg(c), d),
+        Vector::<30>::new(b, a, d, neg(c)),
+        Vector::<30>::new(c, neg(d), a, b),
+        Vector::<30>::new(z, c, neg(b), a),
+    ];
+    let det = Matrix::from_columns(&cols).det().abs();
+    eprintln!("det bits = {}", det.bitsize());
+    let hnf_classical = Matrix::from_hnf_columns(&cols);
+    let hnf_mod_cref = Matrix::from_hnf_columns_mod_cref::<60>(&cols, &det);
+    let hnf_mod = Matrix::from_hnf_columns_mod::<60>(&cols, &det);
+    if hnf_classical != hnf_mod_cref || hnf_classical != hnf_mod {
+        eprintln!("\nclassical:");
+        for (j, col) in hnf_classical.columns().iter().enumerate() {
+            eprintln!(
+                "  col {}: ({:?}, {:?}, {:?}, {:?})",
+                j,
+                col[0].bitsize(),
+                col[1].bitsize(),
+                col[2].bitsize(),
+                col[3].bitsize()
+            );
+        }
+        eprintln!("mod_cref:");
+        for (j, col) in hnf_mod_cref.columns().iter().enumerate() {
+            eprintln!(
+                "  col {}: ({:?}, {:?}, {:?}, {:?})",
+                j,
+                col[0].bitsize(),
+                col[1].bitsize(),
+                col[2].bitsize(),
+                col[3].bitsize()
+            );
+        }
+    }
+    assert_eq!(hnf_classical, hnf_mod_cref, "classical vs mod_cref");
+    assert_eq!(hnf_classical, hnf_mod, "classical vs mod");
+}
+
+/// Quaternion-shape with 256-bit entries at width 30. Exposes Selkie's
+/// HNF variant disagreement (= the same bug as KAT-1 sign's wrong
+/// `i_com_rsp`). Marked `#[ignore]` until fixed.
+#[test]
+#[ignore = "exposes Selkie HNF variant disagreement bug at width 30 with 256-bit inputs"]
+fn from_hnf_columns_quaternion_shape_256bit_w30() {
+    use crate::quaternions::bigint::BigInt;
+    let mk = |hi: u64, lo: u64| -> BigInt<30> {
+        let mut limbs = [0u64; 30];
+        limbs[0] = lo;
+        limbs[1] = hi;
+        limbs[3] = 0xA1B2_C3D4_E5F6_0708;
+        BigInt::<30>::from_limbs(limbs)
+    };
+    let a = mk(0x1234_5678_9ABC_DEF0, 0xFEDC_BA98_7654_3210);
+    let b = mk(0xFEDC_BA98_7654_3210, 0x1234_5678_9ABC_DEF0);
+    let c = mk(0xAAAA_BBBB_CCCC_DDDD, 0x1111_2222_3333_4444);
+    let d = mk(0x5555_6666_7777_8888, 0x9999_AAAA_BBBB_CCCC);
+    let neg = |x: BigInt<30>| x.wrapping_neg();
+    let z = BigInt::<30>::ZERO;
+    let cols = [
+        Vector::<30>::new(a, neg(b), neg(c), d),
+        Vector::<30>::new(b, a, d, neg(c)),
+        Vector::<30>::new(c, neg(d), a, b),
+        Vector::<30>::new(z, c, neg(b), a),
+    ];
+    let det = Matrix::from_columns(&cols).det().abs();
+    eprintln!("det bits = {}", det.bitsize());
+    let hnf_classical = Matrix::from_hnf_columns(&cols);
+    let hnf_mod_cref = Matrix::from_hnf_columns_mod_cref::<60>(&cols, &det);
+    let hnf_mod = Matrix::from_hnf_columns_mod::<60>(&cols, &det);
+    if hnf_classical != hnf_mod_cref {
+        eprintln!("classical vs mod_cref DIFFER:");
+        for j in 0..4 {
+            for r in 0..4 {
+                let cl = hnf_classical.columns()[j][r];
+                let mc = hnf_mod_cref.columns()[j][r];
+                if cl != mc {
+                    eprintln!(
+                        "  [{j}][{r}]: classical bits={}, mod_cref bits={}",
+                        cl.bitsize(),
+                        mc.bitsize()
+                    );
+                }
+            }
+        }
+    }
+    if hnf_classical != hnf_mod {
+        eprintln!("classical vs mod DIFFER:");
+        for j in 0..4 {
+            for r in 0..4 {
+                let cl = hnf_classical.columns()[j][r];
+                let mm = hnf_mod.columns()[j][r];
+                if cl != mm {
+                    eprintln!(
+                        "  [{j}][{r}]: classical bits={}, mod bits={}",
+                        cl.bitsize(),
+                        mm.bitsize()
+                    );
+                }
+            }
+        }
+    }
+    if hnf_mod != hnf_mod_cref {
+        eprintln!("mod vs mod_cref DIFFER!");
+    } else {
+        eprintln!("mod == mod_cref agree");
+    }
+    assert_eq!(hnf_classical, hnf_mod_cref);
+}
+
+/// EXACT KAT-1 reproduction: Selkie's mul_direct output (= O·α post-mul,
+/// at denom 2, halved-coords from compute_backtracking) for the response
+/// phase. Run Selkie's `from_hnf_columns_mod_cref` with mod = |det| and
+/// compare to expected canonical HNF.
+///
+/// Inputs from `[O_ALPHA_PREHNF_SELKIE]` dump for KAT-1 iter 0
+/// with C-ref α injected. Expected = C-ref's `[O_ALPHA_CREF]` divided by 2
+/// (= reduced from denom 4 to denom 2).
+#[test]
+#[ignore = "validates Selkie HNF on exact KAT-1 inputs vs C-ref expected"]
+fn from_hnf_columns_mod_cref_kat1_o_alpha() {
+    use crate::quaternions::bigint::BigInt;
+
+    let parse = |s: &str| -> BigInt<60> {
+        let s = s.trim_start_matches("0x");
+        let pad = format!("{:0>1$}", s, 60 * 16);
+        let mut limbs = [0u64; 60];
+        for (i, chunk) in pad.as_bytes().rchunks(16).enumerate() {
+            if i >= 60 {
+                break;
+            }
+            let lh = std::str::from_utf8(chunk).unwrap();
+            limbs[i] = u64::from_str_radix(lh, 16).unwrap_or(0);
+        }
+        BigInt::<60>::from_limbs(limbs)
+    };
+    let neg = |x: BigInt<60>| x.wrapping_neg();
+    let z = BigInt::<60>::ZERO;
+
+    // Selkie's KAT-1 PREHNF (= raw mul_direct output at denom 2, halved):
+    // Col 0 = (a, -b, -c, -d) of α_conj_at_denom_1 (= halved C-ref α).
+    let alpha_a = parse(
+        "0x339de45818a8dcad1962ce0fabad5d66ddd0f321bcb2c9e4e982adb63e429421d5c85d3a06eee1986",
+    );
+    let alpha_b = parse(
+        "0x11d7d24b11727d3922e1992446850b60c7cac60a57a5bd61f5eb9ef19b7b557f3bae970e2d1d325634",
+    );
+    let alpha_c = parse("0x20e8f2187a69ac25e8976218b1fe895350547aa192d2fba8ba");
+    let alpha_d = parse("0x1938904070736ee61b443e069f76cf0a9dd44bbab8af7d9694");
+
+    // Reconstruct the 4 Selkie PREHNF cols (verified by
+    // SELKIE_DUMP_O_ALPHA_PREHNF).
+    let cols = [
+        Vector::<60>::new(alpha_a, neg(alpha_b), neg(alpha_c), neg(alpha_d)),
+        Vector::<60>::new(alpha_b, alpha_a, alpha_d, neg(alpha_c)),
+        // col 2: "(i+j)/2" * α — values from the dump.
+        Vector::<60>::new(
+            parse(
+                "0x52465d3d32082e5ec57a753dbcfc575934bc581ca84e11b741cc92234285b05370e9f8ee9e089e06aa1e6c74be6615f5ad0e364d251b56bd",
+            ),
+            neg(parse(
+                "0x3f0d68a11920953f442a9b108ea90598eda39a92086fd48fa6e98f82a29514bc753046b9e0b23dcb11cb8efe5283d9a2679738d370ca27f3",
+            )),
+            parse(
+                "0x19cef22c0c546e568cb16707d5d6aeb438acfb9461f4dc234ee347101ad7c265d9868c72c8f35d80d",
+            ),
+            parse(
+                "0x8ebe92588b93e9c9170cc92234285b05370e9f8ee9e089e06aa1e6c74be6615f5ad0e364d251b56bd",
+            ),
+        ),
+        // col 3: "(1+k)/2" * α.
+        Vector::<60>::new(
+            parse(
+                "0x3f0d68a11920953f442a9b108ea9059c2781e01392fd9f613d16707d5d6aeb2a523f78d5abdedc19a9f66a6236ad1bbfc41d0c73dfb84179",
+            ),
+            parse(
+                "0x52465d3d32082e5ec57a753dbcfc57475cea0d0b35d0d89460336ddcbd7a4f8ba623ee96f84b3c10be7f7ad9431096b9fe77282007e90089",
+            ),
+            neg(parse(
+                "0x8ebe92588b93e9c9170cc92234285b07459dc116907b4c3ef41808526bcef69460188d7dff816ff77",
+            )),
+            parse(
+                "0x19cef22c0c546e568cb16707d5d6aeb2a523f78d5abdedc19a9f66a6236ad1bbfc41d0c73dfb84179",
+            ),
+        ),
+    ];
+
+    let det = Matrix::from_columns(&cols).det().abs();
+    eprintln!("det bits = {}", det.bitsize());
+    let hnf = Matrix::from_hnf_columns_mod_cref::<60>(&cols, &det);
+    let hnf_v2 = Matrix::from_hnf_columns_mod_cref_v2::<60>(&cols, &det);
+    let hnf_classical = Matrix::from_hnf_columns(&cols);
+    let hnf_mod_const = Matrix::from_hnf_columns_mod::<60>(&cols, &det);
+    eprintln!("hnf vs hnf_v2: {}", hnf == hnf_v2);
+    eprintln!("hnf vs classical: {}", hnf == hnf_classical);
+    eprintln!("hnf vs mod_const: {}", hnf == hnf_mod_const);
+    eprintln!("classical vs mod_const: {}", hnf_classical == hnf_mod_const);
+    // Dump all four cols 2 row 0 for comparison.
+    eprintln!("col 2 row 0:");
+    eprintln!("  mod_cref     = {:?}", hnf.columns()[2][0]);
+    eprintln!("  mod_cref_v2  = {:?}", hnf_v2.columns()[2][0]);
+    eprintln!("  classical    = {:?}", hnf_classical.columns()[2][0]);
+    eprintln!("  mod_const    = {:?}", hnf_mod_const.columns()[2][0]);
+
+    eprintln!("Selkie HNF cols (existing port):");
+    for j in 0..4 {
+        for r in 0..4 {
+            let v = hnf.columns()[j][r];
+            eprintln!("  col {} row {} bits={}", j, r, v.bitsize());
+        }
+    }
+    eprintln!("Selkie HNF cols (v2 fresh port):");
+    for j in 0..4 {
+        for r in 0..4 {
+            let v = hnf_v2.columns()[j][r];
+            eprintln!("  col {} row {} bits={}", j, r, v.bitsize());
+        }
+    }
+    eprintln!("v2 matches existing? {}", hnf == hnf_v2);
+
+    // Expected col 0 row 0 = a_oa = 0xb52d... (= 2 · α.a in O₀-basis).
+    // From [O_ALPHA_CREF] dump for KAT-1 iter 0:
+    let expected_col0_row0 = parse(
+        "0xb52dfc86a10b45395e61d4b8e09778a1a655e799991a2793fe06285926a82384cabace7ab278a9f563469c3a258d0ccad0d400000000000000000000000000000000000000000000000000000000000000",
+    );
+    let expected_col2_row0 = parse(
+        "0x41868f7b09a3a079e352c3d2394fef5db3d3ea26b0c4a3aa54dae3d3119943e2701a72cc1a3cb1ada0a2a409950e2a27a7fdfc813463412ca2f947aaeda6fd35cbae2b557c921b48a975830a1736c7b14e",
+    );
+
+    let actual_col0_row0 = hnf.columns()[0][0];
+    let actual_col2_row0 = hnf.columns()[2][0];
+    let actual_v2_col0_row0 = hnf_v2.columns()[0][0];
+    let actual_v2_col2_row0 = hnf_v2.columns()[2][0];
+    eprintln!("col 0 row 0:");
+    eprintln!("  expected = {:?}", expected_col0_row0);
+    eprintln!("  actual   = {:?}", actual_col0_row0);
+    eprintln!("  v2       = {:?}", actual_v2_col0_row0);
+    eprintln!("col 2 row 0:");
+    eprintln!("  v2       = {:?}", actual_v2_col2_row0);
+    eprintln!("  expected = {:?}", expected_col2_row0);
+    eprintln!("  actual   = {:?}", actual_col2_row0);
+
+    assert_eq!(actual_col0_row0, expected_col0_row0, "col 0 row 0 mismatch");
+    assert_eq!(actual_col2_row0, expected_col2_row0, "col 2 row 0 mismatch");
+}
