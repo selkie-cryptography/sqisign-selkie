@@ -233,6 +233,15 @@ jobs:
   # of per-test runtime variance. Set SHARDS=1 to disable sharding.
   # Trade-off: each shard pays the cargo-build cost (rust-cache
   # hits keep this cheap on warm cache; cold cache duplicates work).
+  #
+  # x86_64-linux rows route to self-hosted Fly runners
+  # (`[self-hosted, fly, linux, x64, perf-8x]`) — the orchestrator
+  # in `infra/orchestrator/` spawns ephemeral Machines on demand
+  # via the Fly Machines API. perf-8x = 8-vCPU dedicated; the
+  # orchestrator reads the size hint from the labels.
+  #
+  # Non-Linux rows (macOS/Windows) and the i686/aarch64 Linux rows
+  # stay on GitHub-hosted runners — Fly only provides x86_64 Linux.
   kat-matrix:
     name: Compute KAT matrix
     runs-on: ubuntu-24.04
@@ -247,18 +256,19 @@ jobs:
           python3 - <<'PY'
           import json, os
           SHARDS = 4
+          fly_linux_x64 = ["self-hosted", "fly", "linux", "x64", "perf-8x"]
           full = [
-              {"os": "ubuntu-24.04", "target": "x86_64-unknown-linux-gnu", "bits": 64},
+              {"os": fly_linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64},
               {"os": "ubuntu-24.04", "target": "i686-unknown-linux-gnu", "bits": 32, "multilib": True},
               {"os": "macos-latest", "target": "aarch64-apple-darwin", "bits": 64},
               {"os": "windows-latest", "target": "x86_64-pc-windows-msvc", "bits": 64},
               {"os": "windows-latest", "target": "i686-pc-windows-msvc", "bits": 32},
               {"os": "ubuntu-24.04-arm", "target": "aarch64-unknown-linux-gnu", "bits": 64},
-              {"os": "ubuntu-24.04", "target": "x86_64-unknown-linux-gnu", "bits": 64,
+              {"os": fly_linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64,
                "variant": "no-default-features", "flags": "--no-default-features"},
           ]
           slim = [
-              {"os": "ubuntu-24.04", "target": "x86_64-unknown-linux-gnu", "bits": 64},
+              {"os": fly_linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64},
           ]
           base = slim if os.environ["EVENT"] == "pull_request" else full
           rows = []

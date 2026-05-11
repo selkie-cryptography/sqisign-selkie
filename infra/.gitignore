@@ -1,0 +1,6 @@
+# Independent Cargo workspace at this level; ignore its build dir
+# and un-ignore its Cargo.lock (the root .gitignore ignores Cargo.lock
+# globally because the main crate is a library, but the orchestrator
+# binary's lockfile should be tracked).
+target/
+!Cargo.lock

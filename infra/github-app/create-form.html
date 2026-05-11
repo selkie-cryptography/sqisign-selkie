@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<!--
+  Tiny HTML form that POSTs the manifest in `manifest.json` to GitHub's
+  App creation endpoint, scoped to the org in the URL.
+
+  The manifest content is inlined into the form's hidden input
+  because browsers refuse `fetch('manifest.json')` over `file://`
+  for security. If you change `manifest.json`, mirror the change in
+  the value of the <input name="manifest"> below.
+
+  Usage:
+    1. Open this file locally in a browser, OR host it on any static
+       endpoint and visit while logged in to the org owner account.
+    2. Click "Create App". GitHub renders the prefilled creation page.
+    3. After confirmation, GitHub redirects to redirect_url (set in
+       manifest.json) with a `code` query param.
+    4. Exchange the code for App credentials:
+         curl -X POST -H "Accept: application/vnd.github+json" \
+              https://api.github.com/app-manifests/<code>/conversions
+       Response body has: id, pem, webhook_secret, html_url, etc.
+    5. Push those into Fly secrets per ./setup.md.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Create sqisign-runners GitHub App</title>
+</head>
+<body>
+<h1>Create the runner orchestrator GitHub App</h1>
+<p>Click the button below while logged in to a <code>selkie-cryptography</code>
+   org owner account. GitHub will prefill the App creation page;
+   confirm to receive the App's credentials.</p>
+
+<form action="https://github.com/organizations/selkie-cryptography/settings/apps/new" method="post">
+  <input type="hidden" name="manifest" value='{"name":"sqisign-runners","url":"https://github.com/selkie-cryptography/sqisign-selkie","description":"Spawns ephemeral Fly Machine GitHub Actions runners on workflow_job.queued.","public":false,"hook_attributes":{"url":"https://sqisign-infra-orchestrator.fly.dev/webhook","active":true},"redirect_url":"https://github.com/selkie-cryptography","default_events":["workflow_job"],"default_permissions":{"actions":"write","administration":"write","metadata":"read","organization_self_hosted_runners":"write"}}'>
+  <button type="submit">Create App</button>
+</form>
+</body>
+</html>

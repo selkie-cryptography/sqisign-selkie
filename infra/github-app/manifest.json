@@ -1,0 +1,26 @@
+{
+  "$schema-comment": "GitHub App manifest. Apply via the manifest flow at https://github.com/organizations/<org>/settings/apps/new?manifest=<url-encoded-json>. After confirmation GitHub returns App ID + private key + webhook secret in a one-shot redirect; push them to Fly via `fly secrets set`. Schema: https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest",
+
+  "name": "sqisign-runners",
+  "url": "https://github.com/selkie-cryptography/sqisign-selkie",
+  "description": "Spawns ephemeral Fly Machine GitHub Actions runners on workflow_job.queued.",
+  "public": false,
+
+  "hook_attributes": {
+    "url": "https://sqisign-infra-orchestrator.fly.dev/webhook",
+    "active": true
+  },
+
+  "redirect_url": "https://github.com/selkie-cryptography",
+
+  "default_events": [
+    "workflow_job"
+  ],
+
+  "default_permissions": {
+    "actions": "write",
+    "administration": "write",
+    "metadata": "read",
+    "organization_self_hosted_runners": "write"
+  }
+}

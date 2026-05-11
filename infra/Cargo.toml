@@ -1,0 +1,20 @@
+# Independent Cargo workspace for the Fly self-hosted runner stack.
+#
+# Kept separate from the main `sqisign-selkie` crate's Cargo.toml so
+# the runner-core / orchestrator deps (axum, reqwest, jsonwebtoken,
+# tokio with full features) don't pollute the main crate's lockfile,
+# `cargo check`/`clippy` surface, or rust-analyzer index.
+#
+# Build from this directory:
+#
+#   cd infra
+#   cargo build -p runner-core
+#   cargo build -p orchestrator
+#   cargo check --workspace
+#
+# The orchestrator's Dockerfile (orchestrator/Dockerfile) treats this
+# `infra/` directory as its build context.
+
+[workspace]
+resolver = "2"
+members = ["orchestrator"]

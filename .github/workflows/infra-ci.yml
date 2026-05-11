@@ -1,0 +1,133 @@
+name: Infra CI
+
+# CI for the self-hosted runner stack itself: the orchestrator
+# Rust service and the runner Docker image. Stays on GitHub-hosted
+# runners (the orchestrator can't deploy itself; bootstrap layer).
+#
+# Repo secrets required for deploys:
+#   - FLY_API_TOKEN_ORCHESTRATOR  scoped to `sqisign-infra-orchestrator`
+#   - FLY_API_TOKEN_RUNNERS       scoped to `sqisign-infra-runners`
+#
+# Mint via: `fly tokens create deploy --app <name> --expiry 8760h`
+
+on:
+  push:
+    branches: [main]
+    paths: ['infra/**']
+  pull_request:
+    branches: [main]
+    paths: ['infra/**']
+  schedule:
+    # Weekly rebuild of the runner image so OS patches + rustup +
+    # cargo subcommand updates flow through without a code change.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Detect which subtree changed so we only redeploy what's affected.
+  # On schedule and workflow_dispatch this returns false for both,
+  # and the deploy jobs gate on event_name as well.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      orchestrator: ${{ steps.filter.outputs.orchestrator }}
+      runners: ${{ steps.filter.outputs.runners }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36
+        id: filter
+        with:
+          filters: |
+            orchestrator:
+              - 'infra/orchestrator/**'
+              - 'infra/Cargo.toml'
+              - 'infra/Cargo.lock'
+            runners:
+              - 'infra/runners/**'
+
+  # Build + lint the orchestrator crate. Release build is delegated
+  # to the Dockerfile so this job stays fast (~2-3 min warm cache).
+  build:
+    name: Check + lint orchestrator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          workspaces: infra
+          shared-key: infra-stable
+      - run: cargo check --manifest-path infra/Cargo.toml --all-targets --locked
+      - run: cargo +nightly clippy --manifest-path infra/Cargo.toml --all-targets -- -D warnings
+      - run: cargo +nightly fmt --manifest-path infra/Cargo.toml --all -- --check
+
+  # Deploy the orchestrator Rust service. Push-to-main only, and
+  # only when the orchestrator subtree (or shared workspace files)
+  # actually changed. `workflow_dispatch` forces a deploy regardless.
+  deploy-orchestrator:
+    name: Deploy orchestrator
+    needs: [build, changes]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.orchestrator == 'true') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_ORCHESTRATOR }}
+        working-directory: infra
+        run: |
+          flyctl deploy --app sqisign-infra-orchestrator \
+            --config orchestrator/fly.toml \
+            --dockerfile orchestrator/Dockerfile
+
+  # Build + push the runner Docker image. Triggers:
+  #   - push to main that touched infra/runners/**
+  #   - weekly schedule (pulls fresh OS patches + tool versions)
+  #   - manual dispatch
+  # The app holds the image only; no Machines start from this deploy.
+  deploy-runners-image:
+    name: Build + push runner image
+    needs: [build, changes]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.runners == 'true') ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Build + push image
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
+        working-directory: infra/runners
+        run: flyctl deploy --build-only --app sqisign-infra-runners

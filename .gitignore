@@ -32,3 +32,4 @@ Cargo.lock
 **/*.toc
 
 .DS_Store
+app-credentials.json
