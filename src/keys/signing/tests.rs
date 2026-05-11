@@ -793,7 +793,11 @@ fn sign_kat_idx_probe_inner(kat_idx: usize) {
 
     // One DRBG, threaded through keygen then sign — the same
     // sequential consumption pattern C-ref uses for KAT generation.
-    let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
+    // Wrap in `TracingDrbg` so `crate::drbg::debug::offset()` reports
+    // the cumulative byte offset at every checkpoint.
+    let inner = crate::drbg::Aes256CtrDrbg::new(&seed);
+    let mut drbg = TracingDrbg::new(inner);
+    crate::drbg::debug::reset();
     let sk =
         SigningKey::generate_with_rng(&mut drbg).expect("keygen must succeed within retry budget");
 

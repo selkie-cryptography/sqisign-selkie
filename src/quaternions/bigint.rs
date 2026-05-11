@@ -694,12 +694,27 @@ impl<const N: usize> BigInt<N> {
         let a_abs = self.abs();
         let b_abs = other.abs();
 
-        // Edge cases: gcd(0, b) = b with cofactors (0, 1); symmetric.
+        // Edge cases: gcd(0, b) = |b| with cofactors (0, sign(b)); symmetric.
+        // The cofactors must satisfy `self · u + other · v = gcd ≥ 0`. For
+        // negative inputs the early-returned cofactor needs the matching
+        // sign so the identity holds (e.g. `xgcd(-5, 0)` must return
+        // `(5, -1, 0)` so that `(-5) · (-1) + 0 · 0 = 5`, not `(5, 1, 0)`
+        // which gives `-5 ≠ 5`).
         if bool::from(a_abs.is_zero()) {
-            return (b_abs, Self::ZERO, Self::ONE);
+            let v_sign = if other.sign == 1 {
+                Self::ONE.wrapping_neg()
+            } else {
+                Self::ONE
+            };
+            return (b_abs, Self::ZERO, v_sign);
         }
         if bool::from(b_abs.is_zero()) {
-            return (a_abs, Self::ONE, Self::ZERO);
+            let u_sign = if self.sign == 1 {
+                Self::ONE.wrapping_neg()
+            } else {
+                Self::ONE
+            };
+            return (a_abs, u_sign, Self::ZERO);
         }
 
         // Strip common factor of 2; reapplied to gcd at the end.

@@ -698,10 +698,46 @@ impl TorsionBasis {
         let mut P = ProjectiveXOnlyPoint::from_affine_x(x_P, curve);
         let mut Q = ProjectiveXOnlyPoint::from_affine_x(x_Q, curve);
 
+        #[cfg(test)]
+        if std::env::var("SELKIE_DUMP_FROM_HINT").is_ok() {
+            let fmt = |x: &Fp2| {
+                let bytes = x.to_bytes();
+                let mut a = bytes[..32].to_vec();
+                a.reverse();
+                let mut b = bytes[32..].to_vec();
+                b.reverse();
+                format!("0x{} + i*0x{}", hex::encode(a), hex::encode(b))
+            };
+            eprintln!("[FROM_HINT_SELKIE] hint_A={h_A} hint_P={h}");
+            eprintln!("[FROM_HINT_SELKIE] curve.A_aff = {}", fmt(&A));
+            eprintln!("[FROM_HINT_SELKIE] x_P (pre-cofactor) = {}", fmt(&x_P));
+            eprintln!("[FROM_HINT_SELKIE] x_Q (pre-cofactor) = {}", fmt(&x_Q));
+        }
+
         // Clear odd cofactor to get points of order 2^e.
         // Multiply by (p+1)/2^e = cofactor.
         P = P.clear_cofactor();
         Q = Q.clear_cofactor();
+
+        #[cfg(test)]
+        if std::env::var("SELKIE_DUMP_FROM_HINT").is_ok() {
+            let fmt = |x: &Fp2| {
+                let bytes = x.to_bytes();
+                let mut a = bytes[..32].to_vec();
+                a.reverse();
+                let mut b = bytes[32..].to_vec();
+                b.reverse();
+                format!("0x{} + i*0x{}", hex::encode(a), hex::encode(b))
+            };
+            eprintln!(
+                "[FROM_HINT_SELKIE] P.x (post-cofactor) = {}",
+                fmt(&P.to_affine_x().as_fp2())
+            );
+            eprintln!(
+                "[FROM_HINT_SELKIE] Q.x (post-cofactor) = {}",
+                fmt(&Q.to_affine_x().as_fp2())
+            );
+        }
 
         let PmQ = P.projective_difference(&Q);
 
