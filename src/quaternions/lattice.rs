@@ -1106,7 +1106,15 @@ impl<const N: usize> Lattice<N> {
             Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ONE, BigInt::ZERO),
             Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ZERO, BigInt::ONE),
         ];
+        #[cfg(test)]
+        {
+            crate::l2_trace_active::set(true);
+        }
         let nrd = NrdBasis::from_cols_and_gram(identity_cols, dual_g).l2_reduce();
+        #[cfg(test)]
+        {
+            crate::l2_trace_active::set(false);
+        }
         let reduced_dual = *nrd.gram();
         let u_lll = Matrix::from_columns(nrd.cols());
 
@@ -3983,6 +3991,22 @@ impl<const N: usize> NrdBasis<N> {
     /// [Alg. 3.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.6
     #[must_use]
     pub fn l2_reduce(mut self) -> Self {
+        #[cfg(test)]
+        let l2_my_call: u64 = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            COUNTER.fetch_add(1, Ordering::SeqCst) + 1
+        };
+        #[cfg(test)]
+        if std::env::var("L2_TRACE").is_ok() && crate::l2_trace_active::get() {
+            eprintln!("[L2_SELKIE] === call #{l2_my_call} begin ===");
+            for i in 0..4 {
+                for j in 0..=i {
+                    eprintln!("[L2_SELKIE] call={l2_my_call} G_in[{i}][{j}] = {}", self.gram[i][j]);
+                }
+            }
+        }
+
         /// L² reduction parameter η (size-reduction threshold).
         /// Following the spec: η = 0.51 (any value in (1/2, 1) works).
         const ETA: f64 = 0.51;
@@ -4117,6 +4141,26 @@ impl<const N: usize> NrdBasis<N> {
         while k < D {
             size_reduce(&mut self.cols, &mut self.gram, k, &mut r, &mut mu, eta_bar);
 
+            #[cfg(test)]
+            if std::env::var("L2_TRACE").is_ok() && crate::l2_trace_active::get() {
+                for i in 0..=k {
+                    eprintln!(
+                        "[L2_SELKIE] call={l2_my_call} kappa={} post-size-reduce r[{}][{}] mant={:.17} exp={}",
+                        k, k, i, r[k][i].m, r[k][i].e
+                    );
+                }
+                for i in 0..k {
+                    eprintln!(
+                        "[L2_SELKIE] call={l2_my_call} kappa={} post-size-reduce u[{}][{}] mant={:.17} exp={}",
+                        k, k, i, mu[k][i].m, mu[k][i].e
+                    );
+                }
+                eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[0] = {}", self.cols[k][0]);
+                eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[1] = {}", self.cols[k][1]);
+                eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[2] = {}", self.cols[k][2]);
+                eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[3] = {}", self.cols[k][3]);
+            }
+
             t[0] = DoublePlusExponent::from_bigint(&self.gram[k][k]);
             for i in 1..=k {
                 t[i] = t[i - 1] - mu[k][i - 1] * r[k][i - 1];
@@ -4140,6 +4184,11 @@ impl<const N: usize> NrdBasis<N> {
                     Some(core::cmp::Ordering::Less) => s -= 1,
                     _ => break,
                 }
+            }
+
+            #[cfg(test)]
+            if std::env::var("L2_TRACE").is_ok() && crate::l2_trace_active::get() {
+                eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} swap={s}");
             }
 
             if k != s {
