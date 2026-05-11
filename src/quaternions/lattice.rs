@@ -1056,8 +1056,26 @@ impl<const N: usize> Lattice<N> {
                 cols_n[i][3].widen::<W>(),
             )
         });
-        // Primal Gram (no LLL reduction here — we LLL the dual below).
-        let g_w = *NrdBasis::new(cols_w).gram();
+        // Primal Gram, scaled by 2 to match C ref's `quat_lattice_gram`
+        // (`lattice.c:344`), which builds `G[i][j] = 2 · (a_i·a_j +
+        // b_i·b_j + p · (c_i·c_j + d_i·d_j))` — the TRACE pairing, not
+        // the reduced-norm pairing. Selkie's `NrdBasis::compute_gram`
+        // omits the factor of 2 (it's a reduced-norm pairing matrix),
+        // so for byte-equality with `quat_lattice_sample_from_ball` we
+        // multiply through here. Without this, det_G and the LLL-reduced
+        // dualG diagonal entries scale by a factor of 2⁴ = 16, producing
+        // different `bounds[i]` after the `sqrt_floor` and different
+        // sample byte-streams.
+        let two = BigInt::<W>::from_u64(2);
+        let g_w = {
+            let mut g = *NrdBasis::new(cols_w).gram();
+            for i in 0..4 {
+                for j in 0..4 {
+                    g[i][j] = g[i][j].ct_mul(&two);
+                }
+            }
+            g
+        };
 
         // Adjust radius: rad = radius · denom² · 2.
         // (Gram corresponds to twice the reduced norm; the radius
@@ -1067,7 +1085,7 @@ impl<const N: usize> Lattice<N> {
             .widen::<W>()
             .ct_mul(&denom_wide)
             .ct_mul(&denom_wide)
-            .ct_mul(&BigInt::<W>::from_u64(2));
+            .ct_mul(&two);
 
         // dualG = adj(G); det_g = det(G).
         let det_g = g_w.det();
@@ -1188,11 +1206,25 @@ impl<const N: usize> Lattice<N> {
                 let raw = BigInt::<W>::rand_interval(rng, &BigInt::<W>::ZERO, &two_b);
                 y[i] = raw.ct_sub(&bounds[i]);
             }
+            #[cfg(test)]
+            if std::env::var("SELKIE_DUMP_YX").is_ok() && _n_pos < 2 {
+                eprintln!(
+                    "[sample_from_ball] y0={} y1={} y2={} y3={}",
+                    y[0], y[1], y[2], y[3]
+                );
+            }
 
             // x = U_inv^T · y, i.e., coords in the original lattice basis.
             let y_vec = Vector::new(y[0], y[1], y[2], y[3]);
             let x_vec = u_inv.eval_left(&y_vec);
             let x = [x_vec[0], x_vec[1], x_vec[2], x_vec[3]];
+            #[cfg(test)]
+            if std::env::var("SELKIE_DUMP_YX").is_ok() && _n_pos < 2 {
+                eprintln!(
+                    "[sample_from_ball] x0={} x1={} x2={} x3={}",
+                    x[0], x[1], x[2], x[3]
+                );
+            }
 
             // Evaluate primal quadratic form: nrd = x^T · G · x.
             let mut nrd = BigInt::<W>::ZERO;
