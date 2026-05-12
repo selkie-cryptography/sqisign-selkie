@@ -137,9 +137,9 @@ impl VerifyingKey {
                 format!("0x{re}")
             };
             // Check all three basis points
-            let R_aff = &basis_pk.R.X * &basis_pk.R.Z.invert();
-            let S_aff = &basis_pk.S.X * &basis_pk.S.Z.invert();
-            let RS_aff = &basis_pk.RS.X * &basis_pk.RS.Z.invert();
+            let R_aff = &basis_pk.P.X * &basis_pk.P.Z.invert();
+            let S_aff = &basis_pk.PmQ.X * &basis_pk.PmQ.Z.invert();
+            let RS_aff = &basis_pk.Q.X * &basis_pk.Q.Z.invert();
             crate::selkie_trace!("VK: R(=P) affine = {}", fp2_hex_short(&R_aff));
             crate::selkie_trace!("VK: S(=P-Q) affine = {}", fp2_hex_short(&S_aff));
             crate::selkie_trace!("VK: RS(=Q) affine = {}", fp2_hex_short(&RS_aff));
@@ -167,8 +167,8 @@ impl VerifyingKey {
                     .collect();
                 format!("0x{re}+i*0x{im}")
             };
-            crate::selkie_trace!("VK: basis_pk.R.X={}", fp2_hex_short(&basis_pk.R.X));
-            crate::selkie_trace!("VK: basis_pk.R.Z={}", fp2_hex_short(&basis_pk.R.Z));
+            crate::selkie_trace!("VK: basis_pk.P.X={}", fp2_hex_short(&basis_pk.P.X));
+            crate::selkie_trace!("VK: basis_pk.P.Z={}", fp2_hex_short(&basis_pk.P.Z));
             crate::selkie_trace!("VK: K_chl.X={}", fp2_hex_short(&K_chl.X));
             crate::selkie_trace!("VK: K_chl.Z={}", fp2_hex_short(&K_chl.Z));
             let k_aff = &K_chl.X * &K_chl.Z.invert();
@@ -226,17 +226,17 @@ impl VerifyingKey {
                 format!("0x{re}+i*0x{im}")
             };
             let aff = |p: &ProjectiveXOnlyPoint| -> String { fp2_hex(&(&p.X * &p.Z.invert())) };
-            crate::selkie_trace!("TRACE basis_chl.R aff={}", aff(&basis_chl.R));
-            crate::selkie_trace!("TRACE basis_chl.S aff={}", aff(&basis_chl.S));
-            crate::selkie_trace!("TRACE basis_aux.R aff={}", aff(&basis_aux.R));
+            crate::selkie_trace!("TRACE basis_chl.P aff={}", aff(&basis_chl.P));
+            crate::selkie_trace!("TRACE basis_chl.PmQ aff={}", aff(&basis_chl.PmQ));
+            crate::selkie_trace!("TRACE basis_aux.P aff={}", aff(&basis_aux.P));
         }
 
         // Algorithm 4.9 line 11:
         // Scale aux basis: double f − e'_rsp − 2 times.
         // Scale all three points to preserve PmQ (never recompute via sqrt).
-        let mut P_aux = basis_aux.R;
-        let mut Q_aux = basis_aux.S;
-        let mut PmQ_aux = basis_aux.RS;
+        let mut P_aux = basis_aux.P;
+        let mut Q_aux = basis_aux.PmQ;
+        let mut PmQ_aux = basis_aux.Q;
         for _ in 0..(f - e_rsp_prime - 2) {
             P_aux = P_aux.double();
             Q_aux = Q_aux.double();
@@ -252,9 +252,9 @@ impl VerifyingKey {
         // together via `ec_dbl_iter_basis`. Recomputing PmQ via
         // `projective_difference` after scaling would give a
         // different point (the sqrt picks a different branch).
-        let mut P_chl = basis_chl.R;
-        let mut Q_chl = basis_chl.S;
-        let mut PmQ_chl = basis_chl.RS;
+        let mut P_chl = basis_chl.P;
+        let mut Q_chl = basis_chl.PmQ;
+        let mut PmQ_chl = basis_chl.Q;
         for _ in 0..(f - e_rsp_prime - sig.r_rsp.value() - 2) {
             P_chl = P_chl.double();
             Q_chl = Q_chl.double();
@@ -265,9 +265,9 @@ impl VerifyingKey {
         let basis_chl_scaled = TorsionBasis::from_propagated(P_chl, Q_chl, PmQ_chl);
         let basis_chl_transformed = &sig.M_chl * &basis_chl_scaled;
         let (mut P_chl, mut Q_chl, mut PmQ_chl) = (
-            basis_chl_transformed.R,
-            basis_chl_transformed.S,
-            basis_chl_transformed.RS,
+            basis_chl_transformed.P,
+            basis_chl_transformed.PmQ,
+            basis_chl_transformed.Q,
         );
 
         #[cfg(test)]
@@ -300,9 +300,9 @@ impl VerifyingKey {
             crate::selkie_trace!("VERIFY M_chl[1][1]={}", dump(&sig.M_chl.entries[1][1]));
             crate::selkie_trace!(
                 "VERIFY basis_chl_scaled (det_chl): R={}, S={}, RS={}",
-                aff(&basis_chl_scaled.R),
-                aff(&basis_chl_scaled.S),
-                aff(&basis_chl_scaled.RS),
+                aff(&basis_chl_scaled.P),
+                aff(&basis_chl_scaled.PmQ),
+                aff(&basis_chl_scaled.Q),
             );
         }
 

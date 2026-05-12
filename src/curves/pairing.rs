@@ -415,10 +415,10 @@ impl TorsionBasis {
         reduced: &TorsionBasis,
         e: TorsionExponent,
     ) -> Option<[RootOfUnity; 5]> {
-        let curve = *self.R.curve();
+        let curve = *self.P.curve();
         debug_assert_eq!(
             curve,
-            *reduced.R.curve(),
+            *reduced.P.curve(),
             "self and `reduced` must share a curve"
         );
 
@@ -441,11 +441,28 @@ impl TorsionBasis {
         // Basis points → (x : 1). Diff points stay in raw projective
         // (X : Z) form: their cubical structure depends on the
         // post-jac representative, not the affine x alone.
-        let xp = *self.R.to_affine_x().as_fp2();
-        let xq = *self.S.to_affine_x().as_fp2();
-        let xpmq = *self.RS.to_affine_x().as_fp2();
-        let xr = *reduced.R.to_affine_x().as_fp2();
-        let xs = *reduced.S.to_affine_x().as_fp2();
+        //
+        // # Field-to-ladder-name mapping
+        //
+        // The pairing ladder operates on a basis pair `(p_ladder,
+        // q_ladder)` with precomputed difference `x_PmQ_ladder`. Under
+        // Selkie's spec-permuted storage layout (see [`TorsionBasis`])
+        // those map to the fields as:
+        //
+        //   p_ladder       ↔ self.P     (first basis point)
+        //   q_ladder       ↔ self.PmQ   (= our P − Q; spec's permuted "S")
+        //   x_PmQ_ladder   ↔ self.Q     (= our Q; spec's permuted "RS")
+        //
+        // i.e., the pairing computation reads the *positional* slot
+        // semantics, not the field-name semantics. C ref's
+        // `ec_dlog_2_tate` does the same: it consumes (B.P, B.Q, B.PmQ)
+        // positionally with the same permutation applied at basis
+        // construction time.
+        let xp = *self.P.to_affine_x().as_fp2();
+        let xq = *self.PmQ.to_affine_x().as_fp2();
+        let xpmq = *self.Q.to_affine_x().as_fp2();
+        let xr = *reduced.P.to_affine_x().as_fp2();
+        let xs = *reduced.PmQ.to_affine_x().as_fp2();
 
         let mut np = CubicalPoint::from_affine(xp);
         let mut npq = CubicalPoint::from_affine(xpmq);
@@ -593,7 +610,7 @@ mod tests {
         let basis = e0_basis();
         let e = TorsionExponent::FULL; // 248
 
-        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
 
         // ζ ≠ 1 (non-degenerate pairing on a basis).
         assert_ne!(
@@ -615,7 +632,7 @@ mod tests {
     fn tate_pairing_primitive_on_full_basis() {
         let basis = e0_basis();
         let e = TorsionExponent::FULL;
-        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
 
         let ord = (0..=e.value() + 4).find(|&k| zeta.square_n(k) == RootOfUnity::ONE);
         assert_eq!(ord, Some(e.value()), "ord(ζ) must equal 2^{}", e.value());
@@ -645,7 +662,7 @@ mod tests {
         let reduced = TorsionBasis::from_propagated(
             &scale_scalar * &r_full,
             &scale_scalar * &s_full,
-            &scale_scalar * &pq_full.R,
+            &scale_scalar * &pq_full.P,
         );
 
         let e = TorsionExponent::try_from(e_red).expect("128 valid");
@@ -688,7 +705,7 @@ mod tests {
         let reduced = TorsionBasis::from_propagated(
             &scale_scalar * &r_full,
             &scale_scalar * &s_full,
-            &scale_scalar * &pq_full.S,
+            &scale_scalar * &pq_full.PmQ,
         );
 
         let e = TorsionExponent::try_from(e_red).expect("128 valid");
@@ -738,13 +755,13 @@ mod tests {
         let scale = e_full - e_red;
         let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
 
-        let r = &scale_scalar * &basis.R;
-        let s = &scale_scalar * &basis.S;
-        let rs = &scale_scalar * &basis.RS;
+        let r = &scale_scalar * &basis.P;
+        let s = &scale_scalar * &basis.PmQ;
+        let rs = &scale_scalar * &basis.Q;
         let reduced = TorsionBasis::from_propagated(r, s, rs);
 
         let e = TorsionExponent::try_from(e_red).expect("128 is a valid TorsionExponent");
-        let zeta = tate_pairing(&reduced.R, &reduced.S, &reduced.RS, e);
+        let zeta = tate_pairing(&reduced.P, &reduced.PmQ, &reduced.Q, e);
         assert_ne!(zeta, RootOfUnity::ONE);
 
         let ord = (0..=e.value() + 4).find(|&k| zeta.square_n(k) == RootOfUnity::ONE);
@@ -763,7 +780,7 @@ mod tests {
     fn dlog_round_trip_large() {
         let basis = e0_basis();
         let e = TorsionExponent::FULL;
-        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
 
         // dlog with full exponent: ζ^42 should round-trip.
         let zeta42 = zeta.pow(42);
@@ -783,7 +800,7 @@ mod tests {
     fn dlog_round_trip_above_u32() {
         let basis = e0_basis();
         let e = TorsionExponent::FULL; // 248
-        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
 
         // Pick a value with bits set above 2^32 so any `as u32` cast
         // would lose information.
@@ -815,17 +832,17 @@ mod tests {
         let e = TorsionExponent::FULL;
 
         // Compute P+Q from (P, Q, P-Q): differential_add(P, Q, P-Q) = P + Q.
-        let ppq = basis.R.differential_add(&basis.S, &basis.RS);
-        let t_pq = tate_pairing(&basis.R, &basis.S, &ppq, e);
+        let ppq = basis.P.differential_add(&basis.PmQ, &basis.Q);
+        let t_pq = tate_pairing(&basis.P, &basis.PmQ, &ppq, e);
         let t_pq_squared = t_pq.square_n(1);
 
-        let p2 = basis.R.double();
+        let p2 = basis.P.double();
         // [2]P + Q via differential_add([2]P, Q, [2]P-Q).
         // [2]P-Q from differential_add(P, P-Q, Q).
-        let two_p_minus_q = basis.R.differential_add(&basis.RS, &basis.S);
-        let two_p_plus_q = p2.differential_add(&basis.S, &two_p_minus_q);
+        let two_p_minus_q = basis.P.differential_add(&basis.Q, &basis.PmQ);
+        let two_p_plus_q = p2.differential_add(&basis.PmQ, &two_p_minus_q);
 
-        let t_2p_q = tate_pairing(&p2, &basis.S, &two_p_plus_q, e);
+        let t_2p_q = tate_pairing(&p2, &basis.PmQ, &two_p_plus_q, e);
         assert_eq!(
             t_2p_q, t_pq_squared,
             "Tate bilinearity (P+Q form): T([2]P, Q, [2]P+Q) should equal T(P, Q, P+Q)^2"
@@ -842,14 +859,14 @@ mod tests {
         let basis = e0_basis();
         let e = TorsionExponent::FULL;
 
-        let t_pq = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+        let t_pq = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
         let t_pq_squared = t_pq.square_n(1);
 
-        let p2 = basis.R.double();
+        let p2 = basis.P.double();
         // [2]P - Q via differential_add(P, P-Q, Q).
-        let two_p_minus_q = basis.R.differential_add(&basis.RS, &basis.S);
+        let two_p_minus_q = basis.P.differential_add(&basis.Q, &basis.PmQ);
 
-        let t_2p_q = tate_pairing(&p2, &basis.S, &two_p_minus_q, e);
+        let t_2p_q = tate_pairing(&p2, &basis.PmQ, &two_p_minus_q, e);
         assert_eq!(
             t_2p_q, t_pq_squared,
             "Tate bilinearity (P-Q form): T([2]P, Q, [2]P-Q) should equal T(P, Q, P-Q)^2"
@@ -860,18 +877,18 @@ mod tests {
     /// `from_bases` relies on for the cross-pairing dlog.
     ///
     /// Specifically: `t(P, Q) · t(Q, P) == 1` so that
-    /// `ζ_2 = 1/t(target.R, full.R)` correctly recovers
-    /// `ζ^{coefficient of P in target.R}`.
+    /// `ζ_2 = 1/t(target.P, full.P)` correctly recovers
+    /// `ζ^{coefficient of P in target.P}`.
     #[test]
     fn tate_antisymmetric() {
         let basis = e0_basis();
         let e = TorsionExponent::FULL;
 
         // P+Q for the third arg per `tate_pairing`'s convention.
-        let ppq = basis.R.differential_add(&basis.S, &basis.RS);
+        let ppq = basis.P.differential_add(&basis.PmQ, &basis.Q);
 
-        let t_pq = tate_pairing(&basis.R, &basis.S, &ppq, e);
-        let t_qp = tate_pairing(&basis.S, &basis.R, &ppq, e);
+        let t_pq = tate_pairing(&basis.P, &basis.PmQ, &ppq, e);
+        let t_qp = tate_pairing(&basis.PmQ, &basis.P, &ppq, e);
         let product = t_pq.as_fp2() * t_qp.as_fp2();
         assert_eq!(
             product,
@@ -887,9 +904,9 @@ mod tests {
         let e = TorsionExponent::FULL;
 
         // Use P+Q form for Weil since Tate's bilinearity probably holds there.
-        let ppq = basis.R.differential_add(&basis.S, &basis.RS);
-        let w_pq = weil_pairing(&basis.R, &basis.S, &ppq, e);
-        let w_qp = weil_pairing(&basis.S, &basis.R, &ppq, e);
+        let ppq = basis.P.differential_add(&basis.PmQ, &basis.Q);
+        let w_pq = weil_pairing(&basis.P, &basis.PmQ, &ppq, e);
+        let w_qp = weil_pairing(&basis.PmQ, &basis.P, &ppq, e);
         let product = w_pq.as_fp2() * w_qp.as_fp2();
         assert_eq!(
             product,
@@ -904,7 +921,7 @@ mod tests {
 
         // Use the full-order pairing which is guaranteed primitive.
         let e = TorsionExponent::FULL; // 248
-        let zeta = tate_pairing(&basis.R, &basis.S, &basis.RS, e);
+        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
         assert_ne!(zeta, RootOfUnity::ONE);
 
         // Use a small exponent for the dlog test by squaring down.
@@ -947,16 +964,16 @@ mod tests {
             ChangeOfBasisMatrix::from_bases(&basis_a, &basis_b, e).expect("dlog should succeed");
         let applied = recovered.mul(&basis_a);
         assert_eq!(
-            applied.R, basis_b.R,
-            "x-only: applied.R must equal basis_b.R"
+            applied.P, basis_b.P,
+            "x-only: applied.P must equal basis_b.P"
         );
         assert_eq!(
-            applied.S, basis_b.S,
-            "x-only: applied.S must equal basis_b.S"
+            applied.PmQ, basis_b.PmQ,
+            "x-only: applied.PmQ must equal basis_b.PmQ"
         );
         assert_eq!(
-            applied.RS, basis_b.RS,
-            "x-only: applied.RS must equal basis_b.RS"
+            applied.Q, basis_b.Q,
+            "x-only: applied.Q must equal basis_b.Q"
         );
     }
 
@@ -1010,16 +1027,16 @@ mod tests {
         // the chain downstream consumes.
         let applied = recovered.mul(&basis_a);
         assert_eq!(
-            applied.R, basis_b.R,
-            "x-only round-trip: applied.R must equal basis_b.R"
+            applied.P, basis_b.P,
+            "x-only round-trip: applied.P must equal basis_b.P"
         );
         assert_eq!(
-            applied.S, basis_b.S,
-            "x-only round-trip: applied.S must equal basis_b.S"
+            applied.PmQ, basis_b.PmQ,
+            "x-only round-trip: applied.PmQ must equal basis_b.PmQ"
         );
         assert_eq!(
-            applied.RS, basis_b.RS,
-            "x-only round-trip: applied.RS must equal basis_b.RS"
+            applied.Q, basis_b.Q,
+            "x-only round-trip: applied.Q must equal basis_b.Q"
         );
 
         // Stricter check: actual entry values match the constructed
@@ -1056,7 +1073,7 @@ mod tests {
     #[test]
     fn scalar_mul_pow2_matches_doubling() {
         let basis = e0_basis();
-        let target = basis.R;
+        let target = basis.P;
         let k_bits = 60u32; // arbitrary, exercise the multi-bit ladder
 
         let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(k_bits).as_limbs());
@@ -1115,7 +1132,7 @@ mod tests {
     /// would disagree, and the matrix `M_chl` — even if computed
     /// correctly relative to signing's basis — would map to a
     /// different basis when applied on verify, producing the
-    /// observed `transformed.R != post-M_chl.R` mismatch.
+    /// observed `transformed.P != post-M_chl.P` mismatch.
     #[test]
     fn to_hint_from_hint_roundtrip_e0() {
         // E_0: A = 0 by NIST-I convention.
@@ -1125,15 +1142,15 @@ mod tests {
         let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()));
 
         assert_eq!(
-            basis_via_to.R, basis_via_from.R,
+            basis_via_to.P, basis_via_from.P,
             "to_hint/from_hint round-trip must match on E_0: R differs"
         );
         assert_eq!(
-            basis_via_to.S, basis_via_from.S,
+            basis_via_to.PmQ, basis_via_from.PmQ,
             "to_hint/from_hint round-trip must match on E_0: S differs"
         );
         assert_eq!(
-            basis_via_to.RS, basis_via_from.RS,
+            basis_via_to.Q, basis_via_from.Q,
             "to_hint/from_hint round-trip must match on E_0: RS differs"
         );
     }
@@ -1158,15 +1175,15 @@ mod tests {
         let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()));
 
         assert_eq!(
-            basis_via_to.R, basis_via_from.R,
+            basis_via_to.P, basis_via_from.P,
             "to_hint/from_hint round-trip on alternate curve: R differs"
         );
         assert_eq!(
-            basis_via_to.S, basis_via_from.S,
+            basis_via_to.PmQ, basis_via_from.PmQ,
             "to_hint/from_hint round-trip on alternate curve: S differs"
         );
         assert_eq!(
-            basis_via_to.RS, basis_via_from.RS,
+            basis_via_to.Q, basis_via_from.Q,
             "to_hint/from_hint round-trip on alternate curve: RS differs"
         );
     }
@@ -1207,15 +1224,15 @@ mod tests {
                 TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()));
 
             assert_eq!(
-                basis_via_to.R, basis_via_from.R,
+                basis_via_to.P, basis_via_from.P,
                 "{ec:?}: to_hint/from_hint round-trip — R differs"
             );
             assert_eq!(
-                basis_via_to.S, basis_via_from.S,
+                basis_via_to.PmQ, basis_via_from.PmQ,
                 "{ec:?}: to_hint/from_hint round-trip — S (= P−Q) differs"
             );
             assert_eq!(
-                basis_via_to.RS, basis_via_from.RS,
+                basis_via_to.Q, basis_via_from.Q,
                 "{ec:?}: to_hint/from_hint round-trip — RS differs"
             );
         }
@@ -1308,12 +1325,12 @@ mod tests {
         let applied = recovered.mul(&source);
 
         assert_eq!(
-            applied.R, target.R,
-            "from_bases + mul round-trip must reproduce target.R"
+            applied.P, target.P,
+            "from_bases + mul round-trip must reproduce target.P"
         );
         assert_eq!(
-            applied.S, target.S,
-            "from_bases + mul round-trip must reproduce target.S"
+            applied.PmQ, target.PmQ,
+            "from_bases + mul round-trip must reproduce target.PmQ"
         );
     }
 
@@ -1356,12 +1373,12 @@ mod tests {
         let applied = recovered.mul(&source);
 
         assert_eq!(
-            applied.R, target.R,
-            "from_bases + mul round-trip with k > u32 must reproduce target.R"
+            applied.P, target.P,
+            "from_bases + mul round-trip with k > u32 must reproduce target.P"
         );
         assert_eq!(
-            applied.S, target.S,
-            "from_bases + mul round-trip with k > u32 must reproduce target.S"
+            applied.PmQ, target.PmQ,
+            "from_bases + mul round-trip with k > u32 must reproduce target.PmQ"
         );
     }
 

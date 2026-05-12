@@ -125,14 +125,12 @@ impl IdealKernel for LeftIdeal<4> {
         //   1. α = lideal_generator(I).
         //   2. α := conj(α).             ← Selkie was MISSING this step.
         //   3. Express α in O₀-basis coords c₀, c₁, c₂, c₃.
-        //   4. Build 2×2 matrix:
-        //        mat[i][j] = c₀·δ_{i,j}  +  c₁·GEN2[i][j]
-        //                                 +  c₂·GEN3[i][j]
-        //                                 +  c₃·GEN4[i][j]
-        //   5. (s, t) ← column 0 of mat (mod norm). If gcd(s, t) is even,
-        //      use column 1 instead.   ← Selkie was finding the KERNEL of
-        //                                M_α, which is the wrong operation.
-        //                                C-ref takes a column directly.
+        //   4. Build 2×2 matrix: mat[i][j] = c₀·δ_{i,j}  +  c₁·GEN2[i][j]
+        //                                 + c₂·GEN3[i][j]
+        //                                 + c₃·GEN4[i][j]
+        //   5. (s, t) ← column 0 of mat (mod norm). If gcd(s, t) is even, use column 1
+        //      instead.   ← Selkie was finding the KERNEL of M_α, which is the wrong
+        //      operation. C-ref takes a column directly.
         //
         // Step 1: Find α ∈ O₀ such that I = O₀⟨α, 2^e⟩.
         let alpha = match self.generator() {
@@ -370,7 +368,7 @@ pub fn compute_even_response(
             g0, g0_is_even, s, t
         );
     }
-    let decomp = KernelDecomposition {
+    let _ = KernelDecomposition {
         a: Scalar::from(s),
         b: Scalar::from(t),
     };
@@ -406,11 +404,8 @@ pub fn compute_even_response(
     };
     let s_scalar = Scalar::from(s);
     let t_scalar = Scalar::from(t);
-    let K = basis_reduced.biscalar_mul(
-        &s_scalar,
-        &t_scalar,
-        TorsionExponent::try_from(r_rsp).ok()?,
-    );
+    let K =
+        basis_reduced.biscalar_mul(&s_scalar, &t_scalar, TorsionExponent::try_from(r_rsp).ok()?);
     #[cfg(test)]
     if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
         let fp2_hex = |v: &crate::fields::fp2::Fp2| -> String {
@@ -423,15 +418,15 @@ pub fn compute_even_response(
         };
         eprintln!(
             "[compute_even_response inline] basis_red.P.x   = {}",
-            fp2_hex(basis_reduced.R.to_affine_x().as_fp2())
+            fp2_hex(basis_reduced.P.to_affine_x().as_fp2())
         );
         eprintln!(
             "[compute_even_response inline] basis_red.Q.x   = {}",
-            fp2_hex(basis_reduced.S.to_affine_x().as_fp2())
+            fp2_hex(basis_reduced.PmQ.to_affine_x().as_fp2())
         );
         eprintln!(
             "[compute_even_response inline] basis_red.PmQ.x = {}",
-            fp2_hex(basis_reduced.RS.to_affine_x().as_fp2())
+            fp2_hex(basis_reduced.Q.to_affine_x().as_fp2())
         );
         eprintln!(
             "[compute_even_response inline] kernel K.x      = {}",
@@ -445,17 +440,18 @@ pub fn compute_even_response(
     // carries a propagated difference; downstream
     // `compute_challenge_isogeny` and `ChangeOfBasisMatrix::from_bases`
     // require `PmQ` consistent with `P` and `Q`'s evaluation history.
-    let isogeny_res = CurveKernel::new(K)
-        .isogeny_small(
-            TorsionExponent::try_from(r_rsp).ok()?,
-            &[*P, *Q, *PmQ],
-            true,
-        );
+    let isogeny_res = CurveKernel::new(K).isogeny_small(
+        TorsionExponent::try_from(r_rsp).ok()?,
+        &[*P, *Q, *PmQ],
+        true,
+    );
     let (new_curve, images) = match isogeny_res {
         Ok(r) => r,
         Err(e) => {
             #[cfg(test)]
-            eprintln!("[compute_even_response] DROP: isogeny_small err: {e:?}, r_rsp={r_rsp}, e_prime={e_prime}");
+            eprintln!(
+                "[compute_even_response] DROP: isogeny_small err: {e:?}, r_rsp={r_rsp}, e_prime={e_prime}"
+            );
             return None;
         }
     };
@@ -714,9 +710,9 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
     // extra zero bits at positions e_fdi+2..f change the group
     // element (verified empirically).
     let doublings = f.value() - 2 - e_fdi;
-    let mut doubled_p = basis_t.R;
-    let mut doubled_q = basis_t.S;
-    let mut doubled_pmq = basis_t.RS;
+    let mut doubled_p = basis_t.P;
+    let mut doubled_q = basis_t.PmQ;
+    let mut doubled_pmq = basis_t.Q;
     for _ in 0..doublings {
         doubled_p = doubled_p.double();
         doubled_q = doubled_q.double();
@@ -796,7 +792,7 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
     let zero = ProjectiveXOnlyPoint::identity(&curve_t);
     let (codomain, images) = kernel.isogeny_extra_torsion(
         TorsionExponent::try_from(e_fdi).ok()?,
-        &[(basis_t.R, zero), (basis_t.S, zero), (basis_t.RS, zero)],
+        &[(basis_t.P, zero), (basis_t.PmQ, zero), (basis_t.Q, zero)],
     )?;
 
     let e_out = &codomain.E1;

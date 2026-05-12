@@ -219,90 +219,101 @@ impl From<ChallengeHint> for u8 {
 // Torsion basis
 // ---------------------------------------------------------------------------
 
-/// An x-only basis (R, S) of a torsion subgroup E\[m\], stored as
-/// the projective triple (R, S, R−S).
+/// An x-only basis of a torsion subgroup E\[m\] stored in the
+/// **spec-permuted layout** of [§2.2.3]: a triple `(x_P, x_{P−Q}, x_Q)`
+/// where `(P, Q)` is the basis pair and `Q` is constructed so the
+/// 2-torsion point at `(0, 0)` lies in this slot.
 ///
-/// The third point R−S is required for differential addition, which
-/// is the only way to compute P + Q in x-only Montgomery arithmetic.
-/// This triple is the minimum information needed to compute arbitrary
-/// linear combinations \[a\]R + \[b\]S via `LadderBiscalar`.
+/// # Layout — why the middle slot holds the difference
+///
+/// The spec (§2.2.3) computes a basis `(R, S)` and then **permutes**
+/// the triple `(x_R, x_S, x_RS)` to `(x_R, x_RS, x_S)` so that the
+/// final "second basis point" is `R + S`, which is above `(0, 0)`.
+/// In our field naming this maps to:
+/// - [`P`](Self::P): the first basis point (spec's `R`).
+/// - [`PmQ`](Self::PmQ): `x(P − Q)` — the differential-addition precomputation
+///   (spec's permuted `x_S`).
+/// - [`Q`](Self::Q): the second basis point, above `(0, 0)` for non-`E₀` curves
+///   (spec's permuted `x_RS`).
+///
+/// The "above `(0, 0)`" property of `Q` enables the special fast doubling
+/// `xDBL_E0`; downstream algorithms assume it.
+///
+/// `PmQ` is required for differential addition, the only way to
+/// compute `P + Q` in x-only Montgomery arithmetic. `LadderBiscalar`
+/// reads `(P, Q, PmQ)` and computes `[m]P + [n]·(P − Q)` under the
+/// spec-permuted application (see [`biscalar_mul`](Self::biscalar_mul)).
+/// The matrix `M_chl` recorded in the signature is encoded in this
+/// same layout, so signing and verify must agree.
 ///
 /// # Constructors
 ///
-/// Prefer `From<(P, Q)>` which computes R−S automatically via
-/// `projective_difference`. Use `new` only when R−S is already
-/// known from a prior computation (e.g., propagated through an
-/// isogeny evaluation). The R−S argument to `new` MUST be the
-/// actual `projective_difference(R, S)` — NOT an independently
-/// computed point with the same affine x, since the projective
-/// representative affects the Okeya-Sakurai y-recovery in `lift`.
-///
-/// See [§2.2.3] (torsion subgroups and deterministic basis computation).
+/// Prefer `From<(P, Q)>` which computes `P − Q` automatically via
+/// `projective_difference`. Use [`from_propagated`](Self::from_propagated)
+/// when `P − Q` is already known from a prior computation (e.g.,
+/// propagated through an isogeny evaluation). The `PmQ` argument to
+/// `from_propagated` MUST be the actual `projective_difference(P, Q)`
+/// — NOT an independently computed point with the same affine x —
+/// since the projective representative affects the Okeya-Sakurai
+/// y-recovery in [`lift`](Self::lift).
 ///
 /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct TorsionBasis {
-    /// First basis element R.
-    pub R: ProjectiveXOnlyPoint,
-    /// Second basis element S.
-    pub S: ProjectiveXOnlyPoint,
-    /// Difference R − S (needed for differential addition).
+    /// First basis point P.
+    pub P: ProjectiveXOnlyPoint,
+    /// Differential `x(P − Q)`, precomputed for differential addition.
     ///
-    /// Must be the actual projective difference of R and S — not
-    /// an independently computed point with the same affine x.
-    /// The projective representative affects Okeya-Sakurai
-    /// y-recovery in [`lift`](Self::lift).
-    pub RS: ProjectiveXOnlyPoint,
+    /// Must be the actual `projective_difference(P, Q)` — not an
+    /// independently computed point with the same affine x. The
+    /// projective representative affects the Okeya-Sakurai y-recovery
+    /// in [`lift`](Self::lift) and propagates through isogeny chain
+    /// evaluations.
+    pub PmQ: ProjectiveXOnlyPoint,
+    /// Second basis point Q. For non-`E₀` curves this is constructed
+    /// so it lies above the 2-torsion point at `(0, 0)`, enabling
+    /// the `xDBL_E0` fast doubling path on doublings of `Q`.
+    pub Q: ProjectiveXOnlyPoint,
 }
 
 /// Construct a [`TorsionBasis`] from two [`ProjectiveXOnlyPoint`]s,
-/// computing R − S via [`ProjectiveXOnlyPoint::projective_difference`].
+/// computing `P − Q` via [`ProjectiveXOnlyPoint::projective_difference`].
 ///
 /// # Security
 ///
-/// This does **not** verify that R and S actually generate the full
-/// n-torsion subgroup E\[n\]. The caller must ensure the points are
-/// linearly independent and of the correct order. In SQIsign, this
+/// This does **not** verify that `P` and `Q` actually generate the
+/// full n-torsion subgroup E\[n\]. The caller must ensure the points
+/// are linearly independent and of the correct order. In SQIsign, this
 /// is guaranteed by construction from `TorsionBasisFromHint` or
 /// from the `ChallengeMatrix` transformation.
 impl From<(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> for TorsionBasis {
-    fn from((R, S): (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)) -> TorsionBasis {
-        let RS = R.projective_difference(&S);
-        TorsionBasis { R, S, RS }
+    /// Build a torsion basis from the pair `(P, Q)`, computing the
+    /// differential `P − Q` internally.
+    ///
+    /// Each named field holds its semantic content:
+    /// - `P` — first basis point
+    /// - `PmQ` — `x(P − Q)`, the differential
+    /// - `Q` — second basis point
+    fn from((P, Q): (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)) -> TorsionBasis {
+        let PmQ = P.projective_difference(&Q);
+        TorsionBasis { P, PmQ, Q }
     }
 }
 
 impl TorsionBasis {
     /// Construct a basis from pre-propagated components.
     ///
-    /// # Slot convention
+    /// Arguments correspond directly to fields:
+    /// - `P`: first basis point.
+    /// - `PmQ`: `x(P − Q)`, propagated from a prior computation.
+    /// - `Q`: second basis point (above `(0, 0)` for non-`E₀` curves — see the
+    ///   [`TorsionBasis`] struct doc on the spec permutation).
     ///
-    /// We use the C reference's shuffled layout
-    /// `(R, S, RS) = (P, P − Q, Q)` — *not* the naïve
-    /// `(P, Q, P − Q)` the spec's pseudocode suggests. Every
-    /// caller of this constructor passes points in the
-    /// shuffled order, so that `LadderBiscalar` reads
-    /// `(R, S, RS)` as `(P, Q, PmQ)` *internally* and ends up
-    /// computing `[m]P + [n](P − Q)` rather than `[m]P + [n]Q`.
-    /// The matrix `M_chl` recorded in the signature is encoded in
-    /// this same shuffled frame, so signing and verify must agree.
+    /// # Provenance of `PmQ`
     ///
-    /// Concretely:
-    /// - `R` slot: `P`
-    /// - `S` slot: `P − Q` (the difference)
-    /// - `RS` slot: `Q` (despite the name)
-    ///
-    /// [`from_hint`](Self::from_hint) and [`to_hint`](Self::to_hint)
-    /// already produce bases in this layout. New callers must match
-    /// it, otherwise `LadderBiscalar` and `from_bases` operate in a
-    /// different frame and the resulting `M_chl` will collapse the
-    /// basis when verify applies it.
-    ///
-    /// # Provenance of `RS`
-    ///
-    /// `RS` must have been obtained from one of:
+    /// `PmQ` must have been obtained from one of:
     /// - a precomputed constant (e.g., `BASIS_E0_PMQ_X`)
-    /// - propagation through a group homomorphism alongside R and S (scalar
+    /// - propagation through a group homomorphism alongside `P` and `Q` (scalar
     ///   multiplication, isogeny evaluation, doubling)
     /// - rearranging an existing `TorsionBasis`'s fields
     ///
@@ -310,21 +321,21 @@ impl TorsionBasis {
     /// any other independent computation — even if it has the
     /// correct affine x-coordinate, its projective representative
     /// will be inconsistent, causing `lift` to recover the wrong
-    /// Jacobian y-sign. Use `From<(R, S)>` instead.
+    /// Jacobian y-sign. Use `From<(P, Q)>` instead.
     pub fn from_propagated(
-        R: ProjectiveXOnlyPoint,
-        S: ProjectiveXOnlyPoint,
-        RS: ProjectiveXOnlyPoint,
+        P: ProjectiveXOnlyPoint,
+        PmQ: ProjectiveXOnlyPoint,
+        Q: ProjectiveXOnlyPoint,
     ) -> TorsionBasis {
-        TorsionBasis { R, S, RS }
+        TorsionBasis { P, PmQ, Q }
     }
 
     /// Lift this x-only basis to Jacobian coordinates on the
     /// given curve.
     ///
-    /// Normalizes R internally and uses the Okeya-Sakurai
-    /// algorithm to recover S's y-coordinate from R's
-    /// y-coordinate and the difference point R−S.
+    /// Normalizes `P` internally and uses the Okeya-Sakurai
+    /// algorithm to recover `Q`'s y-coordinate from `P`'s
+    /// y-coordinate and the difference point `PmQ` (= `x(P − Q)`).
     ///
     /// Returns `None` if y-recovery fails (point not on curve).
     ///
@@ -334,46 +345,47 @@ impl TorsionBasis {
     pub fn lift(&self, curve: &Curve) -> Option<(JacobianPoint, JacobianPoint)> {
         let A = *curve.coefficient().as_fp2();
 
-        // Normalize R: compute affine x_R = X_R / Z_R.
-        let z_inv = self.R.Z.invert();
-        let x_r = &self.R.X * &z_inv;
+        // Normalize P: compute affine x_P = X_P / Z_P.
+        let z_inv = self.P.Z.invert();
+        let x_p = &self.P.X * &z_inv;
 
-        // Recover y_R via Curve::recover_y.
-        let y_r = curve.recover_y(&AffineX::from(x_r))?;
+        // Recover y_P via Curve::recover_y.
+        let y_p = curve.recover_y(&AffineX::from(x_p))?;
 
-        let r_jac = JacobianPoint::new(x_r, y_r, Fp2::ONE, curve);
+        let p_jac = JacobianPoint::new(x_p, y_p, Fp2::ONE, curve);
 
-        // Okeya-Sakurai: recover y_S from x_R, y_R, S, R−S.
+        // Okeya-Sakurai: recover y of the "second basis point" from
+        // x_P, y_P, the PmQ field, and the Q field.
         // C reference: basis.c:91-116.
-        let v1 = &x_r * &self.S.Z;
-        let v2 = &self.S.X + &v1;
+        let v1 = &x_p * &self.PmQ.Z;
+        let v2 = &self.PmQ.X + &v1;
         let v3 = {
-            let diff = &self.S.X - &v1;
+            let diff = &self.PmQ.X - &v1;
             let diff_sq = diff.square();
-            &diff_sq * &self.RS.X
+            &diff_sq * &self.Q.X
         };
         let two_a = &A + &A;
-        let v1_new = &two_a * &self.S.Z;
+        let v1_new = &two_a * &self.PmQ.Z;
         let v2 = &v2 + &v1_new;
-        let v4 = &(&x_r * &self.S.X) + &self.S.Z;
+        let v4 = &(&x_p * &self.PmQ.X) + &self.PmQ.Z;
         let v2 = &v2 * &v4;
-        let v1_new = &v1_new * &self.S.Z;
+        let v1_new = &v1_new * &self.PmQ.Z;
         let v2 = &v2 - &v1_new;
-        let v2 = &v2 * &self.RS.Z;
+        let v2 = &v2 * &self.Q.Z;
         let y_s_num = &v3 - &v2;
-        let two_yr = &y_r + &y_r;
-        let v1 = &(&two_yr * &self.S.Z) * &self.RS.Z;
+        let two_yp = &y_p + &y_p;
+        let v1 = &(&two_yp * &self.PmQ.Z) * &self.Q.Z;
 
         // S in Jacobian: (X_S·v1·Z_S : y_s_num·(Z_S·v1)² : Z_S·v1)
-        let x_s_tmp = &self.S.X * &v1;
-        let z_s_jac = &self.S.Z * &v1;
+        let x_s_tmp = &self.PmQ.X * &v1;
+        let z_s_jac = &self.PmQ.Z * &v1;
         let z_s_jac_sq = z_s_jac.square();
         let y_s_jac = &y_s_num * &z_s_jac_sq;
         let x_s_jac = &x_s_tmp * &z_s_jac;
 
         let s_jac = JacobianPoint::new(x_s_jac, y_s_jac, z_s_jac, curve);
 
-        Some((r_jac, s_jac))
+        Some((p_jac, s_jac))
     }
 
     /// Convert kernel scalars on E₀\[2^f\] to the corresponding
@@ -441,38 +453,49 @@ impl TorsionBasis {
         Some(LeftIdeal::new(&alpha, &modulus, EXTREMAL_ORDERS[0].order()))
     }
 
-    /// Compute R + \[m\]S from this basis.
+    /// Compute `P + [m]·(P − Q)` via the three-point Montgomery ladder.
     ///
-    /// The three-point Montgomery ladder takes (R, S, R−S) and computes
-    /// R + \[m\]S. The scalar m is given as a little-endian bit slice
-    /// (LSB first). Constant-time in the value of m.
+    /// The scalar `m` is a [`Scalar`] (256-bit unsigned integer in four
+    /// u64 limbs); the ladder always processes exactly 256 bits, in
+    /// little-endian bit order from LSB to MSB. Constant-time in the
+    /// scalar value.
     ///
-    /// # Convention
+    /// # What this computes (not `P + [m]Q`)
     ///
-    /// Due to the `from_hint` convention (matching the C reference),
-    /// `S` is actually P−Q and `RS` is Q. So this computes
-    /// P + \[m\](P−Q), not P + \[m\]Q. See [`from_hint`](Self::from_hint).
+    /// The 3-pt Montgomery ladder takes a basis triple
+    /// `(start, increment, increment − start)` and computes
+    /// `start + [m]·increment`. We pass `(P, PmQ, Q)` from this struct
+    /// (which under our layout means start = `P`,
+    /// increment = `x(P − Q)`, difference = `x(Q)`), so the result is
+    /// `P + [m]·(P − Q)`, NOT `P + [m]·Q`.
+    ///
+    /// This is the spec's permuted convention (§2.2.3): the kernel
+    /// generator for the challenge isogeny is encoded as a basis
+    /// transformation `(1, chl)` applied to `(P, P − Q)`, and the
+    /// downstream isogeny chain compensates for the permutation when
+    /// it consumes the kernel. Signing and verifying must agree on
+    /// the convention; both ends are correctly aligned to this one.
     ///
     /// Implements `Ladder3pt` ([§8.2], [Alg. 8.7][Alg. 8.7]).
     ///
     /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
     /// [Alg. 8.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.7
-    /// Compute R + \[m\]S using the three-point Montgomery ladder.
-    ///
-    /// The scalar `m` is a [`Scalar`] (256-bit unsigned integer in
-    /// four u64 limbs). The ladder always processes exactly 256 bits.
-    ///
-    /// Implements [Ladder3pt][Alg. 8.7] ([Alg. 8.7][Alg. 8.7]).
-    ///
-    /// [Alg. 8.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.7
     pub fn scalar_mul_add(&self, m: &Scalar) -> ProjectiveXOnlyPoint {
-        // Three-point Montgomery ladder computing R + [m]S.
+        // Three-point Montgomery ladder. Ladder seeds (matching
+        // C ref's `ec_ladder3pt` convention):
+        //   x0 = ladder "increment"  ← self.PmQ (= our P − Q)
+        //   x1 = ladder "start"      ← self.P
+        //   x2 = ladder "P − Q"      ← self.Q (the difference of x1 and x0
+        //                                      under our field naming:
+        //                                      P − (P − Q) = Q)
         //
-        // Processes 4 limbs × 64 bits = 256 bits from LSB to MSB,
-        // matching the C reference's `ec_ladder3pt` loop structure.
-        let mut x0 = self.S;
-        let mut x1 = self.R;
-        let mut x2 = self.RS;
+        // After 256 iterations the result is x1 = P + [m]·(P − Q), i.e.,
+        // the ladder accumulates [m] times the PmQ field into P.
+        //
+        // Processes 4 limbs × 64 bits = 256 bits from LSB to MSB.
+        let mut x0 = self.PmQ;
+        let mut x1 = self.P;
+        let mut x2 = self.Q;
 
         for limb in m.as_limbs() {
             for bit_pos in 0..64u32 {
@@ -488,28 +511,51 @@ impl TorsionBasis {
     }
 
     /// Evaluate a [`KernelDecomposition`][crate::deuring::KernelDecomposition]
-    /// against this basis: computes [a]R + [b]S.
+    /// against this basis: computes `[a]·P + [b]·PmQ` via the biscalar
+    /// Montgomery ladder.
     ///
-    /// Uses the three-point ladder internally. The scalars come from
-    /// the kernel decomposition produced by the Deuring correspondence.
+    /// The scalars come from the kernel decomposition produced by the
+    /// Deuring correspondence. The result is `[a]·P + [b]·(P − Q)`
+    /// under our spec-permuted layout — see [`scalar_mul_add`] for
+    /// why this is `(P − Q)` rather than `Q`.
+    ///
+    /// [`scalar_mul_add`]: Self::scalar_mul_add
     pub fn eval_decomposition(&self, a: &Scalar, b: &Scalar) -> ProjectiveXOnlyPoint {
         self.biscalar_mul(a, b, TorsionExponent::FULL)
     }
 
-    /// Compute \[m\]R + \[n\]S from this basis.
+    /// Compute `[m]·P + [n]·(P − Q)` from this basis.
     ///
-    /// Uses the biscalar Montgomery ladder with scalar recoding.
+    /// **Spec-permuted convention.** This function multiplies the
+    /// *differential* `P − Q` (the [`PmQ`](Self::PmQ) field), not the
+    /// second basis point `Q`. C-ref's `ec_biscalar_mul` operates on
+    /// the same convention positionally (see `basis.c:422-425`:
+    /// C-ref's `B.Q` slot stores `P − Q`). Selkie's [`ACTION_MATRICES`]
+    /// table is byte-imported from C-ref and is therefore encoded
+    /// against this convention — for an endomorphism `θ` with matrix
+    /// `M`, applying `biscalar_mul(M[0][0], M[1][0])` yields
+    /// `θ(P)`'s spec-permuted decomposition, which is what every
+    /// downstream consumer of `ACTION_MATRICES` expects.
+    ///
     /// Both scalars are [`Scalar`]s reduced mod 2^e, where `e` is the
     /// torsion exponent of the basis. Constant-time in the scalar values.
     ///
     /// Implements [LadderBiscalar][Alg. 8.8] ([Alg. 8.8][Alg. 8.8]).
     ///
+    /// [`ACTION_MATRICES`]: crate::deuring::precomputed::ACTION_MATRICES
     /// [Alg. 8.8]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.8
     pub fn biscalar_mul(&self, m: &Scalar, n: &Scalar, e: TorsionExponent) -> ProjectiveXOnlyPoint {
         let kbits = e.value() as usize;
-        let P = &self.R;
-        let Q = &self.S;
-        let PmQ = &self.RS;
+        // Local-name aliases for the ladder roles, NOT the field semantics:
+        //  - `P`   = first basis point P (the [m]-multiplied operand).
+        //  - `Q`   = the [n]-multiplied operand. Here that is `P − Q`, because this
+        //    function computes `[m]·P + [n]·(P − Q)`.
+        //  - `PmQ` = the precomputed `x(P − Q_local)`-differential the ladder needs for
+        //    differential addition. With `Q_local = P − Q`, that differential is
+        //    `x(Q)`.
+        let P = &self.P;
+        let Q = &self.PmQ;
+        let PmQ = &self.Q;
         let curve = P.curve();
 
         // Convert to bytes for the recoding stage.
@@ -663,11 +709,7 @@ impl TorsionBasis {
             let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, curve);
             let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, curve);
             let PmQ = P.projective_difference(&Q);
-            return TorsionBasis {
-                R: P,
-                S: PmQ,
-                RS: Q,
-            };
+            return TorsionBasis { P, PmQ, Q };
         }
 
         let h_A = hint.h_A();
@@ -741,28 +783,25 @@ impl TorsionBasis {
 
         let PmQ = P.projective_difference(&Q);
 
-        // WARNING: The C reference (`ec_curve_to_basis_2f_from_hint` in
-        // `basis.c:403-406`) deliberately stores P−Q in the `B.Q` slot
-        // and Q in the `B.PmQ` slot:
+        // The spec (§2.2.3) constructs Q so that Q lies above the
+        // 2-torsion point at `(0, 0)`, and stores the triple in the
+        // permuted layout `(x_P, x_{P−Q}, x_Q)`. C ref's
+        // `ec_curve_to_basis_2f_from_hint` (`basis.c:403-406`)
+        // implements the same permutation:
         //
-        //   difference_point(&PQ2->Q, &P, &Q, curve);  // B.Q = P − Q
-        //   copy_point(&PQ2->P, &P);                    // B.P = P
-        //   copy_point(&PQ2->PmQ, &Q);                  // B.PmQ = Q
+        //   PQ2->P   = P                          // x_P
+        //   PQ2->Q   = difference_point(P, Q)     // x_{P − Q}
+        //   PQ2->PmQ = Q                          // x_Q (above (0, 0))
         //
-        // The comment in the C ref says "set PmQ to Q to ensure Q
-        // above (0,0)." This swap means `ec_ladder3pt(R, m, B.P, B.Q,
-        // B.PmQ, E)` computes `P + [m](P−Q)`, not `P + [m]Q`.
+        // Selkie's struct field names match this layout directly:
+        // `P` ↔ `B.P`, `PmQ` ↔ `B.Q`, `Q` ↔ `B.PmQ`. With these
+        // assignments, `scalar_mul_add` (= ladder3pt) computes
+        // `P + [m]·(P − Q)`, NOT `P + [m]·Q` — the spec relies on
+        // this to encode the challenge kernel; see [§2.2.3] and
+        // [`scalar_mul_add`](Self::scalar_mul_add).
         //
-        // We follow the same convention: R = P, S = P−Q, RS = Q.
-        // The spec's Algorithm 4.9 line 9 says the challenge kernel is
-        // ⟨[2^n_bt](P_pk + [chl]Q_pk)⟩, but with this convention the
-        // ladder computes P + [chl](P−Q) = (1−chl)P + chl·Q, which
-        // generates the same cyclic subgroup for any nonzero chl.
-        TorsionBasis {
-            R: P,
-            S: PmQ,
-            RS: Q,
-        }
+        // [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
+        TorsionBasis { P, PmQ, Q }
     }
 
     /// Generate a torsion basis for E_A\[2^e\] and its associated hint,
@@ -797,11 +836,7 @@ impl TorsionBasis {
             let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, curve);
             let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, curve);
             let PmQ = P.projective_difference(&Q);
-            let basis = TorsionBasis {
-                R: P,
-                S: PmQ,
-                RS: Q,
-            };
+            let basis = TorsionBasis { P, PmQ, Q };
             return (basis, BasisHint::from_byte(0));
         }
 
@@ -827,11 +862,7 @@ impl TorsionBasis {
 
         let PmQ = P.projective_difference(&Q);
 
-        let basis = TorsionBasis {
-            R: P,
-            S: PmQ,
-            RS: Q,
-        };
+        let basis = TorsionBasis { P, PmQ, Q };
 
         let hint_byte = BasisHint::new(h_A as u8, h);
         (basis, hint_byte)
