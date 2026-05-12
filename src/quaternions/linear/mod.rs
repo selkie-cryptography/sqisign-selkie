@@ -890,7 +890,11 @@ impl<const N: usize> Matrix<N> {
         let euclidean_xgcd = |x: &BigInt<W>, y: &BigInt<W>| -> (BigInt<W>, BigInt<W>, BigInt<W>) {
             #[cfg(test)]
             if std::env::var("SELKIE_DEBUG_EUCLIDEAN").is_ok() {
-                eprintln!("[euclidean_xgcd] called with x.bits={} y.bits={}", x.bitsize(), y.bitsize());
+                eprintln!(
+                    "[euclidean_xgcd] called with x.bits={} y.bits={}",
+                    x.bitsize(),
+                    y.bitsize()
+                );
             }
             // Returns (gcd, u, v) with u·x + v·y = gcd, gcd ≥ 0, and
             // |u| ≤ |y|/(2·gcd), matching mpz_gcdext.
@@ -963,9 +967,17 @@ impl<const N: usize> Matrix<N> {
                     let xy = x.ct_mul(y);
                     let neg = bool::from(xy.is_negative());
                     let (q_y_d_sgn, _) = trunc_div_rem(y, &d);
-                    let q_y_d = if neg { q_y_d_sgn.wrapping_neg() } else { q_y_d_sgn };
+                    let q_y_d = if neg {
+                        q_y_d_sgn.wrapping_neg()
+                    } else {
+                        q_y_d_sgn
+                    };
                     let (q_x_d_sgn, _) = trunc_div_rem(x, &d);
-                    let q_x_d = if neg { q_x_d_sgn.wrapping_neg() } else { q_x_d_sgn };
+                    let q_x_d = if neg {
+                        q_x_d_sgn.wrapping_neg()
+                    } else {
+                        q_x_d_sgn
+                    };
                     // First, run C-ref's "while u·x ≤ 0" loop to ensure
                     // u·x > 0. Each step: u += sign·y/d, v -= sign·x/d.
                     let mut ux = x.ct_mul(&u);
@@ -1012,20 +1024,33 @@ impl<const N: usize> Matrix<N> {
                 eprintln!(
                     "  {}: ({} bits, sign={}; {} bits; {} bits; {} bits)",
                     label,
-                    v[0].bitsize(), if bool::from(v[0].is_negative()) { '-' } else { '+' },
-                    v[1].bitsize(), v[2].bitsize(), v[3].bitsize()
+                    v[0].bitsize(),
+                    if bool::from(v[0].is_negative()) {
+                        '-'
+                    } else {
+                        '+'
+                    },
+                    v[1].bitsize(),
+                    v[2].bitsize(),
+                    v[3].bitsize()
                 );
             }
         };
         #[cfg(not(test))]
         let dump_vec = |_label: &str, _v: &[BigInt<W>; 4]| {};
         if trace {
-            eprintln!("[HNF_TRACE] entering outer loop, n={n}, modulus.bits={}", m.bitsize());
+            eprintln!(
+                "[HNF_TRACE] entering outer loop, n={n}, modulus.bits={}",
+                m.bitsize()
+            );
         }
 
         while i != -1 {
             if trace {
-                eprintln!("[HNF_TRACE] === outer i={i}, k={k}, m.bits={} ===", m.bitsize());
+                eprintln!(
+                    "[HNF_TRACE] === outer i={i}, k={k}, m.bits={} ===",
+                    m.bitsize()
+                );
                 dump_vec("a[k] (before inner)", &a[k]);
             }
             // Inner loop: accumulate gcd of row-i entries into a[k][i].
@@ -1037,8 +1062,18 @@ impl<const N: usize> Matrix<N> {
                     if trace {
                         eprintln!(
                             "[HNF_TRACE]  inner j={j}: val_k.bits={} (sign {}), val_j.bits={} (sign {})",
-                            val_k.bitsize(), if bool::from(val_k.is_negative()) { '-' } else { '+' },
-                            val_j.bitsize(), if bool::from(val_j.is_negative()) { '-' } else { '+' },
+                            val_k.bitsize(),
+                            if bool::from(val_k.is_negative()) {
+                                '-'
+                            } else {
+                                '+'
+                            },
+                            val_j.bitsize(),
+                            if bool::from(val_j.is_negative()) {
+                                '-'
+                            } else {
+                                '+'
+                            },
                         );
                     }
                     let (d, u, v) = xgcd_with_u_not_0(&val_k, &val_j);
@@ -1046,8 +1081,18 @@ impl<const N: usize> Matrix<N> {
                         eprintln!(
                             "[HNF_TRACE]    xgcd: d.bits={}, u.bits={} (sign {}), v.bits={} (sign {})",
                             d.bitsize(),
-                            u.bitsize(), if bool::from(u.is_negative()) { '-' } else { '+' },
-                            v.bitsize(), if bool::from(v.is_negative()) { '-' } else { '+' },
+                            u.bitsize(),
+                            if bool::from(u.is_negative()) {
+                                '-'
+                            } else {
+                                '+'
+                            },
+                            v.bitsize(),
+                            if bool::from(v.is_negative()) {
+                                '-'
+                            } else {
+                                '+'
+                            },
                         );
                     }
                     let c = lin_comb(&u, &a[k], &v, &a[j]);
@@ -1073,8 +1118,14 @@ impl<const N: usize> Matrix<N> {
             if trace {
                 eprintln!(
                     "[HNF_TRACE]  pivot xgcd: a[k][i].bits={}, d.bits={}, u.bits={} (sign {})",
-                    val_k_i.bitsize(), d.bitsize(),
-                    u.bitsize(), if bool::from(u.is_negative()) { '-' } else { '+' },
+                    val_k_i.bitsize(),
+                    d.bitsize(),
+                    u.bitsize(),
+                    if bool::from(u.is_negative()) {
+                        '-'
+                    } else {
+                        '+'
+                    },
                 );
             }
 
@@ -1176,16 +1227,18 @@ impl<const N: usize> Matrix<N> {
             let a_neg = bool::from(a.is_negative());
             let b_neg = bool::from(b.is_negative());
             let q_sign_negative = a_neg ^ b_neg;
-            let q = if q_sign_negative { q_mag.wrapping_neg() } else { q_mag };
+            let q = if q_sign_negative {
+                q_mag.wrapping_neg()
+            } else {
+                q_mag
+            };
             let r = if a_neg { r_mag.wrapping_neg() } else { r_mag };
             (q, r)
         };
         // Floor division (mpz_fdiv_qr / ibz_div_floor): only used on
         // positive divisor in HNF, where Selkie's Euclidean div_rem
         // gives the floor result directly.
-        let f_div_rem = |a: &BigInt<W>, b: &BigInt<W>| -> (BigInt<W>, BigInt<W>) {
-            a.div_rem(b)
-        };
+        let f_div_rem = |a: &BigInt<W>, b: &BigInt<W>| -> (BigInt<W>, BigInt<W>) { a.div_rem(b) };
         // Centered mod (hnf_internal.c:21-36).
         let centered_mod = |a: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
             let tmp = a.ct_mod(m);
@@ -1199,14 +1252,23 @@ impl<const N: usize> Matrix<N> {
                 tmp
             }
         };
-        let vec4_lin_comb = |ca: &BigInt<W>, va: &[BigInt<W>; 4], cb: &BigInt<W>, vb: &[BigInt<W>; 4]| -> [BigInt<W>; 4] {
+        let vec4_lin_comb = |ca: &BigInt<W>,
+                             va: &[BigInt<W>; 4],
+                             cb: &BigInt<W>,
+                             vb: &[BigInt<W>; 4]|
+         -> [BigInt<W>; 4] {
             let mut out = [BigInt::<W>::ZERO; 4];
             for i in 0..4 {
                 out[i] = ca.ct_mul(&va[i]).ct_add(&cb.ct_mul(&vb[i]));
             }
             out
         };
-        let vec4_lin_comb_mod = |ca: &BigInt<W>, va: &[BigInt<W>; 4], cb: &BigInt<W>, vb: &[BigInt<W>; 4], m: &BigInt<W>| -> [BigInt<W>; 4] {
+        let vec4_lin_comb_mod = |ca: &BigInt<W>,
+                                 va: &[BigInt<W>; 4],
+                                 cb: &BigInt<W>,
+                                 vb: &[BigInt<W>; 4],
+                                 m: &BigInt<W>|
+         -> [BigInt<W>; 4] {
             let mut sums = [BigInt::<W>::ZERO; 4];
             for i in 0..4 {
                 let s = ca.ct_mul(&va[i]).ct_add(&cb.ct_mul(&vb[i]));
@@ -1221,53 +1283,71 @@ impl<const N: usize> Matrix<N> {
             }
             out
         };
-        let vec4_scalar_mul_mod = |s: &BigInt<W>, v: &[BigInt<W>; 4], m: &BigInt<W>| -> [BigInt<W>; 4] {
-            let mut out = [BigInt::<W>::ZERO; 4];
-            for i in 0..4 {
-                out[i] = v[i].ct_mul(s).ct_mod(m);
-            }
-            out
-        };
-        let ibz_xgcd_with_u_not_0 = |x: &BigInt<W>, y: &BigInt<W>| -> (BigInt<W>, BigInt<W>, BigInt<W>) {
-            if bool::from(x.is_zero()) && bool::from(y.is_zero()) {
-                return (BigInt::<W>::ONE, BigInt::<W>::ONE, BigInt::<W>::ZERO);
-            }
-            let x1 = *x;
-            let y1 = *y;
-            let (d, mut u, mut v) = x1.xgcd(&y1);
-            if bool::from(u.is_zero()) {
+        let vec4_scalar_mul_mod =
+            |s: &BigInt<W>, v: &[BigInt<W>; 4], m: &BigInt<W>| -> [BigInt<W>; 4] {
+                let mut out = [BigInt::<W>::ZERO; 4];
+                for i in 0..4 {
+                    out[i] = v[i].ct_mul(s).ct_mod(m);
+                }
+                out
+            };
+        let ibz_xgcd_with_u_not_0 =
+            |x: &BigInt<W>, y: &BigInt<W>| -> (BigInt<W>, BigInt<W>, BigInt<W>) {
+                if bool::from(x.is_zero()) && bool::from(y.is_zero()) {
+                    return (BigInt::<W>::ONE, BigInt::<W>::ONE, BigInt::<W>::ZERO);
+                }
+                let x1 = *x;
+                let y1 = *y;
+                let (d, mut u, mut v) = x1.xgcd(&y1);
+                if bool::from(u.is_zero()) {
+                    if !bool::from(x1.is_zero()) {
+                        let y_use = if bool::from(y1.is_zero()) {
+                            BigInt::<W>::ONE
+                        } else {
+                            y1
+                        };
+                        let (q, _r) = t_div_rem(&x1, &y_use);
+                        v = v.ct_sub(&q);
+                    }
+                    u = BigInt::<W>::ONE;
+                }
                 if !bool::from(x1.is_zero()) {
-                    let y_use = if bool::from(y1.is_zero()) { BigInt::<W>::ONE } else { y1 };
-                    let (q, _r) = t_div_rem(&x1, &y_use);
-                    v = v.ct_sub(&q);
+                    let r = x1.ct_mul(&y1);
+                    let neg = bool::from(r.is_negative());
+                    let mut q = x1.ct_mul(&u);
+                    while !bool::from(q.is_positive()) {
+                        let (mut q_y, _r_y) = t_div_rem(&y1, &d);
+                        if neg {
+                            q_y = q_y.wrapping_neg();
+                        }
+                        u = u.ct_add(&q_y);
+                        let (mut q_x, _r_x) = t_div_rem(&x1, &d);
+                        if neg {
+                            q_x = q_x.wrapping_neg();
+                        }
+                        v = v.ct_sub(&q_x);
+                        q = x1.ct_mul(&u);
+                    }
                 }
-                u = BigInt::<W>::ONE;
-            }
-            if !bool::from(x1.is_zero()) {
-                let r = x1.ct_mul(&y1);
-                let neg = bool::from(r.is_negative());
-                let mut q = x1.ct_mul(&u);
-                while !bool::from(q.is_positive()) {
-                    let (mut q_y, _r_y) = t_div_rem(&y1, &d);
-                    if neg { q_y = q_y.wrapping_neg(); }
-                    u = u.ct_add(&q_y);
-                    let (mut q_x, _r_x) = t_div_rem(&x1, &d);
-                    if neg { q_x = q_x.wrapping_neg(); }
-                    v = v.ct_sub(&q_x);
-                    q = x1.ct_mul(&u);
-                }
-            }
-            (d, u, v)
-        };
+                (d, u, v)
+            };
 
         let n = cols.len();
         assert!(n > 3, "generator_number must be > 3");
         let mut i: i32 = 3;
         let mut j: usize = n - 1;
         let mut k: usize = n - 1;
-        let mut a: Vec<[BigInt<W>; 4]> = cols.iter().map(|c| [
-            c[0].widen::<W>(), c[1].widen::<W>(), c[2].widen::<W>(), c[3].widen::<W>(),
-        ]).collect();
+        let mut a: Vec<[BigInt<W>; 4]> = cols
+            .iter()
+            .map(|c| {
+                [
+                    c[0].widen::<W>(),
+                    c[1].widen::<W>(),
+                    c[2].widen::<W>(),
+                    c[3].widen::<W>(),
+                ]
+            })
+            .collect();
         let mut w: [[BigInt<W>; 4]; 4] = [[BigInt::<W>::ZERO; 4]; 4];
         assert!(bool::from(modulus.is_positive()), "modulus must be > 0");
         let mut m: BigInt<W> = modulus.widen::<W>();
@@ -1316,14 +1396,33 @@ impl<const N: usize> Matrix<N> {
                 i -= 1;
             }
         }
-        let narrow = |x: &BigInt<W>| -> BigInt<N> {
-            x.narrow_to::<N>().expect("HNF output fits in N")
-        };
+        let narrow =
+            |x: &BigInt<W>| -> BigInt<N> { x.narrow_to::<N>().expect("HNF output fits in N") };
         Self::from_columns(&[
-            Vector::new(narrow(&w[0][0]), narrow(&w[0][1]), narrow(&w[0][2]), narrow(&w[0][3])),
-            Vector::new(narrow(&w[1][0]), narrow(&w[1][1]), narrow(&w[1][2]), narrow(&w[1][3])),
-            Vector::new(narrow(&w[2][0]), narrow(&w[2][1]), narrow(&w[2][2]), narrow(&w[2][3])),
-            Vector::new(narrow(&w[3][0]), narrow(&w[3][1]), narrow(&w[3][2]), narrow(&w[3][3])),
+            Vector::new(
+                narrow(&w[0][0]),
+                narrow(&w[0][1]),
+                narrow(&w[0][2]),
+                narrow(&w[0][3]),
+            ),
+            Vector::new(
+                narrow(&w[1][0]),
+                narrow(&w[1][1]),
+                narrow(&w[1][2]),
+                narrow(&w[1][3]),
+            ),
+            Vector::new(
+                narrow(&w[2][0]),
+                narrow(&w[2][1]),
+                narrow(&w[2][2]),
+                narrow(&w[2][3]),
+            ),
+            Vector::new(
+                narrow(&w[3][0]),
+                narrow(&w[3][1]),
+                narrow(&w[3][2]),
+                narrow(&w[3][3]),
+            ),
         ])
     }
 }
