@@ -1,10 +1,9 @@
-//! GitHub App authentication + JIT runner-config minting + webhook
-//! HMAC verification.
+//! GitHub App auth, JIT runner-config minting, webhook HMAC verify.
 //!
-//! API references:
-//! - App auth: <https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/about-authentication-with-a-github-app>
-//! - JIT runner: `POST /orgs/{org}/actions/runners/generate-jitconfig`
-//! - Webhook signing: `X-Hub-Signature-256` header is `sha256=<hmac>`
+//! Refs: [App auth][app], [JIT][jit], `X-Hub-Signature-256` for HMAC.
+//!
+//! [app]: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/about-authentication-with-a-github-app
+//! [jit]: https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-an-organization
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,9 +15,8 @@ use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Authenticated GitHub App client. Holds the App's private key and
-/// installation ID; mints short-lived installation access tokens
-/// on demand.
+/// GitHub App client. Holds the App's private key + installation ID
+/// and mints short-lived installation access tokens on demand.
 #[derive(Debug, Clone)]
 pub struct GitHubAppClient {
     app_id: u64,
@@ -39,11 +37,8 @@ impl GitHubAppClient {
         }
     }
 
-    /// Mint a JIT runner registration config for a single job.
-    ///
-    /// `labels` are the runner labels matching the job's `runs-on:`.
-    /// Returns the base64 JIT blob to pass to the runner via the
-    /// `JITCONFIG` env var.
+    /// Mint a base64 JIT runner registration config for a single job.
+    /// `labels` must match the job's `runs-on:`.
     pub async fn mint_jit_config(&self, runner_name: &str, labels: &[&str]) -> Result<String> {
         let token = self.installation_token().await?;
 
@@ -87,9 +82,8 @@ impl GitHubAppClient {
         Ok(resp.encoded_jit_config)
     }
 
-    /// Mint a short-lived (~1 hr) installation access token by signing
-    /// a JWT with the App's private key, exchanging it for an
-    /// installation token.
+    /// Mint a ~1 hr installation access token by signing a JWT with
+    /// the App's private key and exchanging it via the App API.
     async fn installation_token(&self) -> Result<String> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let claims = JwtClaims {
@@ -136,12 +130,9 @@ struct JwtClaims {
 }
 
 /// Verify an `X-Hub-Signature-256` header against the request body.
-///
-/// `signature_header` is the raw header value, e.g. `sha256=abcd...`.
-/// `secret` is the webhook secret configured in the GitHub App.
-///
-/// Returns `Ok(())` if the signature is valid, `Err` otherwise.
-/// Constant-time comparison via `hmac::Mac::verify_slice`.
+/// Constant-time via `hmac::Mac::verify_slice`. `signature_header`
+/// is the raw header value (`sha256=<hex>`); `secret` is the webhook
+/// shared secret.
 pub fn verify_webhook_signature(body: &[u8], signature_header: &str, secret: &[u8]) -> Result<()> {
     let expected_hex = signature_header
         .strip_prefix("sha256=")
@@ -165,8 +156,7 @@ fn hex_decode(s: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
-/// Webhook payload subset we care about. GitHub's `workflow_job`
-/// event has many fields; this is just what the orchestrator reads.
+/// Subset of GitHub's `workflow_job` webhook payload we read.
 #[derive(Debug, Deserialize)]
 pub struct WorkflowJobEvent {
     pub action: String, // "queued", "in_progress", "completed", "waiting"

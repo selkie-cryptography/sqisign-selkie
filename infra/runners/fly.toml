@@ -1,24 +1,16 @@
-# Fly app config for the runner image.
-#
-# This app holds the pre-baked runner Docker image. It does NOT run
-# always-on Machines — Machines are spawned ephemerally by the
-# orchestrator via the Fly Machines API. Push the image with:
-#
-#   fly deploy --build-only --app sqisign-infra-runners
-#
-# Bump `image_label` when the Dockerfile changes so existing-build
-# caches don't get reused on rollouts.
+# Fly app holding the pre-baked runner image. Machines are spawned
+# ephemerally by the orchestrator via the Fly Machines API; this app
+# never runs always-on Machines itself.
 
 app = "sqisign-infra-runners"
 primary_region = "ord"
 
 [build]
   dockerfile = "Dockerfile"
-  # image_label = "v1"  # uncomment + bump on Dockerfile changes
+  # Stable `latest` tag so the orchestrator's FLY_RUNNER_IMAGE
+  # (defaults to `registry.fly.io/<app>:latest`) resolves on every
+  # spawn. Each deploy overwrites it.
+  image_label = "latest"
 
 [deploy]
   strategy = "immediate"
-
-# No `[http_service]`, no `[services]`, no `[[vm]]`: this is an
-# image-holder app. `--build-only` on the deploy bypasses Machine
-# creation; orchestrator launches Machines from the image on demand.

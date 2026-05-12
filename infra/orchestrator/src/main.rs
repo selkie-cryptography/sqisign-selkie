@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,orchestrator=debug,runner_core=debug".into()),
+                .unwrap_or_else(|_| "info,orchestrator=debug".into()),
         )
         .init();
 
@@ -61,7 +61,8 @@ impl AppState {
         let private_key = require_env("GITHUB_APP_PRIVATE_KEY")?;
         let webhook_secret = require_env("GITHUB_WEBHOOK_SECRET")?.into_bytes();
         let fly_token = require_env("FLY_API_TOKEN")?;
-        let fly_app = std::env::var("FLY_RUNNER_APP").unwrap_or_else(|_| "sqisign-infra-runners".into());
+        let fly_app =
+            std::env::var("FLY_RUNNER_APP").unwrap_or_else(|_| "sqisign-infra-runners".into());
         let fly_region = std::env::var("FLY_REGION").unwrap_or_else(|_| "ord".into());
         let image_ref = std::env::var("FLY_RUNNER_IMAGE")
             .unwrap_or_else(|_| format!("registry.fly.io/{fly_app}:latest"));
@@ -88,16 +89,12 @@ async fn webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    // 1. Verify HMAC signature.
-    let signature = match headers
+    let Some(signature) = headers
         .get("X-Hub-Signature-256")
         .and_then(|v| v.to_str().ok())
-    {
-        Some(s) => s,
-        None => {
-            warn!("webhook missing X-Hub-Signature-256");
-            return (StatusCode::UNAUTHORIZED, "missing signature").into_response();
-        }
+    else {
+        warn!("webhook missing X-Hub-Signature-256");
+        return (StatusCode::UNAUTHORIZED, "missing signature").into_response();
     };
 
     if let Err(e) = verify_webhook_signature(&body, signature, &state.webhook_secret) {
@@ -105,7 +102,6 @@ async fn webhook(
         return (StatusCode::UNAUTHORIZED, "bad signature").into_response();
     }
 
-    // 2. Only act on workflow_job events.
     let event_kind = headers
         .get("X-GitHub-Event")
         .and_then(|v| v.to_str().ok())
@@ -118,11 +114,13 @@ async fn webhook(
             .into_response();
     }
 
-    // 3. Parse, route by labels.
     let event: WorkflowJobEvent = match serde_json::from_slice(&body) {
         Ok(e) => e,
         Err(e) => {
-            error!(error = %e, "failed to parse workflow_job payload");
+            error!(
+                error = format!("{e:#}"),
+                "failed to parse workflow_job payload"
+            );
             return (StatusCode::BAD_REQUEST, "bad payload").into_response();
         }
     };
@@ -135,7 +133,6 @@ async fn webhook(
             .into_response();
     }
 
-    // Only spawn for jobs that opted into the self-hosted Fly pool.
     if !event.workflow_job.labels.iter().any(|l| l == "fly") {
         return (
             StatusCode::OK,
@@ -154,7 +151,6 @@ async fn webhook(
         "spawning runner"
     );
 
-    // 4. Mint JIT config.
     let runner_name = format!("fly-{}-{}", event.workflow_job.id, short_hex_now());
     let label_refs: Vec<&str> = event
         .workflow_job
@@ -169,19 +165,18 @@ async fn webhook(
     {
         Ok(j) => j,
         Err(e) => {
-            error!(error = %e, "failed to mint JIT config");
+            error!(error = format!("{e:#}"), "failed to mint JIT config");
             return (StatusCode::INTERNAL_SERVER_ERROR, "jit mint failed").into_response();
         }
     };
 
-    // 5. Spawn Machine.
     match state.fly.spawn_runner(size, &jit).await {
         Ok(id) => {
             info!(machine = ?id, "runner spawned");
             (StatusCode::OK, Json(serde_json::json!({"machine": id}))).into_response()
         }
         Err(e) => {
-            error!(error = %e, "failed to spawn Machine");
+            error!(error = format!("{e:#}"), "failed to spawn Machine");
             (StatusCode::INTERNAL_SERVER_ERROR, "spawn failed").into_response()
         }
     }

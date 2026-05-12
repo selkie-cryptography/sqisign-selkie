@@ -1,35 +1,58 @@
-# GitHub Actions self-hosted runner, pre-baked with the toolchain
-# every Selkie CI job needs. Built once via `fly deploy --build-only`,
-# spawned per-job by the orchestrator via the Fly Machines API.
+# GitHub Actions self-hosted runner image. Spawned per-job by the
+# orchestrator via the Fly Machines API.
 #
-# The image is intentionally fat: every cargo subcommand and tool the
-# workflows use is pre-installed so the per-job startup cost is just
-# Machine boot + GitHub JIT registration (target: < 5 s).
+# Substrate only: OS, system libs, rustup toolchains, Sage, TeX Live,
+# and the runner binary. Rust-ecosystem tools (cargo-nextest, deny,
+# mutants, llvm-cov, fuzz, ...) are installed per-job by workflow
+# `taiki-e/install-action` steps — workflow YAML is the single source
+# of truth for tool versions.
+#
+# Layer order is heaviest-and-most-stable first so RUNNER_VERSION
+# bumps don't bust the multi-GB texlive / Sage layers.
 
 FROM ubuntu:24.04
-
-ARG RUNNER_VERSION=2.328.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
-    PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    SAGE_HOME=/opt/sage-env \
+    PATH=/opt/sage-env/bin:/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Base OS + build tooling.
-# - build-essential, gcc-multilib: Rust + cross-target builds (i686).
-# - cmake, libssl-dev: dependency of some crates and cref-bench.
-# - valgrind: required by iai-callgrind for instruction counting.
-# - git, curl, ca-certificates, jq: registration + general use.
-# - sudo, libicu-dev: required by the GitHub Actions runner.
-# - python3: kat-matrix step + various scripts.
-# - docker.io: latex-action runs in a Docker container (DinD pattern).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# HTTPS bootstrap.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && rm -rf /var/lib/apt/lists/*
+
+# TeX Live (~5-10 GB). latex.yml runs latexmk directly.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends texlive-full \
+  && rm -rf /var/lib/apt/lists/*
+
+# Miniforge — split from the Sage env so bumping sage= only rebuilds
+# the env layer, not the installer.
+RUN curl -L https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+      -o /tmp/miniforge.sh \
+  && bash /tmp/miniforge.sh -b -p /opt/miniforge \
+  && rm /tmp/miniforge.sh
+
+# Sage (~3-4 GB).
+RUN /opt/miniforge/bin/conda create -y -p ${SAGE_HOME} sage=10.6 -c conda-forge \
+  && /opt/miniforge/bin/conda clean -afy
+
+# Rustup stable + nightly + clippy/rustfmt. Cross-compile targets
+# stay on GitHub-hosted (Fly is x86_64-linux only).
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain stable --no-modify-path \
+  && rustup toolchain install nightly --profile minimal \
+  && rustup component add rustfmt clippy --toolchain nightly
+
+# Smaller system tools. Separate layer so adding/removing one of
+# these doesn't invalidate texlive above.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
       build-essential \
-      ca-certificates \
       cmake \
-      curl \
       docker.io \
-      gcc-multilib \
       git \
       jq \
       libicu-dev \
@@ -41,32 +64,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       valgrind \
   && rm -rf /var/lib/apt/lists/*
 
-# Rust toolchain. Pre-install both stable and nightly; clippy/fmt/fuzz
-# need nightly while gate/test/kat are stable.
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --default-toolchain stable --no-modify-path \
-  && rustup toolchain install nightly --profile minimal \
-  && rustup component add rustfmt clippy --toolchain nightly \
-  && rustup target add i686-unknown-linux-gnu --toolchain stable \
-  && rustup target add aarch64-unknown-linux-gnu --toolchain stable
+# GitHub Actions runner binary. ARG placed here so bumps invalidate
+# only from this layer down.
+ARG RUNNER_VERSION=2.334.0
 
-# Cargo subcommands the workflows invoke. Bump the image tag when
-# versions advance.
-# Use `cargo-binstall` to fetch prebuilt binaries from crates.io
-# instead of compiling from source — turns ~60 min of source compile
-# (cargo-nextest + cargo-deny + cargo-mutants + iai-callgrind-runner
-# all have heavy dep trees) into ~30 s of downloads. All four
-# publish binstall-compatible release artifacts.
-RUN curl --proto '=https' --tlsv1.2 -sSfL \
-      https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
-    | bash
-RUN cargo binstall --no-confirm --no-symlinks \
-      cargo-nextest \
-      cargo-deny \
-      cargo-mutants \
-      iai-callgrind-runner
-
-# GitHub Actions runner binary.
 RUN useradd -m -s /bin/bash runner \
   && mkdir -p /home/runner/actions-runner \
   && chown runner:runner /home/runner/actions-runner
@@ -81,9 +82,8 @@ RUN curl -L -o runner.tar.gz \
 USER root
 RUN ./bin/installdependencies.sh
 
-# Entrypoint reads JITCONFIG env var, configures runner, runs once,
-# exits. The Machine is configured with auto_destroy=true so exit
-# triggers destruction.
+# Entrypoint reads JITCONFIG and execs one runner registration.
+# Machine is spawned with auto_destroy=true → exit destroys the VM.
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

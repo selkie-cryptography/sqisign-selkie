@@ -67,6 +67,7 @@ pub struct FlyClient {
 }
 
 impl FlyClient {
+    /// Construct a client bound to a Fly app, region, and image ref.
     pub fn new(api_token: String, app: String, region: String, image_ref: String) -> Self {
         Self {
             api_token,
@@ -77,16 +78,13 @@ impl FlyClient {
         }
     }
 
-    /// Spawn an ephemeral runner Machine from the pre-baked image.
+    /// Spawn an ephemeral runner Machine.
     ///
-    /// `jit_config` is a base64-encoded JIT runner registration blob
-    /// minted by [`crate::github::GitHubAppClient::mint_jit_config`].
-    /// It's passed to the runner via the `JITCONFIG` env var; the
-    /// runner consumes it on startup, registers with GitHub, and
-    /// runs exactly one job.
-    ///
-    /// `auto_destroy: true` means the Machine self-destroys on exit
-    /// (which happens after the runner finishes its single job).
+    /// `jit_config` is the base64 JIT blob from
+    /// [`crate::github::GitHubAppClient::mint_jit_config`], injected
+    /// via the `JITCONFIG` env var. The Machine is created with
+    /// `auto_destroy: true` so it self-destroys when the runner
+    /// finishes its single job and exits.
     pub async fn spawn_runner(&self, size: MachineSize, jit_config: &str) -> Result<MachineId> {
         let (cpu_kind, cpus) = size.as_fly();
 
@@ -96,8 +94,6 @@ impl FlyClient {
                 image: &self.image_ref,
                 env: [("JITCONFIG", jit_config)].into(),
                 init: SpawnInit {
-                    // entrypoint.sh in the runner image consumes JITCONFIG
-                    // and execs `./run.sh --jitconfig $JITCONFIG`.
                     exec: vec!["/entrypoint.sh"],
                 },
                 guest: SpawnGuest {
@@ -106,33 +102,41 @@ impl FlyClient {
                     memory_mb: cpus * 2048, // 2 GB per vCPU
                 },
                 auto_destroy: true,
-                restart: SpawnRestart {
-                    policy: "no", // ephemeral; failure → destroy, no retry
-                },
+                restart: SpawnRestart { policy: "no" },
             },
         };
 
         let url = format!("{FLY_API_BASE}/apps/{}/machines", self.app);
-        let resp: SpawnMachineResponse = self
+        let resp = self
             .http
             .post(&url)
             .bearer_auth(&self.api_token)
             .json(&body)
             .send()
             .await
-            .context("POST /machines")?
-            .error_for_status()?
-            .json()
-            .await?;
+            .with_context(|| format!("send POST {url}"))?;
 
-        Ok(MachineId(resp.id))
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
+            anyhow::bail!("POST {url} returned HTTP {status}; body: {body}");
+        }
+
+        let parsed: SpawnMachineResponse =
+            resp.json().await.context("parse Machines API response")?;
+        Ok(MachineId(parsed.id))
     }
 }
 
+/// Opaque Machine identifier returned by the Fly Machines API.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MachineId(pub String);
 
-// ---- Request/response shapes (private to this module) ----------
+// Request/response shapes for `POST /v1/apps/<app>/machines`.
+// See <https://fly.io/docs/machines/api/> for field semantics.
 
 #[derive(Serialize)]
 struct SpawnMachineRequest<'a> {
