@@ -424,22 +424,33 @@ fn bigint_ct_mod_large_negative() {
     // Construct a large negative value at width 30 and verify ct_mod
     // returns a value in [0, modulus).
     let mut limbs_a = [0u64; 30];
-    limbs_a[10] = 0x1234_5678_9abc_def0;
+    limbs_a[10] = 0x1234_5678_9ABC_DEF0;
     let big = BigInt::<30>::from_limbs(limbs_a);
     let neg_big = big.wrapping_neg();
     let mut limbs_m = [0u64; 30];
-    limbs_m[5] = 0xabcd_1234_5678_9abc;
+    limbs_m[5] = 0xABCD_1234_5678_9ABC;
     let m = BigInt::<30>::from_limbs(limbs_m);
 
     let r = neg_big.ct_mod(&m);
-    eprintln!("neg_big.bits = {}, m.bits = {}, r.bits = {}", neg_big.bitsize(), m.bitsize(), r.bitsize());
+    eprintln!(
+        "neg_big.bits = {}, m.bits = {}, r.bits = {}",
+        neg_big.bitsize(),
+        m.bitsize(),
+        r.bitsize()
+    );
     eprintln!("r is_negative? {}", bool::from(r.is_negative()));
     eprintln!("r is_positive? {}", bool::from(r.is_positive()));
     // Verify r is in [0, m).
-    assert!(!bool::from(r.is_negative()), "ct_mod result should be non-negative");
+    assert!(
+        !bool::from(r.is_negative()),
+        "ct_mod result should be non-negative"
+    );
     // r < m.
     let diff = m.ct_sub(&r);
-    assert!(bool::from(diff.is_positive()), "ct_mod result should be less than modulus");
+    assert!(
+        bool::from(diff.is_positive()),
+        "ct_mod result should be less than modulus"
+    );
     // Verify: neg_big = q·m + r where 0 ≤ r < m.
     let (q, _) = neg_big.div_rem(&m);
     let recon = q.ct_mul(&m).ct_add(&r);
@@ -462,16 +473,30 @@ fn bigint_xgcd_canonical_cofactor_test() {
         let x = BigInt::<4>::from(x_val);
         let y = BigInt::<4>::from(y_val);
         let (g, u, _v) = x.xgcd(&y);
-        let g_val = if g.as_limbs()[0] == 0 && g.as_limbs()[1] == 0 { 0 } else { g.as_limbs()[0] as i64 };
+        let g_val = if g.as_limbs()[0] == 0 && g.as_limbs()[1] == 0 {
+            0
+        } else {
+            g.as_limbs()[0] as i64
+        };
         let u_val = {
             let mag = u.as_limbs()[0] as i64;
-            if bool::from(u.is_negative()) { -mag } else { mag }
+            if bool::from(u.is_negative()) {
+                -mag
+            } else {
+                mag
+            }
         };
         let bound = (y_val.abs() / (2 * g_val.max(1))).max(1);
         let in_range = u_val.abs() <= bound;
         eprintln!(
             "xgcd({}, {}): gcd={}, u={}, |u|={}, bound=|y|/2g={}, canonical={}",
-            x_val, y_val, g_val, u_val, u_val.abs(), bound, in_range
+            x_val,
+            y_val,
+            g_val,
+            u_val,
+            u_val.abs(),
+            bound,
+            in_range
         );
     }
 }
