@@ -61,9 +61,9 @@ fn torsion_basis_holds_points() {
     let RS = ProjectiveXOnlyPoint::from_affine_x(Fp2::from_fp(Fp::from_small(11)), &curve);
 
     let basis = TorsionBasis::from_propagated(R, S, RS);
-    assert_eq!(basis.R, R);
-    assert_eq!(basis.S, S);
-    assert_eq!(basis.RS, RS);
+    assert_eq!(basis.P, R);
+    assert_eq!(basis.PmQ, S);
+    assert_eq!(basis.Q, RS);
 }
 
 /// Verify that Jacobian doubling produces the same affine x
