@@ -2101,67 +2101,6 @@ impl LeftIdeal<30> {
             let skip_hnf = false;
             let cols_w: [Vector<60>; 4] = if skip_hnf {
                 widened
-            } else if std::env::var("SELKIE_INJECT_CREF_O_ALPHA").is_ok() {
-                // Inject C-ref's KAT-1 iter 0 post-HNF + post-reduce_denom
-                // O·α basis. If sum_mod_cref then byte-matches C-ref's
-                // i_com_rsp, the bug is in our HNF mod (which produces
-                // a non-canonical form). If sum still differs, bug is
-                // in `from_hnf_columns_mod_cref` itself.
-                let parse = |s: &str| -> BigInt<60> {
-                    let s = s.trim_start_matches("0x");
-                    let pad = format!("{:0>1$}", s, 60 * 16);
-                    let mut limbs = [0u64; 60];
-                    for (i, chunk) in pad.as_bytes().rchunks(16).enumerate() {
-                        if i >= 60 {
-                            break;
-                        }
-                        let lh = std::str::from_utf8(chunk).unwrap();
-                        limbs[i] = u64::from_str_radix(lh, 16).unwrap_or(0);
-                    }
-                    BigInt::<60>::from_limbs(limbs)
-                };
-                // From [O_ALPHA_CREF] dump for KAT-1 iter 0 (denom=2).
-                // Re-organized as cols (basis[i][j] in C means row i col j).
-                let z = || BigInt::<60>::ZERO;
-                let col0 = Vector::<60>::new(
-                    parse(
-                        "0xb52dfc86a10b45395e61d4b8e09778a1a655e799991a2793fe06285926a82384cabace7ab278a9f563469c3a258d0ccad0d400000000000000000000000000000000000000000000000000000000000000",
-                    ),
-                    z(),
-                    z(),
-                    z(),
-                );
-                let col1 = Vector::<60>::new(
-                    parse(
-                        "0x5a96fe435085a29caf30ea5c704bbc50d32af3cccc8d13c9ff03142c935411c2655d673d593c54fab1a34e1d12c68665686a00000000000000000000000000000000000000000000000000000000000000",
-                    ),
-                    parse(
-                        "0x5a96fe435085a29caf30ea5c704bbc50d32af3cccc8d13c9ff03142c935411c2655d673d593c54fab1a34e1d12c68665686a00000000000000000000000000000000000000000000000000000000000000",
-                    ),
-                    z(),
-                    z(),
-                );
-                let col2 = Vector::<60>::new(
-                    parse(
-                        "0x41868f7b09a3a079e352c3d2394fef5db3d3ea26b0c4a3aa54dae3d3119943e2701a72cc1a3cb1ada0a2a409950e2a27a7fdfc813463412ca2f947aaeda6fd35cbae2b557c921b48a975830a1736c7b14e",
-                    ),
-                    parse(
-                        "0x42f7b3d5cec5f47417a7dcbc618cd57ee06a866a03446f90477279c92c43981c6e9136ce2c4ffa405a1cf1ec5d583a97681274924bd9a5ea0b48f2fb6db1730451c73a5a743aab8cca691ae092249d9038",
-                    ),
-                    BigInt::<60>::from_u64(2),
-                    z(),
-                );
-                let col3 = Vector::<60>::new(
-                    parse(
-                        "0x59de6c15edf4789f95065de75c2d49403cdfa5ab234d2dd705b7493185fee7a56622053c5032b0b154e6272baea17e2d885fc3f77444cda14bd82a57bffac518bcf3787d842bb7ddef863414c28915108b",
-                    ),
-                    parse(
-                        "0x423f21a86c34ca76fd7d50474d6e626e4a1f38485a04899d4e26aece1eee6dff6f55d4cd234655f6fd5fcafaf933325f88083889c01e738b57211d532dac381d0ebab2d7f866636ab9ef4ef554adb2a0c3",
-                    ),
-                    BigInt::<60>::from_u64(1),
-                    BigInt::<60>::from_u64(1),
-                );
-                [col0, col1, col2, col3]
             } else {
                 let det_w = Matrix::from_columns(&widened).det().abs();
                 // Use the constant-modulus variant (= old Selkie path)

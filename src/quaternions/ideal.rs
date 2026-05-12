@@ -839,16 +839,6 @@ impl<const W: usize> NrdBasis<W> {
         let mut vectors = Vec::with_capacity(width.pow(4) - 1);
 
         #[cfg(test)]
-        let (
-            mut _rej_zero_nrd,
-            mut _rej_nonintegral,
-            mut _rej_degree_zero,
-            mut _rej_narrow_degree,
-            mut _rej_not_odd,
-            mut _rej_narrow_coord,
-        ) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
-
-        #[cfg(test)]
         if std::env::var("ENUM_TRACE").is_ok() {
             // Print G[0][0], G[0][1], G[1][1] and the divisor once so we
             // can see if divisor divides G[i][i] (which is nrd(α_i)·denom²
@@ -887,41 +877,21 @@ impl<const W: usize> NrdBasis<W> {
             let nrd_scaled = self.eval_quadratic_form(&x);
 
             if bool::from(nrd_scaled.is_zero()) || bool::from(nrd_scaled.is_negative()) {
-                #[cfg(test)]
-                {
-                    _rej_zero_nrd += 1;
-                }
                 continue;
             }
 
             // degree = nrd_scaled / (nrd(I) · denom²).
             let (degree_wide, rem) = nrd_scaled.div_rem(&divisor);
             if !bool::from(rem.is_zero()) {
-                #[cfg(test)]
-                {
-                    _rej_nonintegral += 1;
-                }
                 continue;
             }
             if bool::from(degree_wide.is_zero()) {
-                #[cfg(test)]
-                {
-                    _rej_degree_zero += 1;
-                }
                 continue;
             }
             let Some(degree_4) = degree_wide.narrow_to::<4>() else {
-                #[cfg(test)]
-                {
-                    _rej_narrow_degree += 1;
-                }
                 continue;
             };
             let Some(degree) = IsogenyDegree::new_odd(*degree_4.as_limbs()) else {
-                #[cfg(test)]
-                {
-                    _rej_not_odd += 1;
-                }
                 continue;
             };
 
@@ -937,10 +907,6 @@ impl<const W: usize> NrdBasis<W> {
             let narrow: [Option<BigInt<4>>; 4] =
                 core::array::from_fn(|i| coords[i].narrow_to::<4>());
             let [Some(a), Some(b), Some(c), Some(d)] = narrow else {
-                #[cfg(test)]
-                {
-                    _rej_narrow_coord += 1;
-                }
                 continue;
             };
 
@@ -998,47 +964,6 @@ impl<const W: usize> NrdBasis<W> {
             }
             core::cmp::Ordering::Equal
         });
-
-        #[cfg(test)]
-        if std::env::var("SELKIE_DUMP_SORTED").is_ok() {
-            let limit: usize = std::env::var("SELKIE_DUMP_SORTED_LIMIT")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(10);
-            for (i, v) in vectors.iter().enumerate().take(limit) {
-                let limbs = v.degree.limbs();
-                let mut last_nz = 0;
-                for (k, &l) in limbs.iter().enumerate() {
-                    if l != 0 {
-                        last_nz = k;
-                    }
-                }
-                let mut s = String::new();
-                for k in (0..=last_nz).rev() {
-                    s.push_str(&format!("{:016x}", limbs[k]));
-                }
-                let s = s.trim_start_matches('0').to_string();
-                crate::selkie_trace!("[SELKIE_SORTED] idx={i} degree=0x{s}");
-            }
-        }
-
-        #[cfg(test)]
-        if std::env::var("ENUM_DIAG").is_ok() {
-            crate::selkie_trace!(
-                "[enum] ideal_norm={} bits, denom={} bits, kept={}, rejected: \
-                 zero_nrd={} nonintegral={} degree_zero={} narrow_degree={} \
-                 not_odd={} narrow_coord={}",
-                ideal_norm.bitsize(),
-                lattice_denom.bitsize(),
-                vectors.len(),
-                _rej_zero_nrd,
-                _rej_nonintegral,
-                _rej_degree_zero,
-                _rej_narrow_degree,
-                _rej_not_odd,
-                _rej_narrow_coord,
-            );
-        }
 
         // Stable sort by `degree`: `nrd(parent_ideal)` is constant
         // across this batch, so ordering by degree matches ordering
@@ -2015,80 +1940,7 @@ impl<const N: usize> LeftIdeal<N> {
                 }
                 g
             };
-            #[cfg(test)]
-            if t == 0 && std::env::var_os("SELKIE_DUMP_CLASS_GRAM").is_some() {
-                crate::selkie_trace!("[SELKIE_CLASS_GRAM_BEGIN]");
-                for i in 0..4 {
-                    for j in 0..4 {
-                        let v = class_gram[i][j];
-                        let neg = bool::from(v.is_negative());
-                        eprint!("g[{i}][{j}] sign={} hex=", if neg { 1 } else { 0 });
-                        let limbs = v.abs();
-                        let limbs = limbs.as_limbs();
-                        let mut last_nz = 0;
-                        for (k, &l) in limbs.iter().enumerate() {
-                            if l != 0 {
-                                last_nz = k;
-                            }
-                        }
-                        for k in (0..=last_nz).rev() {
-                            eprint!("{:016x}", limbs[k]);
-                        }
-                        crate::selkie_trace!();
-                    }
-                }
-                crate::selkie_trace!("[SELKIE_CLASS_GRAM_END]");
-            }
             let class_basis = NrdBasis::from_cols_and_gram(cols_w, class_gram).l2_reduce();
-
-            #[cfg(test)]
-            if t == 0 && std::env::var_os("SELKIE_DUMP_POSTL2_GRAM").is_some() {
-                let cols_dump = class_basis.cols();
-                crate::selkie_trace!("[SELKIE_POSTL2_COLS_BEGIN]");
-                #[allow(clippy::needless_range_loop)]
-                for j in 0..4 {
-                    for r in 0..4 {
-                        let v = cols_dump[j][r];
-                        let neg = bool::from(v.is_negative());
-                        eprint!("c[{j}][{r}] sign={} hex=", if neg { 1 } else { 0 });
-                        let abs = v.abs();
-                        let limbs = abs.as_limbs();
-                        let mut last_nz = 0;
-                        for (k, &l) in limbs.iter().enumerate() {
-                            if l != 0 {
-                                last_nz = k;
-                            }
-                        }
-                        for k in (0..=last_nz).rev() {
-                            eprint!("{:016x}", limbs[k]);
-                        }
-                        crate::selkie_trace!();
-                    }
-                }
-                crate::selkie_trace!("[SELKIE_POSTL2_COLS_END]");
-                crate::selkie_trace!("[SELKIE_POSTL2_GRAM_BEGIN] (class form)");
-                let g = class_basis.gram();
-                for i in 0..4 {
-                    for j in 0..4 {
-                        let v = g[i][j];
-                        let neg = bool::from(v.is_negative());
-                        eprint!("g[{i}][{j}] sign={} hex=", if neg { 1 } else { 0 });
-                        let abs = v.abs();
-                        let limbs = abs.as_limbs();
-                        let mut last_nz = 0;
-                        for (k, &l) in limbs.iter().enumerate() {
-                            if l != 0 {
-                                last_nz = k;
-                            }
-                        }
-                        for k in (0..=last_nz).rev() {
-                            eprint!("{:016x}", limbs[k]);
-                        }
-                        crate::selkie_trace!();
-                    }
-                }
-                crate::selkie_trace!("[SELKIE_POSTL2_GRAM_END]");
-            }
 
             let post_l2_cols = *class_basis.cols();
             let nrd_basis = NrdBasis::new(post_l2_cols);

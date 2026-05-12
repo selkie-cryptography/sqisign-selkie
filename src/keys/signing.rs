@@ -753,23 +753,10 @@ impl SigningKey {
             ];
             let c1 = m_wire[0][0].add_mod2k(&m_wire[0][1].mul_mod2k(&chl_scalar, f), f);
             let c2 = m_wire[1][0].add_mod2k(&m_wire[1][1].mul_mod2k(&chl_scalar, f), f);
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
-                crate::selkie_trace!("[M_SK_SELKIE] M_sk[0][0] = {:?}", m[0][0]);
-                crate::selkie_trace!("[M_SK_SELKIE] M_sk[0][1] = {:?}", m[0][1]);
-                crate::selkie_trace!("[M_SK_SELKIE] M_sk[1][0] = {:?}", m[1][0]);
-                crate::selkie_trace!("[M_SK_SELKIE] M_sk[1][1] = {:?}", m[1][1]);
-                crate::selkie_trace!("[M_SK_SELKIE] chl_scalar = {:?}", chl_scalar);
-            }
 
             // Line 12: I'_chl ← KernelDecomposedToIdeal(c₁, c₂)
             let c1_big = BigInt::<4>::from(c1);
             let c2_big = BigInt::<4>::from(c2);
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
-                crate::selkie_trace!("[CHL_SCALARS_SELKIE] c1 = {}", c1_big);
-                crate::selkie_trace!("[CHL_SCALARS_SELKIE] c2 = {}", c2_big);
-            }
             let i_chl_prime =
                 match TorsionBasis::kernel_to_ideal(&c1_big, &c2_big, TorsionExponent::FULL) {
                     Some(ideal) => ideal,
@@ -837,21 +824,6 @@ impl SigningKey {
             let i_chl_lat = Lattice::<N_RESP>::from(*i_chl_prime_w.lattice());
             let i_sk_lat = Lattice::<N_RESP>::from(*i_sk_w.lattice());
             #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
-                crate::selkie_trace!("[INPUT_CHL_SELKIE] denom = {}", i_chl_lat.denom());
-                for i in 0..4 {
-                    for j in 0..4 {
-                        crate::selkie_trace!("[INPUT_CHL_SELKIE] basis[{i}][{j}] = {}", i_chl_lat.basis()[i][j]);
-                    }
-                }
-                crate::selkie_trace!("[INPUT_SK_SELKIE] denom = {}", i_sk_lat.denom());
-                for i in 0..4 {
-                    for j in 0..4 {
-                        crate::selkie_trace!("[INPUT_SK_SELKIE] basis[{i}][{j}] = {}", i_sk_lat.basis()[i][j]);
-                    }
-                }
-            }
-            #[cfg(test)]
             let _t_int = std::time::Instant::now();
             // W=60: entries start at ~60 limbs (d*B products); xgcd
             // elimination may grow them. W=120 is the safe Hadamard
@@ -865,16 +837,6 @@ impl SigningKey {
                     continue;
                 }
             };
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
-                let l1 = Lattice::<N_RESP>::from(i_chl_sk);
-                crate::selkie_trace!("[INTER1_SELKIE] denom = {}", l1.denom());
-                for i in 0..4 {
-                    for j in 0..4 {
-                        crate::selkie_trace!("[INTER1_SELKIE] basis[{i}][{j}] = {}", l1.basis()[i][j]);
-                    }
-                }
-            }
             #[cfg(test)]
             crate::selkie_trace!(
                 "[sign {_iter}] intersection 1: {:?} (cumul {:?})",
@@ -895,14 +857,17 @@ impl SigningKey {
             // magnitudes (KAT-1 sign iter 0: ~520-bit i_chl_sk vs
             // ~140-bit conj(I_com)). For byte-equality with C-ref we
             // must use the dual-sum-dual path here.
-            let intersection = match i_chl_sk_lat.intersection_via_dual_sum_dual::<500>(&i_com_conj_lat) {
-                Some(l) => l,
-                None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: intersection_via_dual_sum_dual 2 None");
-                    continue;
-                }
-            };
+            let intersection =
+                match i_chl_sk_lat.intersection_via_dual_sum_dual::<500>(&i_com_conj_lat) {
+                    Some(l) => l,
+                    None => {
+                        #[cfg(test)]
+                        crate::selkie_trace!(
+                            "[sign {_iter}] DROP: intersection_via_dual_sum_dual 2 None"
+                        );
+                        continue;
+                    }
+                };
             #[cfg(test)]
             crate::selkie_trace!(
                 "[sign {_iter}] intersection 2: {:?} (cumul {:?})",
@@ -910,17 +875,6 @@ impl SigningKey {
                 _iter_start.elapsed()
             );
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_INTERSECTION").is_ok() {
-                let b = intersection_lat.basis();
-                let d = intersection_lat.denom();
-                crate::selkie_trace!("[INTER_SELKIE] denom = {d}");
-                for i in 0..4 {
-                    for j in 0..4 {
-                        crate::selkie_trace!("[INTER_SELKIE] basis[{i}][{j}] = {}", b[i][j]);
-                    }
-                }
-            }
 
             // Sampling radius — C-ref formula, not spec.
             //
@@ -1012,93 +966,6 @@ impl SigningKey {
                     Some(a) => a,
                     None => continue,
                 };
-                // Debug-only override: replace sampled alpha with C-ref's
-                // KAT-1 iter 0 alpha (alpha_pre_bt). Lets us test whether
-                // Selkie's intersection lattice contains C-ref's element.
-                #[cfg(test)]
-                let alpha_try = if std::env::var("SELKIE_INJECT_CREF_ALPHA_KAT1").is_ok() {
-                    crate::selkie_trace!("[sign {_iter}] INJECTING C-ref KAT-1 alpha_pre_bt");
-                    let parse_be_hex = |s: &str| -> BigInt<N_RESP> {
-                        let s = s.strip_prefix("0x").unwrap_or(s);
-                        let pad_len = N_RESP * 16; // 16 hex chars per limb
-                        let s = if s.len() < pad_len {
-                            format!("{:0>1$}", s, pad_len)
-                        } else {
-                            s.to_string()
-                        };
-                        let mut limbs = [0u64; N_RESP];
-                        for (i, limb_chunk) in s.as_bytes().rchunks(16).enumerate() {
-                            if i >= N_RESP {
-                                break;
-                            }
-                            let limb_hex = std::str::from_utf8(limb_chunk).unwrap();
-                            limbs[i] = u64::from_str_radix(limb_hex, 16).unwrap_or(0);
-                        }
-                        BigInt::<N_RESP>::from_limbs(limbs)
-                    };
-                    // C-ref's KAT-1 α_pre_bt values (sign-aware, from
-                    // sign-aware sqisign_dump_ibz):
-                    //   coord[0] = +0x339de458... (positive)
-                    //   coord[1] = +0x11d7d24b... (positive)
-                    //   coord[2] = -0x20e8f218... (NEGATIVE!)
-                    //   coord[3] = +0x19389040... (positive)
-                    // Earlier injection used all-positive values which
-                    // caused EVERY downstream divergence we were chasing.
-                    let a = parse_be_hex(
-                        "339de45818a8dcad1962ce0fabad5d66ddd0f321bcb2c9e4e982adb63e429421d5c85d3a06eee1986",
-                    );
-                    let b = parse_be_hex(
-                        "11d7d24b11727d3922e1992446850b60c7cac60a57a5bd61f5eb9ef19b7b557f3bae970e2d1d325634",
-                    );
-                    let c_pos = parse_be_hex(
-                        "20e8f2187a69ac25e8976218b1fe895350547aa192d2fba8ba",
-                    );
-                    let c = c_pos.wrapping_neg();
-                    let d = parse_be_hex("1938904070736ee61b443e069f76cf0a9dd44bbab8af7d9694");
-                    Element::<N_RESP> {
-                        a: Coordinate::from_bigint(a),
-                        b: Coordinate::from_bigint(b),
-                        c: Coordinate::from_bigint(c),
-                        d: Coordinate::from_bigint(d),
-                        denom: Denominator::from_bigint_unchecked(BigInt::<N_RESP>::ONE),
-                    }
-                } else {
-                    alpha_try
-                };
-                #[cfg(test)]
-                if std::env::var("SELKIE_DUMP_ALPHA").is_ok() {
-                    let limbs_hex = |bi: &BigInt<N_RESP>| {
-                        bi.as_limbs()
-                            .iter()
-                            .rev()
-                            .flat_map(|l| l.to_be_bytes())
-                            .collect::<Vec<_>>()
-                    };
-                    crate::selkie_trace!(
-                        "[sign {_iter}] alpha_pre_bt: denom={:?} a_bits={} b_bits={} c_bits={} d_bits={}",
-                        alpha_try.denom.as_bigint().as_limbs()[0],
-                        alpha_try.a.as_bigint().bitsize(),
-                        alpha_try.b.as_bigint().bitsize(),
-                        alpha_try.c.as_bigint().bitsize(),
-                        alpha_try.d.as_bigint().bitsize(),
-                    );
-                    crate::selkie_trace!(
-                        "[sign {_iter}] alpha_pre_bt: a={}",
-                        hex::encode(limbs_hex(alpha_try.a.as_bigint())),
-                    );
-                    crate::selkie_trace!(
-                        "[sign {_iter}] alpha_pre_bt: b={}",
-                        hex::encode(limbs_hex(alpha_try.b.as_bigint())),
-                    );
-                    crate::selkie_trace!(
-                        "[sign {_iter}] alpha_pre_bt: c={}",
-                        hex::encode(limbs_hex(alpha_try.c.as_bigint())),
-                    );
-                    crate::selkie_trace!(
-                        "[sign {_iter}] alpha_pre_bt: d={}",
-                        hex::encode(limbs_hex(alpha_try.d.as_bigint())),
-                    );
-                }
                 let (alpha_norm, n_bt_try) = alpha_try.compute_backtracking();
                 let (num_w, den_sq_w) = alpha_norm.norm_w::<N_RESP>();
                 let (q1, r1) = num_w.div_rem(&den_sq_w);
@@ -1327,76 +1194,6 @@ impl SigningKey {
                         continue;
                     }
                 };
-                // Debug-only: replace sampled i_aux with C-ref's KAT-1
-                // iter 0 i_aux (HNF basis bytes from `[I_AUX_CREF]` dump).
-                #[cfg(test)]
-                let i_aux = if std::env::var("SELKIE_INJECT_CREF_I_AUX_KAT1").is_ok() {
-                    crate::selkie_trace!("[sign {_iter}] INJECTING C-ref KAT-1 i_aux");
-                    let parse = |s: &str| -> BigInt<4> {
-                        let s = s.strip_prefix("0x").unwrap_or(s);
-                        let pad_len = 64;
-                        let s = if s.len() < pad_len {
-                            format!("{:0>1$}", s, pad_len)
-                        } else {
-                            s.to_string()
-                        };
-                        let mut limbs = [0u64; 4];
-                        for (i, chunk) in s.as_bytes().rchunks(16).enumerate() {
-                            if i >= 4 {
-                                break;
-                            }
-                            let limb_hex = std::str::from_utf8(chunk).unwrap();
-                            limbs[i] = u64::from_str_radix(limb_hex, 16).unwrap_or(0);
-                        }
-                        BigInt::<4>::from_limbs(limbs)
-                    };
-                    use crate::quaternions::{
-                        lattice::{HnfLattice, Lattice},
-                        linear::{Matrix, Vector},
-                    };
-                    let zero = BigInt::<4>::ZERO;
-                    let one = BigInt::<4>::ONE;
-                    let diag = parse("5032829004b4219c196f6c8d0662a9e");
-                    let col0 = Vector::<4>::new(diag, zero, zero, zero);
-                    let col1 = Vector::<4>::new(zero, diag, zero, zero);
-                    let col2 = Vector::<4>::new(
-                        parse("2574b0eebc9830ca9abd14380bdfdaa"),
-                        parse("1300d9486bf72484f64f54da7e12d65"),
-                        one,
-                        zero,
-                    );
-                    let col3 = Vector::<4>::new(
-                        parse("3d31a94798bcfd17232017b2884fd39"),
-                        parse("2574b0eebc9830ca9abd14380bdfdaa"),
-                        zero,
-                        one,
-                    );
-                    let basis = Matrix::<4>::from_columns(&[col0, col1, col2, col3]);
-                    let denom = parse("2");
-                    let lattice: HnfLattice<4> = Lattice::<4>::new(basis, denom).into();
-                    let norm = parse("28194148025a10ce0cb7b646833154f");
-                    LeftIdeal::<4>::from_parts(lattice, norm, *EXTREMAL_ORDERS[0].order())
-                } else {
-                    i_aux
-                };
-                #[cfg(test)]
-                if std::env::var("SELKIE_DUMP_I_AUX").is_ok() {
-                    crate::selkie_trace!("[sign {_iter}] i_aux norm = {:?}", i_aux.norm());
-                    crate::selkie_trace!(
-                        "[sign {_iter}] i_aux denom = {:?}",
-                        i_aux.lattice().denom()
-                    );
-                    let m = i_aux.lattice().basis();
-                    let cols = m.columns();
-                    for j in 0..4 {
-                        for i in 0..4 {
-                            crate::selkie_trace!(
-                                "[sign {_iter}] i_aux basis row={i} col={j} = {:?}",
-                                cols[j][i]
-                            );
-                        }
-                    }
-                }
                 #[cfg(test)]
                 crate::selkie_trace!(
                     "[sign {_iter}] i_aux done, norm={} bits (cumul {:?})",
@@ -1429,23 +1226,6 @@ impl SigningKey {
                 // and intersect at width 8.
                 let i_aux_w: LeftIdeal<8> = i_aux.widen::<8>();
                 let i_com_rsp_lat_w: Lattice<8> = (*i_com_rsp.lattice()).into();
-                #[cfg(test)]
-                if std::env::var("SELKIE_DUMP_I_COM_RSP").is_ok() {
-                    crate::selkie_trace!("[sign {_iter}] i_com_rsp norm = {:?}", i_com_rsp.norm());
-                    crate::selkie_trace!(
-                        "[sign {_iter}] i_com_rsp denom = {:?}",
-                        i_com_rsp.lattice().denom()
-                    );
-                    let cols = i_com_rsp.lattice().basis().columns();
-                    for j in 0..4 {
-                        for i in 0..4 {
-                            crate::selkie_trace!(
-                                "[sign {_iter}] i_com_rsp basis row={i} col={j} = {:?}",
-                                cols[j][i]
-                            );
-                        }
-                    }
-                }
                 let i_aux_lat_w: Lattice<8> = (*i_aux_w.lattice()).into();
                 #[cfg(test)]
                 let _t_inter = std::time::Instant::now();
@@ -1480,76 +1260,6 @@ impl SigningKey {
                 let o0_w8 = EXTREMAL_ORDERS[0].widen::<8>();
                 let mut i_inter_w =
                     LeftIdeal::<8>::from_parts(inter_hnf_w8, inter_norm_w8, *o0_w8.order());
-                // Debug: replace Selkie's computed i_inter with C-ref's
-                // KAT-1 iter 0 i_inter (HNF basis bytes from
-                // `[I_INTER_CREF]` dump). If chain accepts, we know
-                // EVERYTHING downstream of i_inter is correct in
-                // Selkie. If chain still rejects, bug is in
-                // i_inter.to_isogeny() or below.
-                #[cfg(test)]
-                let i_inter_w = if std::env::var("SELKIE_INJECT_CREF_I_INTER_KAT1").is_ok() {
-                    crate::selkie_trace!("[sign {_iter}] INJECTING C-ref KAT-1 i_inter");
-                    use crate::quaternions::lattice::HnfLattice;
-                    let parse_8 = |s: &str| -> BigInt<8> {
-                        let s = s.strip_prefix("0x").unwrap_or(s);
-                        let pad_len = 128;
-                        let s = if s.len() < pad_len {
-                            format!("{:0>1$}", s, pad_len)
-                        } else {
-                            s.to_string()
-                        };
-                        let mut limbs = [0u64; 8];
-                        for (i, chunk) in s.as_bytes().rchunks(16).enumerate() {
-                            if i >= 8 {
-                                break;
-                            }
-                            let limb_hex = std::str::from_utf8(chunk).unwrap();
-                            limbs[i] = u64::from_str_radix(limb_hex, 16).unwrap_or(0);
-                        }
-                        BigInt::<8>::from_limbs(limbs)
-                    };
-                    let zero8 = BigInt::<8>::ZERO;
-                    let one8 = BigInt::<8>::ONE;
-                    let diag = parse_8(
-                        "22be3518abb8190fbaa0eeb4cc34faa4c4a4eb304ef57783620865462fd3b5790bec193bf5ab56e00e63c2ac0ca4baf6",
-                    );
-                    use crate::quaternions::linear::Vector;
-                    let col0 = Vector::<8>::new(diag, zero8, zero8, zero8);
-                    let col1 = Vector::<8>::new(zero8, diag, zero8, zero8);
-                    let col2 = Vector::<8>::new(
-                        parse_8(
-                            "21a08a1849cc5cd714cc713e9ade56933be051d9be169fdbb7597bb6783ae9c4e59b97769dd683c53d38a42250e74110",
-                        ),
-                        parse_8(
-                            "c250d95dbccc252a3a80fe7be39110a67f2ffb3186b701a23a0aece58aea94e5878f971cbab099b88344400e87ea0ad",
-                        ),
-                        one8,
-                        zero8,
-                    );
-                    let col3 = Vector::<8>::new(
-                        parse_8(
-                            "16992782cfeb56bd16f8decd0dfbe99a5cb1eb7d368a07693e67b677d7250c2ab3731fca2a004d44862f7eab24261a49",
-                        ),
-                        parse_8(
-                            "21a08a1849cc5cd714cc713e9ade56933be051d9be169fdbb7597bb6783ae9c4e59b97769dd683c53d38a42250e74110",
-                        ),
-                        zero8,
-                        one8,
-                    );
-                    use crate::quaternions::lattice::Lattice as Lat;
-                    let basis = crate::quaternions::linear::Matrix::<8>::from_columns(&[
-                        col0, col1, col2, col3,
-                    ]);
-                    let denom = parse_8("2");
-                    let lattice: HnfLattice<8> = Lat::<8>::new(basis, denom).into();
-                    let norm = parse_8(
-                        "115f1a8c55dc0c87dd50775a661a7d5262527598277abbc1b10432a317e9dabc85f60c9dfad5ab700731e15606525d7b",
-                    );
-                    LeftIdeal::<8>::from_parts(lattice, norm, *o0_w8.order())
-                } else {
-                    i_inter_w
-                };
-                let mut i_inter_w = i_inter_w; // re-mut for refresh_norm
                 #[cfg(test)]
                 let _t_refresh = std::time::Instant::now();
                 if i_inter_w.refresh_norm::<40>().is_none() {
@@ -1564,23 +1274,6 @@ impl SigningKey {
                     i_inter_w.norm().bitsize(),
                     _iter_start.elapsed()
                 );
-                #[cfg(test)]
-                if std::env::var("SELKIE_DUMP_I_INTER").is_ok() {
-                    crate::selkie_trace!("[sign {_iter}] i_inter norm = {:?}", i_inter_w.norm());
-                    crate::selkie_trace!(
-                        "[sign {_iter}] i_inter denom = {:?}",
-                        i_inter_w.lattice().denom()
-                    );
-                    let cols = i_inter_w.lattice().basis().columns();
-                    for j in 0..4 {
-                        for i in 0..4 {
-                            crate::selkie_trace!(
-                                "[sign {_iter}] i_inter basis row={i} col={j} = {:?}",
-                                cols[j][i]
-                            );
-                        }
-                    }
-                }
                 if *i_inter_w.norm() == BigInt::<8>::ONE {
                     #[cfg(test)]
                     crate::selkie_trace!("[sign {_iter}] DROP: i_inter collapsed to O_0");
@@ -1821,49 +1514,6 @@ impl SigningKey {
                 "[sign {_iter}] entering compute_challenge_isogeny (n_bt={})",
                 n_bt_te.value()
             );
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_CHALL_INPUTS").is_ok() {
-                let fp2_hex = |v: &Fp2| -> String {
-                    let b = v.to_bytes();
-                    let re: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
-                    let im: String = b[32..].iter().rev().map(|x| format!("{:02x}", x)).collect();
-                    format!("0x{re} + i*0x{im}")
-                };
-                let chl_scalar: Scalar = chl.into();
-                let chl_limbs = chl_scalar.as_limbs();
-                let chl_hex: String = chl_limbs
-                    .iter()
-                    .rev()
-                    .map(|l| format!("{:016x}", l))
-                    .collect::<String>();
-                crate::selkie_trace!("[CHALL_INPUTS_SELKIE] chl_scalar = 0x{chl_hex}");
-                crate::selkie_trace!(
-                    "[CHALL_INPUTS_SELKIE] basis_pk.R.x = {}",
-                    fp2_hex(basis_pk.R.to_affine_x().as_fp2())
-                );
-                crate::selkie_trace!(
-                    "[CHALL_INPUTS_SELKIE] basis_pk.S.x = {}",
-                    fp2_hex(basis_pk.S.to_affine_x().as_fp2())
-                );
-                crate::selkie_trace!(
-                    "[CHALL_INPUTS_SELKIE] basis_pk.RS.x = {}",
-                    fp2_hex(basis_pk.RS.to_affine_x().as_fp2())
-                );
-                crate::selkie_trace!(
-                    "[CHALL_INPUTS_SELKIE] e_pk.j = {}",
-                    fp2_hex(&e_pk.j_invariant())
-                );
-                let mut e_pk_norm = *e_pk;
-                e_pk_norm.normalize();
-                crate::selkie_trace!(
-                    "[CHALL_INPUTS_SELKIE] e_pk.A_aff = {}",
-                    fp2_hex(e_pk_norm.coefficient().as_fp2())
-                );
-                crate::selkie_trace!(
-                    "[CHALL_INPUTS_SELKIE] hint = 0x{:02x}",
-                    u8::from(self.verifying_key.hint)
-                );
-            }
             let (e_chl_final, p_chl_final, q_chl_final, pmq_chl_final) =
                 match compute_challenge_isogeny(
                     &basis_pk, &chl, &e_chl, &p_chl, &q_chl, &pmq_chl, n_bt_te,
@@ -1949,17 +1599,17 @@ impl SigningKey {
                     |p: &ProjectiveXOnlyPoint| -> String { fp2_short(&(&p.X * &p.Z.invert())) };
                 crate::selkie_trace!(
                     "[sign {_iter}] basis_chl: R={}, S={}, RS={}, R==S={}",
-                    aff(&basis_chl.R),
-                    aff(&basis_chl.S),
-                    aff(&basis_chl.RS),
-                    basis_chl.R == basis_chl.S,
+                    aff(&basis_chl.P),
+                    aff(&basis_chl.PmQ),
+                    aff(&basis_chl.Q),
+                    basis_chl.P == basis_chl.PmQ,
                 );
                 crate::selkie_trace!(
                     "[sign {_iter}] transformed: R={}, S={}, RS={}, R==S={}",
-                    aff(&transformed.R),
-                    aff(&transformed.S),
-                    aff(&transformed.RS),
-                    transformed.R == transformed.S,
+                    aff(&transformed.P),
+                    aff(&transformed.PmQ),
+                    aff(&transformed.Q),
+                    transformed.P == transformed.PmQ,
                 );
             }
             // m_chl = "coords of transformed in det_chl at 2^e_cob".
@@ -2001,9 +1651,9 @@ impl SigningKey {
                 );
                 crate::selkie_trace!(
                     "[sign {_iter}] det_chl: R={}, S={}, RS={}",
-                    aff(&det_chl.R),
-                    aff(&det_chl.S),
-                    aff(&det_chl.RS),
+                    aff(&det_chl.P),
+                    aff(&det_chl.PmQ),
+                    aff(&det_chl.Q),
                 );
                 crate::selkie_trace!(
                     "[sign {_iter}] m_chl e={} entries: [00]={} [01]={} [10]={} [11]={}",
