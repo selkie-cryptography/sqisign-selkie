@@ -1266,6 +1266,130 @@ short vectors of the input lattice can have coordinates
 up to the input-entry size (${\sim}2^{258}$), so narrow-to-4 on~$\delta$
 would have rejected every valid input.
 
+\subsection{\texttt{random\_norm} off-by-one in $\beta$ rejection sampling}
+\label{sec:bug-random-norm-off-by-one}
+
+The same Algorithm~3.10 (\textsc{RandomIdealGivenNorm}) calls for
+$\beta = x + yi + zj + wk$ with coordinates uniformly in
+$[1, N]$, the same range the C reference draws via
+\texttt{ibz\_rand\_interval(out, 1, norm)}.  We had reimplemented
+the rejection-sampling loop inline rather than reusing our
+existing \texttt{BigInt::rand\_interval}.  The inline version
+read $\lceil \log_2 N / 8 \rceil$ bytes, applied the same top-byte
+mask the C reference uses, but then rejected $\mathtt{val}=0$ and
+returned $\mathtt{val}$ directly:
+\begin{lstlisting}[language=Rust]
+loop {
+    rng.fill_bytes(&mut bytes[..n_bytes]);
+    if n_bits % 8 != 0 {
+        bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
+    }
+    let val = BigInt::<4>::from_bytes_le_unsigned(&bytes[..n_bytes]);
+    if bool::from(val.is_zero()) || val.ct_mod(n) != val {
+        continue;
+    }
+    return val;
+}
+\end{lstlisting}
+The C reference instead accepts $\mathtt{tmp} \le N - 1$ and
+returns $\mathtt{tmp} + 1$:
+\begin{lstlisting}[language=C]
+do {
+    randombytes((unsigned char *)r, len_bytes);
+    r[len_limbs - 1] &= mask;
+    mpz_roinit_n(tmp, r, len_limbs);
+    if (mpz_cmp(tmp, bmina) <= 0)  // bmina = N - 1
+        break;
+} while (1);
+mpz_add(*rand, tmp, *a);  // *a = 1
+\end{lstlisting}
+Per attempt the byte consumption is identical: both sides draw
+the same $\lceil \log_2 N / 8 \rceil$ bytes, both apply the same
+top-byte mask, and the reject conditions
+($\mathtt{val} \ge N$ on our side, $\mathtt{tmp} > N - 1$ on the
+reference's) coincide on every nonzero value.  But the C
+reference's \emph{accepted} value is exactly one larger than
+ours: on a shared DRBG, each of the four coordinates of $\beta$
+came out one less than the reference's, except in the
+vanishing-probability case where the bytes are all zero (which
+the reference accepts and remaps to $1$).
+
+This mistake interacted badly with what came after.  After
+sampling $\beta$, the algorithm computes $\alpha = \gamma\beta$
+where $\gamma$ has reduced norm $m \cdot N$ from
+\textsc{RepresentInteger}.  A constant shift of the
+coefficients of~$\beta$ by $(1, 1, 1, 1)$ propagates through the
+non-linear quaternion multiplication as
+\[
+  \alpha_{\text{ours}}
+  \;=\; \gamma\beta_{\text{ours}}
+  \;=\; \gamma\bigl(\beta_{\text{ref}} - (1+i+j+k)\bigr)
+  \;=\; \alpha_{\text{ref}} \;-\; \gamma\cdot(1+i+j+k),
+\]
+and $\gamma \cdot (1 + i + j + k)$ generally does \emph{not} lie
+in the right-ideal $O_0 \cdot N$, so the resulting
+$O_0$-ideal $O_0 \cdot \alpha + O_0 \cdot N$ is a different
+$\mathbb{Z}$-module than the reference's, not just a different
+basis representation of the same module.  The intersection
+$I_{\text{inter}} = I_{\text{com,rsp}} \cap I_{\text{aux}}$
+inherits the divergence, and the response-phase
+\textsc{IdealToIsogeny} on $I_{\text{inter}}$ ran an
+$L^2$-LLL on a basis that no longer matched the reference's at
+byte level.
+
+\paragraph{Diagnosis.}  We built a cross-implementation
+$L^2$-LLL dump harness: a \texttt{SELKIE\_L2\_DUMP\_DIR} env
+variable in our \texttt{l2\_reduce} writes each $L^2$ input
+$(G, B)$ to a numbered text file, and we added the same
+\texttt{CREF\_L2\_DUMP\_DIR} hook to the C reference's
+\texttt{quat\_lll\_core}.  On the same KAT seed, hashing the
+files and joining by content matched the first seventeen
+$L^2$ calls byte-for-byte and diverged on the eighteenth.
+Caller-location tags written to a sister
+\texttt{l2\_caller\_NNNN.txt} (using
+\texttt{\#[track\_caller]} on \texttt{l2\_reduce} and the
+\texttt{core::panic::Location::caller()} API) identified call~18
+as the $t=0$ extremal-order step of
+\textsc{IdealToIsogeny}'s \textsc{SuitableIdeals}, run on
+$I_{\text{inter}}$.  Dumping the HNF bases of
+$I_{\text{aux}}$ from both sides then showed off-diagonal
+column entries differing by amounts unrelated to the lattice
+norm --- a different $\mathbb{Z}$-module, not just a different
+basis.
+
+\paragraph{Fix.}  Mirror the C reference's mapping exactly.
+Sample $\mathtt{tmp}$ from $[0, N-1]$ via top-byte-masked
+rejection on $\lceil \log_2(N-1) / 8 \rceil$ bytes, reject
+$\mathtt{tmp} > N - 1$, and return $\mathtt{tmp} + 1$.  This
+made \texttt{random\_norm}'s $I_{\text{aux}}$ byte-equal to the
+reference's, the downstream intersection byte-equal, and the
+two previously-stuck KATs (\#39 and \#80, which had been
+exhausting in-iter rejection samplers for tens of seconds
+without ever finding a valid response~$\alpha$) returned in
+$\sim 2.5$~s each, succeeding on iteration~0 like the
+reference.  After the fix, 94 of 100 signing KATs pass; the
+remaining six (\#20, \#53, \#56, \#79, \#94, \#95) fail with a
+distinct lattice-basis divergence in
+\texttt{from\_generator\_mod\_hnf}'s canonical-HNF reduction,
+unrelated to this sampling bug.
+
+\noindent
+\textbf{Advice for implementers:} When emulating a C-reference
+sampling primitive on a shared DRBG, the byte-stream contract is
+half the story.  The other half is the \emph{mapping} from raw
+bytes to the returned value: an inclusive vs.\ exclusive bound,
+a $+a$ offset, or a different rejection threshold all produce
+the same byte consumption and the same distribution but
+different individual samples.  For KAT byte-equality, the
+mapping has to match exactly --- ideally by routing all such
+sampling through a single shared primitive (we already had one,
+\texttt{BigInt::rand\_interval}; this loop just hadn't been
+refactored onto it).  When that's infeasible, write a tiny
+property test that pulls bytes from a fixed-seed DRBG and
+verifies your routine and the reference's
+\texttt{ibz\_rand\_interval} return identical sequences for
+the same range~$[a, b]$.
+
 \subsection{Invalid test kernels for $(2,2)$-isogeny chains}
 \label{sec:bug-theta-tests}
 
