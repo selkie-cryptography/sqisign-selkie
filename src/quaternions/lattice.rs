@@ -3937,11 +3937,43 @@ impl<const N: usize> NrdBasis<N> {
             COUNTER.fetch_add(1, Ordering::SeqCst) + 1
         };
         #[cfg(test)]
-        if std::env::var("L2_TRACE").is_ok() && crate::l2_trace_active::get() {
+        if std::env::var("L2_TRACE").is_ok()
+            && (crate::l2_trace_active::get() || std::env::var_os("SELKIE_L2_TRACE_ALL").is_some())
+        {
             eprintln!("[L2_SELKIE] === call #{l2_my_call} begin ===");
             for i in 0..4 {
                 for j in 0..=i {
-                    eprintln!("[L2_SELKIE] call={l2_my_call} G_in[{i}][{j}] = {}", self.gram[i][j]);
+                    eprintln!(
+                        "[L2_SELKIE] call={l2_my_call} G_in[{i}][{j}] = {}",
+                        self.gram[i][j]
+                    );
+                }
+            }
+        }
+        // Capture every L² input as a text file under
+        // `$SELKIE_L2_DUMP_DIR/l2_in_{call}.txt`. Each file has 16
+        // lines of the form `g_{i}_{j} = <signed-decimal>` plus 16
+        // lines of the form `c_{j}_{i} = <signed-decimal>` for the
+        // 4×4 basis columns. Pair with the equivalent C-ref dump to
+        // get a minimal repro for L²-LLL byte-equality investigation
+        // (memory entry `2026-05-11-late`).
+        #[cfg(test)]
+        if let Some(dir) = std::env::var_os("SELKIE_L2_DUMP_DIR") {
+            use std::io::Write;
+            let path = std::path::PathBuf::from(&dir).join(format!("l2_in_{l2_my_call:04}.txt"));
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(mut f) = std::fs::File::create(&path) {
+                for i in 0..4 {
+                    for j in 0..4 {
+                        let _ = writeln!(f, "g_{i}_{j} = {}", self.gram[i][j]);
+                    }
+                }
+                for j in 0..4 {
+                    for i in 0..4 {
+                        let _ = writeln!(f, "c_{j}_{i} = {}", self.cols[j][i]);
+                    }
                 }
             }
         }
@@ -3981,6 +4013,17 @@ impl<const N: usize> NrdBasis<N> {
             mu: &mut [[DoublePlusExponent; D]; D],
             eta_bar: f64,
         ) {
+            // DPE-native comparison thresholds. Matches C-ref's
+            // `dpe_cmp_d(u, ETABAR) > 0 || dpe_cmp_d(u, -ETABAR) < 0`
+            // exactly — comparing DPE-to-DPE preserves the full DPE
+            // precision, whereas the earlier `mu.abs().to_f64() >
+            // eta_bar` round-tripped through f64 and could flip the
+            // decision for values within f64-precision of the
+            // threshold. That f64 round-trip is the documented
+            // borderline-decision divergence from C-ref's
+            // `quat_lll_core` (memory 2026-05-11-late).
+            let eta_bar_dpe = DoublePlusExponent::from_f64(eta_bar);
+            let neg_eta_bar_dpe = DoublePlusExponent::from_f64(-eta_bar);
             loop {
                 extend_gso_family(gram, k, r, mu);
 
@@ -3988,7 +4031,7 @@ impl<const N: usize> NrdBasis<N> {
                 let mut ii = k;
                 while ii > 0 {
                     ii -= 1;
-                    if mu[k][ii].abs().to_f64() > eta_bar {
+                    if mu[k][ii] > eta_bar_dpe || mu[k][ii] < neg_eta_bar_dpe {
                         done = false;
                         let x_big: BigInt<N> = mu[k][ii].to_bigint();
 
@@ -4081,7 +4124,10 @@ impl<const N: usize> NrdBasis<N> {
             size_reduce(&mut self.cols, &mut self.gram, k, &mut r, &mut mu, eta_bar);
 
             #[cfg(test)]
-            if std::env::var("L2_TRACE").is_ok() && crate::l2_trace_active::get() {
+            if std::env::var("L2_TRACE").is_ok()
+                && (crate::l2_trace_active::get()
+                    || std::env::var_os("SELKIE_L2_TRACE_ALL").is_some())
+            {
                 for i in 0..=k {
                     eprintln!(
                         "[L2_SELKIE] call={l2_my_call} kappa={} post-size-reduce r[{}][{}] mant={:.17} exp={}",
@@ -4094,10 +4140,22 @@ impl<const N: usize> NrdBasis<N> {
                         k, k, i, mu[k][i].m, mu[k][i].e
                     );
                 }
-                eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[0] = {}", self.cols[k][0]);
-                eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[1] = {}", self.cols[k][1]);
-                eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[2] = {}", self.cols[k][2]);
-                eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[3] = {}", self.cols[k][3]);
+                eprintln!(
+                    "[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[0] = {}",
+                    self.cols[k][0]
+                );
+                eprintln!(
+                    "[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[1] = {}",
+                    self.cols[k][1]
+                );
+                eprintln!(
+                    "[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[2] = {}",
+                    self.cols[k][2]
+                );
+                eprintln!(
+                    "[L2_SELKIE] call={l2_my_call} kappa={k} basis col[{k}] row[3] = {}",
+                    self.cols[k][3]
+                );
             }
 
             t[0] = DoublePlusExponent::from_bigint(&self.gram[k][k]);
@@ -4126,7 +4184,10 @@ impl<const N: usize> NrdBasis<N> {
             }
 
             #[cfg(test)]
-            if std::env::var("L2_TRACE").is_ok() && crate::l2_trace_active::get() {
+            if std::env::var("L2_TRACE").is_ok()
+                && (crate::l2_trace_active::get()
+                    || std::env::var_os("SELKIE_L2_TRACE_ALL").is_some())
+            {
                 eprintln!("[L2_SELKIE] call={l2_my_call} kappa={k} swap={s}");
             }
 
