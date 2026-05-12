@@ -19,7 +19,10 @@ permissions:
 jobs:
   paper:
     name: Build LaTeX documents
-    runs-on: ubuntu-24.04
+    # Self-hosted Fly runner. `texlive-full` is pre-installed in
+    # infra/runners/Dockerfile, so we run latexmk directly instead
+    # of through xu-cheng/latex-action's Docker wrapper.
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -31,16 +34,12 @@ jobs:
           submodules: true
 
       - name: Build paper
-        uses: xu-cheng/latex-action@v4
-        with:
-          working_directory: latex
-          root_file: sqisign-selkie.tex
+        working-directory: latex
+        run: latexmk -pdf -bibtex -interaction=nonstopmode sqisign-selkie.tex
 
       - name: Build spec review
-        uses: xu-cheng/latex-action@v4
-        with:
-          working_directory: latex
-          root_file: sqisign-v2-spec-review.tex
+        working-directory: latex
+        run: latexmk -pdf -bibtex -interaction=nonstopmode sqisign-v2-spec-review.tex
 
       - name: Upload PDFs
         id: upload

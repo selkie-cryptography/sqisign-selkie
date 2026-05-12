@@ -1,7 +1,6 @@
-# Multi-stage build for the orchestrator binary. Final image is a
-# minimal Debian slim with the orchestrator binary + ca-certs.
+# Multi-stage build for the orchestrator binary.
 #
-# Build context is `infra/` (the runner-stack workspace root). Run:
+# Build context is `infra/` (the runner-stack workspace root):
 #
 #   cd infra
 #   fly deploy --app sqisign-infra-orchestrator \
@@ -12,18 +11,14 @@ FROM rust:slim-bookworm AS builder
 
 WORKDIR /work
 
-# Cache deps separately from source. Copy manifests first; the layer
-# is reused until any Cargo.toml changes.
+# Manifests first so `cargo fetch` caches in its own layer.
 COPY Cargo.toml Cargo.lock ./
 COPY orchestrator/Cargo.toml orchestrator/Cargo.toml
 
-# Stub source file so cargo fetch + first compile populate the dep
-# graph without compiling real code yet.
 RUN mkdir -p orchestrator/src \
   && echo "fn main() {}" > orchestrator/src/main.rs \
   && cargo fetch --locked
 
-# Real source.
 COPY orchestrator/src orchestrator/src
 
 RUN cargo build --release --locked --package orchestrator

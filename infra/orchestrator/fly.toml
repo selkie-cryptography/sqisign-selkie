@@ -1,14 +1,8 @@
-# Fly app config for the orchestrator service.
+# Fly app for the orchestrator service.
+# Long-lived HTTP receiver: webhook → JIT mint → spawn Fly Machine.
 #
-# Long-lived HTTP service that:
-#   - receives `workflow_job` webhooks from GitHub
-#   - HMAC-verifies them
-#   - mints JIT runner registration tokens via the GitHub App
-#   - spawns ephemeral Fly Machines via the Machines API
-#
-# Deployed from `infra/` as cwd so the Dockerfile has the right
-# build context. flyctl defaults `fly.toml` to the cwd, so we pass
-# `--config` explicitly to point it at this file:
+# Deploy from `infra/` so the Dockerfile has the right build context.
+# `fly.toml` defaults to cwd, so pass `--config` explicitly:
 #
 #   cd infra
 #   fly deploy --app sqisign-infra-orchestrator \
@@ -24,7 +18,7 @@ primary_region = "ord"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = false        # always-on; we need to receive webhooks
+  auto_stop_machines = false        # always-on for webhook delivery
   auto_start_machines = true
   min_machines_running = 1
   processes = ["app"]
