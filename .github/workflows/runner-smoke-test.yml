@@ -1,0 +1,33 @@
+name: Runner smoke test
+
+# One-off manual workflow to verify the Fly self-hosted runner
+# pipeline end-to-end: orchestrator receives the workflow_job webhook,
+# mints a JIT runner config, spawns an ephemeral Fly Machine, the
+# Machine registers, runs this trivial job, exits, auto-destroys.
+#
+# Costs nothing in GitHub Actions minutes (no GitHub-hosted jobs)
+# and roughly a few cents in Fly compute for the ~1 min runtime.
+#
+# Trigger:
+#   gh workflow run runner-smoke-test.yml --ref <branch>
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hello:
+    name: Hello from a Fly runner
+    # `self-hosted, fly` is what the orchestrator routes on; `x64`
+    # selects the SharedCpu2x size (cheapest) per MachineSize::from_labels.
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 10
+    steps:
+      - run: uname -a
+      - run: cat /etc/os-release
+      - run: rustc --version
+      - run: cargo --version
+      - run: cargo nextest --version
+      - run: echo "smoke test ok"
