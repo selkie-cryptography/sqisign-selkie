@@ -2643,23 +2643,34 @@ impl LeftIdeal<4> {
         let order_wide = ExtremalOrder::<8>::from(*order);
         let gamma = order_wide.represent_integer(&mn, false, rng)?;
 
-        // Lines 11-14: sample β = x + yi + zj + wij with gcd(nrd(β), N) = 1
-        let n_bits = n.bitsize() as usize;
-        let n_bytes = n_bits.div_ceil(8);
-
+        // Lines 11-14: sample β = x + yi + zj + wij with gcd(nrd(β), N) = 1.
+        //
+        // Match C-ref's `ibz_rand_interval(out, 1, N)` byte-for-byte
+        // (`src/quaternion/ref/generic/intbig.c:413`). C-ref masks the
+        // top limb to `ceil(log2(N - 1))` bits, rejects `tmp > N - 1`,
+        // then returns `tmp + 1`, mapping accepted tmps in `[0, N-1]`
+        // to results in `[1, N]`. The earlier Selkie code rejected
+        // `val == 0` and returned `val ∈ [1, N-1]` — same DRBG bytes
+        // but each accepted sample one less than C-ref's, which then
+        // compounded through `γ·β` into a different `i_aux` lattice
+        // (KAT 39 iter 0 byte-diff vs `[I_AUX_CREF]`).
+        let n_minus_1 = n.ct_sub(&BigInt::<4>::ONE);
+        let bmina_bits = n_minus_1.bitsize() as usize;
+        let bmina_bytes = bmina_bits.div_ceil(8);
         let mut sample_in_range = || -> BigInt<4> {
             loop {
                 let mut bytes = [0u8; 32];
-                rng.fill_bytes(&mut bytes[..n_bytes]);
-                if n_bits % 8 != 0 {
-                    bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
+                rng.fill_bytes(&mut bytes[..bmina_bytes]);
+                if bmina_bits % 8 != 0 {
+                    bytes[bmina_bytes - 1] &= (1u8 << (bmina_bits % 8)) - 1;
                 }
-                let val = BigInt::<4>::from_bytes_le_unsigned(&bytes[..n_bytes]);
-                // Ensure val in [1, N]: reject 0 and val >= N.
-                if bool::from(val.is_zero()) || val.ct_mod(n) != val {
+                let tmp = BigInt::<4>::from_bytes_le_unsigned(&bytes[..bmina_bytes]);
+                // Reject when `tmp > N - 1`, matching C-ref's
+                // `mpz_cmp(tmp, bmina) <= 0` accept condition.
+                if tmp > n_minus_1 {
                     continue;
                 }
-                return val;
+                return tmp.ct_add(&BigInt::<4>::ONE);
             }
         };
 
