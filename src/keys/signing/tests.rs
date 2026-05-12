@@ -54,8 +54,12 @@ fn generated_verifying_key_roundtrips() {
 /// Deterministic keygen from every KAT seed must produce the
 /// matching KAT pk and sk.
 ///
-/// Run with: `cargo test --lib --release keygen_kat_all -- --ignored`.
+/// `#[ignore]`d: redundant with the per-vector `keygen_kat_NNN` tests,
+/// which give better parallelism (nextest shards across cores) and
+/// failure isolation. Run with: `cargo test --lib --release
+/// keygen_kat_all -- --ignored`.
 #[test]
+#[ignore = "redundant with per-vector keygen_kat_NNN tests"]
 fn keygen_kat_all() {
     for (i, &(seed_hex, pk_hex, sk_hex, ..)) in
         crate::keys::kat_data::KAT_VECTORS.iter().enumerate()
@@ -621,8 +625,13 @@ fn keygen_kat_099() {
 /// Deserialize every KAT signing key, sign the corresponding
 /// message, and verify with the paired public key.
 ///
-/// Run with: `cargo test --lib --release sign_kat_all -- --ignored`.
+/// `#[ignore]`d: redundant with the per-vector `sign_kat_derand_NNN`
+/// tests, which give better parallelism (nextest shards across cores)
+/// and failure isolation; this aggregate also consistently exceeds
+/// nextest's 300s timeout running all 100 vectors serially. Run with:
+/// `cargo test --lib --release sign_kat_all -- --ignored`.
 #[test]
+#[ignore = "redundant with per-vector sign_kat_derand_NNN tests"]
 fn sign_kat_all() {
     for (i, &(_, pk_hex, sk_hex, msg_hex, _)) in
         crate::keys::kat_data::KAT_VECTORS.iter().enumerate()
