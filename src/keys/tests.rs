@@ -162,7 +162,12 @@ fn challenge_matrix_from_bytes_exact_length() {
 
 /// Verify all 100 hardcoded KAT vectors from the C reference
 /// implementation (PQCsignKAT_353_SQIsign_lvl1.rsp).
+///
+/// `#[ignore]`d: redundant with the per-vector `verify_kat_NNN` tests,
+/// which give better parallelism, failure isolation, and don't run all
+/// 100 vectors serially in one process.
 #[test]
+#[ignore = "redundant with per-vector verify_kat_NNN tests"]
 fn kat_verify_all() {
     for (i, &(_seed, pk, _sk, _msg, sm)) in kat_data::KAT_VECTORS.iter().enumerate() {
         verify_kat(pk, sm);
