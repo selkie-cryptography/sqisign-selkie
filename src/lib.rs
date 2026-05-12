@@ -48,9 +48,13 @@ pub mod l2_trace_active {
         static ACTIVE: Cell<bool> = const { Cell::new(false) };
     }
     /// Set the active flag.
-    pub fn set(v: bool) { ACTIVE.with(|c| c.set(v)); }
+    pub fn set(v: bool) {
+        ACTIVE.with(|c| c.set(v));
+    }
     /// Read the active flag.
-    pub fn get() -> bool { ACTIVE.with(|c| c.get()) }
+    pub fn get() -> bool {
+        ACTIVE.with(|c| c.get())
+    }
 }
 
 // Finite field arithmetic (F_p and F_{p^2})
