@@ -52,7 +52,15 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 # Cargo subcommands the workflows invoke. Bump the image tag when
 # versions advance.
-RUN cargo install --locked \
+# Use `cargo-binstall` to fetch prebuilt binaries from crates.io
+# instead of compiling from source — turns ~60 min of source compile
+# (cargo-nextest + cargo-deny + cargo-mutants + iai-callgrind-runner
+# all have heavy dep trees) into ~30 s of downloads. All four
+# publish binstall-compatible release artifacts.
+RUN curl --proto '=https' --tlsv1.2 -sSfL \
+      https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+    | bash
+RUN cargo binstall --no-confirm --no-symlinks \
       cargo-nextest \
       cargo-deny \
       cargo-mutants \
