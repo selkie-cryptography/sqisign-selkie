@@ -208,10 +208,10 @@ impl SigningKey {
     /// case a fresh ideal is sampled. Expected to succeed after O(1)
     /// attempts.
     ///
-    /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
-    /// [§2.2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.2
-    /// [§3.1.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.1
-    /// [§3.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.2
+    /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
+    /// [§2.2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.5
+    /// [§3.1.6]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.3.1.6
+    /// [§3.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.3.2.3
     /// [§4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.3
     ///
     /// # Constant-time
@@ -553,11 +553,11 @@ impl SigningKey {
     /// This is probabilistic: several sub-algorithms may fail,
     /// requiring a restart with fresh randomness.
     ///
-    /// [§3.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.2
-    /// [§3.2.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.3.2
+    /// [§3.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.3.2.3
+    /// [§3.2.6]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.3.2.6
     /// [§4.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
-    /// [§4.4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
-    /// [§4.4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.4
+    /// [§4.4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.4.4.2
+    /// [§4.4.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.4.4.3
     /// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
     pub fn sign<R: rand_core::CryptoRngCore>(
         &self,
