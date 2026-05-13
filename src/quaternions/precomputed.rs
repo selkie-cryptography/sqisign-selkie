@@ -196,7 +196,7 @@ pub const STANDARD_ORDER: &ExtremalOrder<4> = &EXTREMAL_ORDERS[0];
 ///
 /// `CONNECTING_IDEAL_NORMS[t]` is the reduced norm of the connecting
 /// ideal I_t (a left O₀-ideal with right order conjugate to O_t).
-/// "Reduced norm" here matches C ref's [`quat_lideal_norm`]
+/// "Reduced norm" here matches C ref's `quat_lideal_norm`
 /// (`quaternion/ref/generic/ideal.c:7`), which is `sqrt([O_0 : I])`
 /// computed from the lattice index. This equals Sage's
 /// `QuaternionFractionalIdeal.norm()`.

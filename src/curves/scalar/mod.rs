@@ -50,7 +50,7 @@ impl Scalar {
 
     /// Serialize to 32 little-endian bytes.
     #[must_use]
-    pub fn to_le_bytes(&self) -> [u8; 32] {
+    pub fn to_le_bytes(self) -> [u8; 32] {
         let mut out = [0u8; 32];
         for (i, limb) in self.0.iter().enumerate() {
             out[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());

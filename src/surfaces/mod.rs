@@ -389,8 +389,8 @@ impl Kernel {
 
     /// Construct from Montgomery x-only points by lifting to Jacobian.
     ///
-    /// Recovers y-coordinates via [`lift_basis`] (Okeya-Sakurai).
-    /// Requires the component-wise difference P−Q for y-recovery.
+    /// Recovers y-coordinates via the Okeya-Sakurai lift, which
+    /// requires the component-wise difference `P − Q` for y-recovery.
     ///
     /// Returns `None` if the y-recovery fails (points not on curve).
     pub fn from_montgomery(

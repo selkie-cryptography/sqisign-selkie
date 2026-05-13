@@ -172,9 +172,8 @@ impl JacobianPoint {
     /// deterministically distinguish P+Q from P−Q (impossible with
     /// x-only arithmetic alone).
     ///
-    /// This is used by
-    /// [`ChangeOfBasis`](crate::curves::pairing::change_of_basis)
-    /// to compute the cross-pairing sum points.
+    /// This is used by the change-of-basis matrix computation in
+    /// [`crate::curves::pairing`] to compute the cross-pairing sum points.
     #[must_use]
     pub fn x_add_sub(&self, other: &Self) -> (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint) {
         let a = *self.curve.coefficient().as_fp2();

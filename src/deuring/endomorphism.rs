@@ -18,9 +18,9 @@ use crate::{
 /// A 2×2 matrix over Z/2^f Z representing the action of an
 /// endomorphism on a torsion basis (P, Q) of E[2^f].
 ///
-/// Given an endomorphism α and basis (P, Q), the matrix M_α
-/// satisfies: α(P) = [M[0][0]]P + [M[1][0]]Q and
-/// α(Q) = [M[0][1]]P + [M[1][1]]Q.
+/// Given an endomorphism α and basis (P, Q), the matrix `M_α`
+/// satisfies: `α(P) = [M[0][0]]P + [M[1][0]]Q` and
+/// `α(Q) = [M[0][1]]P + [M[1][1]]Q`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActionMatrix {
     /// Entries stored row-major: [[a, b], [c, d]].
@@ -81,9 +81,9 @@ impl ActionMatrix {
         }
     }
 
-    /// Matrix-vector multiplication mod 2^f: M · [c1, c2]^T.
+    /// Matrix-vector multiplication mod `2^f`: `M · [c1, c2]^T`.
     ///
-    /// Returns [M[0][0]*c1 + M[0][1]*c2, M[1][0]*c1 + M[1][1]*c2] mod 2^f.
+    /// Returns `[M[0][0]*c1 + M[0][1]*c2, M[1][0]*c1 + M[1][1]*c2]` mod `2^f`.
     ///
     /// The arguments are `BigInt<4>` because callers pass quaternion
     /// coordinates.
@@ -263,7 +263,7 @@ impl ConditionallySelectable for ActionMatrix {
 /// [§3.2.1.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.2.1.1
 pub struct CurveEndomorphisms {
     /// Action matrices for the four basis elements of the order.
-    /// M[u] represents the action of the u-th basis element.
+    /// `M[u]` represents the action of the u-th basis element.
     pub action: [ActionMatrix; 4],
     // TODO: Add curve (ec_curve_t) and torsion basis (P_t, Q_t)
     // once we define the bridge between quaternion and curve types.

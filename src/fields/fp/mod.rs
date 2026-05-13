@@ -137,7 +137,7 @@ impl Fp {
     }
 
     /// Encode this field element as 32 bytes, little-endian.
-    pub fn to_bytes(&self) -> [u8; FP_ENCODED_BYTES] {
+    pub fn to_bytes(self) -> [u8; FP_ENCODED_BYTES] {
         let c = self.reduce_montgomery();
         let mut out = [0u8; 32];
 

@@ -378,7 +378,9 @@ fn generate_extended_vectors() {
 
     // The HintOverflow / boundary / splitting-degenerate vectors all
     // share the donor pk (KAT 0). Collect them into the first test
-    // group.
+    // group. The `mut` is only used under `expose-internals`, where
+    // the cross-order group below is appended.
+    #[cfg_attr(not(feature = "expose-internals"), allow(unused_mut))]
     let mut groups: Vec<(String, Vec<String>)> = vec![(hex::encode(pk_arr), vectors)];
 
     // --- Cross-order positive vectors --------------------------------
