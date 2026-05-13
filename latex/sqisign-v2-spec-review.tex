@@ -149,6 +149,74 @@ Add a definition early in \S8.5:
 \end{quote}
 
 % =====================================================================
+\section{\textsc{GluingEval} cross-curve products are not explicit}
+\label{sec:gluing-eval-cross}
+
+\finding{Affects \algo{8.39} (\textsc{GluingEval}).}{\high}
+
+The product-curve gluing evaluation runs \textsc{AddComponents}
+on each curve component separately, producing
+$(u_1, v_1, w_1)$ from curve~1 and $(u_2, v_2, w_2)$ from
+curve~2, then assembles the output theta point from
+products of these six values.  In the spec's pseudocode the
+$U$, $V$, $W$ vectors are written as products without explicit
+subscripts on every factor, leaving the reader to infer which
+factors come from which curve.
+
+The defining property of a product-curve formula is that every
+multiplication has \emph{one} factor from curve~1 and \emph{one}
+factor from curve~2.  An implementor reading
+``$U_2 \leftarrow u_1 \cdot w_1$'' (same subscript on both
+factors) cannot tell at the line whether this is a
+deliberate within-curve product (rare) or a transcription error
+for the cross-curve product $u_1 \cdot w_2$ (almost always
+correct).  We made exactly this transcription error: the
+resulting null point passed the on-curve check, ran through the
+chain without raising, and the codomain failed only at
+\textsc{SplittingIsomorphism} far downstream.
+
+\paragraph{Recommendation.}
+In \algo{8.39}, write every product factor with an explicit
+subscript and verify the cross-curve property holds.  A short
+note of the form ``\textit{every multiplication in
+\textsc{AddComponents}'s output assembly takes one factor from
+each component curve}'' would catch the typo class at code
+review time.
+
+% =====================================================================
+\section{Projective inverse of the dual theta null point is not field
+  inversion}
+\label{sec:projective-inverse-gluing}
+
+\finding{Affects \algo{8.37} (\textsc{GluingCodomain}) and
+similar product-theta constructions where ``inverse'' appears
+as a sub-step.}{\medium}
+
+The gluing codomain construction (\algo{8.37}, transitively
+referenced from \algo{8.39}) requires the ``inverse'' of the
+dual theta null point $(\alpha, \beta, \gamma, 0)$.  In
+projective theta coordinates this is computed via
+cross-products --- pure multiplications producing a vector
+projectively equivalent to the multiplicative inverse.  No
+field inversion is involved.
+
+The spec uses the word ``inverse'' without qualifying it, which
+an implementor can reasonably read as the field-inverse
+operation.  Field-inverting components in $\mathbb{F}_{p^2}$
+is both numerically wrong (the projective and field inverses
+agree only up to scaling that's lost between projective
+classes) and expensive (each inverse is hundreds of
+multiplications).
+
+\paragraph{Recommendation.}
+Replace ``inverse'' in \algo{8.37} with ``projective inverse
+via cross-products'' and state the closed-form expressions
+explicitly.  In general, in any projective- or theta-coordinate
+algorithm, ``inverse'' should be qualified: an actual field
+inversion at this layer is almost always a transcription error
+from an affine reference, and is worth flagging in the spec.
+
+% =====================================================================
 \section{\texttt{hadamard\_bool} in the $(2,2)$-chain}
 \label{sec:hadamard-bool}
 
@@ -229,6 +297,56 @@ torsion basis triple --- especially \algo{2.5}, \algo{4.7},
 \algo{4.8}, and \algo{4.9}'s line 14.  An implementer who sees
 ``$(P, Q, P{-}Q)$'' uniformly in pseudocode has no way of knowing
 that \textsc{Ladder3pt} expects the difference in the second slot.
+
+% =====================================================================
+\section{\textsc{TorsionBasisFromHint} fallback search must be bounded}
+\label{sec:spec-find-uv-cap}
+
+\finding{Affects \algo{2.2} (\textsc{TorsionBasisFromHint}), and
+transitively verification (\algo{4.9}).}{\high}
+
+\algo{2.2} reconstructs a $2$-torsion basis from a curve
+coefficient~$A$ and a $7$-bit hint~$h$.  When $h = 0$ (the rare case
+where the smallest admissible scalar~$n$ does not fit in $7$~bits),
+the algorithm falls back to a search: starting at $n = 128$, increment
+until the predicate $\bigl(n A \text{ on } E_A \text{ and not a square}\bigr)$
+holds (or the dual predicate, when $A$ is a residue).  The
+pseudocode reads ``while not satisfied: $n \leftarrow n + 1$,''
+with no upper bound on~$n$.
+
+\paragraph{What goes wrong.}
+\textsc{TorsionBasisFromHint} is invoked from \algo{4.9}
+(\textsc{Verify}) on three different curves
+($E_{\mathrm{pk}}$, $E_{\mathrm{aux}}$, $E_{\mathrm{chl}}$) whose
+coefficients are reconstructed directly from signature bytes.  An
+adversary who controls those bytes can supply a curve coefficient~$A$
+for which no $n$ in the entire search window satisfies the
+predicate.  A literal implementation of the spec pseudocode loops
+forever; verification never returns.
+
+This is a denial-of-service against \texttt{verify}, reachable from
+any unauthenticated input.  We discovered it via the Wycheproof
+SQIsign suite, which contains a regression vector
+(\texttt{HintOverflow} flag) for exactly this case.  A direct
+spec-to-code translation hangs on that vector regardless of the
+implementation language.
+
+\paragraph{Recommendation.}
+\algo{2.2} should state explicitly that the fallback search is
+bounded: ``stop after at most $K$ iterations and signal failure to
+the caller; on signal, \textsc{Verify} rejects the signature.''
+A constant of $K = 2^{16}$ provides several orders of magnitude
+of headroom above anything observed on honest signatures (where
+the admissible~$n$ uniformly fits in $7$~bits) and is small enough
+that the verifier remains $O(1)$ on adversarial input.
+
+\algo{4.9} (\textsc{Verify}) should be amended to consume the new
+failure signal from \textsc{TorsionBasisFromHint} as a rejection.
+The pattern is the same one already established in
+\S\ref{sec:splitting-panic} (\textsc{GetIndexSplitting}'s
+``uniqueness'' assumption): \emph{the spec's correctness
+guarantees apply to honest inputs; verify must impose an
+explicit cap and a rejection path on adversarial ones}.
 
 % =====================================================================
 \section{Matrix storage convention for $M_{\mathrm{chl}}$ and $M_{\mathrm{sk}}$}
@@ -321,6 +439,76 @@ $2^{f-e} \cdot \log_{\zeta}(\zeta_i)$ when applied to a full
 $2^f$-torsion basis.''  As written, the algorithm is correct for
 its declared semantics (full-torsion application) but wrong for
 how every protocol algorithm actually uses it.
+
+% =====================================================================
+\section{Cubical Tate third-argument sign convention in
+  \algo{2.5}}
+\label{sec:tate-thirdarg-sign}
+
+\finding{Affects \algo{2.5} (\textsc{ChangeOfBasis}) step 1, and
+transitively every algorithm whose change-of-basis matrix is
+recovered by cubical Tate pairings (\algo{4.8}'s
+$M_{\mathrm{chl}}$ inversion).}{\critical}
+
+The cubical Tate pairing $t_{2^e}(P, Q, R)$ takes a third
+projective argument~$R$ that fixes the sign branch of the
+differential addition ladder.  The values
+$t_{2^e}(P, Q, P{+}Q)$ and $t_{2^e}(P, Q, P{-}Q)$ are
+multiplicative inverses of each other:
+\[
+  t_{2^e}(P, Q, P{-}Q) \;=\; t_{2^e}(P, Q, P{+}Q)^{-1}.
+\]
+Both satisfy bilinearity in their respective convention, both
+test as $2^e$-th roots of unity, and the two conventions are
+individually self-consistent.
+
+\algo{2.5} step~1 writes $\zeta \leftarrow t_{2^e}(P_1, P_2)$
+without naming the third argument's sign.  Step~3 then computes
+$\zeta_i \leftarrow t_{2^e}(R_i, P_j, R_i \pm P_j)$ for each
+target basis point~$R_i$ against the canonical pair $(P_1, P_2)$.
+
+\paragraph{What goes wrong.}
+An implementer who picks the SUM convention
+($R = P_1 {+} P_2$) for the four cross-pairings~$\zeta_i$ but
+DIFFERENCE
+($R = P_1 {-} P_2$, e.g.\ because the basis triple already
+carries $P_1 {-} P_2$ in the third slot per
+\S\ref{sec:basis-swap}) for the base~$\zeta$ silently inverts
+the relationship between~$\zeta$ and the~$\zeta_i$: the base
+becomes~$T^{-1}$ where the cross-pairings remain~$T_i$, and
+$\log_\zeta(\zeta_i)$ returns~$-x_i \bmod 2^e$ instead of~$x_i$.
+
+For a target basis with all coefficients in~$\{1, 2\}$ (the
+typical case in \algo{4.8}), every dlog comes out near
+$2^e - 1$ or $2^e - 2$, so every matrix cell ends with its low
+limbs entirely set to~$\mathtt{0xff\ldots ff}$ with at most a
+few low bits differing.  Verification accepts the matrix
+syntactically (entries within bounds), applies it to the
+canonical basis, and obtains a \emph{non-degenerate but wrong}
+basis.  The $(2,2)$-chain then runs to completion, lands on a
+non-product theta null, and verify rejects.  Without
+intermediate diagnostics the symptom looks like ``the chain is
+just wrong'' rather than a sign-flip in the pairing setup.
+
+The bug is invisible to most unit tests because each individual
+convention is internally consistent.  Bilinearity-in-the-first
+test with SUM holds.  Bilinearity-in-the-first test with
+DIFFERENCE holds.  Antisymmetry holds.  Round-trip
+\textsc{from\_bases} test with a known matrix is the only
+shape that fires --- and even then only when the test uses
+small positive matrix entries (small negatives masquerade as
+near-$2^e$ values and the symptom is washed out).
+
+\paragraph{Recommendation.}
+State the third-argument convention explicitly in \algo{2.5}.
+The natural choice is the SUM convention everywhere
+(consistent with Jacobian addition's natural output), in which
+case step~1 should read $\zeta \leftarrow t_{2^e}(P_1, P_2,
+P_1{+}P_2)$.  Equivalently, an implementer who reads
+\algo{8.12} (\textsc{DifferencePoint}) and naturally has
+$P_1{-}P_2$ available must compute~$P_1{+}P_2$ separately for
+step~1 rather than reusing the available difference.  Either
+convention is mathematically fine; mixing them is catastrophic.
 
 % =====================================================================
 \section{Matrix exponent in \algo{4.8} omits \texttt{HD\_extra\_torsion}}
@@ -531,6 +719,72 @@ fail (typically a panic in the splitting step).
 State explicitly in \algo{4.8} and \algo{4.9} that the matrix is
 applied by columns, or equivalently define the multiplication as
 $(P', Q') = (P, Q) \cdot \mathbf{M}^T$.
+
+% =====================================================================
+\section{\textsc{RandomIdealGivenNorm}: $\beta$ sampling range is
+  inclusive of~$N$}
+\label{sec:random-ideal-beta-range}
+
+\finding{Affects \algo{3.10} (\textsc{RandomIdealGivenNorm})
+during signing's auxiliary-ideal construction
+(\algo{4.2} line~16).}{\high}
+
+\algo{3.10} step~11 reads
+``sample $\beta = x + yi + zj + wk$ with $x, y, z, w \in [1, N]$
+and $\gcd(\mathrm{nrd}(\beta), N) = 1$.''  The bracket notation
+is ambiguous on the endpoint: an implementor can read
+$[1, N]$ as $\{1, 2, \ldots, N\}$ (closed) or as $\{1, 2,
+\ldots, N{-}1\}$ (half-open, ``$\bmod N$'' style).  Both
+distributions are uniform over their respective ranges and both
+preserve the algorithm's correctness as a math object.
+
+\paragraph{Why the choice matters for byte-interop.}
+On a shared DRBG the two interpretations consume the same
+number of bytes per attempt (rejection sampling on a top-byte
+mask), but the \emph{value} accepted differs by $1$: under
+$[1, N]$ a sampled hex-bits-equal-zero case maps to $1$ (the
+addition of the left endpoint), while under $[1, N{-}1]$ the
+same bytes are rejected.  For every other byte pattern the two
+accepted values differ by exactly~$1$.  A constant shift of
+each $\beta$ coordinate by~$1$ propagates through
+$\alpha = \gamma\beta$ (a quaternion product) as
+$\alpha_\mathrm{ours} = \alpha_\mathrm{ref} - \gamma(1 + i + j + k)$,
+which is generally not in $\mathcal{O}_0 \cdot N$.  The
+resulting left ideal $\mathcal{O}_0\alpha + \mathcal{O}_0 N$
+is therefore a different $\mathbb{Z}$-module on the two sides,
+not just a different basis representation.
+
+The downstream sensitivity is severe: signing's response phase
+intersects this ideal with $I_{\mathrm{com,rsp}}$, then feeds
+the intersection through \textsc{SuitableIdeals}.  A different
+Z-module gives a different L\textsuperscript{2}-reduced basis,
+a different choice of $(s, t, \beta_s, \beta_t)$, a different
+$\alpha_\mathrm{rsp}$, and a different signature on the wire.
+
+\paragraph{What the C reference does.}
+\texttt{ibz\_rand\_interval(out, 1, norm)} samples uniformly on
+$\{1, 2, \ldots, N\}$ inclusive of~$N$, by reading
+$\lceil \log_2 N / 8 \rceil$ bytes, masking to
+$\lceil \log_2(N{-}1) \rceil$ bits, rejecting samples
+$> N{-}1$, and returning $\mathrm{tmp} + 1$.  This is the
+closed-interval interpretation.
+
+\paragraph{Recommendation.}
+\algo{3.10} should state the convention explicitly --- the
+notation should be either ``$[1, N]$ inclusive'' with a forward
+pointer to ``\texttt{ibz\_rand\_interval}''-style sampling, or
+``$[1, N-1]$'' (half-open) and a corresponding alternative
+sampling primitive.  Either convention is fine cryptographically;
+mixing them across a reference implementation and a derivative
+implementation breaks KAT byte-equality and produces signatures
+that fail interoperability checks.
+
+The same ambiguity applies to every other ``sample uniformly
+in $[a, b]$'' statement in the spec.  A short normative remark
+near the top of \S3 stating that all such ranges are closed and
+that the canonical sampler is ``$\mathrm{tmp} + a$ with
+$\mathrm{tmp} \in [0, b{-}a]$ by top-byte masked rejection''
+would prevent the entire class of off-by-one mismatches.
 
 % =====================================================================
 \section{\textsc{GeneralizedRepresentInteger} sampling ranges and
@@ -857,13 +1111,49 @@ algorithm works correctly there.
 \paragraph{Fix.}
 Use the standard Domich--Kannan--Trotter modular HNF (Cohen,
 \emph{A Course in Computational Algebraic Number Theory},
-\S2.4.2): given a positive multiple~$D$ of the lattice
-determinant~$\det(L)$, reduce every intermediate entry modulo~$D$
-after every arithmetic update.  This bounds entries by~$D$ instead
-of by the exponential classical bound, at the cost of computing
-at a wider intermediate width $W \geq 2 \cdot
-\lceil\log_2 D\rceil / 64$.  The result is identical to the
-classical HNF in~$\mathbb{Z}$.
+\S2.4.2): given a positive integer~$D$ with $D \cdot e_i \in L$
+for every standard basis vector~$e_i$, reduce every intermediate
+entry modulo~$D$ after every arithmetic update.  This bounds
+entries by~$D$ instead of by the exponential classical bound, at
+the cost of computing at a wider intermediate width
+$W \geq 2 \cdot \lceil\log_2 D\rceil / 64$.  The result is
+identical to the classical HNF in~$\mathbb{Z}$.
+
+\paragraph{The modulus must be a lattice member, not just a
+covolume multiple.}
+The Cohen 2.4.8 construction implicitly takes
+$L \cup D\cdot\mathbb{Z}^n$ and returns its HNF, which equals
+HNF$(L)$ exactly when $D \cdot \mathbb{Z}^n \subseteq L$.  In
+particular, for left ideals~$I \subseteq \mathcal{O}_0$, the
+reduced norm $N(I)$ has $N(I) \cdot \mathcal{O}_0 \subseteq I$
+and is therefore admissible; arbitrary multiples of $\det(L)$
+need not satisfy $D \cdot e_i \in L$ and produce a strictly
+coarser super-lattice.
+
+An implementor who reads ``$D$ is a multiple of $\det(L)$''
+without the membership condition can derive a closed-form
+covolume formula like $D = c \cdot d^4 \cdot N^2 \cdot p$ for
+some scalar~$c$, hand that to the modular HNF, and silently
+construct $L + D\cdot\mathbb{Z}^n$ instead of~$L$.  In the
+\textsc{SuitableIdeals} cross-order step
+($I^{(t)} = \mathrm{conj}(I_{\mathrm{reduced}}) \cdot J_t$), the
+super-lattice may contain integer scalars like $(2, 0, 0, 0)$
+that should not be in $I^{(t)}$.  Those scalars then enter the
+L\textsuperscript{2}-reduced class Gram with a zero
+diagonal, and the Lov\'asz/swap loop fails to terminate --- on
+both our implementation and the C reference's
+\texttt{quat\_lll\_core}, which we confirmed by extracting the
+degenerate Gram and feeding it through C-ref directly.
+
+The C reference avoids this by computing
+$D := |\det(\text{first 4 product generators})|$ at runtime
+(\texttt{lattice.c:231--233}), which is the covolume of those
+generators and therefore lies in the lattice they span.
+\texttt{Lattice::product} (without an explicit modulus)
+implements the same recipe in Rust.  A precomputed covolume
+bound is correct only when the implementer can prove
+$D \cdot e_i \in L$ for the input shape --- a property that
+covolume formulas do not capture.
 
 For NIST-I commitment ideals, $D = 4 d^4 N^2 p \approx 2^{1282}$
 is a compile-time constant.  For response-phase and post-reduce
@@ -872,9 +1162,12 @@ ideals the modulus varies and is computed per call.
 \paragraph{Recommendation.}
 Add a remark after \algo{3.2} noting that fixed-precision
 implementations must account for coefficient growth, and that the
-standard modular HNF technique (reducing modulo a known multiple
-of the lattice determinant) is sufficient to keep intermediates
-bounded.
+standard modular HNF technique works only when the modulus~$D$
+satisfies $D \cdot \mathbb{Z}^n \subseteq L$ --- not merely that
+$D$ divides~$\det(L)$.  State the safe defaults explicitly:
+either $D := N(I)$ (always admissible for an ideal of norm $N(I)$)
+or $D := |\det(\text{first }n\text{ generators})|$ (the C
+reference's choice for lattice products).
 
 % =====================================================================
 \section{Endomorphism image $P{-}Q$ and the Okeya-Sakurai lift}
@@ -1620,6 +1913,72 @@ reference but is not modeled in \algo{3.16} at all.  Implementations
 that follow the spec literally end up with a single-lattice
 \textsc{SuitableIdeals} that fails on KATs where the multi-order
 search is needed.
+
+% =====================================================================
+\section{Connecting-ideal norm encoding: reduced norm vs.\ first
+  basis entry}
+\label{sec:specrev-connecting-ideal-norm}
+
+\finding{Affects the precomputation of the seven extremal-order
+connecting ideals~$J_t$ used by the multi-order
+\textsc{SuitableIdeals} optimization (\algo{3.16}) and by
+\algo{3.13} (\textsc{IdealToIsogeny}) line~6's outer-chain
+scaling.}{\high}
+
+The seven extremal maximal orders $\mathcal{O}_t$ come with
+precomputed connecting ideals
+$J_t \subseteq \mathcal{O}_0$ whose right orders are conjugate
+to~$\mathcal{O}_t$.  Each~$J_t$ is encoded as a basis matrix
+$B_t$, a denominator $d_t$, and a labelled norm $N_t$.  The
+rational basis of $J_t$ is given by the columns of $B_t / d_t$,
+and the labelled norm is supposed to be the
+\emph{reduced norm} $N(J_t) = \sqrt{[\mathcal{O}_0 : J_t]}$.
+
+\paragraph{What goes wrong.}
+For the HNF shape used by the NIST-I precomputed ideals
+($B_t = \mathrm{diag}(2 N_t, 2 N_t, 1, 1)$ at $d_t = 2$), the
+reduced norm is~$N_t$ but the first-coordinate entry of the
+integer basis is~$2 N_t = d_t \cdot N_t$.  An implementer who
+extracts the labelled norm by reading the leading entry of the
+basis ends up encoding $d_t \cdot N_t$ instead of~$N_t$,
+i.e.\ the labelled norm is exactly~$d_t$ times too large for
+every cross-order $t > 0$.
+
+\paragraph{Downstream impact.}
+\begin{itemize}
+  \item \textsc{SuitableIdeals}' integrality check
+    ($\mathrm{nrd}(\beta) / (N_t \cdot d_t^2)$) silently rejects
+    half the hypercube candidates and silently halves the
+    degrees of the rest.  The resulting sorted batch differs
+    from the C reference's, and
+    \textsc{find\_uv\_from\_lists} picks a different
+    $(\beta_s, \beta_t)$.
+  \item \algo{3.13} line~6's outer-chain scaling
+    $1/(\mathrm{nrd}(I) \cdot d_1 \cdot N(J_t))$ for the
+    cross-order case is multiplied by~$d_t$, embedding the
+    output basis in a sublattice of half the intended index.
+\end{itemize}
+This is latent on most KATs because the special-order path
+($t = 0$, which doesn't read the labelled norm at all) usually
+succeeds.  KATs that force the cross-order fallback expose
+both divergences in the same iteration.
+
+\paragraph{Recommendation.}
+The spec should define the connecting-ideal precomputation
+format explicitly: it is a triple $(B_t, d_t, N_t)$ where
+\begin{itemize}
+  \item $B_t / d_t$ are the rational basis columns,
+  \item $N_t$ is the reduced norm $N(J_t)$ (\emph{not} the
+    leading basis entry, which equals $d_t \cdot N_t$ for the
+    typical HNF shape).
+\end{itemize}
+The natural pitfall is to extract~$N_t$ as the first
+coordinate of the integer HNF row space, which yields a
+$d_t$-times-too-large value.  Implementations should derive
+$N_t$ via $\sqrt{|\det(B_t)| / d_t^4}$ or equivalently
+$\sqrt{[\mathcal{O}_0 : J_t]}$, matching what
+\texttt{quat\_lideal\_norm} computes
+(\texttt{quaternion/ref/generic/ideal.c:7}).
 
 % =====================================================================
 \section{\textsc{IdealToIsogeny} action-matrix order index after
