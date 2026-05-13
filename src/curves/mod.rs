@@ -693,7 +693,7 @@ impl TorsionBasis {
     ///
     /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
-    pub fn from_hint(curve: &Curve, hint: BasisHint) -> TorsionBasis {
+    pub fn from_hint(curve: &Curve, hint: BasisHint) -> Option<TorsionBasis> {
         let _e = TORSION_EVEN_POWER;
         // Normalize the curve's A24/C24 constants so the Montgomery
         // ladder produces the same projective representative as the
@@ -709,29 +709,35 @@ impl TorsionBasis {
             let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, curve);
             let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, curve);
             let PmQ = P.projective_difference(&Q);
-            return TorsionBasis { P, PmQ, Q };
+            return Some(TorsionBasis { P, PmQ, Q });
         }
 
         let h_A = hint.h_A();
         let h = hint.h();
 
-        // Compute x(P) from the hint.
+        // Compute x(P) from the hint. The `h == 0` branch performs a
+        // bounded search; on an adversarial curve where no `n` in the
+        // search window produces a valid x-coordinate, the search
+        // returns `None` and we propagate that as a `from_hint`
+        // failure rather than spinning forever (fuzz crash
+        // `find_na_x_coord (crash-f13d2a...)` covered by the
+        // wycheproof verify suite at `tcId = 49`).
         let x_P = if h == 0 {
             // Rare fallback: hint didn't fit in 7 bits.
             // Must search from scratch (starting at 128).
             if h_A == 0 {
                 // A is NQR: search for n*A on the curve.
-                find_na_x_coord(&A, curve, 128)
+                find_na_x_coord(&A, curve, 128)?
             } else {
                 // A is QR: search for -A/(1+i*b) on the curve.
-                find_nqr_factor(&A, curve, 128)
+                find_nqr_factor(&A, curve, 128)?
             }
         } else if h_A == 0 {
             // A is NQR: x(P) = h * A
-            &A * &Fp2::from_fp(Fp::from_small(h as u32))
+            &A * &Fp2::from_fp(Fp::from_small(u32::from(h)))
         } else {
             // A is QR: x(P) = -A / (1 + i*h)
-            let z = Fp2::new(Fp::ONE, Fp::from_small(h as u32));
+            let z = Fp2::new(Fp::ONE, Fp::from_small(u32::from(h)));
             &(-&A) * &z.invert()
         };
 
@@ -801,7 +807,7 @@ impl TorsionBasis {
         // [`scalar_mul_add`](Self::scalar_mul_add).
         //
         // [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
-        TorsionBasis { P, PmQ, Q }
+        Some(TorsionBasis { P, PmQ, Q })
     }
 
     /// Generate a torsion basis for E_A\[2^e\] and its associated hint,
@@ -843,13 +849,16 @@ impl TorsionBasis {
         let h_A = bool::from(A.is_square());
 
         let (x_P, h) = if !h_A {
-            // A is NQR: find n such that n*A is on the curve.
-            let (x, hint) = find_na_x_coord_with_hint(&A, curve);
-            (x, hint)
+            // A is NQR: find n such that n*A is on the curve. Search
+            // is bounded; honest signing always satisfies the
+            // predicate inside the bound (in practice the first
+            // 7-bit `n` works).
+            find_na_x_coord_with_hint(&A, curve)
+                .expect("to_hint: bounded find_na_x_coord_with_hint search exhausted on honest curve")
         } else {
             // A is QR: find b such that -A/(1+i*b) is on the curve.
-            let (x, hint) = find_nqr_factor_with_hint(&A, curve);
-            (x, hint)
+            find_nqr_factor_with_hint(&A, curve)
+                .expect("to_hint: bounded find_nqr_factor_with_hint search exhausted on honest curve")
         };
 
         let x_Q = -&(&A + &x_P);
@@ -1088,52 +1097,69 @@ fn is_on_curve(x: &Fp2, A: &Fp2) -> bool {
     bool::from(t.is_square())
 }
 
-/// Find n such that n*A is a valid x-coordinate on E_A. Returns x(P).
-fn find_na_x_coord(A: &Fp2, _curve: &Curve, start: u8) -> Fp2 {
-    let mut x = &Fp2::from_fp(Fp::from_small(start as u32)) * A;
-    let mut _n = start;
-    while !is_on_curve(&x, A) || bool::from(x.is_square()) {
+/// Maximum number of `n` values to try in the fallback x-coordinate
+/// searches. For a valid `(A, hint)` pair the search terminates well
+/// before this bound; an attacker-supplied curve that never satisfies
+/// the predicate would otherwise drive an unbounded loop in verify.
+/// Capping at `2^16` keeps verify O(1) on adversarial input while
+/// preserving the worst-case behavior on every well-formed signature
+/// we've ever produced (where `n` fits in 7 bits).
+const FIND_X_COORD_MAX_TRIES: u32 = 1 << 16;
+
+/// Find `n` such that `n*A` is a valid x-coordinate on E_A. Returns
+/// `Some(x(P))` on success or `None` if no `n` in
+/// `[start, start + FIND_X_COORD_MAX_TRIES)` satisfies the predicate
+/// (which only happens for adversarial / fuzz-crafted curves).
+fn find_na_x_coord(A: &Fp2, _curve: &Curve, start: u8) -> Option<Fp2> {
+    let mut x = &Fp2::from_fp(Fp::from_small(u32::from(start))) * A;
+    for _ in 0..FIND_X_COORD_MAX_TRIES {
+        if is_on_curve(&x, A) && !bool::from(x.is_square()) {
+            return Some(x);
+        }
         x = &x + A;
-        _n += 1;
     }
-    x
+    None
 }
 
-/// Find n*A and return (x, hint).
-fn find_na_x_coord_with_hint(A: &Fp2, _curve: &Curve) -> (Fp2, u8) {
+/// Find `n*A` and return `(x, hint)`. Used in signing where `A` is
+/// honestly generated and the predicate is satisfied for some small
+/// `n`; the bound is here for defense in depth.
+fn find_na_x_coord_with_hint(A: &Fp2, _curve: &Curve) -> Option<(Fp2, u8)> {
     let mut x = *A;
-    let mut n: u8 = 1;
-    while !is_on_curve(&x, A) || bool::from(x.is_square()) {
+    for n in 1u32..=FIND_X_COORD_MAX_TRIES {
+        if is_on_curve(&x, A) && !bool::from(x.is_square()) {
+            let hint = if n < 128 { n as u8 } else { 0 };
+            return Some((x, hint));
+        }
         x = &x + A;
-        n += 1;
     }
-    let hint = if n < 128 { n } else { 0 };
-    (x, hint)
+    None
 }
 
-/// Find b such that -A/(1+i*b) is a valid NQR x-coordinate on E_A.
-fn find_nqr_factor(A: &Fp2, _curve: &Curve, start: u8) -> Fp2 {
-    let mut n = start;
-    loop {
-        let z = Fp2::new(Fp::ONE, Fp::from_small(n as u32));
+/// Find `b` such that `-A/(1+i*b)` is a valid NQR x-coordinate on E_A.
+/// Returns `None` if no `b` in `[start, start + FIND_X_COORD_MAX_TRIES)`
+/// satisfies the predicate.
+fn find_nqr_factor(A: &Fp2, _curve: &Curve, start: u8) -> Option<Fp2> {
+    for offset in 0..FIND_X_COORD_MAX_TRIES {
+        let n = u32::from(start).wrapping_add(offset);
+        let z = Fp2::new(Fp::ONE, Fp::from_small(n));
         let x = &(-A) * &z.invert();
         if is_on_curve(&x, A) && !bool::from(x.is_square()) {
-            return x;
+            return Some(x);
         }
-        n += 1;
     }
+    None
 }
 
-/// Find -A/(1+i*b) and return (x, hint).
-fn find_nqr_factor_with_hint(A: &Fp2, _curve: &Curve) -> (Fp2, u8) {
-    let mut n: u8 = 1;
-    loop {
-        let z = Fp2::new(Fp::ONE, Fp::from_small(n as u32));
+/// Find `-A/(1+i*b)` and return `(x, hint)`.
+fn find_nqr_factor_with_hint(A: &Fp2, _curve: &Curve) -> Option<(Fp2, u8)> {
+    for n in 1u32..=FIND_X_COORD_MAX_TRIES {
+        let z = Fp2::new(Fp::ONE, Fp::from_small(n));
         let x = &(-A) * &z.invert();
         if is_on_curve(&x, A) && !bool::from(x.is_square()) {
-            let hint = if n < 128 { n } else { 0 };
-            return (x, hint);
+            let hint = if n < 128 { n as u8 } else { 0 };
+            return Some((x, hint));
         }
-        n += 1;
     }
+    None
 }

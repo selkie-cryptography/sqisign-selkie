@@ -1139,7 +1139,7 @@ mod tests {
         let curve = Curve::from(Coefficient::ZERO);
 
         let (basis_via_to, hint) = TorsionBasis::to_hint(&curve);
-        let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()));
+        let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte())).expect("test: from_hint failed on honest curve");
 
         assert_eq!(
             basis_via_to.P, basis_via_from.P,
@@ -1172,7 +1172,7 @@ mod tests {
         let curve = Curve::from(Coefficient::from(a));
 
         let (basis_via_to, hint) = TorsionBasis::to_hint(&curve);
-        let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()));
+        let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte())).expect("test: from_hint failed on honest curve");
 
         assert_eq!(
             basis_via_to.P, basis_via_from.P,
@@ -1221,7 +1221,7 @@ mod tests {
 
             let (basis_via_to, hint) = TorsionBasis::to_hint(&curve);
             let basis_via_from =
-                TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()));
+                TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte())).expect("test: from_hint failed on honest curve");
 
             assert_eq!(
                 basis_via_to.P, basis_via_from.P,

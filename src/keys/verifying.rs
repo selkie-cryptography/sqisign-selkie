@@ -116,8 +116,15 @@ impl VerifyingKey {
             .ok_or(SignatureError::VerificationFailed)?;
 
         // --- Line 8: torsion basis on E_pk from hint_pk ---
+        // `from_hint` performs a bounded x-coordinate search whose
+        // failure on adversarial curves is treated as a verification
+        // failure (rather than an infinite loop) — see
+        // `find_na_x_coord` / `find_nqr_factor` in `curves/mod.rs` and
+        // the wycheproof verify `tcId = 49` ("fuzz crash: integer
+        // overflow in find_na_x_coord") regression test.
         let basis_pk =
-            TorsionBasis::from_hint(&self.curve, BasisHint::from_byte(u8::from(self.hint)));
+            TorsionBasis::from_hint(&self.curve, BasisHint::from_byte(u8::from(self.hint)))
+                .ok_or(SignatureError::VerificationFailed)?;
 
         // --- Line 9: challenge isogeny ---
         // Compute kernel: P_pk + [chl]Q_pk, then [2^n_bt] of that.
@@ -205,9 +212,11 @@ impl VerifyingKey {
 
         // --- Lines 10–11: torsion bases on E_aux and E_chl ---
         let basis_aux =
-            TorsionBasis::from_hint(&sig.curve_aux, BasisHint::from_byte(u8::from(sig.hint_aux)));
+            TorsionBasis::from_hint(&sig.curve_aux, BasisHint::from_byte(u8::from(sig.hint_aux)))
+                .ok_or(SignatureError::VerificationFailed)?;
         let basis_chl =
-            TorsionBasis::from_hint(&curve_chl, BasisHint::from_byte(u8::from(sig.hint_chl)));
+            TorsionBasis::from_hint(&curve_chl, BasisHint::from_byte(u8::from(sig.hint_chl)))
+                .ok_or(SignatureError::VerificationFailed)?;
 
         #[cfg(test)]
         {
