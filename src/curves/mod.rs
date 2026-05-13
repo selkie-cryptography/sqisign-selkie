@@ -853,12 +853,14 @@ impl TorsionBasis {
             // is bounded; honest signing always satisfies the
             // predicate inside the bound (in practice the first
             // 7-bit `n` works).
-            find_na_x_coord_with_hint(&A, curve)
-                .expect("to_hint: bounded find_na_x_coord_with_hint search exhausted on honest curve")
+            find_na_x_coord_with_hint(&A, curve).expect(
+                "to_hint: bounded find_na_x_coord_with_hint search exhausted on honest curve",
+            )
         } else {
             // A is QR: find b such that -A/(1+i*b) is on the curve.
-            find_nqr_factor_with_hint(&A, curve)
-                .expect("to_hint: bounded find_nqr_factor_with_hint search exhausted on honest curve")
+            find_nqr_factor_with_hint(&A, curve).expect(
+                "to_hint: bounded find_nqr_factor_with_hint search exhausted on honest curve",
+            )
         };
 
         let x_Q = -&(&A + &x_P);
