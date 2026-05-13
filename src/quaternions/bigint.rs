@@ -302,12 +302,12 @@ impl<const N: usize> BigInt<N> {
     /// Returns `0.0` for zero input. **Sign is ignored** — this
     /// returns the magnitude only, mirroring `mpz_get_d`'s "magnitude
     /// then negate" structure (callers apply the sign separately;
-    /// see [`DoublePlusExponent::from_bigint`]).
+    /// see [`DoublePlusExponent::from_bigint`](crate::quaternions::lattice::dpe::DoublePlusExponent::from_bigint)).
     ///
     /// Distinct from [`to_f64`](Self::to_f64), which does
     /// signed conversion via repeated `val * 2^64 + limb`
     /// accumulation — bit-different at the rounding boundary.
-    pub fn to_f64_trunc(&self) -> f64 {
+    pub fn to_f64_trunc(self) -> f64 {
         let limbs = &self.limbs;
         let mut un = N;
         while un > 0 && limbs[un - 1] == 0 {
@@ -1510,7 +1510,7 @@ impl<const N: usize> BigInt<N> {
     /// Constant-time unsigned subtraction of magnitudes. Returns `(limbs,
     /// borrow)`. Borrow is 1 if `a < b` (unsigned).
     ///
-    /// Same `b1 | b2` simplification as in [`mag_add`] for tighter
+    /// Same `b1 | b2` simplification as in [`Self::mag_add`] for tighter
     /// `sbcs` chain codegen.
     #[inline(always)]
     const fn mag_sub(a: &[u64; N], b: &[u64; N]) -> ([u64; N], u64) {
@@ -2562,7 +2562,7 @@ impl From<BigInt<4>> for BigInt<8> {
 /// Returns a `CtOption` — the result is always computed (constant time),
 /// but the `is_some` flag indicates whether the value actually fits.
 ///
-/// For ergonomic use in non-constant-time code, see [`BigInt<8>::narrow`].
+/// For ergonomic use in non-constant-time code, see `BigInt<8>::narrow`.
 impl From<BigInt<8>> for subtle::CtOption<BigInt<4>> {
     fn from(wide: BigInt<8>) -> Self {
         let mut overflow = 0u64;

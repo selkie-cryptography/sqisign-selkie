@@ -1777,7 +1777,7 @@ impl ZeroizeOnDrop for SigningKey {}
 /// Compute the challenge isogeny and map points through the isomorphism.
 ///
 /// Given a basis (P, Q) on curve E and a challenge `chl`, computes the
-/// isogeny with kernel ⟨[2^n](P + [chl]Q)⟩ of degree 2^(f−n), producing
+/// isogeny with kernel `⟨[2^n](P + [chl]Q)⟩` of degree `2^(f−n)`, producing
 /// the challenge curve E''. Then maps P', Q' from E' (which has the
 /// same j-invariant as E'') onto E'' via
 /// [`Isomorphism`](crate::curves::montgomery::Isomorphism).

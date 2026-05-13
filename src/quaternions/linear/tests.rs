@@ -995,7 +995,6 @@ fn from_hnf_columns_mod_cref_kat1_o_alpha() {
         BigInt::<60>::from_limbs(limbs)
     };
     let neg = |x: BigInt<60>| x.wrapping_neg();
-    let z = BigInt::<60>::ZERO;
 
     // Selkie's KAT-1 PREHNF (= raw mul_direct output at denom 2, halved):
     // Col 0 = (a, -b, -c, -d) of α_conj_at_denom_1 (= halved C-ref α).

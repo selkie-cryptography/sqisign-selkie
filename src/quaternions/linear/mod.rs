@@ -742,7 +742,8 @@ impl<const N: usize> Matrix<N> {
     /// - **Pivot col tracking**: `k = n-1, n-2, ..., n-4` (the last 4 cols
     ///   become output), separate from the row pivot `i = 3, 2, 1, 0`.
     ///
-    /// Used by [`Lattice::sum_mod_cref`] (sign-side response phase).
+    /// Used by [`crate::quaternions::lattice::Lattice::sum_mod`]
+    /// (sign-side response phase via `from_generator_mod_hnf`).
     /// The original `from_hnf_columns_mod` is still used by keygen's
     /// `build_equiv_from_delta`, where its convention coincides with
     /// canonical HNF for keygen-shaped inputs.

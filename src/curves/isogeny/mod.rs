@@ -75,7 +75,7 @@ impl IsogenyDegree {
 
     /// Convert to a [`Scalar`] for elliptic curve point multiplication.
     #[inline]
-    pub fn to_scalar(&self) -> Scalar {
+    pub fn to_scalar(self) -> Scalar {
         Scalar::from_limbs(self.0)
     }
 

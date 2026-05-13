@@ -7,7 +7,8 @@
 //!   3.12])
 //! - [`ExtremalOrder::represent_integer_any`]: same, trying all precomputed
 //!   orders
-//! - [`equivalent_prime_ideal`]: find J ∼ I with prime norm ([Alg. 3.9])
+//! - [`LeftIdeal::smallest_equiv_with_delta`]: find J ∼ I with smaller norm
+//!   (used during [Alg. 3.9])
 //! - [`SuitableIdealResult`]: output of SuitableIdeals ([Alg. 3.16][Alg. 3.16])
 //!
 //! [Alg. 3.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.9
@@ -32,13 +33,12 @@ use crate::curves::{TorsionExponent, isogeny::IsogenyDegree};
 /// Find γ ∈ O with nrd(γ) = M, trying each precomputed extremal order.
 ///
 /// Iterates over the seven precomputed extremal orders, calling
-/// [`represent_integer`] on each until one succeeds.
+/// [`ExtremalOrder::represent_integer`] on each until one succeeds.
 impl ExtremalOrder<8> {
     /// Find γ ∈ O with nrd(γ) = M, trying all precomputed orders.
     ///
     /// Iterates over [`EXTREMAL_ORDERS`] and calls
-    /// [`represent_integer`](Self::represent_integer) on each until
-    /// one succeeds.
+    /// [`Self::represent_integer`] on each until one succeeds.
     ///
     /// WARNING: Not constant-time — data-dependent iteration over
     /// orders with early return on first success.
@@ -1327,7 +1327,7 @@ impl<const N: usize> LeftIdeal<N> {
     /// during signing (response-phase `i_com_rsp`) — L2 reduction
     /// has data-dependent loop counts.
     ///
-    /// [`to_isogeny`]: crate::deuring::LeftIdeal::to_isogeny
+    /// [`to_isogeny`]: crate::quaternions::lattice::LeftIdeal::to_isogeny
     /// [`LeftIdeal<4>::smallest_equiv`]: LeftIdeal::smallest_equiv
     #[must_use]
     pub fn smallest_equiv_narrow<const W: usize>(&self) -> Option<LeftIdeal<4>> {
