@@ -1390,6 +1390,116 @@ verifies your routine and the reference's
 \texttt{ibz\_rand\_interval} return identical sequences for
 the same range~$[a, b]$.
 
+\subsection{Modular HNF modulus must be a lattice member, not just a
+  covolume bound}
+\label{sec:bug-hnf-mod-modulus}
+
+Algorithm~3.16's id2iso decomposition (\textsc{SuitableIdeals})
+enumerates short vectors in the seven extremal-order parents
+$I^{(t)} = \mathrm{conj}(I_{\mathrm{reduced}}) \cdot J_t$,
+where $J_t$ is a precomputed connecting ideal.  Computing
+$I^{(t)}$ as a lattice product on the integer columns of
+$I_{\mathrm{reduced}}$ and $J_t$ involves an HNF
+reduction of the 16 generators
+$(b_i^{I_{\mathrm{reduced}}} \cdot b_j^{J_t})_{i,j}$.
+
+Our \texttt{Lattice::product\_with\_modulus} (used to specialize
+the HNF reduction with a precomputed covolume bound) calls
+\texttt{Matrix::from\_hnf\_columns\_mod}, whose contract on the
+modulus~$D$ is stricter than ``$D$ is a multiple of
+$\det(L)$.''  The implementation appends explicit columns
+$D \cdot e_i$ to the generator list (Cohen's Algorithm
+2.4.8) and HNF-reduces the union $L + D\cdot\mathbb{Z}^4$.
+That equals~$L$ only when $D \cdot e_i \in L$ for every~$i$
+--- equivalently, when $D$ is a lattice \emph{member}, not
+merely a covolume bound.
+
+We supplied $D = 1024 \cdot N^4 \cdot (k \cdot N_J)^2$,
+intended as the canonical integer-column covolume of the
+product lattice at denominator $4N$.  For the default response
+case (denominator $4N$ on $I_{\mathrm{reduced}}$ and
+denominator~$2$ on~$J_t$) the actual canonical covolume is
+$(8N)^4 \cdot (kN_J)^2 = 4096 \cdot N^4 \cdot (kN_J)^2 =
+4 \cdot D$, so our~$D$ is a strict divisor of the covolume
+--- and is not a lattice member for these inputs.  The HNF
+returns the strictly coarser super-lattice $L + D\cdot\mathbb{Z}^4$,
+whose canonical generator includes the integer scalar
+$(2, 0, 0, 0)$.
+
+That scalar then enters the class Gram
+$g_{ij} = 2 \, \mathrm{nrd}(b_i, b_j) / (d^2 \cdot N(I))$ used
+by L$^2$-LLL.  The first column has
+$\mathrm{nrd}((2,0,0,0)) = 4$, while $d^2 \cdot N(I) \approx 2^{770}$
+at width~16, so integer division floors~$g_{00}$ (and all of
+row~0) to zero.  Both our \texttt{l2\_reduce} and the C reference's
+\texttt{quat\_lll\_core} non-terminate on that Gram: the DPE
+$r$ values collapse to $\pm 0$ (mantissa~$\pm 0$, exponent
+$-2^{31}$) and the Lov\'asz/swap test enters an infinite swap
+loop.  We verified this is not specific to our implementation
+by feeding the dumped degenerate Gram into a C-reference
+harness that calls \texttt{quat\_lll\_core} directly:
+it also runs at 100\% CPU for $>5$~minutes without producing
+output.  The reference doesn't hit this state during
+\texttt{PQCgenKAT\_sign} because its cross-order construction
+(\texttt{quat\_lideal\_lideal\_mul\_reduced} $\to$
+\texttt{quat\_lattice\_mul} in
+\texttt{lattice.c:202--244}) uses
+$|\det(\text{first 4 product generators})|$
+as the HNF modulus
+(\texttt{lattice.c:231--233}):
+\begin{lstlisting}[language=C]
+ibz_mat_4x4_inv_with_det_as_denom(NULL, &det, &detmat);
+ibz_abs(&det, &det);
+ibz_mat_4xn_hnf_mod_core(&(res->basis), 16, generators, &det);
+\end{lstlisting}
+\noindent
+\texttt{detmat} here is the matrix of the first four generators;
+its $|\det|$ is the covolume of those four generators, which
+lies in the lattice they span.  Our \texttt{Lattice::product}
+(without the explicit modulus) mirrors that exactly.
+
+\paragraph{Fix.}  Switch the cross-order step at
+\texttt{src/quaternions/ideal.rs:1873} from
+\texttt{conj\_lat.product\_with\_modulus(\&j\_t\_lat, \&modulus\_outer)}
+to \texttt{conj\_lat.product(\&j\_t\_lat)}, which uses
+\texttt{Lattice::product}'s built-in
+$|\det(\text{first 4 cols})|$ modulus.  This is the C-reference
+recipe.  After the fix, all six previously-stuck KATs
+(\#20, \#53, \#56, \#79, \#94, \#95) complete in $1$--$6$~seconds
+on iteration~0, and 100 of 100 signing KATs pass.
+
+\paragraph{Why it was hidden.}  For most response-phase
+ideals the precomputed bound $D$ happens to coincide with the
+canonical covolume, so $D \cdot e_i \in L$ and the result is
+correct.  KAT~53 in particular produces an
+$I_{\mathrm{inter}}$ whose post-LLL basis has a non-canonical
+HNF (\texttt{basis[2][2] = 5}, \texttt{basis[2][3] = 2}) ---
+the lattice content includes a factor of~$5$ in row~2.  This
+shifts the denominator structure so that our hard-coded
+$1024 \cdot N^4$ factor no longer matches the actual covolume,
+$D$ becomes a strict divisor of the canonical value, and the
+HNF widens to the coarser super-lattice.  KATs~39 and~80 don't
+hit this because their off-by-one in $\beta$ sampling
+(\S\ref{sec:bug-random-norm-off-by-one}) had already
+broken~$I_{\mathrm{inter}}$ upstream, so they never reached
+this code path with the troublesome geometry.
+
+\noindent
+\textbf{Advice for implementers:} When using a modular HNF
+algorithm (Cohen's Algorithm~2.4.8) to compute lattice
+products, the modulus must be a lattice member, not just an
+arbitrary multiple of the determinant.  The two conditions are
+equivalent for self-dual lattices but distinct in general --- a
+$D$ that is~$k \cdot \det(L)$ for $k > 1$ may or may not live
+in~$L$.  When in doubt, do what the C reference does: compute
+$|\det(\text{first 4 generators})|$ as the modulus rather than
+trying to derive a covolume formula.  Document the membership
+condition prominently on any function whose contract claims
+``modulus must be a multiple of covolume''~--- that's not
+sufficient, and the failure mode (coarser lattice $\to$
+degenerate Gram $\to$ non-terminating L$^2$) takes hours to
+debug.
+
 \subsection{Invalid test kernels for $(2,2)$-isogeny chains}
 \label{sec:bug-theta-tests}
 

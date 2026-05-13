@@ -1863,16 +1863,27 @@ impl<const N: usize> LeftIdeal<N> {
                 };
                 let j_t_norm: BigInt<W2> = *connecting_ideal(t).widen::<W2>().norm();
                 let prod_norm = k_norm.ct_mul(&j_t_norm);
-                // modulus = 1024 · N^4 · (k·N_J)² (integer-col covolume of result).
-                let n_sq = n_self_w2.ct_mul(n_self_w2);
-                let n4 = n_sq.ct_mul(&n_sq);
-                let prod_norm_sq = prod_norm.ct_mul(&prod_norm);
-                let modulus_outer = BigInt::<W2>::from_u64(1024)
-                    .ct_mul(&n4)
-                    .ct_mul(&prod_norm_sq);
-                let prod_lat = conj_lat
-                    .product_with_modulus(&j_t_lat, &modulus_outer)
-                    .reduce_denom();
+                // Use `Lattice::product`'s built-in `det(first 4 cols)`
+                // modulus rather than the precomputed
+                // `1024 · N^4 · (k·N_J)²` covolume formula. The precomputed
+                // formula was 4× the canonical covolume in the default
+                // (denom_self=2, denom_J=2) case — and Selkie's
+                // `from_hnf_columns_mod` constructs the lattice
+                // `⟨input cols⟩ + D·Z^4`, so a too-large `D` not in the
+                // lattice yields a coarser sublattice containing scalars
+                // like `(2, 0, 0, 0)`. That degenerate generator, fed
+                // through `class_gram = 2·nrd/(denom²·N)`, zeros row/col 0
+                // and L²-LLL never terminates (KAT 053 t=5 hang;
+                // C-ref's `quat_lll_core` also hangs on the same input).
+                //
+                // C-ref's `quat_lideal_lideal_mul_reduced` (`lll/lll_applications.c:38`)
+                // calls `quat_lattice_mul`, which uses `|det(first 4
+                // generators)|` (`lattice.c:231-233`) as the HNF modulus —
+                // a value guaranteed to live in the lattice. `Lattice::product`
+                // mirrors that recipe.
+                let _ = n_self_w2;
+                let _ = j_t_norm;
+                let prod_lat = conj_lat.product(&j_t_lat).reduce_denom();
                 let parent_o0 = *EXTREMAL_ORDERS[0].widen::<W2>().order();
                 let ideal_w2 = LeftIdeal::<W2>::from_parts(prod_lat, prod_norm, parent_o0);
                 match ideal_w2.narrow_to::<N>() {
