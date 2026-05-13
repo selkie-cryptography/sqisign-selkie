@@ -12,3 +12,11 @@
 # driver override is needed (Ubuntu 24.04 ships gcc 13).
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[env]
+# Tests run signing on width-60 BigInts (480 bytes each); debug-mode
+# stack frames in `Lattice::product`'s `det(first_block)` and the
+# laplace-expanded chained `ct_mul`/`ct_sub` ladder push past the
+# default 2 MiB per test thread on the response-phase cross-order
+# path (KAT 001 was the first to overflow). 16 MiB is conservative.
+RUST_MIN_STACK = "16777216"
