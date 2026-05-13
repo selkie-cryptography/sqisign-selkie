@@ -1,18 +1,12 @@
 //! Modular arithmetic over [`BigInt<N>`][super::BigInt].
 //!
-//! Currently holds the Montgomery-reduction context type
-//! [`MontReducer`]. Operations like modular exponentiation and modular
-//! square root that live on [`BigInt<N>`] as inherent methods may move
-//! here in the future, alongside the variants that consume a
-//! `MontReducer<N>` directly.
+//! Holds the Montgomery-reduction context type [`MontReducer`] and
+//! the high-level modular-exponentiation entry points
+//! [`pow_mod`][BigInt::pow_mod] and [`pow_mod_w`][BigInt::pow_mod_w].
 
 use core::cmp::Ordering;
 
 use super::BigInt;
-
-// ---------------------------------------------------------------------
-// Montgomery arithmetic
-// ---------------------------------------------------------------------
 
 /// Precomputed Montgomery reducer for a runtime-supplied odd modulus.
 ///
@@ -496,5 +490,83 @@ impl<const N: usize> MontReducer<N> {
             iter += 1;
         }
         x
+    }
+}
+
+impl<const N: usize> BigInt<N> {
+    /// Modular exponentiation: `base^exp mod modulus`.
+    ///
+    /// Uses Montgomery arithmetic when the modulus is odd (the common
+    /// case): conversion in/out plus square-and-multiply with CIOS
+    /// Montgomery multiplication, no per-step division. Falls back to
+    /// schoolbook square-and-multiply (`ct_mul` + `ct_mod`) for even
+    /// moduli, where Montgomery doesn't apply.
+    ///
+    /// # Width requirement
+    ///
+    /// The inner squaring `result * result` can reach `(modulus - 1)²`
+    /// before the reduction. For the result to not silently truncate,
+    /// `BigInt<N>` must satisfy `64*N >= 2*bits(modulus)`. If `modulus`
+    /// is larger than that bound, use [`pow_mod_w`](Self::pow_mod_w)
+    /// with a wider working type.
+    pub fn pow_mod(base: &Self, exp: &Self, modulus: &Self) -> Self {
+        // Montgomery requires an odd modulus.
+        if let Some(ctx) = MontReducer::<N>::new(modulus) {
+            return ctx.pow(base, exp);
+        }
+        Self::pow_mod_schoolbook(base, exp, modulus)
+    }
+
+    /// Schoolbook square-and-multiply fallback for even moduli. Kept
+    /// public(crate) so MontReducer::pow can delegate when the exponent
+    /// loop trivially terminates.
+    fn pow_mod_schoolbook(base: &Self, exp: &Self, modulus: &Self) -> Self {
+        let mut result = Self::ONE;
+        let bs = exp.bitsize();
+        let mut i = bs;
+        while i > 0 {
+            i -= 1;
+            result = result.ct_mul(&result).ct_mod(modulus);
+            let limb_idx = (i / 64) as usize;
+            let bit_idx = i % 64;
+            let bit = (exp.limbs[limb_idx] >> bit_idx) & 1;
+            if bit == 1 {
+                result = result.ct_mul(base).ct_mod(modulus);
+            }
+        }
+        result
+    }
+
+    /// Modular exponentiation at a wider working width `W`.
+    ///
+    /// Widens the operands to `BigInt<W>`, runs [`pow_mod`](Self::pow_mod)
+    /// at that width, then narrows the result back to `BigInt<N>`.
+    /// Use this when the storage width `N` is not big enough for the
+    /// squarings inside `pow_mod` to fit without truncation — that is,
+    /// whenever `64*N < 2*bits(modulus)`.
+    ///
+    /// # Width requirements
+    ///
+    /// - Compile-time: `W >= N` (enforced by a const assertion).
+    /// - Runtime invariant: `64*W >= 2*bits(modulus)`. The caller is
+    ///   responsible for choosing `W` large enough for their modulus. If this
+    ///   is violated, the wider `pow_mod` will also silently truncate.
+    ///
+    /// For the SQIsign v2 commitment modulus
+    /// `D_mix = 2^512 + 75` (513 bits), use at least `W = 18`.
+    pub fn pow_mod_w<const W: usize>(base: &Self, exp: &Self, modulus: &Self) -> Self {
+        const {
+            assert!(
+                W >= N,
+                "pow_mod_w: working width W must be >= storage width N"
+            )
+        };
+        let base_w: BigInt<W> = base.widen();
+        let exp_w: BigInt<W> = exp.widen();
+        let modulus_w: BigInt<W> = modulus.widen();
+        let result_w = BigInt::<W>::pow_mod(&base_w, &exp_w, &modulus_w);
+        result_w
+            .narrow_to::<N>()
+            .expect("pow_mod_w result < modulus < 2^(64N) fits in BigInt<N>")
     }
 }

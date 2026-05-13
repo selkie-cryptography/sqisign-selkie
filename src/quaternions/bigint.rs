@@ -24,10 +24,6 @@ pub(crate) use modular::MontReducer;
 #[cfg(test)]
 mod tests;
 
-// ---------------------------------------------------------------------------
-// Limb helpers
-// ---------------------------------------------------------------------------
-
 /// Constant-time bit-size of a single 64-bit word.
 ///
 /// Returns the position of the highest set bit (1-indexed), or 0 if `x == 0`.
@@ -93,10 +89,6 @@ const fn widening_mul(a: u64, b: u64) -> (u64, u64) {
     let full = (a as u128) * (b as u128);
     (full as u64, (full >> 64) as u64)
 }
-
-// ---------------------------------------------------------------------------
-// BigInt<N>: fixed-width signed integer (sign + magnitude)
-// ---------------------------------------------------------------------------
 
 /// A fixed-width signed integer in sign+magnitude representation.
 ///
@@ -1024,82 +1016,6 @@ impl<const N: usize> BigInt<N> {
         r_w.narrow_to::<N>()
     }
 
-    /// Modular exponentiation: `base^exp mod modulus`.
-    ///
-    /// Uses Montgomery arithmetic when the modulus is odd (the common
-    /// case): conversion in/out plus square-and-multiply with CIOS
-    /// Montgomery multiplication, no per-step division. Falls back to
-    /// schoolbook square-and-multiply (`ct_mul` + `ct_mod`) for even
-    /// moduli, where Montgomery doesn't apply.
-    ///
-    /// # Width requirement
-    ///
-    /// The inner squaring `result * result` can reach `(modulus - 1)²`
-    /// before the reduction. For the result to not silently truncate,
-    /// `BigInt<N>` must satisfy `64*N >= 2*bits(modulus)`. If `modulus`
-    /// is larger than that bound, use [`pow_mod_w`](Self::pow_mod_w)
-    /// with a wider working type.
-    pub fn pow_mod(base: &Self, exp: &Self, modulus: &Self) -> Self {
-        // Montgomery requires an odd modulus.
-        if let Some(ctx) = MontReducer::<N>::new(modulus) {
-            return ctx.pow(base, exp);
-        }
-        Self::pow_mod_schoolbook(base, exp, modulus)
-    }
-
-    /// Schoolbook square-and-multiply fallback for even moduli. Kept
-    /// public(crate) so MontReducer::pow can delegate when the exponent
-    /// loop trivially terminates.
-    fn pow_mod_schoolbook(base: &Self, exp: &Self, modulus: &Self) -> Self {
-        let mut result = Self::ONE;
-        let bs = exp.bitsize();
-        let mut i = bs;
-        while i > 0 {
-            i -= 1;
-            result = result.ct_mul(&result).ct_mod(modulus);
-            let limb_idx = (i / 64) as usize;
-            let bit_idx = i % 64;
-            let bit = (exp.limbs[limb_idx] >> bit_idx) & 1;
-            if bit == 1 {
-                result = result.ct_mul(base).ct_mod(modulus);
-            }
-        }
-        result
-    }
-
-    /// Modular exponentiation at a wider working width `W`.
-    ///
-    /// Widens the operands to `BigInt<W>`, runs [`pow_mod`](Self::pow_mod)
-    /// at that width, then narrows the result back to `BigInt<N>`.
-    /// Use this when the storage width `N` is not big enough for the
-    /// squarings inside `pow_mod` to fit without truncation — that is,
-    /// whenever `64*N < 2*bits(modulus)`.
-    ///
-    /// # Width requirements
-    ///
-    /// - Compile-time: `W >= N` (enforced by a const assertion).
-    /// - Runtime invariant: `64*W >= 2*bits(modulus)`. The caller is
-    ///   responsible for choosing `W` large enough for their modulus. If this
-    ///   is violated, the wider `pow_mod` will also silently truncate.
-    ///
-    /// For the SQIsign v2 commitment modulus
-    /// `D_mix = 2^512 + 75` (513 bits), use at least `W = 18`.
-    pub fn pow_mod_w<const W: usize>(base: &Self, exp: &Self, modulus: &Self) -> Self {
-        const {
-            assert!(
-                W >= N,
-                "pow_mod_w: working width W must be >= storage width N"
-            )
-        };
-        let base_w: BigInt<W> = base.widen();
-        let exp_w: BigInt<W> = exp.widen();
-        let modulus_w: BigInt<W> = modulus.widen();
-        let result_w = BigInt::<W>::pow_mod(&base_w, &exp_w, &modulus_w);
-        result_w
-            .narrow_to::<N>()
-            .expect("pow_mod_w result < modulus < 2^(64N) fits in BigInt<N>")
-    }
-
     /// Miller-Rabin probabilistic primality test.
     ///
     /// Returns `true` if `self` is probably prime. Uses `rounds`
@@ -1789,10 +1705,6 @@ impl<const N: usize> From<i32> for BigInt<N> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Width conversions
-// ---------------------------------------------------------------------------
-
 impl<const N: usize> BigInt<N> {
     /// Widen to `BigInt<W>` by zero-extending the upper limbs.
     ///
@@ -1893,10 +1805,6 @@ impl BigInt<8> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ConstantTimeEq / ConditionallySelectable
-// ---------------------------------------------------------------------------
-
 impl<const N: usize> ConstantTimeEq for BigInt<N> {
     fn ct_eq(&self, other: &Self) -> Choice {
         let both_zero = Self::mag_is_zero(&self.limbs) & Self::mag_is_zero(&other.limbs);
@@ -1954,10 +1862,6 @@ impl<const N: usize> PartialOrd for BigInt<N> {
         Some(self.cmp(other))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Standard operator traits
-// ---------------------------------------------------------------------------
 
 impl<const N: usize> Add for BigInt<N> {
     type Output = Self;
@@ -2046,10 +1950,6 @@ impl<const N: usize> Neg for &BigInt<N> {
         self.wrapping_neg()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Display
-// ---------------------------------------------------------------------------
 
 impl<const N: usize> fmt::Debug for BigInt<N> {
     #[cfg_attr(test, mutants::skip)] // formatting, not correctness
