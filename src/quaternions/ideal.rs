@@ -186,34 +186,12 @@ impl ExtremalOrder<8> {
         // domain at the cost of every byte-stream draw consuming
         // a different number of bytes than C ref's
         // `ibz_rand_interval(rand, 1, temp)` call.
-        #[cfg(test)]
-        if std::env::var("REPI_TRACE").is_ok() {
-            crate::selkie_trace!(
-                "[REPI] init bound={} counter={} adjusted_n_gamma={}",
-                z_max_big,
-                counter_big,
-                four_m
-            );
-            crate::selkie_trace!(
-                "[REPI] init q={} p={} non_diag={} standard_order={}",
-                q,
-                p,
-                if isogeny_cond { 1 } else { 0 },
-                if q_val == 1 { 1 } else { 0 }
-            );
-        }
         let one_big = BigInt::<8>::ONE;
         let mut iter: u64 = 0;
         while iter < bound {
-            #[cfg(test)]
-            let _iter_idx = iter;
             iter += 1;
 
             let z = BigInt::<8>::rand_interval(rng, &one_big, &z_max_big);
-            #[cfg(test)]
-            if std::env::var("REPI_TRACE").is_ok() {
-                crate::selkie_trace!("[REPI] iter={} z={}", _iter_idx, z);
-            }
 
             let pz_sq = p.ct_mul(&z.ct_mul(&z));
             if four_m <= pz_sq {
