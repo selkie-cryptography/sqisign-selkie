@@ -3,13 +3,19 @@
 failure-output = "immediate"
 slow-timeout = { period = "60s", terminate-after = 5 }
 
-# TODO(sign-bug): cap sign_kat_derand_NNN tests at 30s in the default
-# profile. Until sign tests complete reliably under 30s in debug, this
-# keeps the CI gate from wedging. The `kat` profile keeps the 30-min
-# cap for explicit KAT runs.
+# Cap sign_kat_derand_NNN tests at 180s in the default profile. After
+# the random_norm β off-by-one, cross-order product modulus, and
+# TorsionBasisFromHint bounded-search fixes, all 100 sign KATs pass on
+# iter 0 in release in 1–6 s each. Debug builds (no inlining, large
+# BigInt<60> stack frames) typically run 14–60 s; the long-tail
+# response-phase cross-order KATs (e.g. KAT 049, release 5.2 s) push
+# past 90 s. 180 s = ~30× the release worst-case gives the debug
+# suite headroom without letting a genuine regression hang CI
+# indefinitely. The `kat` profile keeps the 30-min cap for explicit
+# long-running KAT debugging.
 [[profile.default.overrides]]
 filter = 'test(/sign_kat_derand_/)'
-slow-timeout = { period = "30s", terminate-after = 1 }
+slow-timeout = { period = "180s", terminate-after = 1 }
 
 # `coverage` profile: same fast suite as `default`, but with a longer
 # per-test cap to absorb llvm-cov instrumentation overhead. Without
