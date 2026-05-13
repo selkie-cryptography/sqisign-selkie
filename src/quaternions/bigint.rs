@@ -23,6 +23,7 @@ mod modular;
 mod primes;
 mod rand;
 mod resize;
+mod sqrt;
 pub(crate) use modular::MontReducer;
 
 #[cfg(test)]
@@ -479,53 +480,6 @@ impl<const N: usize> BigInt<N> {
     pub fn divides(&self, other: &Self) -> Choice {
         let (_, r) = other.div_rem(self);
         r.is_zero()
-    }
-
-    /// Integer square root: returns the largest `s` such that `s*s <= self`.
-    ///
-    /// Only defined for non-negative values. Based on Newton-Raphson
-    /// reciprocal square root (Algorithm 10, §2.5) from
-    /// [Kouider et al.][ct-bigint], simplified here as a binary search
-    /// on the result bits.
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self` is negative.
-    pub fn sqrt_floor(&self) -> Self {
-        assert!(
-            !bool::from(self.is_negative()),
-            "sqrt_floor called on negative value"
-        );
-        if bool::from(self.is_zero()) {
-            return Self::ZERO;
-        }
-
-        // Binary search: set bits from MSB to LSB, keeping the bit if
-        // result^2 <= self.
-        let bs = self.bitsize();
-        // The sqrt has at most ceil(bs/2) bits.
-        let max_bit = bs.div_ceil(2);
-
-        let mut result = Self::ZERO;
-        let mut bit = max_bit;
-        while bit > 0 {
-            bit -= 1;
-            // Tentatively set this bit.
-            let limb_idx = (bit / 64) as usize;
-            let bit_idx = bit % 64;
-            if limb_idx < N {
-                result.limbs[limb_idx] |= 1u64 << bit_idx;
-                // Check if result^2 > self.
-                let sq = result.ct_mul(&result);
-                if sq > *self {
-                    // Clear the bit.
-                    result.limbs[limb_idx] &= !(1u64 << bit_idx);
-                }
-            }
-        }
-        result
     }
 
     /// Constant-time unsigned addition of magnitudes. Returns `(limbs, carry)`.
