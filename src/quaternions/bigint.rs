@@ -879,143 +879,6 @@ impl<const N: usize> BigInt<N> {
         Some((x_w.narrow_to::<N>()?, y_w.narrow_to::<N>()?))
     }
 
-    /// Modular square root: returns x such that x² ≡ n (mod m),
-    /// or `None` if n is not a quadratic residue mod m.
-    ///
-    /// Requires m to be an odd prime. Implements [Alg. 3.1] from
-    /// the spec, with fast paths for m ≡ 3 (mod 4) and m ≡ 5 (mod 8),
-    /// and Tonelli-Shanks for the general case m ≡ 1 (mod 8).
-    ///
-    /// # Width requirement
-    ///
-    /// All internal operations use [`pow_mod`](Self::pow_mod) and
-    /// direct `ct_mul`/`ct_mod` at width `N`. The caller must ensure
-    /// `64*N >= 2*bits(m)` — otherwise the squarings silently
-    /// truncate and the result is wrong. For larger moduli use
-    /// [`modular_sqrt_w`](Self::modular_sqrt_w).
-    ///
-    /// [Alg. 3.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.1
-    pub fn modular_sqrt(n: &Self, m: &Self) -> Option<Self> {
-        let n_mod = n.ct_mod(m);
-        if bool::from(n_mod.is_zero()) {
-            return Some(Self::ZERO);
-        }
-
-        // Build Montgomery context once for this modulus and share
-        // across all pow_mod calls. The general Tonelli-Shanks branch
-        // below issues 4+ pow_mods per call plus more inside the
-        // Newton-style adjustment loop; without caching, each would
-        // rebuild Newton iteration for n_inv and the 128·N doublings
-        // for R². Fall back to the schoolbook path if `m` is even
-        // (Montgomery requires an odd modulus).
-        //
-        // CT note: see `MontReducer`'s doc. Within-function caching is
-        // safe even when `m` is secret-derived (e.g. via
-        // `cornacchia` from `random_prime_norm`) because the context
-        // is dropped before this function returns — no cross-call
-        // cache-occupancy channel.
-        let ctx = MontReducer::<N>::new(m);
-
-        // Helper: mod-pow either via cached ctx or schoolbook fallback.
-        let pow = |b: &Self, e: &Self| -> Self {
-            match &ctx {
-                Some(c) => c.pow(b, e),
-                None => Self::pow_mod(b, e, m),
-            }
-        };
-
-        let m_mod4 = m.as_limbs()[0] & 3;
-        let m_mod8 = m.as_limbs()[0] & 7;
-
-        // m ≡ 3 (mod 4): return n^((m+1)/4) mod m.
-        if m_mod4 == 3 {
-            let exp = m.ct_add(&Self::ONE).shr(2);
-            let r = pow(&n_mod, &exp);
-            let check = r.ct_mul(&r).ct_mod(m);
-            return if check == n_mod { Some(r) } else { None };
-        }
-
-        // m ≡ 5 (mod 8):
-        if m_mod8 == 5 {
-            // Check if n^((m-1)/4) ≡ 1 mod m.
-            let exp_check = m.ct_sub(&Self::ONE).shr(2);
-            let test = pow(&n_mod, &exp_check);
-            if test == Self::ONE {
-                // return n^((m+3)/8) mod m
-                let exp = m.ct_add(&Self::THREE).shr(3);
-                return Some(pow(&n_mod, &exp));
-            } else {
-                // return 2n(4n)^((m-5)/8) mod m
-                let four_n = n_mod.ct_mul(&Self::from_u64(4)).ct_mod(m);
-                let exp = m.ct_sub(&Self::from_u64(5)).shr(3);
-                let base = pow(&four_n, &exp);
-                let r = Self::TWO.ct_mul(&n_mod).ct_mul(&base).ct_mod(m);
-                let check = r.ct_mul(&r).ct_mod(m);
-                return if check == n_mod { Some(r) } else { None };
-            }
-        }
-
-        // General Tonelli-Shanks (m ≡ 1 mod 8).
-        let e = m.ct_sub(&Self::ONE).two_adic_val();
-        let q = m.ct_sub(&Self::ONE).shr(e);
-
-        // Find a non-residue w.
-        let mut w = Self::TWO;
-        loop {
-            let exp = m.ct_sub(&Self::ONE).shr(1);
-            let ls = pow(&w, &exp);
-            // Legendre symbol: if ls == m - 1, then w is a non-residue.
-            if ls == m.ct_sub(&Self::ONE) {
-                break;
-            }
-            w = w.ct_add(&Self::ONE);
-            // Safety bound.
-            if w > *m {
-                return None;
-            }
-        }
-
-        let mut z = pow(&w, &q);
-        let mut y = pow(&n_mod, &q);
-        let mut x = pow(&n_mod, &q.ct_add(&Self::ONE).shr(1));
-        let mut f = Self::from_u64(1u64 << (e - 2));
-
-        for _i in 0..e.saturating_sub(1) {
-            let b = pow(&y, &f);
-            if b == m.ct_sub(&Self::ONE) {
-                // b ≡ -1 mod m
-                x = x.ct_mul(&z).ct_mod(m);
-                y = y.ct_mul(&z).ct_mul(&z).ct_mod(m);
-            }
-            z = z.ct_mul(&z).ct_mod(m);
-            f = f.shr(1);
-        }
-
-        let check = x.ct_mul(&x).ct_mod(m);
-        if check == n_mod { Some(x) } else { None }
-    }
-
-    /// Modular square root at a wider working width `W`.
-    ///
-    /// Widens `n` and `m` to `BigInt<W>` and runs
-    /// [`modular_sqrt`](Self::modular_sqrt) at that width. Use when
-    /// `64*N < 2*bits(m)` would otherwise silently truncate the
-    /// Tonelli-Shanks exponentiations.
-    ///
-    /// See [`pow_mod_w`](Self::pow_mod_w) for the width constraints.
-    pub fn modular_sqrt_w<const W: usize>(n: &Self, m: &Self) -> Option<Self> {
-        const {
-            assert!(
-                W >= N,
-                "modular_sqrt_w: working width W must be >= storage width N"
-            )
-        };
-        let n_w: BigInt<W> = n.widen();
-        let m_w: BigInt<W> = m.widen();
-        let r_w = BigInt::<W>::modular_sqrt(&n_w, &m_w)?;
-        r_w.narrow_to::<N>()
-    }
-
     /// Miller-Rabin probabilistic primality test.
     ///
     /// Returns `true` if `self` is probably prime. Uses `rounds`
@@ -1152,46 +1015,6 @@ impl<const N: usize> BigInt<N> {
         let self_w: BigInt<W> = self.widen();
         self_w.is_probable_prime(rounds)
     }
-
-    /// Legendre symbol: returns 1 if `a` is a quadratic residue mod
-    /// `p`, -1 if not, 0 if a ≡ 0 mod p. Requires `p` odd prime.
-    ///
-    /// # Width requirement
-    ///
-    /// Uses Euler's criterion via [`pow_mod`](Self::pow_mod), which
-    /// requires `64*N >= 2*bits(p)`. For larger primes use
-    /// [`legendre_w`](Self::legendre_w).
-    pub fn legendre(a: &Self, p: &Self) -> i32 {
-        let a_mod = a.ct_mod(p);
-        if bool::from(a_mod.is_zero()) {
-            return 0;
-        }
-        let exp = p.ct_sub(&Self::ONE).shr(1);
-        let result = Self::pow_mod(&a_mod, &exp, p);
-        if result == Self::ONE { 1 } else { -1 }
-    }
-
-    /// Legendre symbol at a wider working width `W`.
-    ///
-    /// Widens `a` and `p` to `BigInt<W>` and runs [`legendre`](Self::legendre)
-    /// at that width. See [`pow_mod_w`](Self::pow_mod_w) for the width
-    /// constraints. Use when `64*N < 2*bits(p)` would otherwise
-    /// silently truncate the Euler exponentiation.
-    pub fn legendre_w<const W: usize>(a: &Self, p: &Self) -> i32 {
-        const {
-            assert!(
-                W >= N,
-                "legendre_w: working width W must be >= storage width N"
-            )
-        };
-        let a_w: BigInt<W> = a.widen();
-        let p_w: BigInt<W> = p.widen();
-        BigInt::<W>::legendre(&a_w, &p_w)
-    }
-
-    // -----------------------------------------------------------------------
-    // Private magnitude helpers
-    // -----------------------------------------------------------------------
 
     /// Constant-time unsigned addition of magnitudes. Returns `(limbs, carry)`.
     ///
@@ -1611,10 +1434,6 @@ impl<const N: usize> BigInt<N> {
         }
         result
     }
-
-    // -----------------------------------------------------------------------
-    // Signed arithmetic
-    // -----------------------------------------------------------------------
 
     /// Constant-time signed addition.
     ///
