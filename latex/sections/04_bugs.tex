@@ -2164,3 +2164,71 @@ maximal order we choose to expand it in, but
 recombination matrices must come from the same maximal order
 the decomposition is taken in.
 
+\subsection{Unbounded x-coordinate search in
+  \textsc{TorsionBasisFromHint} fallback}
+\label{sec:bug-find-na-x-coord-unbounded}
+
+\textsc{TorsionBasisFromHint} (Algorithm~2.2) reconstructs a
+$2$-torsion basis from a curve coefficient~$A$ and a $7$-bit
+hint.  The hint~$h$ encodes the smallest integer~$n$ such that
+either $n A$ (when $A$ is a non-residue) or $-A/(1 + i h)$
+(when $A$ is a residue) is a valid x-coordinate on $E_A$.
+Honest signing always finds an admissible~$n$ in the first few
+values, so the $7$-bit hint suffices.  The spec also describes
+a fallback path for $h = 0$: search from $n = 128$ upward
+until the predicate is satisfied.
+
+The spec's pseudocode (Algorithm~2.2) writes the fallback as
+\textit{``increment $n$ until the predicate holds.''}  Read
+literally, that is an unbounded search.  In \texttt{verify},
+the function is called on three curves
+($E_{\mathrm{pk}}$, $E_{\mathrm{aux}}$, $E_{\mathrm{chl}}$)
+all reconstructed from signature bytes, so the curve
+coefficient~$A$ is attacker-controlled.  An adversary can
+supply a malformed signature whose~$A$ never satisfies the
+on-curve / non-residue predicate inside the
+$\mathbb{F}_{p^2}$ search window, and verify spins forever.
+
+The Wycheproof suite for SQIsign includes a regression vector
+for exactly this case (\texttt{tcId = 49} in the verify file,
+flag \texttt{HintOverflow}, comment \textit{``fuzz crash:
+integer overflow in find\_na\_x\_coord''}).  An implementation
+that translates the spec's pseudocode directly into a
+\texttt{while}-loop hangs on that vector regardless of
+language.
+
+\paragraph{Fix.}  Bound the search by a constant well above
+anything observed on honest signatures (the largest~$n$ in
+practice is below~$128$, so a cap of $2^{16}$ leaves
+five orders of magnitude of headroom) and make
+\textsc{TorsionBasisFromHint} fallible.  In \texttt{verify},
+treat \texttt{None} as a verification failure;
+on the signing side the same call is on the signer's own
+curve, where the search always succeeds, so a non-recoverable
+assertion is appropriate.  The fix is independent of language
+or counter width --- a fixed-width counter that wraps silently
+(\texttt{u8} in our case, but the same risk exists in any C
+implementation using \texttt{uint8\_t} or \texttt{int}) only
+amplifies the same algorithmic gap: a search whose termination
+proof relies on \textit{``honest input always works''} is not
+a search at all when applied to attacker-controlled data.
+
+After bounding the search and propagating the failure, the
+Wycheproof verify suite passes in $\sim 0.5$~seconds (49 of
+49 vectors).
+
+\noindent
+\textbf{Advice for implementers:} Every loop in
+\texttt{verify} that depends on attacker-controlled data needs
+a hard iteration cap.  Search loops with implicit termination
+(``increment until the predicate holds'') are the canonical
+hazard: a loop whose termination proof relies on
+\textit{well-formed input} is unbounded on malicious input.
+Minimum hygiene: cap the iteration count, return an optional,
+and propagate to a verify-time rejection.  Spec authors should
+state the cap explicitly (see~\S\ref{sec:spec-find-uv-cap}
+of the spec review).  The Wycheproof project's signature suite
+catches exactly this pattern with \texttt{HintOverflow}-flagged
+test vectors --- run those before shipping any signature
+library.
+
