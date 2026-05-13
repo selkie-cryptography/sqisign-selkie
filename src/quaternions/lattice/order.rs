@@ -1,13 +1,96 @@
-//! p-extremal maximal orders in the quaternion algebra `B_{p,∞}`.
+//! Maximal orders in the quaternion algebra `B_{p,∞}`.
 //!
-//! See [§3.1.7.2] of the SQIsign specification.
+//! [`Order`] is the general type of a maximal order, expressed as a
+//! [`Lattice`] with a type-level guarantee of the order invariant.
+//! [`ExtremalOrder`] is the p-extremal specialization carrying a
+//! small-discriminant quadratic subring witness.
 //!
+//! See [§3.1.5.1] and [§3.1.7.2] of the SQIsign specification.
+//!
+//! [§3.1.5.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.1
 //! [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
 
-use super::super::algebra::{Coordinate, Denominator, Element};
-use super::super::bigint::BigInt;
-use super::super::linear::{Matrix, Vector};
-use super::{Lattice, Order};
+use super::{
+    super::{
+        algebra::{Coordinate, Denominator, Element},
+        bigint::BigInt,
+        linear::{Matrix, Vector},
+    },
+    Lattice,
+};
+
+// ---------------------------------------------------------------------------
+// Order<N>: maximal order in B_{p,∞}
+// ---------------------------------------------------------------------------
+
+/// A maximal order in B_{p,∞}.
+///
+/// An order is a lattice that is also a subring of B_{p,∞} (closed under
+/// multiplication, contains 1). This newtype over [`Lattice`] enforces
+/// the order invariant at the type level: values are only constructed by
+/// operations that guarantee the result is an order:
+///
+/// - [`ExtremalOrder::order`] — precomputed extremal orders
+/// - [`LeftIdeal::right_order`] — O_R(I) = I⁻¹ · I
+/// - [`Order::from_lattice_unchecked`] — internal use when the lattice is known
+///   to be an order (e.g., narrowing after `reduce_to_prime_norm`)
+///
+/// Implements [`Deref<Target = Lattice<N>>`](core::ops::Deref) so all
+/// lattice methods are available transparently. Use `From<Order<N>>` to
+/// unwrap into the underlying [`Lattice`].
+///
+/// See [§3.1.5.1] of the SQIsign specification.
+///
+/// [`LeftIdeal::right_order`]: super::LeftIdeal::right_order
+/// [§3.1.5.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.1
+#[derive(Clone)]
+pub struct Order<const N: usize>(Lattice<N>);
+
+impl<const N: usize> Order<N> {
+    /// Constructs an order from a lattice that is known to be an order.
+    ///
+    /// # Safety (logical)
+    ///
+    /// The caller must ensure the lattice is actually a maximal order
+    /// (closed under multiplication, contains 1). This is not checked.
+    pub(crate) const fn from_lattice_unchecked(lattice: Lattice<N>) -> Self {
+        Self(lattice)
+    }
+
+    /// Returns the underlying lattice.
+    #[inline]
+    pub const fn lattice(&self) -> &Lattice<N> {
+        &self.0
+    }
+}
+
+impl<const N: usize> core::ops::Deref for Order<N> {
+    type Target = Lattice<N>;
+
+    #[inline]
+    fn deref(&self) -> &Lattice<N> {
+        &self.0
+    }
+}
+
+impl<const N: usize> Copy for Order<N> where BigInt<N>: Copy {}
+
+/// Unwrap an order into its underlying lattice.
+impl<const N: usize> From<Order<N>> for Lattice<N> {
+    fn from(order: Order<N>) -> Self {
+        order.0
+    }
+}
+
+impl<const N: usize> core::fmt::Debug for Order<N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Order({:?})", self.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ExtremalOrder<N>: p-extremal maximal order
+// ---------------------------------------------------------------------------
 
 /// A p-extremal maximal order in B_{p,∞}.
 ///
