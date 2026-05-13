@@ -5,7 +5,8 @@
 //!
 //! Usage:
 //!   cargo run -p ops -- deploy-orchestrator
-//!   cargo run -p ops -- deploy-runners
+//!   cargo run -p ops -- deploy-runner-base    # slow, run rarely
+//!   cargo run -p ops -- deploy-runners        # fast, FROM the pinned base
 //!   cargo run -p ops -- cleanup-orphans
 //!   cargo run -p ops -- deploy-all
 //!   cargo run -p ops -- smoke-test
@@ -33,7 +34,17 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
     },
-    /// Build + push the runner image, tagged `latest`.
+    /// Build + push the heavy base runner image (texlive + Sage +
+    /// rustup + system tools), tagged `:base`. Slow (~2h on a cold
+    /// builder); run rarely. Overwrites the previous `:base` —
+    /// audit trail lives in git history of `runners/Dockerfile`.
+    DeployRunnerBase {
+        /// Extra args forwarded to `fly deploy`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra: Vec<String>,
+    },
+    /// Build + push the runtime runner image (thin layer on top of
+    /// the pinned base), tagged `latest`.
     DeployRunners {
         /// Extra args forwarded to `fly deploy`.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -41,7 +52,8 @@ enum Cmd {
     },
     /// Destroy orphan Machines in the runners app.
     CleanupOrphans,
-    /// Deploy orchestrator + runners + cleanup, in order.
+    /// Deploy orchestrator + runners + cleanup, in order. Does NOT
+    /// touch the base — bump it explicitly with `deploy-runner-base`.
     DeployAll,
     /// Dispatch the runner-smoke-test workflow + tail orchestrator logs.
     SmokeTest,
@@ -50,6 +62,7 @@ enum Cmd {
 fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::DeployOrchestrator { extra } => deploy_orchestrator(&extra),
+        Cmd::DeployRunnerBase { extra } => deploy_runner_base(&extra),
         Cmd::DeployRunners { extra } => deploy_runners(&extra),
         Cmd::CleanupOrphans => cleanup_orphans(),
         Cmd::DeployAll => {
@@ -101,12 +114,42 @@ fn deploy_orchestrator(extra: &[String]) -> Result<()> {
 }
 
 fn deploy_runners(extra: &[String]) -> Result<()> {
-    println!("==> deploy runners image");
+    println!("==> deploy runtime runner image (FROM pinned base)");
     let mut cmd = Command::new("fly");
     cmd.current_dir(infra_dir().join("runners"));
-    cmd.args(["deploy", "--app", RUNNERS_APP, "--image-label", "latest"]);
+    cmd.args([
+        "deploy",
+        "--app",
+        RUNNERS_APP,
+        "--image-label",
+        "latest",
+        "--build-target",
+        "runtime",
+    ]);
     cmd.args(extra);
     run("fly deploy runners", &mut cmd)
+}
+
+fn deploy_runner_base(extra: &[String]) -> Result<()> {
+    println!("==> deploy runner base image as :base");
+
+    let mut cmd = Command::new("fly");
+    cmd.current_dir(infra_dir().join("runners"));
+    cmd.args([
+        "deploy",
+        "--app",
+        RUNNERS_APP,
+        "--image-label",
+        "base",
+        "--build-target",
+        "base",
+    ]);
+    cmd.args(extra);
+    run("fly deploy runner base", &mut cmd)?;
+
+    println!();
+    println!("==> base pushed. next: cargo run -p ops -- deploy-runners");
+    Ok(())
 }
 
 fn cleanup_orphans() -> Result<()> {
