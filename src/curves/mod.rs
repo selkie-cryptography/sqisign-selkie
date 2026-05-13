@@ -779,11 +779,11 @@ impl TorsionBasis {
             };
             eprintln!(
                 "[FROM_HINT_SELKIE] P.x (post-cofactor) = {}",
-                fmt(&P.to_affine_x().as_fp2())
+                fmt(P.to_affine_x().as_fp2())
             );
             eprintln!(
                 "[FROM_HINT_SELKIE] Q.x (post-cofactor) = {}",
-                fmt(&Q.to_affine_x().as_fp2())
+                fmt(Q.to_affine_x().as_fp2())
             );
         }
 
@@ -916,9 +916,11 @@ impl ChangeOfBasisMatrix {
     /// 2^TORSION_EVEN_POWER torsion).
     ///
     /// The relationship encoded is:
+    /// ```text
     ///   reduced.P = [r1]canonical.P + [r2]canonical.Q
     ///   reduced.Q = [s1]canonical.P + [s2]canonical.Q
-    /// where (r1, r2, s1, s2) are the matrix entries reduced mod 2^e.
+    /// ```
+    /// where `(r1, r2, s1, s2)` are the matrix entries reduced mod `2^e`.
     ///
     /// # Storage
     ///

@@ -131,7 +131,7 @@ impl DoublePlusExponent {
     /// This is the equivalent of the C reference's `ibz_set_dpe`:
     /// it converts the DPE mantissa to an integer and shifts left
     /// by the exponent. Needed because size-reduction μ values
-    /// can exceed `i64` range (e.g., μ[3][0] ≈ 2^260 before
+    /// can exceed `i64` range (e.g., `μ[3][0] ≈ 2^260` before
     /// the first reduction pass); `round() as i64` would wrap.
     pub fn to_bigint<const N: usize>(self) -> BigInt<N> {
         if self.m == 0.0 {

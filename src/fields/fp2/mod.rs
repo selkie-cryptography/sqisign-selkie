@@ -199,7 +199,7 @@ impl Fp2 {
     }
 
     /// Encode this element as 64 bytes (real part ‖ imaginary part).
-    pub fn to_bytes(&self) -> [u8; FP2_ENCODED_BYTES] {
+    pub fn to_bytes(self) -> [u8; FP2_ENCODED_BYTES] {
         let mut out = [0u8; FP2_ENCODED_BYTES];
         out[..FP_ENCODED_BYTES].copy_from_slice(&self.a.to_bytes());
         out[FP_ENCODED_BYTES..].copy_from_slice(&self.b.to_bytes());

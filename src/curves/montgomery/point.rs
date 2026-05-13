@@ -51,7 +51,7 @@ impl ProjectiveXOnlyPoint {
 
     /// Compute the affine x-coordinate x = X/Z.
     #[must_use]
-    pub fn to_affine_x(&self) -> AffineX {
+    pub fn to_affine_x(self) -> AffineX {
         AffineX::from(&self.X * &self.Z.invert())
     }
 

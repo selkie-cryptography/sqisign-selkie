@@ -95,7 +95,7 @@ impl Coefficient {
     }
 
     /// Encode as bytes (delegates to F_{p²} encoding).
-    pub fn to_bytes(&self) -> [u8; crate::params::CURVE_ENCODED_BYTES] {
+    pub fn to_bytes(self) -> [u8; crate::params::CURVE_ENCODED_BYTES] {
         self.0.to_bytes()
     }
 

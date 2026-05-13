@@ -249,8 +249,9 @@ impl TryFrom<&[u8]> for Signature {
 /// stored in a fixed-size array of [`TORSION_2POWER_BYTES`] = 32
 /// bytes (zero-padded).
 ///
-/// The matrix is applied to a [`TorsionBasis`] via [`apply`](Self::apply),
-/// which uses the biscalar Montgomery ladder internally.
+/// The matrix is applied to a [`TorsionBasis`] via its `Mul`
+/// implementation (`&matrix * &basis`), which uses the biscalar
+/// Montgomery ladder internally.
 ///
 /// See [§4.5] (Algorithm 4.9, line 14) and [§4.6].
 ///
@@ -347,10 +348,10 @@ impl ChallengeMatrix {
     }
 }
 
-/// Multiply a [`ChallengeMatrix`] by a [`TorsionBasis`], producing
-/// a new [`TorsionBasis`] with transformed generators:
-/// R' = \[a\]R + \[b\]S, S' = \[c\]R + \[d\]S, and R'−S' computed
-/// via [`ProjectiveXOnlyPoint::projective_difference`].
+/// Multiply a `ChallengeMatrix` by a `TorsionBasis`, producing
+/// a new `TorsionBasis` with transformed generators:
+/// `R' = [a]R + [b]S`, `S' = [c]R + [d]S`, and `R'−S'` computed
+/// via `ProjectiveXOnlyPoint::projective_difference`.
 ///
 /// Uses the biscalar Montgomery ladder ([§8.2], Algorithm 8.8).
 ///

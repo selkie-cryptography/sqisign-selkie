@@ -46,7 +46,7 @@ use crate::{
 
 /// A kernel generator decomposed in a torsion basis (P, Q).
 ///
-/// Represents the point [a]P + [b]Q where a, b are scalars. The
+/// Represents the point `[a]P + [b]Q` where `a, b` are scalars. The
 /// actual curve point is computed by evaluating the scalars against
 /// a specific torsion basis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -308,10 +308,10 @@ pub fn compute_even_response(
     );
     let (new_curve, images) = match isogeny_res {
         Ok(r) => r,
-        Err(e) => {
+        Err(_e) => {
             #[cfg(test)]
             eprintln!(
-                "[compute_even_response] DROP: isogeny_small err: {e:?}, r_rsp={r_rsp}, e_prime={e_prime}"
+                "[compute_even_response] DROP: isogeny_small err: {_e:?}, r_rsp={r_rsp}, e_prime={e_prime}"
             );
             return None;
         }

@@ -2711,12 +2711,12 @@ impl LeftIdeal<30> {
     /// = 2^512 + 75 is 513 bits. This method stores the resulting
     /// ideal at `BigInt<30>` (1920 bits) so that:
     /// - Column entries `p·g_i ≈ 2^769` fit without truncation.
-    /// - The downstream [`reduce_to_prime_norm`] gram computation `c^T·G·c ≈
+    /// - The downstream `reduce_to_prime_norm` gram computation `c^T·G·c ≈
     ///   2^1806` fits without overflow.
     ///
-    /// After construction, call [`reduce_to_prime_norm`] to get a
-    /// small prime norm, then [`narrow`] to convert to `LeftIdeal<4>`
-    /// for [`to_isogeny`].
+    /// After construction, call `reduce_to_prime_norm` to get a small
+    /// prime norm, then `narrow_to::<4>()` to convert to `LeftIdeal<4>`
+    /// for `to_isogeny`.
     ///
     /// [Alg. 3.10][Alg. 3.10] from the spec (prime case).
     ///
@@ -2917,9 +2917,9 @@ impl LeftIdeal<30> {
 impl<const N: usize> LeftIdeal<N> {
     /// Narrow a wide `LeftIdeal<N>` to `LeftIdeal<4>` after norm reduction.
     ///
-    /// After [`reduce_to_prime_norm`], the norm is a small prime and
+    /// After `reduce_to_prime_norm`, the norm is a small prime and
     /// the HNF basis entries are bounded. This converts the wide
-    /// representation to the narrow one needed by [`to_isogeny`].
+    /// representation to the narrow one needed by `to_isogeny`.
     ///
     /// Returns `None` if any entry doesn't fit in `BigInt<4>`.
     pub fn narrow(&self) -> Option<LeftIdeal<4>> {
@@ -3358,10 +3358,10 @@ impl<const N: usize> core::fmt::Debug for LeftIdeal<N> {
 
 /// A p-extremal maximal order in B_{p,∞}.
 ///
-/// These are maximal orders containing j and a distinguished quadratic
-/// subring Z[ω] of small discriminant, such that j and Z[ω] are
-/// orthogonal. The element z with z² = -q generates the quadratic
-/// subring, and t is an element of norm p orthogonal to z.
+/// These are maximal orders containing `j` and a distinguished quadratic
+/// subring `Z[ω]` of small discriminant, such that `j` and `Z[ω]` are
+/// orthogonal. The element `z` with `z² = -q` generates the quadratic
+/// subring, and `t` is an element of norm `p` orthogonal to `z`.
 ///
 /// See [§3.1.7.2] of the SQIsign specification.
 ///
@@ -3663,13 +3663,13 @@ impl<const N: usize> NrdBasis<N> {
     /// L² reduction with DPE-based GSO ([Alg. 3.3]).
     ///
     /// Reduces the basis in place, keeping the Gram matrix in sync.
-    /// Uses [`DoublePlusExponent`](dpe::DoublePlusExponent) (double-precision
+    /// Uses [`dpe::DoublePlusExponent`] (double-precision
     /// with extended exponent) for the Gram-Schmidt coefficients, matching
     /// the C reference's approach. The basis and Gram updates remain exact
     /// (integer). Size-reduction rounding uses
     /// [`DoublePlusExponent::to_bigint`](dpe::DoublePlusExponent::to_bigint) to
     /// convert the float μ back to an integer coefficient, which handles
-    /// values that exceed `i64` range (e.g., μ[3][0] ≈ 2^260 before first
+    /// values that exceed `i64` range (e.g., `μ[3][0] ≈ 2^260` before first
     /// reduction).
     ///
     /// # Precision requirement
@@ -3889,16 +3889,16 @@ impl<const N: usize> NrdBasis<N> {
                 && (crate::l2_trace_active::get()
                     || std::env::var_os("SELKIE_L2_TRACE_ALL").is_some())
             {
-                for i in 0..=k {
+                for (i, val) in r[k][..=k].iter().enumerate() {
                     eprintln!(
-                        "[L2_SELKIE] call={l2_my_call} kappa={} post-size-reduce r[{}][{}] mant={:.17} exp={}",
-                        k, k, i, r[k][i].m, r[k][i].e
+                        "[L2_SELKIE] call={l2_my_call} kappa={k} post-size-reduce r[{k}][{i}] mant={:.17} exp={}",
+                        val.m, val.e
                     );
                 }
-                for i in 0..k {
+                for (i, val) in mu[k][..k].iter().enumerate() {
                     eprintln!(
-                        "[L2_SELKIE] call={l2_my_call} kappa={} post-size-reduce u[{}][{}] mant={:.17} exp={}",
-                        k, k, i, mu[k][i].m, mu[k][i].e
+                        "[L2_SELKIE] call={l2_my_call} kappa={k} post-size-reduce u[{k}][{i}] mant={:.17} exp={}",
+                        val.m, val.e
                     );
                 }
                 eprintln!(
