@@ -759,14 +759,6 @@ impl<const N: usize> Matrix<N> {
         let n = cols.len();
         assert!(n >= 4, "need at least 4 columns for rank-4 HNF");
 
-        #[cfg(test)]
-        if std::env::var("SELKIE_HNF_TRACE").is_ok() {
-            eprintln!(
-                "[HNF_CREF] called with n={n} modulus_bits={}",
-                modulus.bitsize()
-            );
-        }
-
         let mut a: Vec<[BigInt<W>; 4]> = cols
             .iter()
             .map(|v| {
@@ -888,14 +880,6 @@ impl<const N: usize> Matrix<N> {
         // HNF mod algorithm produce canonical upper-triangular form
         // matching C-ref's `ibz_mat_4xn_hnf_mod_core`.
         let euclidean_xgcd = |x: &BigInt<W>, y: &BigInt<W>| -> (BigInt<W>, BigInt<W>, BigInt<W>) {
-            #[cfg(test)]
-            if std::env::var("SELKIE_DEBUG_EUCLIDEAN").is_ok() {
-                eprintln!(
-                    "[euclidean_xgcd] called with x.bits={} y.bits={}",
-                    x.bitsize(),
-                    y.bitsize()
-                );
-            }
             // Returns (gcd, u, v) with u·x + v·y = gcd, gcd ≥ 0, and
             // |u| ≤ |y|/(2·gcd), matching mpz_gcdext.
             if bool::from(x.is_zero()) && bool::from(y.is_zero()) {

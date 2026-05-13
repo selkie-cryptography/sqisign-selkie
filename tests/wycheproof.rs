@@ -207,8 +207,7 @@ fn generate_extended_vectors() {
     // would require enabling the `expose-internals` feature for
     // integration tests).
     let donor_json = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/vectors/sqisign_verify.json"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/sqisign_verify.json"),
     )
     .expect("read sqisign_verify.json");
     let donor_file: TestFile =
@@ -227,10 +226,8 @@ fn generate_extended_vectors() {
         .as_slice()
         .try_into()
         .expect("donor sig length");
-    let pk_arr: &[u8; sqisign_selkie::VERIFYING_KEY_BYTES] = pk_bytes
-        .as_slice()
-        .try_into()
-        .expect("donor pk length");
+    let pk_arr: &[u8; sqisign_selkie::VERIFYING_KEY_BYTES] =
+        pk_bytes.as_slice().try_into().expect("donor pk length");
     let vk = VerifyingKey::from_bytes(pk_arr).unwrap();
     let msg_kat0 = hex::decode(&donor_tv.msg).unwrap();
 
@@ -251,8 +248,8 @@ fn generate_extended_vectors() {
         }
         // Force fallback search by zeroing the relevant hint byte.
         match target {
-            "aux" => s[146] = 0x00,           // h=0, h_A=0
-            "aux_nqr" => s[146] = 0x80,       // h=0, h_A=1
+            "aux" => s[146] = 0x00,     // h=0, h_A=0
+            "aux_nqr" => s[146] = 0x80, // h=0, h_A=1
             "chl" => s[147] = 0x00,
             "chl_nqr" => s[147] = 0x80,
             _ => {}
@@ -301,11 +298,7 @@ fn generate_extended_vectors() {
     // Test min/max boundaries to exercise verify's range checks.
     let boundary_cases = [
         (0u8, valid_sig_bytes[65], "n_bt=0 (minimum), valid r_rsp"),
-        (
-            valid_sig_bytes[64],
-            0u8,
-            "r_rsp=0 (minimum), valid n_bt",
-        ),
+        (valid_sig_bytes[64], 0u8, "r_rsp=0 (minimum), valid n_bt"),
         (255, 0, "n_bt=255 (max byte value, exceeds e_rsp)"),
         (0, 255, "r_rsp=255 (max byte value, exceeds e_rsp)"),
         (
@@ -359,7 +352,7 @@ fn generate_extended_vectors() {
         // Mutate by XORing 0x5a — a multi-bit twiddle that's unlikely
         // to give a coincidentally-valid sig but still leaves a
         // parseable Fp2 element.
-        s[off as usize] ^= 0x5a;
+        s[off as usize] ^= 0x5A;
         let rejected = match Signature::from_bytes(&s) {
             Err(_) => true,
             Ok(sig) => !verify_succeeds(&vk, &msg_kat0, &sig),
@@ -409,9 +402,8 @@ fn generate_extended_vectors() {
             let (_, pk_hex_i, _, msg_hex_i, sm_hex_i) = KAT_VECTORS[kat_idx];
             let pk_i = hex::decode(pk_hex_i).unwrap();
             let sig_i_bytes_full = hex::decode(sm_hex_i).unwrap();
-            let sig_i_arr: &[u8; SIGNATURE_BYTES] = sig_i_bytes_full[..SIGNATURE_BYTES]
-                .try_into()
-                .unwrap();
+            let sig_i_arr: &[u8; SIGNATURE_BYTES] =
+                sig_i_bytes_full[..SIGNATURE_BYTES].try_into().unwrap();
             let pk_arr_i: &[u8; sqisign_selkie::VERIFYING_KEY_BYTES] =
                 pk_i.as_slice().try_into().unwrap();
             let vk_i = VerifyingKey::from_bytes(pk_arr_i).unwrap();
