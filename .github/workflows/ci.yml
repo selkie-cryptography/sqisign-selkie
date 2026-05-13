@@ -38,6 +38,23 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# Runner routing
+#
+# Every Linux job's `runs-on` is gated on the trigger context:
+#   - push to main, schedule, workflow_dispatch, same-repo PR
+#       -> Fly self-hosted (`[self-hosted, fly, linux, x64]`)
+#   - fork PR
+#       -> GH-hosted (`ubuntu-latest`)
+#
+# Fork PRs run arbitrary contributor code and must NOT execute on
+# our self-hosted Machines. The same-repo distinction is
+# `head.repo.full_name == github.repository` — anyone with write
+# access to the repo can push branches, so write-access is the
+# trust line.
+#
+# The expression repeats inline on every `runs-on` since GitHub
+# Actions does not support YAML anchors for `runs-on` values.
+
 # Tier 1 — Gate
 #
 # Fast checks that catch the most common problems. Required for merge.
@@ -46,7 +63,7 @@ env:
 jobs:
   fmt:
     name: Format
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     permissions:
       checks: write
@@ -68,7 +85,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -88,7 +105,7 @@ jobs:
 
   gate:
     name: lib + doc tests (x86_64-linux)
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -113,7 +130,7 @@ jobs:
 
   proptest:
     name: Property tests
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -128,7 +145,7 @@ jobs:
 
   doc:
     name: Documentation
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -247,16 +264,17 @@ jobs:
   # hits keep this cheap on warm cache; cold cache duplicates work).
   #
   # x86_64-linux rows route to self-hosted Fly runners
-  # (`[self-hosted, fly, linux, x64, perf-8x]`) — the orchestrator
-  # in `infra/orchestrator/` spawns ephemeral Machines on demand
-  # via the Fly Machines API. perf-8x = 8-vCPU dedicated; the
-  # orchestrator reads the size hint from the labels.
+  # (`[self-hosted, fly, linux, x64, perf-8x]`) on trusted triggers
+  # (push, schedule, dispatch, same-repo PR). Fork PRs route to
+  # GH-hosted `ubuntu-latest` so untrusted cargo build scripts can't
+  # execute on Fly. perf-8x = 8-vCPU dedicated; the orchestrator
+  # reads the size hint from the labels.
   #
   # Non-Linux rows (macOS/Windows) and the i686/aarch64 Linux rows
   # stay on GitHub-hosted runners — Fly only provides x86_64 Linux.
   kat-matrix:
     name: Compute KAT matrix
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 2
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
@@ -264,13 +282,23 @@ jobs:
       - id: compute
         env:
           EVENT: ${{ github.event_name }}
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           python3 - <<'PY'
           import json, os
           SHARDS = 4
+          # x86_64-linux on fork PR routes to GH-hosted
+          # (`ubuntu-latest`) so untrusted cargo build scripts
+          # can't execute on Fly self-hosted Machines. Same-repo
+          # PR, push to main, nightly, and dispatch are trusted
+          # and route to Fly perf-8x for speed.
+          event = os.environ["EVENT"]
+          is_pr = event == "pull_request"
+          is_fork_pr = os.environ.get("IS_FORK_PR", "false") == "true"
           fly_linux_x64 = ["self-hosted", "fly", "linux", "x64", "perf-8x"]
+          linux_x64 = "ubuntu-latest" if is_fork_pr else fly_linux_x64
           full = [
-              {"os": fly_linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64},
+              {"os": linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64},
               # i686-linux disabled: Fly runner image is x86_64-only
               # (we removed gcc-multilib + i686 rustup target). Re-add
               # to infra/runners/Dockerfile + uncomment to re-enable.
@@ -281,13 +309,13 @@ jobs:
               # aarch64-linux disabled — see comment in `platform`
               # matrix above for context. Uncomment to re-enable.
               # {"os": "ubuntu-24.04-arm", "target": "aarch64-unknown-linux-gnu", "bits": 64},
-              {"os": fly_linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64,
+              {"os": linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64,
                "variant": "no-default-features", "flags": "--no-default-features"},
           ]
           slim = [
-              {"os": fly_linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64},
+              {"os": linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64},
           ]
-          base = slim if os.environ["EVENT"] == "pull_request" else full
+          base = slim if is_pr else full
           rows = []
           for r in base:
               for s in range(1, SHARDS + 1):
@@ -356,9 +384,12 @@ jobs:
   sage-precompute-check:
     name: Sage precompute cross-check
     needs: [gate]
-    # Sage 10.6 is pre-installed in the Fly runner image at
-    # /opt/sage-env (see infra/runners/Dockerfile). No per-job conda
-    # bootstrap needed; `sage` is already on PATH.
+    # The value here is the pre-installed Sage in the Fly runner
+    # image (/opt/sage-env, see infra/runners/Dockerfile). Runs on
+    # trusted triggers (push/schedule/dispatch + same-repo PR).
+    # Skipped on fork PR — we don't route untrusted code to
+    # self-hosted Fly Machines.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -377,7 +408,7 @@ jobs:
   c-ref-cross-check:
     name: C reference cross-check
     needs: [gate]
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -400,7 +431,8 @@ jobs:
     needs: [kat]
     # Always run on push to main even if `kat` failed — the report
     # script reads results from the GitHub API and surfaces the
-    # failure on the dashboard.
+    # failure on the dashboard. Only fires on main (never PR), so
+    # safe on self-hosted Fly.
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 15
@@ -431,6 +463,7 @@ jobs:
   platform-report:
     name: Platform coverage
     needs: [platform, kat]
+    # Only fires on main (never PR), so safe on self-hosted Fly.
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5

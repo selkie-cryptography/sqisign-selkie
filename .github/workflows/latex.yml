@@ -19,10 +19,14 @@ permissions:
 jobs:
   paper:
     name: Build LaTeX documents
-    # Self-hosted Fly runner. `texlive-full` is pre-installed in
-    # infra/runners/Dockerfile, so we run latexmk directly instead
-    # of through xu-cheng/latex-action's Docker wrapper.
-    runs-on: [self-hosted, fly, linux, x64]
+    # Stays on GH-hosted regardless of trigger. xu-cheng's
+    # latex-action is a Docker action and the Fly runner image
+    # doesn't run a Docker daemon. Free on public repo. To move
+    # this to Fly, replace the action with direct `latexmk` calls
+    # (texlive-full is pre-installed in the Fly runner image at
+    # infra/runners/Dockerfile) and gate on the same-repo-PR
+    # conditional that the other Linux jobs use.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -34,12 +38,16 @@ jobs:
           submodules: true
 
       - name: Build paper
-        working-directory: latex
-        run: latexmk -pdf -bibtex -interaction=nonstopmode sqisign-selkie.tex
+        uses: xu-cheng/latex-action@v4
+        with:
+          working_directory: latex
+          root_file: sqisign-selkie.tex
 
       - name: Build spec review
-        working-directory: latex
-        run: latexmk -pdf -bibtex -interaction=nonstopmode sqisign-v2-spec-review.tex
+        uses: xu-cheng/latex-action@v4
+        with:
+          working_directory: latex
+          root_file: sqisign-v2-spec-review.tex
 
       - name: Upload PDFs
         id: upload
