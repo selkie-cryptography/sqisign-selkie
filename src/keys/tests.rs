@@ -23,7 +23,7 @@ fn verify_kat(pk_hex: &str, sm_hex: &str) {
     vk.verify(msg, &sig).expect("signature should verify");
 }
 
-// ---------------- wire-format round-trip tests ----------------
+// Wire-format round-trip tests.
 
 /// Parse a KAT signature and re-serialize it: the bytes must be
 /// byte-identical.
@@ -58,7 +58,7 @@ fn signature_double_roundtrip() {
     assert_eq!(bytes1, *sig_bytes);
 }
 
-// ---------------- wire-format error paths ----------------
+// Wire-format error paths.
 
 /// Slices shorter than `SIGNATURE_BYTES` must produce
 /// `InvalidLength`, not panic or `NonCanonical`.
@@ -118,7 +118,7 @@ fn signature_out_of_range_r_rsp_rejected() {
     ));
 }
 
-// ------------ ChallengeMatrix::from_bytes rejection ----------
+// ChallengeMatrix::from_bytes rejection.
 
 /// `ChallengeMatrix::from_bytes` must reject data shorter than
 /// `4 * comp_bytes`.
@@ -158,7 +158,7 @@ fn challenge_matrix_from_bytes_exact_length() {
 // (C2SP/wycheproof JSON format, portable to other implementations).
 // (top-level integration test, public API only, portable to other impls).
 
-// ---------------- KAT verification ----------------
+// KAT verification.
 
 /// Verify all 100 hardcoded KAT vectors from the C reference
 /// implementation (PQCsignKAT_353_SQIsign_lvl1.rsp).

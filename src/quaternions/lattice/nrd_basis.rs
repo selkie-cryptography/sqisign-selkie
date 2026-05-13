@@ -20,10 +20,6 @@ use super::{
     dpe::DoublePlusExponent,
 };
 
-// ---------------------------------------------------------------------------
-// NrdBasis: quaternion lattice basis with its reduced-norm Gram matrix
-// ---------------------------------------------------------------------------
-
 /// Dimension of quaternion lattices.
 const D: usize = 4;
 

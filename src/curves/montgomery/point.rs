@@ -369,10 +369,6 @@ pub(crate) fn differential_add_and_double(
     Q.Z = add_Z;
 }
 
-// ---------------------------------------------------------------------------
-// Scalar multiplication via Mul trait
-// ---------------------------------------------------------------------------
-
 /// Scalar multiplication `[n]P`. Constant-time in the scalar value.
 impl Mul<&ProjectiveXOnlyPoint> for &Scalar {
     type Output = ProjectiveXOnlyPoint;
@@ -405,10 +401,6 @@ impl Mul<ProjectiveXOnlyPoint> for &Scalar {
         point.scalar_mul(self)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Constant-time traits
-// ---------------------------------------------------------------------------
 
 impl ConditionallySelectable for ProjectiveXOnlyPoint {
     fn conditional_select(

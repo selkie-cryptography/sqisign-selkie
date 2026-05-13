@@ -19,10 +19,6 @@ use super::{
     Lattice,
 };
 
-// ---------------------------------------------------------------------------
-// Order<N>: maximal order in B_{p,∞}
-// ---------------------------------------------------------------------------
-
 /// A maximal order in B_{p,∞}.
 ///
 /// An order is a lattice that is also a subring of B_{p,∞} (closed under
@@ -87,10 +83,6 @@ impl<const N: usize> core::fmt::Debug for Order<N> {
         write!(f, "Order({:?})", self.0)
     }
 }
-
-// ---------------------------------------------------------------------------
-// ExtremalOrder<N>: p-extremal maximal order
-// ---------------------------------------------------------------------------
 
 /// A p-extremal maximal order in B_{p,∞}.
 ///

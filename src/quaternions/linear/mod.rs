@@ -15,10 +15,6 @@ use super::bigint::BigInt;
 #[cfg(test)]
 mod tests;
 
-// ---------------------------------------------------------------------------
-// Vector<N>: 4-element vector of BigInt<N>
-// ---------------------------------------------------------------------------
-
 /// A 4-element vector of [`BigInt<N>`] values.
 ///
 /// Used for quaternion algebra element coordinates in the basis
@@ -140,10 +136,6 @@ impl<const N: usize> fmt::Debug for Vector<N> {
         )
     }
 }
-
-// ---------------------------------------------------------------------------
-// Matrix<N>: 4×4 matrix of BigInt<N>
-// ---------------------------------------------------------------------------
 
 /// A 4×4 matrix of [`BigInt<N>`] values, stored row-major.
 ///
@@ -1465,10 +1457,6 @@ impl<const N: usize> fmt::Debug for Matrix<N> {
         )
     }
 }
-
-// ---------------------------------------------------------------------------
-// Hermite Normal Form (HNF)
-// ---------------------------------------------------------------------------
 
 impl<const N: usize> Matrix<N> {
     /// Compute the column-style Hermite Normal Form from a set of

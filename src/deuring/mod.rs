@@ -320,14 +320,6 @@ pub fn compute_even_response(
     Some((new_curve, images[0], images[1], images[2]))
 }
 
-// ---------------------------------------------------------------------------
-// CurveWithEndomorphismRing
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// IdealToIsogeny (Algorithm 3.13) + FixedDegreeIsogeny (Algorithm 3.15)
-// ---------------------------------------------------------------------------
-
 /// Compute the action matrix M_α for an element α on E_t[2^f],
 /// given the order's lattice and generator action matrices.
 ///

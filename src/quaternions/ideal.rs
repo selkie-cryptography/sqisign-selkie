@@ -468,10 +468,6 @@ impl ExtremalOrder<8> {
 // RandomEquivalentPrimeIdeal (Algorithm 3.9) is defined as
 // LeftIdeal<8>::reduce_to_prime_norm() in lattice.rs.
 
-// ---------------------------------------------------------------------------
-// SuitableIdeals (Algorithm 3.16)
-// ---------------------------------------------------------------------------
-
 /// One factor of a [`SuitableIdealResult`] decomposition.
 ///
 /// Bundles a short-vector element β ∈ J_t · I together with the

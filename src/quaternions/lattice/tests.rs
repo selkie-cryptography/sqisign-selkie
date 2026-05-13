@@ -369,10 +369,6 @@ fn l2_gram_stays_symmetric() {
     }
 }
 
-// -----------------------------------------------------------------------
-// NrdBasis tests
-// -----------------------------------------------------------------------
-
 #[test]
 fn nrd_basis_identity_gram() {
     // Standard basis {1, i, j, k} has nrd gram diag(1, 1, p, p).
@@ -448,10 +444,6 @@ fn nrd_basis_eval_quadratic_form() {
     // p(1² + 1²) = 2p
     assert_eq!(qf2, p.ct_mul(&i8(2)));
 }
-
-// -----------------------------------------------------------------------
-// HnfLattice::canonicalize tests
-// -----------------------------------------------------------------------
 
 #[test]
 fn canonicalize_already_canonical() {

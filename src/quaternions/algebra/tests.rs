@@ -2,10 +2,6 @@ use proptest::prelude::*;
 
 use super::*;
 
-// ---------------------------------------------------------------------------
-// Strategies
-// ---------------------------------------------------------------------------
-
 /// Generates a random `Element<4>` from four small i64 coordinates.
 /// Uses i8-range values so that chained multiplications (3 deep) and
 /// norm computations stay well within `BigInt<4>`'s 256-bit budget.
@@ -13,10 +9,6 @@ fn arb_element4() -> impl Strategy<Value = Element<4>> {
     (any::<i8>(), any::<i8>(), any::<i8>(), any::<i8>())
         .prop_map(|(a, b, c, d)| Element::from_i64(a as i64, b as i64, c as i64, d as i64))
 }
-
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn zero() {
@@ -285,10 +277,6 @@ fn equality_across_denominators() {
     let b = Element::<4>::from_i64(1, 2, 0, 0);
     assert_eq!(a, b);
 }
-
-// ---------------------------------------------------------------------------
-// Property-based tests
-// ---------------------------------------------------------------------------
 
 proptest! {
     #[test]

@@ -33,10 +33,6 @@ use crate::{
     },
 };
 
-// ---------------------------------------------------------------------------
-// Gluing: EllipticProduct → Jacobian (§8.5.5, §8.5.6)
-// ---------------------------------------------------------------------------
-
 /// Kernel of a gluing (2,2)-isogeny Φ₁ : E₁ × E₂ → A₁.
 ///
 /// Defined by two 8-torsion points on the domain product, stored as pairs of
@@ -291,10 +287,6 @@ impl GluingKernel {
         (data, images)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Gluing helpers
-// ---------------------------------------------------------------------------
 
 /// Intermediate products from `ActionByTranslation` ([§8.5.5],
 /// Algorithm 8.35) before inversion.
@@ -573,10 +565,6 @@ fn squared_hadamard4(x: &Fp2, y: &Fp2, z: &Fp2, w: &Fp2) -> (Fp2, Fp2, Fp2, Fp2)
     hadamard4(&x.square(), &y.square(), &z.square(), &w.square())
 }
 
-// ---------------------------------------------------------------------------
-// Generic with 8-torsion: Jacobian → Jacobian (§8.5.3)
-// ---------------------------------------------------------------------------
-
 /// Kernel of a generic (2,2)-isogeny specified by two 8-torsion
 /// points on a Jacobian.
 ///
@@ -609,10 +597,6 @@ impl GenericKernel8 {
         (codomain, images)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Generic with 4-torsion: Jacobian → Jacobian (§8.5.3)
-// ---------------------------------------------------------------------------
 
 /// Kernel of a generic (2,2)-isogeny specified by a single 4-torsion
 /// point on a Jacobian, plus the domain's theta null point.
@@ -668,10 +652,6 @@ impl GenericKernel4 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Generic with 2-torsion: Jacobian → Jacobian (§8.5.3)
-// ---------------------------------------------------------------------------
-
 /// Kernel of a generic (2,2)-isogeny specified only by the domain
 /// Jacobian's theta null point (2-torsion kernel generators).
 ///
@@ -720,10 +700,6 @@ impl GenericKernel2 {
         (codomain, images)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Splitting: Jacobian → EllipticProduct (§8.5.7)
-// ---------------------------------------------------------------------------
 
 /// Kernel of a splitting (2,2)-isogeny Φₑ : Aₑ₋₁ → E₃ × E₄.
 ///
@@ -853,10 +829,6 @@ fn sample_normalization_index<R: rand_core::RngCore + ?Sized>(rng: &mut R) -> u8
         // approximately `4 / 2³² ≈ 10⁻⁹` chance per draw.
     }
 }
-
-// ---------------------------------------------------------------------------
-// Internal computations
-// ---------------------------------------------------------------------------
 
 /// Codomain from 8-torsion (Algorithm 8.30).
 pub(crate) fn codomain_8torsion(
@@ -1289,10 +1261,6 @@ fn hadamard_null(dual: &DualThetaNullPoint) -> ThetaNullPoint {
     let (a, b, c, d) = hadamard4(&dual.alpha, &dual.beta, &dual.gamma, &dual.delta);
     ThetaNullPoint::new(a, b, c, d)
 }
-
-// ---------------------------------------------------------------------------
-// Splitting helpers (§8.5.7)
-// ---------------------------------------------------------------------------
 
 /// The splitting index (i, j) identifying which coordinate of the
 /// theta null point vanishes under the U_{i,j} map.

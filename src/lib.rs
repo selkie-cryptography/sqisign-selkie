@@ -30,7 +30,7 @@ macro_rules! selkie_trace {
 }
 pub(crate) use selkie_trace;
 
-// --- Internal modules (pub(crate) by default, pub with expose-internals) ---
+// Internal modules: pub(crate) by default, pub with expose-internals.
 
 // NIST-I parameter set constants
 #[cfg(not(feature = "expose-internals"))]
@@ -87,7 +87,7 @@ pub(crate) mod deuring;
 #[cfg(feature = "expose-internals")]
 pub mod deuring;
 
-// --- Always-private modules ---
+// Always-private modules.
 
 // Challenge hash function
 pub(crate) mod hash;
@@ -101,7 +101,7 @@ pub(crate) mod keys;
 #[cfg(feature = "expose-internals")]
 pub mod keys;
 
-// --- Public API ---
+// Public API.
 
 pub use keys::{Signature, SignatureError, SigningKey, VerifyingKey};
 pub use params::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};

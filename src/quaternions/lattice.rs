@@ -56,10 +56,6 @@ mod tests;
 #[cfg(test)]
 mod intersection_kat1_iter0_tests;
 
-// ---------------------------------------------------------------------------
-// Lattice<N>: quaternion lattice (not necessarily in HNF)
-// ---------------------------------------------------------------------------
-
 /// A rank-4 lattice in B_{p,∞}, represented by a 4×4 integer basis
 /// matrix and a common denominator.
 ///
@@ -1303,10 +1299,6 @@ impl<const N: usize> core::fmt::Debug for Lattice<N> {
         write!(f, "Lattice({:?} / {})", self.basis, self.denom)
     }
 }
-
-// ---------------------------------------------------------------------------
-// HnfLattice<N>: lattice in Hermite Normal Form
-// ---------------------------------------------------------------------------
 
 /// A rank-4 lattice in Hermite Normal Form.
 ///

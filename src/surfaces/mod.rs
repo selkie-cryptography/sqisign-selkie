@@ -49,10 +49,6 @@ use crate::{
 #[cfg(test)]
 mod tests;
 
-// ---------------------------------------------------------------------------
-// Theta internals (pub(crate))
-// ---------------------------------------------------------------------------
-
 /// The theta null point 0_A = (a : b : c : d) of a principally
 /// polarized abelian surface A.
 ///
@@ -210,10 +206,6 @@ impl Mul<GluingMatrix> for GluingMatrix {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Surface types
-// ---------------------------------------------------------------------------
-
 /// A product of two Montgomery elliptic curves, E₁ × E₂.
 ///
 /// Points on the product are pairs of Montgomery [`ProjectiveXOnlyPoint`]s.
@@ -261,10 +253,6 @@ impl Jacobian {
         Jacobian { null, precomp }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Points on Jacobians (internal only)
-// ---------------------------------------------------------------------------
 
 /// A point on a [`Jacobian`] in theta coordinates (x : y : z : w).
 ///
@@ -342,10 +330,6 @@ impl JacobianPoint {
         t.scale(&c.c4, &c.c3, &c.c2, &c.c1)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Kernel
-// ---------------------------------------------------------------------------
 
 /// The kernel of a (2,2)-isogeny Φ : E₁ × E₂ → E₃ × E₄, defined by
 /// two isotropic generators P, Q on E₁ × E₂.

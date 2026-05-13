@@ -563,11 +563,9 @@ fn modular_sqrt_non_residue() {
     assert!(r.is_none());
 }
 
-// ------------------------------------------------------------------
 // Width-aware regression tests (see paper §5 "Bugs from Fixed-Width
 // Arithmetic"). Confirm the `_w` variants give correct answers on
 // moduli where the plain versions would silently truncate.
-// ------------------------------------------------------------------
 
 #[test]
 fn pow_mod_w_dmix_fermat() {
@@ -714,10 +712,6 @@ fn rand_interval_partial_byte_bound() {
         assert!(v <= b, "value {v} > 2^70 − 1");
     }
 }
-
-// ---------------------------------------------------------------------------
-// Property-based tests
-// ---------------------------------------------------------------------------
 
 use proptest::prelude::*;
 
