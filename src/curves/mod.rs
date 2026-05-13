@@ -109,10 +109,6 @@ impl TryFrom<u32> for TorsionExponent {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Basis hints
-// ---------------------------------------------------------------------------
-
 /// A 1-byte hint for deterministic torsion basis reconstruction.
 ///
 /// Encodes a pair (h_A, h) where h_A is a quadratic residuosity flag
@@ -214,10 +210,6 @@ impl From<ChallengeHint> for u8 {
         h.0.to_byte()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Torsion basis
-// ---------------------------------------------------------------------------
 
 /// An x-only basis of a torsion subgroup E\[m\] stored in the
 /// **spec-permuted layout** of [§2.2.3]: a triple `(x_P, x_{P−Q}, x_Q)`
@@ -1058,10 +1050,6 @@ impl ChangeOfBasisMatrix {
     // SigningKey::sign() since it's only called there to assemble
     // the signature's M_chl, hint_aux, and hint_chl.
 }
-
-// ---------------------------------------------------------------------------
-// Helper functions for torsion basis generation
-// ---------------------------------------------------------------------------
 
 /// Subtract 1 from a little-endian byte array, conditionally.
 /// `mask` is 0xff to subtract, 0x00 to skip.

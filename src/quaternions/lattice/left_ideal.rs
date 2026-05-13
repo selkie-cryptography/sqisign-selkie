@@ -21,10 +21,6 @@ use super::{
     ExtremalOrder, HnfLattice, Lattice, NrdBasis, Order,
 };
 
-// ---------------------------------------------------------------------------
-// LeftIdeal<N>: left ideal of a maximal order
-// ---------------------------------------------------------------------------
-
 /// A left ideal of a maximal order in B_{p,∞}.
 ///
 /// An ideal I = O⟨α, N⟩ is represented by its lattice (in HNF), its

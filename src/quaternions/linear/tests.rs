@@ -10,10 +10,6 @@ fn i(v: i64) -> I {
     I::from(v)
 }
 
-// ---------------------------------------------------------------------------
-// Strategies
-// ---------------------------------------------------------------------------
-
 /// Generates a small `BigInt<4>` (fits in i64) for tests where overflow
 /// in multiplication would wrap and obscure the algebraic property.
 fn arb_small_bigint4() -> impl Strategy<Value = BigInt<4>> {
@@ -38,10 +34,6 @@ fn arb_matrix4() -> impl Strategy<Value = Matrix<4>> {
     (arb_vector4(), arb_vector4(), arb_vector4(), arb_vector4())
         .prop_map(|(r0, r1, r2, r3)| Matrix::from_rows(r0, r1, r2, r3))
 }
-
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn vec_add() {
@@ -430,10 +422,6 @@ fn hnf_mod_folds_in_modulus() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Property-based tests — Vector<4>
-// ---------------------------------------------------------------------------
-
 proptest! {
     #[test]
     fn vector_add_commutative(a in arb_vector4(), b in arb_vector4()) {
@@ -480,10 +468,6 @@ proptest! {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Property-based tests — Matrix<4>
-// ---------------------------------------------------------------------------
 
 /// Builds a scalar matrix `s * I`.
 fn scalar_matrix(s: BigInt<4>) -> Matrix<4> {

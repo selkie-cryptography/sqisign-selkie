@@ -42,14 +42,12 @@ fn generated_verifying_key_roundtrips() {
     assert_eq!(parsed.to_bytes(), bytes);
 }
 
-// ----------------------------------------------------------------------
 // End-to-end signing tests using parsed KAT signing keys.
 //
 // These bypass the slow `SigningKey::generate` by deserializing a
 // known-good `sk` from the C reference implementation's KAT file
 // (commit 91e9e464fe5400192d13e1f9240cbf180200a103). Run with
 // `cargo test --lib --release sign_kat -- --ignored`.
-// ----------------------------------------------------------------------
 
 /// Deterministic keygen from every KAT seed must produce the
 /// matching KAT pk and sk.
