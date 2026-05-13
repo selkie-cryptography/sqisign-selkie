@@ -726,18 +726,6 @@ impl<const N: usize> Lattice<N> {
             cols_second[2],
             cols_second[3],
         ];
-        #[cfg(test)]
-        if std::env::var("SELKIE_DUMP_SUM_INPUTS").is_ok() {
-            for j in 0..8 {
-                for i in 0..4 {
-                    crate::selkie_trace!(
-                        "[SUM_INPUTS_SELKIE] gen[{j}][{i}] = {:?}",
-                        all_cols[j][i]
-                    );
-                }
-            }
-            crate::selkie_trace!("[SUM_INPUTS_SELKIE] modulus = {:?}", modulus);
-        }
         Some(HnfLattice {
             basis: Matrix::<N>::from_hnf_columns_mod_cref::<W>(&all_cols, modulus),
             denom: self.denom.ct_mul(&other.denom),
@@ -1133,24 +1121,6 @@ impl<const N: usize> Lattice<N> {
                 all_zero = false;
             }
         }
-        #[cfg(test)]
-        if std::env::var("SELKIE_DUMP_BOUNDS").is_ok() {
-            eprintln!(
-                "[sample_from_ball] rad bits={} det_G bits={}",
-                rad.bitsize(),
-                det_g.bitsize(),
-            );
-            eprintln!(
-                "[sample_from_ball] dualG_red diag bits=[{}, {}, {}, {}]",
-                reduced_dual[0][0].bitsize(),
-                reduced_dual[1][1].bitsize(),
-                reduced_dual[2][2].bitsize(),
-                reduced_dual[3][3].bitsize(),
-            );
-            for (i, b) in bounds.iter().enumerate() {
-                eprintln!("[sample_from_ball] bounds[{i}] = {b}");
-            }
-        }
         if all_zero {
             #[cfg(test)]
             eprintln!(
@@ -1214,25 +1184,11 @@ impl<const N: usize> Lattice<N> {
                 let raw = BigInt::<W>::rand_interval(rng, &BigInt::<W>::ZERO, &two_b);
                 y[i] = raw.ct_sub(&bounds[i]);
             }
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_YX").is_ok() && _n_pos < 2 {
-                eprintln!(
-                    "[sample_from_ball] y0={} y1={} y2={} y3={}",
-                    y[0], y[1], y[2], y[3]
-                );
-            }
 
             // x = U_inv^T · y, i.e., coords in the original lattice basis.
             let y_vec = Vector::new(y[0], y[1], y[2], y[3]);
             let x_vec = u_inv.eval_left(&y_vec);
             let x = [x_vec[0], x_vec[1], x_vec[2], x_vec[3]];
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_YX").is_ok() && _n_pos < 2 {
-                eprintln!(
-                    "[sample_from_ball] x0={} x1={} x2={} x3={}",
-                    x[0], x[1], x[2], x[3]
-                );
-            }
 
             // Evaluate primal quadratic form: nrd = x^T · G · x.
             let mut nrd = BigInt::<W>::ZERO;
@@ -2025,29 +1981,7 @@ impl LeftIdeal<30> {
         let mut o_alpha_cols = [Vector::<30>::ZERO; 4];
         for (j, o_alpha_col) in o_alpha_cols.iter_mut().enumerate() {
             let basis_j = order.basis_elem(j);
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_BASIS_ELEM").is_ok() {
-                crate::selkie_trace!(
-                    "[BASIS_ELEM] j={j} a={:?} b={:?} c={:?} d={:?} denom={:?}",
-                    basis_j.a.as_bigint(),
-                    basis_j.b.as_bigint(),
-                    basis_j.c.as_bigint(),
-                    basis_j.d.as_bigint(),
-                    basis_j.denom.as_bigint(),
-                );
-            }
             let product = basis_j.mul_direct(alpha);
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_BASIS_ELEM").is_ok() {
-                crate::selkie_trace!(
-                    "[BASIS_ELEM] j={j} product.a={:?} product.b={:?} product.c={:?} product.d={:?} product.denom={:?}",
-                    product.a.as_bigint(),
-                    product.b.as_bigint(),
-                    product.c.as_bigint(),
-                    product.d.as_bigint(),
-                    product.denom.as_bigint(),
-                );
-            }
             *o_alpha_col = Vector::new(
                 *product.a.as_bigint(),
                 *product.b.as_bigint(),
@@ -2074,17 +2008,6 @@ impl LeftIdeal<30> {
                     v[3].widen::<60>(),
                 )
             });
-            #[cfg(test)]
-            if std::env::var("SELKIE_DUMP_O_ALPHA_PREHNF").is_ok() {
-                for j in 0..4 {
-                    for i in 0..4 {
-                        crate::selkie_trace!(
-                            "[O_ALPHA_PREHNF_SELKIE] basis row={i} col={j} = {:?}",
-                            widened[j][i]
-                        );
-                    }
-                }
-            }
             // Use C-ref's `quat_lattice_hnf` recipe: modular HNF with
             // mod = |det| of the input matrix, NOT classical HNF.
             // Selkie's classical `Matrix::hnf()` produces a valid
@@ -2093,21 +2016,11 @@ impl LeftIdeal<30> {
             // result, even though both bases describe the same lattice.
             // Tested on KAT-1: byte-mismatch with C-ref's `lideal_com_resp`
             // is gone once we use HNF mod with mod=|det|.
-            //
-            // Toggle: SELKIE_SKIP_INTERMEDIATE_HNF=1 to skip entirely.
-            #[cfg(test)]
-            let skip_hnf = std::env::var("SELKIE_SKIP_INTERMEDIATE_HNF").is_ok();
-            #[cfg(not(test))]
-            let skip_hnf = false;
-            let cols_w: [Vector<60>; 4] = if skip_hnf {
-                widened
-            } else {
-                let det_w = Matrix::from_columns(&widened).det().abs();
-                // Use the constant-modulus variant (= old Selkie path)
-                // — for 4-col input this should match canonical HNF.
-                let hnf_w = Matrix::from_hnf_columns_mod::<60>(&widened, &det_w);
-                hnf_w.columns()
-            };
+            let det_w = Matrix::from_columns(&widened).det().abs();
+            // Use the constant-modulus variant (= old Selkie path)
+            // — for 4-col input this should match canonical HNF.
+            let hnf_w = Matrix::from_hnf_columns_mod::<60>(&widened, &det_w);
+            let cols_w: [Vector<60>; 4] = hnf_w.columns();
             array::from_fn(|i| {
                 Vector::<30>::new(
                     cols_w[i][0]
@@ -2126,18 +2039,6 @@ impl LeftIdeal<30> {
             })
         };
         let o_alpha = Lattice::new(Matrix::from_columns(&o_alpha_cols_hnf), o_alpha_denom);
-
-        // Compute ON: scale each basis vector of O by N. Use C-ref's
-        // convention: ON has integer basis = N · order.basis, with
-        // denom = order.denom (NOT pre-scaled by α_denom). The new
-        // `sum_mod_cref` handles the cross-denom scaling internally.
-        let mut o_n_cols = order.basis().columns();
-        for col in &mut o_n_cols {
-            for row in 0..4 {
-                col[row] = col[row].ct_mul(norm);
-            }
-        }
-        let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), *order.denom());
 
         // Mod-HNF bounding modulus `D = 4 · d⁴ · norm² · p`.
         //
@@ -2159,115 +2060,25 @@ impl LeftIdeal<30> {
         let d_fourth = d_sq.ct_mul(&d_sq);
         let norm_sq = norm.ct_mul(norm);
         let four = BigInt::<30>::from_u64(4);
-        // Two candidate moduli — the spec/Selkie historic formula, and
-        // C-ref's `quat_lattice_add` formula (`gcd(det1, det2)`).
-        // Toggle via `SELKIE_USE_CREF_MODULUS=1`. Diagnostic for
-        // localizing the post-sum lattice divergence (i_com_rsp).
-        let modulus_spec = four.ct_mul(&d_fourth).ct_mul(&norm_sq).ct_mul(&p_wide);
-        let modulus_cref = {
-            // C-ref's `quat_lattice_add` modulus:
-            //   gcd(other.denom^4 · |det(self.basis)|,
-            //       self.denom^4 · |det(other.basis)|).
-            // For sign's i_com_rsp:
-            //   self  = O·α (post-HNF), denom 2, |det| = α_pivot ≈ 2^648
-            //   other = O·N,           denom 2, |det| = N⁴·|det(O)| = 4·N⁴
-            // gcd(16·|det(O·α)|, 16·N⁴·|det(O)|) — match the formula directly.
-            let self_basis_det = o_alpha.basis().det();
-            let other_basis_det = o_n.basis().det();
-            let other_d_4 = order
-                .denom()
-                .ct_mul(order.denom())
-                .ct_mul(order.denom())
-                .ct_mul(order.denom());
-            let self_d_4 = o_alpha_denom
-                .ct_mul(&o_alpha_denom)
-                .ct_mul(&o_alpha_denom)
-                .ct_mul(&o_alpha_denom);
-            let det1 = other_d_4.ct_mul(&self_basis_det).abs();
-            let det2 = self_d_4.ct_mul(&other_basis_det).abs();
-            det1.gcd(&det2)
-        };
-        #[cfg(test)]
-        let modulus = if std::env::var("SELKIE_USE_CREF_MODULUS").is_ok() {
-            crate::selkie_trace!(
-                "[from_generator_mod_hnf] CREF modulus bits={}, spec modulus bits={}",
-                modulus_cref.bitsize(),
-                modulus_spec.bitsize()
-            );
-            modulus_cref
-        } else {
-            modulus_spec
-        };
-        #[cfg(not(test))]
-        let modulus = modulus_spec;
-        let _ = modulus_cref;
+        // Mod-HNF modulus uses the spec/Selkie historic formula
+        // `4 · d⁴ · norm² · p`.  An earlier diagnostic toggle compared
+        // this against C-ref's `quat_lattice_add` `gcd(det1, det2)`
+        // recipe; the two produced the same Z-module for the sign
+        // path and the toggle has been retired.
+        let modulus = four.ct_mul(&d_fourth).ct_mul(&norm_sq).ct_mul(&p_wide);
 
-        // Debug-only: dump O·α before sum_mod to compare with C-ref's
-        // `quat_lattice_alg_elem_mul` output. First divergence pinpoints
-        // whether bug is in `mul_direct` (this dump) or `sum_mod` (later).
-        #[cfg(test)]
-        if std::env::var("SELKIE_DUMP_O_ALPHA").is_ok() {
-            crate::selkie_trace!(
-                "[O_ALPHA_SELKIE] alpha.denom = {:?}, order.denom = {:?}, o_alpha_denom (computed) = {:?}",
-                alpha.denom.as_bigint(),
-                order.denom(),
-                o_alpha_denom
-            );
-            crate::selkie_trace!("[O_ALPHA_SELKIE] denom = {:?}", o_alpha.denom());
-            for j in 0..4 {
-                for i in 0..4 {
-                    crate::selkie_trace!(
-                        "[O_ALPHA_SELKIE] basis row={i} col={j} = {:?}",
-                        o_alpha.basis().columns()[j][i]
-                    );
-                }
+        // ON denom may differ from o_alpha denom — pre-scale ON
+        // basis so both share `o_alpha_denom` for `sum_mod` (which
+        // assumes equal denoms).
+        let alpha_d = *alpha.denom.as_bigint();
+        let mut o_n_for_sum = order.basis().columns();
+        for col in &mut o_n_for_sum {
+            for row in 0..4 {
+                col[row] = col[row].ct_mul(norm).ct_mul(&alpha_d);
             }
         }
-        // Use C-ref-style sum_mod (decreasing modulus + cross-denom
-        // scaling) to match `quat_lideal_create` byte-for-byte. Then
-        // reduce_denom (= divide basis and denom by gcd) — mirrors
-        // `quat_lattice_reduce_denom` called by C-ref's
-        // `quat_lideal_create` after `quat_lattice_add`.
-        //
-        // Toggleable via `SELKIE_USE_CREF_SUMMOD=1` for diagnostic
-        // comparison. Both paths currently produce SAME output for
-        // sign's i_com_rsp (= different from C-ref by same amount in
-        // both); keeping the toggle lets us iterate without changing
-        // call sites. See `project_sign_kat_001_to_isogeny_scaling_2026-05-09.md`
-        // for ongoing investigation.
-        #[cfg(test)]
-        let use_cref = std::env::var("SELKIE_USE_CREF_SUMMOD").is_ok();
-        #[cfg(not(test))]
-        let use_cref = false;
-        let lattice = if use_cref {
-            o_alpha.sum_mod_cref::<60>(&o_n, &modulus)?.reduce_denom()
-        } else {
-            // ON denom may differ from o_alpha denom — pre-scale ON
-            // basis so both share `o_alpha_denom` for the existing
-            // `sum_mod` (which assumes equal denoms).
-            let alpha_d = *alpha.denom.as_bigint();
-            let mut o_n_scaled_cols = order.basis().columns();
-            for col in &mut o_n_scaled_cols {
-                for row in 0..4 {
-                    col[row] = col[row].ct_mul(&alpha_d);
-                }
-            }
-            let o_n_scaled = Lattice::new(Matrix::from_columns(&o_n_scaled_cols), o_alpha_denom);
-            // Re-scale ON's basis by `norm` (already done in `o_n_cols`
-            // above) — but we built `o_n` at order.denom; for the
-            // existing sum_mod path we need `o_n` at `o_alpha_denom`
-            // with cols scaled by both `norm` and `alpha_d`.
-            let _ = o_n_scaled; // unused in this path; we use the matched o_n.
-            // Recompute o_n with cols scaled by both norm and alpha_d.
-            let mut o_n_for_old = order.basis().columns();
-            for col in &mut o_n_for_old {
-                for row in 0..4 {
-                    col[row] = col[row].ct_mul(norm).ct_mul(&alpha_d);
-                }
-            }
-            let o_n_old = Lattice::new(Matrix::from_columns(&o_n_for_old), o_alpha_denom);
-            o_alpha.sum_mod::<60>(&o_n_old, &modulus)?
-        };
+        let o_n_scaled = Lattice::new(Matrix::from_columns(&o_n_for_sum), o_alpha_denom);
+        let lattice = o_alpha.sum_mod::<60>(&o_n_scaled, &modulus)?;
 
         Some(Self {
             lattice,
@@ -2463,42 +2274,6 @@ impl LeftIdeal<4> {
                 .expect("LeftIdeal<4>::new denom does not fit in BigInt<4>")
         };
         let lattice = HnfLattice::from(Lattice::new(basis_4, denom_4));
-
-        #[cfg(test)]
-        if std::env::var("LEFTIDEAL_NEW_TRACE").is_ok() {
-            eprintln!(
-                "[LIN4] α coord bits: a={}, b={}, c={}, d={} | norm bits={}",
-                alpha.a.as_bigint().abs().bitsize(),
-                alpha.b.as_bigint().abs().bitsize(),
-                alpha.c.as_bigint().abs().bitsize(),
-                alpha.d.as_bigint().abs().bitsize(),
-                norm.bitsize(),
-            );
-            eprintln!(
-                "[LIN4] o_alpha col0 (Oα · 1) bits: a={}, b={}, c={}, d={}",
-                o_alpha_cols_w[0][0].abs().bitsize(),
-                o_alpha_cols_w[0][1].abs().bitsize(),
-                o_alpha_cols_w[0][2].abs().bitsize(),
-                o_alpha_cols_w[0][3].abs().bitsize(),
-            );
-            eprintln!(
-                "[LIN4] common_denom_w bits={}, modulus_w bits={}, sum_lattice denom_w bits={}",
-                common_denom_w.bitsize(),
-                modulus_w.bitsize(),
-                lattice_w.denom().bitsize(),
-            );
-            eprintln!("[LIN4] gcd g (final divisor) bits = {}", g.bitsize());
-            for (i, col) in lattice.basis().columns().iter().enumerate() {
-                eprintln!(
-                    "[LIN4] HNF col{i} bits: [{}, {}, {}, {}]",
-                    col[0].abs().bitsize(),
-                    col[1].abs().bitsize(),
-                    col[2].abs().bitsize(),
-                    col[3].abs().bitsize(),
-                );
-            }
-            eprintln!("[LIN4] HNF denom = {}", denom_4);
-        }
 
         Self {
             lattice,
@@ -3000,11 +2775,6 @@ impl LeftIdeal<30> {
                 None => continue,
             };
 
-            #[cfg(test)]
-            if std::env::var("SAMPID_TRACE").is_ok() {
-                eprintln!("[SAMPID] phaseA gen.coord=[{}, {}, {}, {}]", a, g1, g2, g3);
-            }
-
             // Phase B: rerandomize the principal ideal class by
             // sampling δ = (d₀, d₁, d₂, d₃) with gcd(nrd(δ), N) = 1
             // and replacing γ ← γ · δ. Mirrors C ref's
@@ -3033,14 +2803,6 @@ impl LeftIdeal<30> {
                 continue;
             };
 
-            #[cfg(test)]
-            if std::env::var("SAMPID_TRACE").is_ok() {
-                eprintln!(
-                    "[SAMPID] phaseB rerand.coord=[{}, {}, {}, {}]",
-                    d0, d1, d2, d3
-                );
-            }
-
             // γ · δ via [`Element::mul_direct`] at width 30.
             // Inputs use ≤ 9 limbs (513 bits); products fit the
             // N/2 = 15-limb precondition. Output coords reach
@@ -3064,18 +2826,6 @@ impl LeftIdeal<30> {
             let g1 = *new_gen.b.as_bigint();
             let g2 = *new_gen.c.as_bigint();
             let g3 = *new_gen.d.as_bigint();
-
-            #[cfg(test)]
-            if std::env::var("SAMPID_TRACE").is_ok() {
-                eprintln!(
-                    "[SAMPID] mult.coord=[{}, {}, {}, {}] denom={}",
-                    a,
-                    g1,
-                    g2,
-                    g3,
-                    new_gen.denom.as_bigint()
-                );
-            }
 
             // Construct I = O₀⟨γ, N⟩ as a lattice.
             //

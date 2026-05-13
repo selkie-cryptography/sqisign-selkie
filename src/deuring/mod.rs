@@ -144,31 +144,9 @@ impl IdealKernel for LeftIdeal<4> {
 
         // Step 2: Conjugate.
         let alpha_conj = alpha.conjugate();
-        #[cfg(test)]
-        if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
-            eprintln!(
-                "[to_kernel] conj(α): a={:?} b={:?} c={:?} d={:?} denom={:?}",
-                alpha_conj.a.as_bigint(),
-                alpha_conj.b.as_bigint(),
-                alpha_conj.c.as_bigint(),
-                alpha_conj.d.as_bigint(),
-                alpha_conj.denom.as_bigint()
-            );
-        }
 
         // Steps 3-4: Compute M_{conj(α)} mod norm = 2^e.
         let m_alpha = alpha_conj.action_matrix(basis_matrices, e);
-        #[cfg(test)]
-        if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
-            eprintln!(
-                "[to_kernel] M_conj(α) mod 2^{} = [[{:?}, {:?}], [{:?}, {:?}]]",
-                e.value(),
-                m_alpha.entry(0, 0),
-                m_alpha.entry(0, 1),
-                m_alpha.entry(1, 0),
-                m_alpha.entry(1, 1)
-            );
-        }
 
         // Step 5: Pick column 0; if gcd(s, t) is even, use column 1.
         let modulus = BigInt::<4>::ONE.shl(e.value());
@@ -184,13 +162,6 @@ impl IdealKernel for LeftIdeal<4> {
         } else {
             (s0, t0)
         };
-        #[cfg(test)]
-        if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
-            eprintln!(
-                "[to_kernel] g0={:?} even={} → (s, t)=({:?}, {:?})",
-                g0, g0_is_even, s, t
-            );
-        }
         Some(KernelDecomposition {
             a: Scalar::from(s),
             b: Scalar::from(t),
@@ -230,40 +201,6 @@ pub fn compute_even_response(
     let e_prime = e_prime.value();
     let r_rsp = r_rsp.value();
 
-    #[cfg(test)]
-    if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
-        let fp2_hex = |v: &crate::fields::fp2::Fp2| -> String {
-            let bytes = v.to_bytes();
-            let mut a = bytes[..32].to_vec();
-            a.reverse();
-            let mut b = bytes[32..].to_vec();
-            b.reverse();
-            format!("0x{} + i*0x{}", hex::encode(a), hex::encode(b))
-        };
-        eprintln!(
-            "[compute_even_response inline] basis.P.x  = {}",
-            fp2_hex(&P.to_affine_x().as_fp2())
-        );
-        eprintln!(
-            "[compute_even_response inline] basis.Q.x  = {}",
-            fp2_hex(&Q.to_affine_x().as_fp2())
-        );
-        eprintln!(
-            "[compute_even_response inline] basis.PmQ.x= {}",
-            fp2_hex(&PmQ.to_affine_x().as_fp2())
-        );
-        eprintln!(
-            "[compute_even_response inline] r_rsp={r_rsp}, e_prime={e_prime}, shift={}",
-            e_prime + 2
-        );
-        let mut curve_norm = *_curve;
-        curve_norm.normalize();
-        eprintln!(
-            "[compute_even_response inline] E_chl_2.A_aff = {}",
-            fp2_hex(curve_norm.coefficient().as_fp2())
-        );
-    }
-
     // Step 1: I = O₀·conj(α) + O₀·(2^r)
     //
     // C-ref's sign.c line 401 conjugates `resp_quat` in place before
@@ -301,41 +238,6 @@ pub fn compute_even_response(
         }
     };
     let alpha_conj = alpha_for_kernel.conjugate();
-    #[cfg(test)]
-    if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
-        eprintln!(
-            "[compute_even_response inline] alpha_input canonical: a={} b={} c={} d={} denom={}",
-            alpha.a.as_bigint(),
-            alpha.b.as_bigint(),
-            alpha.c.as_bigint(),
-            alpha.d.as_bigint(),
-            BigInt::<4>::from(alpha.denom),
-        );
-        eprintln!(
-            "[compute_even_response inline] alpha_gen canonical: a={} b={} c={} d={} denom={}",
-            alpha_for_kernel.a.as_bigint(),
-            alpha_for_kernel.b.as_bigint(),
-            alpha_for_kernel.c.as_bigint(),
-            alpha_for_kernel.d.as_bigint(),
-            BigInt::<4>::from(alpha_for_kernel.denom),
-        );
-        eprintln!(
-            "[compute_even_response inline] alpha_conj canonical: a={} b={} c={} d={} denom={}",
-            alpha_conj.a.as_bigint(),
-            alpha_conj.b.as_bigint(),
-            alpha_conj.c.as_bigint(),
-            alpha_conj.d.as_bigint(),
-            BigInt::<4>::from(alpha_conj.denom),
-        );
-        if let Some(coords) = EXTREMAL_ORDERS[0].order().decompose(&alpha_conj) {
-            eprintln!(
-                "[compute_even_response inline] alpha_conj O0-coords: c0={} c1={} c2={} c3={}",
-                coords[0], coords[1], coords[2], coords[3],
-            );
-        } else {
-            eprintln!("[compute_even_response inline] alpha_conj decompose: None");
-        }
-    }
     let m_alpha = action_matrix(
         &alpha_conj,
         EXTREMAL_ORDERS[0].order(),
@@ -354,20 +256,6 @@ pub fn compute_even_response(
     } else {
         (s0, t0)
     };
-    #[cfg(test)]
-    if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
-        eprintln!(
-            "[compute_even_response inline] M_conj(α) mod 2^{r_rsp} = [[{:?}, {:?}], [{:?}, {:?}]]",
-            m_alpha.entry(0, 0),
-            m_alpha.entry(0, 1),
-            m_alpha.entry(1, 0),
-            m_alpha.entry(1, 1)
-        );
-        eprintln!(
-            "[compute_even_response inline] g0={:?} even={} → (s, t)=({:?}, {:?})",
-            g0, g0_is_even, s, t
-        );
-    }
     let _ = KernelDecomposition {
         a: Scalar::from(s),
         b: Scalar::from(t),
@@ -406,33 +294,6 @@ pub fn compute_even_response(
     let t_scalar = Scalar::from(t);
     let K =
         basis_reduced.biscalar_mul(&s_scalar, &t_scalar, TorsionExponent::try_from(r_rsp).ok()?);
-    #[cfg(test)]
-    if std::env::var("SELKIE_TRACE_TO_KERNEL").is_ok() {
-        let fp2_hex = |v: &crate::fields::fp2::Fp2| -> String {
-            let bytes = v.to_bytes();
-            let mut a = bytes[..32].to_vec();
-            a.reverse();
-            let mut b = bytes[32..].to_vec();
-            b.reverse();
-            format!("0x{} + i*0x{}", hex::encode(a), hex::encode(b))
-        };
-        eprintln!(
-            "[compute_even_response inline] basis_red.P.x   = {}",
-            fp2_hex(basis_reduced.P.to_affine_x().as_fp2())
-        );
-        eprintln!(
-            "[compute_even_response inline] basis_red.Q.x   = {}",
-            fp2_hex(basis_reduced.PmQ.to_affine_x().as_fp2())
-        );
-        eprintln!(
-            "[compute_even_response inline] basis_red.PmQ.x = {}",
-            fp2_hex(basis_reduced.Q.to_affine_x().as_fp2())
-        );
-        eprintln!(
-            "[compute_even_response inline] kernel K.x      = {}",
-            fp2_hex(K.to_affine_x().as_fp2())
-        );
-    }
 
     // Step 4: E', {P', Q', PmQ'} ← TwoisogenyChainSmall(K, E, r, {P, Q, PmQ}, true)
     //

@@ -1316,27 +1316,14 @@ impl SigningKey {
                         }
                     };
 
-                // Debug-only: experimentally swap P/Q on the aux side
-                // to test the hypothesis that `i_inter.to_isogeny` returns
-                // (P, Q) in opposite ordering vs C-ref's
-                // `dim2id2iso_arbitrary_isogeny_evaluation`.
-                #[cfg(test)]
-                let swap_aux = std::env::var("SELKIE_SWAP_AUX_PQ").is_ok();
-                #[cfg(not(test))]
-                let swap_aux = false;
-                let (p_aux_used, q_aux_used) = if swap_aux {
-                    (&q_aux_prime, &p_aux_prime)
-                } else {
-                    (&p_aux_prime, &q_aux_prime)
-                };
                 let split = match split_auxiliary_isogeny(
                     &e_com,
                     &e_aux_prime,
                     &p_com,
                     &q_com,
                     &pmq_com,
-                    p_aux_used,
-                    q_aux_used,
+                    &p_aux_prime,
+                    &q_aux_prime,
                     &pmq_aux_prime,
                     q_rsp,
                     e_rsp_prime_te,
@@ -1939,32 +1926,9 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     r_rsp: TorsionExponent,
     rng: &mut R,
 ) -> Option<SplitResult> {
-    #[cfg(test)]
-    use crate::curves::pairing::weil_pairing;
-    #[cfg(test)]
-    let trace_pairings = std::env::var("SELKIE_TRACE_PAIRINGS").is_ok();
-
     let f = TORSION_EVEN_POWER;
     let e_prime_val = e_prime.value();
     let r_val = r_rsp.value();
-
-    // Stage (a): raw to_isogeny output, before any reduce/scale/double.
-    // Pairings should equal e_n(P0, Q0)^N(I_com) on E1 and
-    // e_n(P0, Q0)^(N(I_com_rsp) · N(I_aux)) on E2 (mod 2^FULL).
-    #[cfg(test)]
-    if trace_pairings {
-        let e_full = TorsionExponent::FULL;
-        let w1 = weil_pairing(p1, q1, pmq1, e_full);
-        let w2 = weil_pairing(p2, q2, pmq2, e_full);
-        let prod = w1.as_fp2() * w2.as_fp2();
-        crate::selkie_trace!(
-            "[pairing-trace] stage_a (raw to_isogeny @2^{}): w1={:?} w2={:?} prod_log2_ord={}",
-            e_full.value(),
-            hex::encode(w1.as_fp2().to_bytes()),
-            hex::encode(w2.as_fp2().to_bytes()),
-            log2_order_fp2(&prod, e_full.value() + 4),
-        );
-    }
 
     // Kernel construction follows the C reference's
     // `compute_dim2_isogeny_challenge` (sign.c:578-590, 240-256).
@@ -2044,22 +2008,6 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
         pmq2_red = pmq2_red.double();
     }
 
-    // Stage (b): post-reduce. Order should be 2^reduced_order.
-    #[cfg(test)]
-    if trace_pairings {
-        let e_red = TorsionExponent::try_from(reduced_order).ok()?;
-        let w1 = weil_pairing(&p1_red, &q1_red, &pmq1_red, e_red);
-        let w2 = weil_pairing(&p2_red, &q2_red, &pmq2_red, e_red);
-        let prod = w1.as_fp2() * w2.as_fp2();
-        crate::selkie_trace!(
-            "[pairing-trace] stage_b (post-reduce @2^{}): w1={} w2={} prod_log2_ord={}",
-            reduced_order,
-            hex::encode(w1.as_fp2().to_bytes()),
-            hex::encode(w2.as_fp2().to_bytes()),
-            log2_order_fp2(&prod, reduced_order + 4),
-        );
-    }
-
     // q_inv ← q^{-1} (mod 2^reduced_order). C ref uses
     // `degree_resp_inv = degree_odd_resp^{-1} mod 2^(reduced_order)`
     // (computed in compute_random_aux_norm_and_helpers).
@@ -2092,23 +2040,6 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     let q2_qinv = &q_inv * &q2_red;
     let pmq2_qinv = &q_inv * &pmq2_red;
 
-    // Stage (c): post-q_inv mul on E2. E1 unchanged; E2 pairing
-    // scales by q_inv² (Weil pairing on doubled basis).
-    #[cfg(test)]
-    if trace_pairings {
-        let e_red = TorsionExponent::try_from(reduced_order).ok()?;
-        let w1 = weil_pairing(&p1_red, &q1_red, &pmq1_red, e_red);
-        let w2 = weil_pairing(&p2_qinv, &q2_qinv, &pmq2_qinv, e_red);
-        let prod = w1.as_fp2() * w2.as_fp2();
-        crate::selkie_trace!(
-            "[pairing-trace] stage_c (post-q_inv @2^{}): w1={} w2={} prod_log2_ord={}",
-            reduced_order,
-            hex::encode(w1.as_fp2().to_bytes()),
-            hex::encode(w2.as_fp2().to_bytes()),
-            log2_order_fp2(&prod, reduced_order + 4),
-        );
-    }
-
     let two_r_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(r_val).as_limbs());
     let p1_ker = &two_r_scalar * &p1_red;
     let q1_ker = &two_r_scalar * &q1_red;
@@ -2116,24 +2047,6 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     let p2_ker = &two_r_scalar * &p2_qinv;
     let q2_ker = &two_r_scalar * &q2_qinv;
     let pmq2_ker = &two_r_scalar * &pmq2_qinv;
-
-    // Stage (d): post-r-double. Order should be 2^(e_prime + 2).
-    // Lagrangian condition: prod has order 4 (= product is `i`).
-    #[cfg(test)]
-    if trace_pairings {
-        let final_e = e_prime_val + 2;
-        let e_final = TorsionExponent::try_from(final_e).ok()?;
-        let w1 = weil_pairing(&p1_ker, &q1_ker, &pmq1_ker, e_final);
-        let w2 = weil_pairing(&p2_ker, &q2_ker, &pmq2_ker, e_final);
-        let prod = w1.as_fp2() * w2.as_fp2();
-        crate::selkie_trace!(
-            "[pairing-trace] stage_d (post-r-double @2^{}): w1={} w2={} prod_log2_ord={} (Lagrangian iff =2)",
-            final_e,
-            hex::encode(w1.as_fp2().to_bytes()),
-            hex::encode(w2.as_fp2().to_bytes()),
-            log2_order_fp2(&prod, final_e + 4),
-        );
-    }
 
     // (2,2)-isogeny chain on E_com × E_aux.
     let product = surfaces::EllipticProduct::new(*e1, *e2);
@@ -2162,50 +2075,23 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     // makes `lift_basis` recover an inconsistent y, breaking
     // `compute_challenge_isogeny`'s subsequent isomorphism eval and
     // the `ChangeOfBasisMatrix::from_bases` lift.
-    // Debug-only: try `isogeny_no_extra_torsion` (Mode B) instead of
-    // `isogeny` (Mode A) in case Selkie's Mode A is buggy. Per resume
-    // note 2026-05-04 Day-15, Mode A has known divergences from C-ref's
-    // `extra_torsion=true` chain.
-    #[cfg(test)]
-    let mode_b = std::env::var("SELKIE_SPLIT_AUX_MODE_B").is_ok();
-    #[cfg(not(test))]
-    let mode_b = false;
-    let (codomain, images) = match if mode_b {
-        // Mode B uses chain length e and points at order 2^e (no
-        // extra torsion). Our kernel is at order 2^(e+2); double by 2
-        // more to reduce to 2^e (halve twice).
-        let kernel_e = match surfaces::Kernel::from_montgomery(
-            product,
-            (p1_ker.double().double(), p2_ker.double().double()),
-            (q1_ker.double().double(), q2_ker.double().double()),
-            (pmq1_ker.double().double(), pmq2_ker.double().double()),
-        ) {
-            Some(k) => k,
-            None => return None,
-        };
-        kernel_e.isogeny_no_extra_torsion(
-            e_chain,
-            &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
-            None,
-        )
-    } else {
-        // C ref's sign uses `theta_chain_compute_and_eval_randomized`
-        // here (`sign.c:274` and chain dispatch via
-        // `theta_isogenies.c`'s `splitting_compute` with
-        // `randomize=true`). The randomized variant picks a level-2
-        // normalization matrix index from `[0, 6)` by consuming 4 bytes
-        // from the DRBG — without this, our (2,2)-chain codomain lands
-        // on a different (but isomorphic) Montgomery model than C-ref's,
-        // basis points pushed through diverge, and `compute_even_response`
-        // produces a different `j(E_chl_3)`. With `Some(rng)`, both
-        // implementations consume the same DRBG bytes and produce the
-        // same projective representative of the codomain product surface.
-        kernel.isogeny(
-            e_chain,
-            &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
-            Some(rng),
-        )
-    } {
+    //
+    // C ref's sign uses `theta_chain_compute_and_eval_randomized`
+    // here (`sign.c:274` and chain dispatch via
+    // `theta_isogenies.c`'s `splitting_compute` with
+    // `randomize=true`). The randomized variant picks a level-2
+    // normalization matrix index from `[0, 6)` by consuming 4 bytes
+    // from the DRBG — without this, our (2,2)-chain codomain lands
+    // on a different (but isomorphic) Montgomery model than C-ref's,
+    // basis points pushed through diverge, and `compute_even_response`
+    // produces a different `j(E_chl_3)`. With `Some(rng)`, both
+    // implementations consume the same DRBG bytes and produce the
+    // same projective representative of the codomain product surface.
+    let (codomain, images) = match kernel.isogeny(
+        e_chain,
+        &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
+        Some(rng),
+    ) {
         Some(r) => r,
         None => {
             #[cfg(test)]
