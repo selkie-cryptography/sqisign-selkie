@@ -123,7 +123,7 @@ fn isogeny_e1_matches_direct_two_isogeny() {
     assert_eq!(chain_imgs[0], direct_Q);
 }
 
-// --- Property tests ---
+// Property tests.
 
 use proptest::prelude::*;
 

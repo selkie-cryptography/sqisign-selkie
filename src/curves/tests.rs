@@ -9,10 +9,6 @@ use super::{
 };
 use crate::fields::{fp::Fp, fp2::Fp2};
 
-// ---------------------------------------------------------------------------
-// Strategies
-// ---------------------------------------------------------------------------
-
 fn arb_fp2() -> impl Strategy<Value = Fp2> {
     (any::<[u8; 32]>(), any::<[u8; 32]>())
         .prop_map(|(a, b)| Fp2::new(Fp::from_bytes(&a), Fp::from_bytes(&b)))
@@ -21,10 +17,6 @@ fn arb_fp2() -> impl Strategy<Value = Fp2> {
 fn arb_curve() -> impl Strategy<Value = Curve> {
     arb_fp2().prop_map(|a| Curve::from(Coefficient::from(a)))
 }
-
-// ---------------------------------------------------------------------------
-// TorsionExponent
-// ---------------------------------------------------------------------------
 
 proptest! {
     #[test]
@@ -54,10 +46,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Curve conversions — all representations preserve j-invariant
-// ---------------------------------------------------------------------------
-
 proptest! {
     /// Coefficient roundtrip: Curve → coefficient → Curve preserves j.
     #[test]
@@ -77,10 +65,6 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Coefficient serialization
-// ---------------------------------------------------------------------------
-
 proptest! {
     #[test]
     fn coefficient_serialization_roundtrip(a in arb_fp2()) {
@@ -93,10 +77,6 @@ proptest! {
         prop_assert_eq!(j1, j2);
     }
 }
-
-// ---------------------------------------------------------------------------
-// IsogenyDegree
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// new_odd rejects even values.

@@ -60,10 +60,6 @@ pub const SIGNING_KEY_BYTES: usize = 353;
 /// Signature size in bytes.
 pub const SIGNATURE_BYTES: usize = 148;
 
-// ---------------------------------------------------------------------------
-// SuitableIdeals / id2iso parameters
-// ---------------------------------------------------------------------------
-
 /// Half-width of the enumeration box in [Alg. 3.16][Alg. 3.16]
 /// (SuitableIdeals).
 ///
@@ -133,10 +129,6 @@ pub const D_MIX_W18: BigInt<18> =
 /// Use directly via `D_MIX_W18_MOD.pow(base, exp)`, or pass to any
 /// `*_with_ctx` API that accepts a `&MontReducer<18>`.
 pub(crate) const D_MIX_W18_MOD: MontReducer<18> = MontReducer::const_new(&D_MIX_W18);
-
-// ---------------------------------------------------------------------------
-// Precomputed E₀ basis points
-// ---------------------------------------------------------------------------
 
 use crate::fields::{fp::Fp, fp2::Fp2};
 

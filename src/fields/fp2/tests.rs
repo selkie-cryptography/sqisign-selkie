@@ -4,10 +4,6 @@ use subtle::ConstantTimeEq;
 use super::*;
 use crate::fields::fp::Fp;
 
-// ---------------------------------------------------------------------------
-// Strategies
-// ---------------------------------------------------------------------------
-
 fn arb_fp() -> impl Strategy<Value = Fp> {
     any::<[u8; 32]>().prop_map(|b| Fp::from_bytes(&b))
 }
@@ -15,10 +11,6 @@ fn arb_fp() -> impl Strategy<Value = Fp> {
 fn arb_fp2() -> impl Strategy<Value = Fp2> {
     (arb_fp(), arb_fp()).prop_map(|(a, b)| Fp2::new(a, b))
 }
-
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn i_squared_is_minus_one() {
@@ -62,10 +54,6 @@ fn roundtrip_bytes() {
     let b = Fp2::from_bytes(&bytes);
     assert_eq!(a, b);
 }
-
-// ---------------------------------------------------------------------------
-// Property-based tests
-// ---------------------------------------------------------------------------
 
 proptest! {
     #[test]

@@ -30,10 +30,6 @@ use crate::{
     quaternions::bigint::BigInt,
 };
 
-// ---------------------------------------------------------------------------
-// IsogenyDegree
-// ---------------------------------------------------------------------------
-
 /// A positive odd integer representing the degree of a separable isogeny.
 ///
 /// Stored as an unsigned 256-bit integer (`[u64; 4]`, little-endian).
@@ -170,10 +166,6 @@ impl PartialOrd for IsogenyDegree {
         Some(self.cmp(other))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Kernel
-// ---------------------------------------------------------------------------
 
 /// The kernel of a 2^e-isogeny, defined by a generator point P of
 /// order 2^e on an elliptic curve.
@@ -344,10 +336,6 @@ impl Kernel {
         Ok((curve, pts))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Individual isogeny steps (internal)
-// ---------------------------------------------------------------------------
 
 /// A non-singular 2-isogeny φ : E → E'.
 ///

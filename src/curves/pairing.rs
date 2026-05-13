@@ -20,10 +20,6 @@ use crate::{
     quaternions::bigint::BigInt,
 };
 
-// ---------------------------------------------------------------------------
-// Reduced Tate pairing value
-// ---------------------------------------------------------------------------
-
 /// An element of μ_{2^e}, the group of 2^e-th roots of unity in F_{p²}*.
 ///
 /// Produced by the reduced Tate pairing ([`tate_pairing`]) and
@@ -192,10 +188,6 @@ impl ConditionallySelectable for RootOfUnity {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Cubical point (internal)
-// ---------------------------------------------------------------------------
-
 /// A cubical point: projective (X : Z) in F_{p²}.
 ///
 /// Same representation as [`ProjectiveXOnlyPoint`] but used in the
@@ -284,10 +276,6 @@ impl CubicalPoint {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tate pairing (Algorithm 8.18)
-// ---------------------------------------------------------------------------
 
 /// Compute the reduced Tate pairing t_{2^e}(P, Q).
 ///

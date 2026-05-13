@@ -41,10 +41,6 @@ use super::{bigint::BigInt, precomputed::P_WIDE};
 #[cfg(test)]
 mod tests;
 
-// ---------------------------------------------------------------------------
-// Coordinate: a coefficient in the quaternion basis {1, i, j, k}
-// ---------------------------------------------------------------------------
-
 /// A coefficient of a quaternion element in the basis {1, i, j, k}.
 ///
 /// Wraps a `BigInt<N>` signed integer. The limb count `N` determines
@@ -162,10 +158,6 @@ impl<const N: usize> fmt::Display for Coordinate<N> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Denominator: a positive integer common denominator
-// ---------------------------------------------------------------------------
-
 /// A positive integer denominator for a quaternion element.
 ///
 /// Always > 0. Can only be constructed via [`Denominator::new`] (which
@@ -260,10 +252,6 @@ impl<const N: usize> fmt::Display for Denominator<N> {
         write!(f, "{}", self.0)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Element: an element of B_{p,∞}
-// ---------------------------------------------------------------------------
 
 /// An element of the quaternion algebra B_{p,∞} = (-1, -p)_Q.
 ///

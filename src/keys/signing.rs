@@ -1770,10 +1770,6 @@ impl Drop for SigningKey {
 #[cfg(feature = "zeroize")]
 impl ZeroizeOnDrop for SigningKey {}
 
-// ---------------------------------------------------------------------------
-// Challenge isogeny (Algorithm 4.7)
-// ---------------------------------------------------------------------------
-
 /// Compute the challenge isogeny and map points through the isomorphism.
 ///
 /// Given a basis (P, Q) on curve E and a challenge `chl`, computes the
@@ -1856,10 +1852,6 @@ pub(crate) fn compute_challenge_isogeny(
     // Line 3
     Some((curve_chl, p_chl, q_chl, pmq_chl))
 }
-
-// ---------------------------------------------------------------------------
-// Split auxiliary isogeny (Algorithm 4.5)
-// ---------------------------------------------------------------------------
 
 /// Compute the split auxiliary isogeny via a (2,2)-isogeny chain.
 ///
