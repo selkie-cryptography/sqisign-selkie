@@ -630,11 +630,14 @@ impl SigningKey {
         // Line 1: Parse sk
         let e_pk = self.verifying_key.curve();
 
-        // Line 2: basis on E_pk
+        // Line 2: basis on E_pk. The signing key was generated from a
+        // valid curve so `from_hint`'s bounded search is guaranteed to
+        // succeed; the `.expect` documents the invariant.
         let basis_pk = TorsionBasis::from_hint(
             e_pk,
             BasisHint::from_byte(u8::from(self.verifying_key.hint)),
-        );
+        )
+        .expect("sign: from_hint on E_pk failed (own signing key derived from valid curve)");
 
         // Line 3: while true do
         //
