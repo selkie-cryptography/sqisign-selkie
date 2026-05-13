@@ -4,6 +4,10 @@ name: C ref baseline (mini-gmp + ref GF)
 # bundled mini-gmp (no asm) and the portable ref GF backend (no asm
 # Fp), then run keypair/sign/verify against our Rust crate's
 # benches/sqisign.rs on the same runner.
+#
+# Runs on self-hosted Fly (shared-cpu-2x). The comparison is on the
+# same runner so relative C-vs-Rust signal is preserved even with
+# neighbor-job noise. Absolute numbers shift across runs.
 
 on:
   push:
@@ -45,7 +49,7 @@ env:
 jobs:
   baseline:
     name: C ref vs Rust (NIST-I)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6

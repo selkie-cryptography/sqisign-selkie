@@ -27,7 +27,7 @@ env:
 jobs:
   fuzz:
     name: ${{ matrix.target }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -155,7 +155,7 @@ jobs:
     name: Upload fuzz report
     needs: fuzz
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6

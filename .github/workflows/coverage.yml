@@ -28,7 +28,7 @@ env:
 jobs:
   coverage:
     name: Code coverage
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     # Two un-`#[ignore]`d sign() KATs (`sign_kat_derand_001/009`) added
     # to cover `keys/signing.rs`; each is several minutes under llvm-cov
     # instrumentation. Bumped from 30 to 60 to absorb without flake.

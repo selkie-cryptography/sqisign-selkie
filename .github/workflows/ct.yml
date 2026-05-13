@@ -1,5 +1,11 @@
 name: Constant-Time
 
+# Runs on self-hosted Fly runners (shared-cpu-2x). CT measurements
+# are timing-sensitive; shared CPU adds noise vs dedicated hardware.
+# Acceptable for CI regression detection (DudeCT statistical + Tacet
+# taint-tracking both tolerate noise). For publication-grade
+# measurements, run on dedicated hardware off-CI.
+
 on:
   # CT runs on a weekly schedule and on demand only — DudeCT/Tacet
   # are slow and not needed on every push. Push trigger removed in
@@ -23,7 +29,7 @@ env:
 jobs:
   ct:
     name: DudeCT + Tacet
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -87,7 +93,7 @@ jobs:
 
   ctgrind:
     name: ctgrind (Valgrind taint tracking)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
