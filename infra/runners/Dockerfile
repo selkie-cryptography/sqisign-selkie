@@ -41,10 +41,18 @@ RUN /opt/miniforge/bin/conda create -y -p ${SAGE_HOME} sage=10.6 -c conda-forge 
 
 # Rustup stable + nightly + clippy/rustfmt. Cross-compile targets
 # stay on GitHub-hosted (Fly is x86_64-linux only).
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+#
+# We `useradd runner` later (Layer 6) but pre-create it here so we
+# can chown RUSTUP_HOME and CARGO_HOME to the runner user. Job-time
+# `dtolnay/rust-toolchain` invocations refresh rustup and need
+# write access to RUSTUP_HOME; without this, jobs fail with
+# `Permission denied (os error 13)` when writing to /opt/rustup/tmp.
+RUN useradd -m -s /bin/bash runner \
+  && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --default-toolchain stable --no-modify-path \
   && rustup toolchain install nightly --profile minimal \
-  && rustup component add rustfmt clippy --toolchain nightly
+  && rustup component add rustfmt clippy --toolchain nightly \
+  && chown -R runner:runner "$RUSTUP_HOME" "$CARGO_HOME"
 
 # Smaller system tools. Separate layer so adding/removing one of
 # these doesn't invalidate texlive above.
@@ -68,8 +76,9 @@ RUN apt-get update \
 # only from this layer down.
 ARG RUNNER_VERSION=2.334.0
 
-RUN useradd -m -s /bin/bash runner \
-  && mkdir -p /home/runner/actions-runner \
+# `runner` user was already created earlier (alongside rustup) so
+# RUSTUP_HOME / CARGO_HOME could be chowned to it.
+RUN mkdir -p /home/runner/actions-runner \
   && chown runner:runner /home/runner/actions-runner
 
 WORKDIR /home/runner/actions-runner
