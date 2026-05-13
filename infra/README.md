@@ -9,7 +9,9 @@ versus GH-hosted minutes; macOS and Windows jobs stay on GH-hosted.
 infra/
 ├── github-app/      one-time GitHub App creation runbook + manifest
 ├── orchestrator/    long-lived Axum service on Fly: webhook -> JIT -> spawn Machine
-├── runners/         per-job runner image (Ubuntu + rustup + Sage + texlive)
+├── runners/         multi-stage runner image:
+│                      stage `base` (heavy: texlive + Sage + rustup + system tools)
+│                      stage `runtime` (thin: FROM pinned base + actions-runner)
 └── ops/             laptop-driven deploy CLI
 ```
 
@@ -44,9 +46,9 @@ from anywhere — the binary locates the workspace via `CARGO_MANIFEST_DIR`.
 
 ```
 cd infra
-cargo run -p ops -- deploy-runners        # build + push runner image as `latest`
 cargo run -p ops -- deploy-orchestrator   # build + deploy orchestrator
-cargo run -p ops -- deploy-all            # both, in order, then prints verify hints
+cargo run -p ops -- deploy-runners        # build + push runtime image as `latest` (fast, FROM the pinned base)
+cargo run -p ops -- deploy-all            # orchestrator + runners + cleanup, prints verify hints
 cargo run -p ops -- smoke-test            # workflow_dispatch runner-smoke-test.yml + tail logs
 cargo run -p ops -- cleanup-orphans       # destroy leaked `fly-<jobid>-<hex>` Machines
 ```
@@ -55,6 +57,32 @@ Trailing args after `--` are forwarded to `fly deploy`:
 ```
 cargo run -p ops -- deploy-orchestrator -- --strategy immediate
 ```
+
+### Rolling the base image
+
+The runner image has two stages in a single `Dockerfile`. The
+heavy **base** stage (~10 GB: texlive + Sage + rustup + system
+tools) is rebuilt rarely. The thin **runtime** stage (~50 MB:
+actions-runner binary + entrypoint) is rebuilt whenever the runner
+version bumps or the entrypoint changes — fast because its `FROM`
+is `registry.fly.io/sqisign-infra-runners:base`, already in the
+registry.
+
+```
+cd infra
+cargo run -p ops -- deploy-runner-base    # ~2h cold; pushes :base
+cargo run -p ops -- deploy-runners        # ~30s; runtime FROM :base, pushes :latest
+```
+
+No pinning state to track. The `:base` tag is overwritten on each
+roll; git history of `runners/Dockerfile` is the audit trail. If
+you want to roll back, `git revert` and re-run `deploy-runner-base`.
+
+`--build-target base` makes BuildKit ignore the `runtime` stage's
+`FROM registry.fly.io/.../runners:base`, so the first base build
+doesn't depend on its own previous output. After the first base is
+published, subsequent runtime builds pull `:base` from the registry
+and skip rebuilding the heavy layers.
 
 ## Runtime flow (per job)
 

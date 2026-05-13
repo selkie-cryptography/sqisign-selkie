@@ -1,16 +1,25 @@
-# GitHub Actions self-hosted runner image. Spawned per-job by the
-# orchestrator via the Fly Machines API.
+# Multi-stage runner image.
 #
-# Substrate only: OS, system libs, rustup toolchains, Sage, TeX Live,
-# and the runner binary. Rust-ecosystem tools (cargo-nextest, deny,
-# mutants, llvm-cov, fuzz, ...) are installed per-job by workflow
-# `taiki-e/install-action` steps — workflow YAML is the single source
-# of truth for tool versions.
+# Stage `base` — heavy substrate: texlive + Sage + rustup + system
+# tools. Built rarely (~2h cold). Pushed to
+# `registry.fly.io/sqisign-infra-runners:base` (overwritten on each
+# roll — git history is the audit trail).
 #
-# Layer order is heaviest-and-most-stable first so RUNNER_VERSION
-# bumps don't bust the multi-GB texlive / Sage layers.
+# Stage `runtime` — thin layer: actions-runner binary + entrypoint.
+# Built fast (~30s) because its `FROM` is the `:base` image already
+# in the registry; BuildKit fetches it instead of rebuilding.
+#
+# Build modes:
+#   deploy-runner-base  -> fly deploy --build-target base --image-label base
+#   deploy-runners      -> fly deploy --build-target runtime --image-label latest
+#
+# `--build-target base` only builds the `base` stage; BuildKit
+# ignores the `runtime` stage's `FROM` (not reachable in the DAG),
+# so the first base build doesn't depend on its own previous output.
 
-FROM ubuntu:24.04
+# ---------- Stage: base ----------
+
+FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     RUSTUP_HOME=/opt/rustup \
@@ -23,7 +32,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
-# TeX Live (~5-10 GB). latex.yml runs latexmk directly.
+# TeX Live (~5-10 GB).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends texlive-full \
   && rm -rf /var/lib/apt/lists/*
@@ -42,11 +51,9 @@ RUN /opt/miniforge/bin/conda create -y -p ${SAGE_HOME} sage=10.6 -c conda-forge 
 # Rustup stable + nightly + clippy/rustfmt. Cross-compile targets
 # stay on GitHub-hosted (Fly is x86_64-linux only).
 #
-# We `useradd runner` later (Layer 6) but pre-create it here so we
-# can chown RUSTUP_HOME and CARGO_HOME to the runner user. Job-time
-# `dtolnay/rust-toolchain` invocations refresh rustup and need
-# write access to RUSTUP_HOME; without this, jobs fail with
-# `Permission denied (os error 13)` when writing to /opt/rustup/tmp.
+# Pre-create the `runner` user so RUSTUP_HOME / CARGO_HOME can be
+# chowned. Job-time `dtolnay/rust-toolchain` invocations refresh
+# rustup and need write access to RUSTUP_HOME.
 RUN useradd -m -s /bin/bash runner \
   && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --default-toolchain stable --no-modify-path \
@@ -72,12 +79,12 @@ RUN apt-get update \
       valgrind \
   && rm -rf /var/lib/apt/lists/*
 
-# GitHub Actions runner binary. ARG placed here so bumps invalidate
-# only from this layer down.
+# ---------- Stage: runtime ----------
+
+FROM registry.fly.io/sqisign-infra-runners:base AS runtime
+
 ARG RUNNER_VERSION=2.334.0
 
-# `runner` user was already created earlier (alongside rustup) so
-# RUSTUP_HOME / CARGO_HOME could be chowned to it.
 RUN mkdir -p /home/runner/actions-runner \
   && chown runner:runner /home/runner/actions-runner
 
