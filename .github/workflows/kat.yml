@@ -46,7 +46,7 @@ env:
 jobs:
   kat:
     name: KAT tests (x86_64-linux)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v6

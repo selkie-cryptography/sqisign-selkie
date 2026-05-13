@@ -14,7 +14,7 @@ permissions:
 jobs:
   deploy:
     name: Deploy CI site
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6

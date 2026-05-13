@@ -1,5 +1,10 @@
 name: Benchmarks
 
+# Runs on self-hosted Fly runners. Bench numbers reflect Fly's
+# shared-cpu-2x hardware and have non-trivial variance from
+# neighbor jobs. Useful for catching gross regressions; don't quote
+# absolute numbers without controlling the environment.
+
 on:
   push:
     branches: [main]
@@ -20,7 +25,7 @@ env:
 jobs:
   benchmark:
     name: Performance benchmarks
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 90
     permissions:
       contents: read

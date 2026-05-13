@@ -1,5 +1,10 @@
 name: Instruction count
 
+# Runs on self-hosted Fly runners. Valgrind instruction counts are
+# largely CPU-independent (they count instructions, not cycles), so
+# shared-CPU noise barely matters here. Wall-clock latency may vary;
+# the reported instruction counts are reliable.
+
 on:
   push:
     branches: [main]
@@ -20,7 +25,7 @@ env:
 jobs:
   iai:
     name: iai-callgrind
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
