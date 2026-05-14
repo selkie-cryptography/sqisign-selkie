@@ -1,7 +1,8 @@
 # Multi-stage runner image.
 #
-# Stage `base` — heavy substrate: texlive + Sage + rustup + system
-# tools. Built rarely (~2h cold). Pushed to
+# Stage `base` — substrate: rustup + system tools (no Sage, no
+# texlive — see comment below the bootstrap layer for why).
+# Built rarely (~10–15 min cold). Pushed to
 # `registry.fly.io/sqisign-infra-runners:base` (overwritten on each
 # roll — git history is the audit trail).
 #
@@ -24,29 +25,28 @@ FROM ubuntu:24.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive \
     RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
-    SAGE_HOME=/opt/sage-env \
-    PATH=/opt/sage-env/bin:/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # HTTPS bootstrap.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
-# TeX Live (~5-10 GB).
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends texlive-full \
-  && rm -rf /var/lib/apt/lists/*
-
-# Miniforge — split from the Sage env so bumping sage= only rebuilds
-# the env layer, not the installer.
-RUN curl -L https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
-      -o /tmp/miniforge.sh \
-  && bash /tmp/miniforge.sh -b -p /opt/miniforge \
-  && rm /tmp/miniforge.sh
-
-# Sage (~3-4 GB).
-RUN /opt/miniforge/bin/conda create -y -p ${SAGE_HOME} sage=10.6 -c conda-forge \
-  && /opt/miniforge/bin/conda clean -afy
+# No `texlive-full` and no Sage here.
+#
+# Fly Machines enforce an 8 GB *uncompressed* image-unpack ceiling
+# at the platform level (separate from per-Machine rootfs sizing).
+# A Sage 10.6 conda env adds ~4-5 GB; with texlive removed and
+# Sage removed, the image stays comfortably under 8 GB and unpacks
+# fine on `shared-cpu-2x`.
+#
+# Workflows that need these:
+#   - `latex.yml` -> `ubuntu-latest` + `xu-cheng/latex-action` (Docker action).
+#   - `sage-precompute-check` -> `ubuntu-latest` + conda Sage install
+#     (with `actions/cache` for the env).
+#
+# If you ever want them on Fly: install at job time via apt/conda
+# in a workflow step, or build a separate `:base-with-sage` variant.
 
 # Rustup stable + nightly + clippy/rustfmt. Cross-compile targets
 # stay on GitHub-hosted (Fly is x86_64-linux only).

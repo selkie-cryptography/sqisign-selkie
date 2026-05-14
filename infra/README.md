@@ -10,7 +10,7 @@ infra/
 ├── github-app/      one-time GitHub App creation runbook + manifest
 ├── orchestrator/    long-lived Axum service on Fly: webhook -> JIT -> spawn Machine
 ├── runners/         multi-stage runner image:
-│                      stage `base` (heavy: texlive + Sage + rustup + system tools)
+│                      stage `base` (rustup + system tools)
 │                      stage `runtime` (thin: FROM pinned base + actions-runner)
 └── ops/             laptop-driven deploy CLI
 ```
@@ -61,16 +61,20 @@ cargo run -p ops -- deploy-orchestrator -- --strategy immediate
 ### Rolling the base image
 
 The runner image has two stages in a single `Dockerfile`. The
-heavy **base** stage (~10 GB: texlive + Sage + rustup + system
-tools) is rebuilt rarely. The thin **runtime** stage (~50 MB:
-actions-runner binary + entrypoint) is rebuilt whenever the runner
-version bumps or the entrypoint changes — fast because its `FROM`
-is `registry.fly.io/sqisign-infra-runners:base`, already in the
-registry.
+**base** stage (rustup + system tools, ~3 GB uncompressed) is
+rebuilt rarely. The thin **runtime** stage (actions-runner binary
++ entrypoint, ~600 MB on top of base) is rebuilt whenever the
+runner version bumps or the entrypoint changes — fast because its
+`FROM` is `registry.fly.io/sqisign-infra-runners:base`, already in
+the registry.
+
+The image deliberately stays under Fly's **8 GB uncompressed
+image-unpack ceiling**. Tools that don't fit (Sage, texlive-full)
+run on `ubuntu-latest` instead.
 
 ```
 cd infra
-cargo run -p ops -- deploy-runner-base    # ~2h cold; pushes :base
+cargo run -p ops -- deploy-runner-base    # ~10–15 min cold; pushes :base
 cargo run -p ops -- deploy-runners        # ~30s; runtime FROM :base, pushes :latest
 ```
 
