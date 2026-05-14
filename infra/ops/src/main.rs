@@ -121,10 +121,15 @@ fn deploy_runners(extra: &[String]) -> Result<()> {
     println!("==> deploy runtime runner image (FROM pinned base)");
     let mut cmd = Command::new("fly");
     cmd.current_dir(infra_dir().join("runners"));
-    // `--build-only --push` skips flyctl's deploy step (which has
-    // been hitting h2c gRPC failures against the remote builder
-    // after the push completes). We only need the image in the
-    // registry; the orchestrator spawns Machines from it on demand.
+    // `--build-only --push` skips flyctl's deploy step (the legacy
+    // builder was hitting h2c gRPC failures after push completed).
+    // The orchestrator spawns Machines from the registry image on
+    // demand; no Machine deploy needed here.
+    //
+    // `--buildkit` opts into Fly's newer remote builder, which
+    // connects over Flycast IPv6 (avoiding the public IPv4 + h2c
+    // auth chain that was the source of those errors) and uses a
+    // registry mirror for fast push.
     cmd.args([
         "deploy",
         "--app",
@@ -135,6 +140,7 @@ fn deploy_runners(extra: &[String]) -> Result<()> {
         "runtime",
         "--build-only",
         "--push",
+        "--buildkit",
     ]);
     cmd.args(extra);
     run("fly deploy runners", &mut cmd)
@@ -145,7 +151,7 @@ fn deploy_runner_base(extra: &[String]) -> Result<()> {
 
     let mut cmd = Command::new("fly");
     cmd.current_dir(infra_dir().join("runners"));
-    // See `deploy_runners` for why `--build-only --push`.
+    // See `deploy_runners` for `--build-only --push --buildkit`.
     cmd.args([
         "deploy",
         "--app",
@@ -156,6 +162,7 @@ fn deploy_runner_base(extra: &[String]) -> Result<()> {
         "base",
         "--build-only",
         "--push",
+        "--buildkit",
     ]);
     cmd.args(extra);
     run("fly deploy runner base", &mut cmd)?;
