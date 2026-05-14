@@ -23,6 +23,7 @@ mod gcd;
 mod modular;
 mod mul;
 mod neg;
+mod pow;
 mod primes;
 mod rand;
 mod resize;
@@ -225,26 +226,5 @@ impl<const N: usize> BigInt<N> {
     pub fn normalize(&mut self) {
         let is_zero = bool::from(self.is_zero()) as u64;
         self.sign &= 1 - is_zero;
-    }
-
-    /// Integer exponentiation: `self^exp`.
-    ///
-    /// Uses a simple square-and-multiply. The exponent is public (not
-    /// constant-time w.r.t. the exponent value).
-    pub fn pow(&self, exp: u32) -> Self {
-        if exp == 0 {
-            return Self::ONE;
-        }
-        let mut result = Self::ONE;
-        let mut base = *self;
-        let mut e = exp;
-        while e > 0 {
-            if e & 1 == 1 {
-                result = result.ct_mul(&base);
-            }
-            base = base.ct_mul(&base);
-            e >>= 1;
-        }
-        result
     }
 }
