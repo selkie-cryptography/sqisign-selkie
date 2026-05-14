@@ -1,6 +1,6 @@
 use proptest::prelude::*;
 
-use super::*;
+use super::{super::bigint::BigInt, *};
 
 type I = BigInt<4>;
 type V = Vector<4>;
