@@ -37,6 +37,13 @@ impl MachineSize {
 
     /// Match a `runs-on:` label list (e.g. `[self-hosted, fly, perf-8x]`)
     /// to a machine size. Returns `None` if no sizing label is set.
+    ///
+    /// The default for `x64` (no explicit size hint) is
+    /// `PerformanceCpu4x`. Cargo parallelizes well to 4 cores; past
+    /// that, returns diminish (linker is a tail-singleton). Jobs
+    /// that want cheap shared CPU can opt-in via `shared-2x` /
+    /// `shared-4x` labels; bigger workloads scale up via `perf-8x`
+    /// / `perf-16x`.
     pub fn from_labels(labels: &[String]) -> Option<Self> {
         if labels.iter().any(|l| l == "perf-16x") {
             Some(Self::PerformanceCpu16x)
@@ -48,8 +55,10 @@ impl MachineSize {
             Some(Self::PerformanceCpu2x)
         } else if labels.iter().any(|l| l == "shared-4x") {
             Some(Self::SharedCpu4x)
-        } else if labels.iter().any(|l| l == "shared-2x" || l == "x64") {
+        } else if labels.iter().any(|l| l == "shared-2x") {
             Some(Self::SharedCpu2x)
+        } else if labels.iter().any(|l| l == "x64") {
+            Some(Self::PerformanceCpu4x)
         } else {
             None
         }

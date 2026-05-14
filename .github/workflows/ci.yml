@@ -64,7 +64,7 @@ jobs:
   fmt:
     name: Format
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 10
+    timeout-minutes: 30
     permissions:
       checks: write
       contents: read
@@ -91,7 +91,7 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -111,7 +111,7 @@ jobs:
   gate:
     name: lib + doc tests (x86_64-linux)
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -136,7 +136,7 @@ jobs:
   proptest:
     name: Property tests
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -151,7 +151,7 @@ jobs:
   doc:
     name: Documentation
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -432,7 +432,7 @@ jobs:
     name: C reference cross-check
     needs: [gate]
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -458,7 +458,7 @@ jobs:
     # safe on self-hosted Fly.
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, fly, linux, x64]
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
