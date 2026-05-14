@@ -68,6 +68,11 @@ jobs:
     permissions:
       checks: write
       contents: read
+      # reviewdog needs to read the PR's diff to know which lines to
+      # annotate. Without this, reviewdog gets a 403 on
+      # GET /repos/{owner}/{repo}/pulls/{num} and the step fails
+      # even when rustfmt itself passes.
+      pull-requests: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -384,11 +389,14 @@ jobs:
   sage-precompute-check:
     name: Sage precompute cross-check
     needs: [gate]
-    # The value here is the pre-installed Sage in the Fly runner
-    # image (/opt/sage-env, see infra/runners/Dockerfile). Runs on
-    # trusted triggers (push/schedule/dispatch + same-repo PR).
-    # Skipped on fork PR — we don't route untrusted code to
-    # self-hosted Fly Machines.
+    # Runs on Fly self-hosted with Sage installed at job time. Sage
+    # is NOT pre-baked into the runner image because the conda env
+    # would push the image over Fly's 8 GB unpack ceiling. The job
+    # installs into `~/sage-env` on the runtime overlayfs (sized via
+    # `rootfs.size_gb` in the orchestrator's Machine config), and
+    # `actions/cache` brings warm runs down to ~1–2 min.
+    #
+    # Skipped on fork PR (untrusted code on self-hosted Machines).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
@@ -398,6 +406,21 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Cache Conda environment
+        uses: actions/cache@v5
+        with:
+          path: ~/sage-env
+          key: sage-conda-${{ runner.os }}-10.6
+
+      - name: Install SageMath via conda-forge
+        run: |
+          if [ ! -d ~/sage-env ]; then
+            wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O miniforge.sh
+            bash miniforge.sh -b -p ~/miniforge
+            ~/miniforge/bin/conda create -y -p ~/sage-env sage=10.6 -c conda-forge
+          fi
+          echo "$HOME/sage-env/bin" >> "$GITHUB_PATH"
 
       - name: Verify Sage >= 10.5
         run: sage --version
