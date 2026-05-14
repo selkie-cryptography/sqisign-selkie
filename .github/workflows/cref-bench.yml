@@ -67,7 +67,7 @@ jobs:
       - name: Clone C reference at pinned commit
         if: steps.cref-cache.outputs.cache-hit != 'true'
         run: |
-          git clone --no-checkout https://github.com/${CREF_REPO}.git cref
+          git clone --no-checkout "https://github.com/${CREF_REPO}.git" cref
           git -C cref checkout "${CREF_REF}"
 
       - name: Patch stray unconditional gmp.h include

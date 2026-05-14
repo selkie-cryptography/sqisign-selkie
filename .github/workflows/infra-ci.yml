@@ -13,10 +13,13 @@ name: Infra CI
 on:
   push:
     branches: [main]
-    paths: ['infra/**']
+    paths: &infra-paths
+      - 'infra/**'
+      - '.github/workflows/**'
+      - '.github/actionlint.yaml'
   pull_request:
     branches: [main]
-    paths: ['infra/**']
+    paths: *infra-paths
   schedule:
     # Weekly rebuild of the runner image so OS patches + rustup +
     # cargo subcommand updates flow through without a code change.
@@ -34,6 +37,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Lint every workflow file. Fast (~5s) and catches the typo-class
+  # bugs that otherwise only surface at workflow-run time: malformed
+  # `runs-on:` expressions, undeclared self-hosted labels, shellcheck
+  # issues in `run:` blocks, unused YAML anchors, etc.
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: reviewdog/action-actionlint@5eaffa19a1991ecc52b11eddcdd57760d1ac7e3d  # v1.72.0
+        with:
+          fail_on_error: true
+          level: error
+
   # Detect which subtree changed so we only redeploy what's affected.
   # On schedule and workflow_dispatch this returns false for both,
   # and the deploy jobs gate on event_name as well.
@@ -65,7 +85,7 @@ jobs:
   build:
     name: Check + lint orchestrator
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -92,7 +112,7 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.orchestrator == 'true') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
