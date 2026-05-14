@@ -64,6 +64,12 @@ RUN useradd -m -s /bin/bash runner \
 
 # Smaller system tools. Separate layer so adding/removing one of
 # these doesn't invalidate texlive above.
+#
+# `libclang-dev` is needed by the `crabgrind` build script (uses
+# `bindgen` to generate Valgrind FFI). Without it, every `cargo
+# build` of the main crate panics with "Unable to find libclang".
+# Previously came in transitively via Sage's conda env; pinned
+# explicitly now that Sage is no longer in the image.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
       build-essential \
@@ -71,6 +77,7 @@ RUN apt-get update \
       docker.io \
       git \
       jq \
+      libclang-dev \
       libicu-dev \
       libssl-dev \
       pkg-config \
