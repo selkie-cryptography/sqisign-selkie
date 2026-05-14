@@ -630,7 +630,7 @@ impl Kernel {
         let e = e.value();
         assert!(e >= 2, "chain requires e >= 2");
 
-        // --- Phase 1: balanced strategy (lines 1–15) ---
+        // Phase 1: balanced strategy (lines 1–15).
         //
         // Kernel points arrive in Jacobian coordinates (either lifted
         // by from_montgomery or provided directly by from_jacobian).
@@ -660,7 +660,7 @@ impl Kernel {
             orders.push(orders[k - 1] - n);
         }
 
-        // --- Phase 2: gluing (lines 16–20) ---
+        // Phase 2: gluing (lines 16–20).
         //
         // Convert bottom strategy point from Jacobian to Montgomery
         // via jac_to_xz (the From impl). The codomain computation
@@ -816,7 +816,7 @@ impl Kernel {
 
         let mut current_jacobian = gluing_data.codomain.clone();
 
-        // --- Phase 3: generic loop (lines 22–38) ---
+        // Phase 3: generic loop (lines 22–38).
         //
         // The C reference (theta_isogenies.c:1158-1198) uses three
         // different hadamard_bool configurations across the chain:
@@ -1089,7 +1089,7 @@ impl Kernel {
             steps_remaining -= 1;
         }
 
-        // --- Phase 4: splitting (lines 39–45) ---
+        // Phase 4: splitting (lines 39–45).
         //
         // The splitting step expects the codomain in dual form
         // (without the final Hadamard transform on the null point).

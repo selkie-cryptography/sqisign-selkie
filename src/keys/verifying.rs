@@ -108,14 +108,14 @@ impl VerifyingKey {
             crate::selkie_trace!("VK: n_bt={} r_rsp={}", sig.n_bt.value(), sig.r_rsp.value());
         }
 
-        // --- Algorithm 4.9, line 6–7: compute e'_rsp ---
+        // Algorithm 4.9, line 6–7: compute e'_rsp.
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
         let e_rsp_prime = e_rsp
             .checked_sub(sig.n_bt.value())
             .and_then(|v| v.checked_sub(sig.r_rsp.value()))
             .ok_or(SignatureError::VerificationFailed)?;
 
-        // --- Line 8: torsion basis on E_pk from hint_pk ---
+        // Line 8: torsion basis on E_pk from hint_pk.
         // `from_hint` performs a bounded x-coordinate search whose
         // failure on adversarial curves is treated as a verification
         // failure (rather than an infinite loop) — see
@@ -126,7 +126,7 @@ impl VerifyingKey {
             TorsionBasis::from_hint(&self.curve, BasisHint::from_byte(u8::from(self.hint)))
                 .ok_or(SignatureError::VerificationFailed)?;
 
-        // --- Line 9: challenge isogeny ---
+        // Line 9: challenge isogeny.
         // Compute kernel: P_pk + [chl]Q_pk, then [2^n_bt] of that.
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
         #[cfg(test)]
@@ -210,7 +210,7 @@ impl VerifyingKey {
             );
         }
 
-        // --- Lines 10–11: torsion bases on E_aux and E_chl ---
+        // Lines 10–11: torsion bases on E_aux and E_chl.
         let basis_aux =
             TorsionBasis::from_hint(&sig.curve_aux, BasisHint::from_byte(u8::from(sig.hint_aux)))
                 .ok_or(SignatureError::VerificationFailed)?;
@@ -270,7 +270,7 @@ impl VerifyingKey {
             PmQ_chl = PmQ_chl.double();
         }
 
-        // --- Line 14: apply M_chl ---
+        // Line 14: apply M_chl.
         let basis_chl_scaled = TorsionBasis::from_propagated(P_chl, Q_chl, PmQ_chl);
         let basis_chl_transformed = &sig.M_chl * &basis_chl_scaled;
         let (mut P_chl, mut Q_chl, mut PmQ_chl) = (
@@ -315,7 +315,7 @@ impl VerifyingKey {
             );
         }
 
-        // --- Lines 15–20: even response isogeny ---
+        // Lines 15–20: even response isogeny.
         //
         // Push ALL THREE basis points (P, Q, PmQ) through the
         // isogeny. The C reference does this explicitly in
@@ -386,7 +386,7 @@ impl VerifyingKey {
             }
         }
 
-        // --- Lines 21–23: if e'_rsp = 0, skip (2,2)-isogeny ---
+        // Lines 21–23: if e'_rsp = 0, skip (2,2)-isogeny.
         if e_rsp_prime == 0 {
             let j = curve_chl.j_invariant();
             let chl_prime = hash::hash(self, &j, msg);
@@ -397,7 +397,7 @@ impl VerifyingKey {
             };
         }
 
-        // --- Lines 24–26: (2,2)-isogeny chain ---
+        // Lines 24–26: (2,2)-isogeny chain.
         //
         // Pass Montgomery points to from_montgomery, which lifts to
         // Jacobian internally. The chain does all Phase 1 doublings
@@ -464,7 +464,7 @@ impl VerifyingKey {
             )
             .ok_or(SignatureError::VerificationFailed)?;
 
-        // --- Lines 29–30: recompute challenge ---
+        // Lines 29–30: recompute challenge.
         let j_com = codomain.E1.j_invariant();
         let chl_prime = hash::hash(self, &j_com, msg);
 
