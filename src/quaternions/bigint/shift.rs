@@ -1,41 +1,13 @@
-//! Bit shifts on [`BigInt<N>`][super::BigInt]:
-//! [`shl`][BigInt::shl] / [`shr`][BigInt::shr] and the private
+//! Bit shifts on [`BigInt<N>`][super::BigInt]: the [`Shl<u32>`] and
+//! [`Shr<u32>`] trait impls, plus the private
 //! [`mag_shl`](BigInt::mag_shl) / [`mag_shr`](BigInt::mag_shr)
 //! limb-level helpers.
+
+use core::ops::{Shl, Shr};
 
 use super::{BigInt, ct_select_u64};
 
 impl<const N: usize> BigInt<N> {
-    /// Constant-time left shift by `s` bits (multiply by 2^s).
-    ///
-    /// Algorithm 3 (§3.3) from [Kouider et al.][ct-bigint]
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    /// Runs in constant time w.r.t. both the value and the shift amount.
-    pub fn shl(&self, s: u32) -> Self {
-        let limbs = Self::mag_shl(&self.limbs, s);
-        Self {
-            sign: self.sign,
-            limbs,
-        }
-    }
-
-    /// Constant-time right shift by `s` bits (divide by 2^s, rounding
-    /// toward zero).
-    ///
-    /// Algorithm 4 (§3.3) from [Kouider et al.][ct-bigint]
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    pub fn shr(&self, s: u32) -> Self {
-        let limbs = Self::mag_shr(&self.limbs, s);
-        // Canonicalize zero.
-        let is_zero = Self::mag_is_zero(&limbs);
-        Self {
-            sign: self.sign & (1 - is_zero),
-            limbs,
-        }
-    }
-
     /// Constant-time left shift of magnitude by `s` bits.
     ///
     /// Algorithm 3 (§3.3) from [Kouider et al.][ct-bigint]
@@ -93,5 +65,68 @@ impl<const N: usize> BigInt<N> {
             i += 1;
         }
         result
+    }
+}
+
+/// Constant-time left shift by `s` bits (multiply by `2^s`).
+///
+/// Algorithm 3 (§3.3) from [Kouider et al.][ct-bigint]
+/// Runs in constant time w.r.t. both the value and the shift amount.
+///
+/// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
+impl<const N: usize> Shl<u32> for BigInt<N> {
+    type Output = Self;
+    #[inline]
+    fn shl(self, rhs: u32) -> Self {
+        let limbs = Self::mag_shl(&self.limbs, rhs);
+        Self {
+            sign: self.sign,
+            limbs,
+        }
+    }
+}
+
+impl<const N: usize> Shl<u32> for &BigInt<N> {
+    type Output = BigInt<N>;
+    #[inline]
+    fn shl(self, rhs: u32) -> BigInt<N> {
+        let limbs = BigInt::<N>::mag_shl(&self.limbs, rhs);
+        BigInt::<N> {
+            sign: self.sign,
+            limbs,
+        }
+    }
+}
+
+/// Constant-time right shift by `s` bits (divide by `2^s`, rounding toward
+/// zero).
+///
+/// Algorithm 4 (§3.3) from [Kouider et al.][ct-bigint]
+///
+/// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
+impl<const N: usize> Shr<u32> for BigInt<N> {
+    type Output = Self;
+    #[inline]
+    fn shr(self, rhs: u32) -> Self {
+        let limbs = Self::mag_shr(&self.limbs, rhs);
+        // Canonicalize zero.
+        let is_zero = Self::mag_is_zero(&limbs);
+        Self {
+            sign: self.sign & (1 - is_zero),
+            limbs,
+        }
+    }
+}
+
+impl<const N: usize> Shr<u32> for &BigInt<N> {
+    type Output = BigInt<N>;
+    #[inline]
+    fn shr(self, rhs: u32) -> BigInt<N> {
+        let limbs = BigInt::<N>::mag_shr(&self.limbs, rhs);
+        let is_zero = BigInt::<N>::mag_is_zero(&limbs);
+        BigInt::<N> {
+            sign: self.sign & (1 - is_zero),
+            limbs,
+        }
     }
 }

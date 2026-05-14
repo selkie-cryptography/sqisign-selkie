@@ -321,15 +321,15 @@ fn widen_narrow_roundtrip() {
 #[test]
 fn shl_small() {
     let a = I256::from(1i64);
-    assert_eq!(a.shl(0), I256::from(1i64));
-    assert_eq!(a.shl(1), I256::from(2i64));
-    assert_eq!(a.shl(8), I256::from(256i64));
+    assert_eq!(a << 0, I256::from(1i64));
+    assert_eq!(a << 1, I256::from(2i64));
+    assert_eq!(a << 8, I256::from(256i64));
 }
 
 #[test]
 fn shl_across_limbs() {
     let a = I256::from(1i64);
-    let shifted = a.shl(64);
+    let shifted = a << 64;
     assert_eq!(shifted.as_limbs()[0], 0);
     assert_eq!(shifted.as_limbs()[1], 1);
 }
@@ -337,7 +337,7 @@ fn shl_across_limbs() {
 #[test]
 fn shl_preserves_sign() {
     let a = I256::from(-3i64);
-    let shifted = a.shl(4);
+    let shifted = a << 4;
     assert!(bool::from(shifted.is_negative()));
     assert_eq!(shifted.as_limbs()[0], 48); // 3 << 4 = 48
 }
@@ -345,16 +345,16 @@ fn shl_preserves_sign() {
 #[test]
 fn shr_small() {
     let a = I256::from(256i64);
-    assert_eq!(a.shr(0), I256::from(256i64));
-    assert_eq!(a.shr(1), I256::from(128i64));
-    assert_eq!(a.shr(8), I256::from(1i64));
-    assert_eq!(a.shr(9), I256::ZERO);
+    assert_eq!(a >> 0, I256::from(256i64));
+    assert_eq!(a >> 1, I256::from(128i64));
+    assert_eq!(a >> 8, I256::from(1i64));
+    assert_eq!(a >> 9, I256::ZERO);
 }
 
 #[test]
 fn shr_across_limbs() {
     let a = I256::from_sign_and_limbs(0, [0, 1, 0, 0]); // 2^64
-    let shifted = a.shr(64);
+    let shifted = a >> 64;
     assert_eq!(shifted, I256::from(1i64));
 }
 
@@ -857,24 +857,24 @@ proptest! {
     #[test]
     fn bigint_shl_shr_roundtrip(a in arb_small_bigint4(), k in 0u32..64) {
         // (a << k) >> k == a for small a where no bits are lost.
-        let shifted = a.shl(k).shr(k);
+        let shifted = (a << k) >> k;
         prop_assert_eq!(shifted, a);
     }
 
     #[test]
     fn bigint_shl_zero(a in arb_bigint4()) {
-        prop_assert_eq!(a.shl(0), a);
+        prop_assert_eq!(a << 0, a);
     }
 
     #[test]
     fn bigint_shr_zero(a in arb_bigint4()) {
-        prop_assert_eq!(a.shr(0), a);
+        prop_assert_eq!(a >> 0, a);
     }
 
     #[test]
     fn bigint_two_adic_val_of_power_of_two(k in 1u32..200) {
         // v_2(2^k) = k.
-        let val = BigInt::<4>::ONE.shl(k);
+        let val = BigInt::<4>::ONE << k;
         prop_assert_eq!(val.two_adic_val(), k);
     }
 
@@ -882,7 +882,7 @@ proptest! {
     fn bigint_two_adic_val_of_odd(a in arb_small_bigint4()) {
         // An odd number has v_2 = 0.
         prop_assume!(!bool::from(a.is_zero()));
-        let odd = a.abs().shl(1) + BigInt::ONE; // 2|a| + 1 is always odd
+        let odd = (a.abs() << 1) + BigInt::ONE; // 2|a| + 1 is always odd
         prop_assert_eq!(odd.two_adic_val(), 0);
     }
 }
