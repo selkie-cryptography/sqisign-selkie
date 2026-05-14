@@ -622,7 +622,7 @@ impl<const N: usize> BigInt<N> {
 
         // m ≡ 3 (mod 4): return n^((m+1)/4) mod m.
         if m_mod4 == 3 {
-            let exp = m.ct_add(&Self::ONE).shr(2);
+            let exp = m.ct_add(&Self::ONE) >> 2;
             let r = pow(&n_mod, &exp);
             let check = r.ct_mul(&r).ct_mod(m);
             return if check == n_mod { Some(r) } else { None };
@@ -631,16 +631,16 @@ impl<const N: usize> BigInt<N> {
         // m ≡ 5 (mod 8):
         if m_mod8 == 5 {
             // Check if n^((m-1)/4) ≡ 1 mod m.
-            let exp_check = m.ct_sub(&Self::ONE).shr(2);
+            let exp_check = m.ct_sub(&Self::ONE) >> 2;
             let test = pow(&n_mod, &exp_check);
             if test == Self::ONE {
                 // return n^((m+3)/8) mod m
-                let exp = m.ct_add(&Self::THREE).shr(3);
+                let exp = m.ct_add(&Self::THREE) >> 3;
                 return Some(pow(&n_mod, &exp));
             } else {
                 // return 2n(4n)^((m-5)/8) mod m
                 let four_n = n_mod.ct_mul(&Self::from_u64(4)).ct_mod(m);
-                let exp = m.ct_sub(&Self::from_u64(5)).shr(3);
+                let exp = m.ct_sub(&Self::from_u64(5)) >> 3;
                 let base = pow(&four_n, &exp);
                 let r = Self::TWO.ct_mul(&n_mod).ct_mul(&base).ct_mod(m);
                 let check = r.ct_mul(&r).ct_mod(m);
@@ -650,12 +650,12 @@ impl<const N: usize> BigInt<N> {
 
         // General Tonelli-Shanks (m ≡ 1 mod 8).
         let e = m.ct_sub(&Self::ONE).two_adic_val();
-        let q = m.ct_sub(&Self::ONE).shr(e);
+        let q = m.ct_sub(&Self::ONE) >> e;
 
         // Find a non-residue w.
         let mut w = Self::TWO;
         loop {
-            let exp = m.ct_sub(&Self::ONE).shr(1);
+            let exp = m.ct_sub(&Self::ONE) >> 1;
             let ls = pow(&w, &exp);
             // Legendre symbol: if ls == m - 1, then w is a non-residue.
             if ls == m.ct_sub(&Self::ONE) {
@@ -670,7 +670,7 @@ impl<const N: usize> BigInt<N> {
 
         let mut z = pow(&w, &q);
         let mut y = pow(&n_mod, &q);
-        let mut x = pow(&n_mod, &q.ct_add(&Self::ONE).shr(1));
+        let mut x = pow(&n_mod, &(q.ct_add(&Self::ONE) >> 1));
         let mut f = Self::from_u64(1u64 << (e - 2));
 
         for _i in 0..e.saturating_sub(1) {
@@ -681,7 +681,7 @@ impl<const N: usize> BigInt<N> {
                 y = y.ct_mul(&z).ct_mul(&z).ct_mod(m);
             }
             z = z.ct_mul(&z).ct_mod(m);
-            f = f.shr(1);
+            f = f >> 1;
         }
 
         let check = x.ct_mul(&x).ct_mod(m);
@@ -721,7 +721,7 @@ impl<const N: usize> BigInt<N> {
         if bool::from(a_mod.is_zero()) {
             return 0;
         }
-        let exp = p.ct_sub(&Self::ONE).shr(1);
+        let exp = p.ct_sub(&Self::ONE) >> 1;
         let result = Self::pow_mod(&a_mod, &exp, p);
         if result == Self::ONE { 1 } else { -1 }
     }

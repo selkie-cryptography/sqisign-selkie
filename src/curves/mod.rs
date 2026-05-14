@@ -409,7 +409,7 @@ impl TorsionBasis {
         let m_j = &ACTION_MATRICES[0][1];
         let m_gen4 = &ACTION_MATRICES[0][5];
 
-        let modulus = BigInt::<4>::ONE.shl(f.value());
+        let modulus = BigInt::<4>::ONE << f.value();
 
         // Step 1: [d1, d2]^T = M_θ · [c1, c2]^T mod 2^f.
         // θ = j + (1+k)/2, so M_θ = M_j + M_gen4.

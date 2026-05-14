@@ -149,7 +149,7 @@ impl IdealKernel for LeftIdeal<4> {
         let m_alpha = alpha_conj.action_matrix(basis_matrices, e);
 
         // Step 5: Pick column 0; if gcd(s, t) is even, use column 1.
-        let modulus = BigInt::<4>::ONE.shl(e.value());
+        let modulus = BigInt::<4>::ONE << e.value();
         let s0 = BigInt::<4>::from(*m_alpha.entry(0, 0)).ct_mod(&modulus);
         let t0 = BigInt::<4>::from(*m_alpha.entry(1, 0)).ct_mod(&modulus);
         let g0 = s0.gcd(&t0);
@@ -208,7 +208,7 @@ pub fn compute_even_response(
     // at line 616. So `lideal_resp_two = O₀·conj(α_response) + O₀·(2^r)`.
     // We construct the same lattice here so that `ideal.generator()`
     // enumerates over the same basis as C-ref's `quat_lideal_generator`.
-    let norm = BigInt::<4>::ONE.shl(r_rsp);
+    let norm = BigInt::<4>::ONE << r_rsp;
     let alpha_for_ideal = alpha.conjugate();
     let ideal = LeftIdeal::new(&alpha_for_ideal, &norm, EXTREMAL_ORDERS[0].order());
 
@@ -244,7 +244,7 @@ pub fn compute_even_response(
         &basis_mats,
         TorsionExponent::try_from(r_rsp).ok()?,
     )?;
-    let modulus = BigInt::<4>::ONE.shl(r_rsp);
+    let modulus = BigInt::<4>::ONE << r_rsp;
     let s0 = BigInt::<4>::from(*m_alpha.entry(0, 0)).ct_mod(&modulus);
     let t0 = BigInt::<4>::from(*m_alpha.entry(1, 0)).ct_mod(&modulus);
     let g0 = s0.gcd(&t0);
@@ -376,7 +376,7 @@ fn action_matrix(
     // Reduce all coefficients mod 2^f. For negative coefficients,
     // ct_mod returns a negative remainder (truncated division), so
     // add the modulus to get the canonical representative in [0, 2^f).
-    let modulus = BigInt::<4>::ONE.shl(f.value());
+    let modulus = BigInt::<4>::ONE << f.value();
     let reduce = |c: &BigInt<4>| -> Scalar {
         let r = c.ct_mod(&modulus);
         if bool::from(r.is_negative()) {
@@ -485,7 +485,7 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
 
     // Step 2: θ ← RepresentInteger(u·(2^{e_FDI} − u), O_t, true)
     let u_wide = u.to_bigint_wide();
-    let two_e_fdi = BigInt::<8>::ONE.shl(e_fdi);
+    let two_e_fdi = BigInt::<8>::ONE << e_fdi;
     // If u ≥ 2^{e_FDI}, the product is non-positive — no solution.
     if u_wide >= two_e_fdi {
         return None;
@@ -934,7 +934,7 @@ impl<const N: usize> LeftIdeal<N> {
         // from the special order.
         //
         // [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
-        let modulus = BigInt::<4>::ONE.shl(f.value());
+        let modulus = BigInt::<4>::ONE << f.value();
         let s_index = EXTREMAL_ORDERS
             .iter()
             .position(|o| o.q() == sui.factor1.order.q())?;

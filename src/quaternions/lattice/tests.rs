@@ -734,7 +734,7 @@ fn intersection_via_kernel_large_power_of_two() {
     let o0 = *o0_ext.order();
     let o0_lat: Lattice<4> = Lattice::from(o0);
 
-    let two_to_60 = I::ONE.shl(60);
+    let two_to_60 = I::ONE << 60;
     let mut basis_big = Matrix::<4>::ZERO;
     for r in 0..4 {
         for c in 0..4 {
@@ -755,7 +755,7 @@ fn intersection_via_kernel_large_power_of_two() {
         "refresh_norm on (2^60·O0) ∩ O0 failed — covolume not a perfect square"
     );
 
-    let expected = I::ONE.shl(120); // (2^60)^2 = 2^120
+    let expected = I::ONE << 120; // (2^60)^2 = 2^120
     assert_eq!(*ideal.norm(), expected, "expected N(2^60·O0) = 2^120");
 }
 

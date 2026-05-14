@@ -1087,7 +1087,7 @@ fn try_find_uv<const N: usize>(
             }
             if let Ok(e) = TorsionExponent::try_from(f.value() - e_val) {
                 if let (Some(u_narrow), Some(v_narrow)) =
-                    (u.shr(e_val).narrow(), v.shr(e_val).narrow())
+                    ((u >> e_val).narrow(), (v >> e_val).narrow())
                 {
                     return Some(SuitableIdealResult {
                         u: u_narrow,
@@ -1765,7 +1765,7 @@ impl<const N: usize> LeftIdeal<N> {
         // require a wider `NrdBasis`; reject at compile time.
         const { assert!(N <= 8, "suitable_ideals supports N ≤ 8") };
         let f = TorsionExponent::FULL;
-        let two_f = BigInt::<8>::ONE.shl(f.value());
+        let two_f = BigInt::<8>::ONE << f.value();
 
         // Phase 1: for each of the seven extremal orders O_t, build
         // the corresponding ideal in which β is enumerated:
