@@ -179,7 +179,7 @@ fn c_ref_basis_cross_check() {
             0,
         ],
     );
-    let r_bw = BigInt::<8>::ONE.shl(256);
+    let r_bw = BigInt::<8>::ONE << 256;
     let p_minus_2 = p.ct_sub(&BigInt::<8>::TWO);
     let r_bw_inv = BigInt::<8>::pow_mod(&r_bw, &p_minus_2, &p);
 
@@ -278,7 +278,7 @@ fn c_ref_all_bases_cross_check() {
             0,
         ],
     );
-    let r_bw = BigInt::<8>::ONE.shl(256);
+    let r_bw = BigInt::<8>::ONE << 256;
     let r_bw_inv = BigInt::<8>::pow_mod(&r_bw, &p.ct_sub(&BigInt::<8>::TWO), &p);
 
     let convert = |limbs: &[u64; 4]| -> [u8; 32] {

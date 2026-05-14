@@ -112,7 +112,7 @@ impl DoublePlusExponent {
         let bits = v.bitsize() as i64;
         let abs = v.abs();
         let shifted = if bits > f64::MAX_EXP as i64 {
-            abs.shr((bits - f64::MAX_EXP as i64) as u32)
+            abs >> (bits - f64::MAX_EXP as i64) as u32
         } else {
             abs
         };
@@ -162,9 +162,9 @@ impl DoublePlusExponent {
         let mut r = BigInt::<N>::from_u64(int_mantissa);
         let shift = self.e - 53;
         if shift > 0 {
-            r = r.shl(shift as u32);
+            r = r << shift as u32;
         } else if shift < 0 {
-            r = r.shr((-shift) as u32);
+            r = r >> (-shift) as u32;
         }
         if neg {
             r = r.wrapping_neg();

@@ -929,7 +929,7 @@ impl SigningKey {
             let n_sk: BigInt<N_RESP> = *i_sk_w.norm();
             let n_com: BigInt<N_RESP> = *i_com_w.norm();
             let lattice_content_r: BigInt<N_RESP> = n_chl.ct_mul(&n_sk).ct_mul(&n_com);
-            let two_to_e_rsp: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(e_rsp);
+            let two_to_e_rsp: BigInt<N_RESP> = BigInt::<N_RESP>::ONE << e_rsp;
             let two_e_rsp_minus_one = two_to_e_rsp.ct_sub(&BigInt::<N_RESP>::ONE);
             let radius = two_e_rsp_minus_one.ct_mul(&lattice_content_r);
             #[cfg(test)]
@@ -975,7 +975,7 @@ impl SigningKey {
                 if !bool::from(r1.is_zero()) {
                     continue;
                 }
-                let lc_post: BigInt<N_RESP> = lattice_content_r.shr(n_bt_try);
+                let lc_post: BigInt<N_RESP> = lattice_content_r >> n_bt_try;
                 let (_q2, r2) = q1.div_rem(&lc_post);
                 if !bool::from(r2.is_zero()) {
                     continue;
@@ -1047,7 +1047,7 @@ impl SigningKey {
             // whenever `n_bt > 0`, because `nrd(α_primitive) =
             // nrd(α) / tmp²` shrinks faster than `lattice_content`
             // does — the missing `2^backtracking` factor is the gap.
-            let lattice_content: BigInt<N_RESP> = lattice_content_r.shr(n_bt);
+            let lattice_content: BigInt<N_RESP> = lattice_content_r >> n_bt;
 
             let d_rsp_wide = {
                 let (q1, r1) = nrd_num_w.div_rem(&nrd_den_w);
@@ -1075,7 +1075,7 @@ impl SigningKey {
                 q2
             };
             let r_rsp_val = d_rsp_wide.trailing_zeros();
-            let d_rsp_shifted = d_rsp_wide.shr(r_rsp_val);
+            let d_rsp_shifted = d_rsp_wide >> r_rsp_val;
             // q_rsp = d_rsp / 2^r_rsp (odd part). For NIST-I the
             // response-degree odd part is bounded by `D_rsp ≈ 2^126`,
             // so it fits in `BigInt<4>` (256 bits) with room to
@@ -1182,7 +1182,7 @@ impl SigningKey {
                 // prime norm (~2^15). The intersection with I_aux
                 // (norm ~2^126) produces a ~141-bit norm ideal,
                 // within FixedDegreeIsogeny's bound (< 2^246).
-                let aux_norm = BigInt::<4>::ONE.shl(e_rsp_prime).ct_sub(&q_rsp);
+                let aux_norm = (BigInt::<4>::ONE << e_rsp_prime).ct_sub(&q_rsp);
                 #[cfg(test)]
                 crate::selkie_trace!(
                     "[sign {_iter}] aux_norm step starting, aux_norm bits={} (cumul {:?})",
@@ -1422,7 +1422,7 @@ impl SigningKey {
             // mod `2^r_rsp` — and then narrow to `Element<4>`.
             // For `r_rsp ≤ 126`, the reduced coordinates fit easily.
             if r_rsp_val > 0 {
-                let two_to_r: BigInt<N_RESP> = BigInt::<N_RESP>::ONE.shl(r_rsp_val);
+                let two_to_r: BigInt<N_RESP> = BigInt::<N_RESP>::ONE << r_rsp_val;
                 let mod_coord = |c: &BigInt<N_RESP>| c.ct_mod(&two_to_r);
                 let reduced_w = Element::<N_RESP>::new(
                     Coordinate::from_bigint(mod_coord(alpha_rsp_w.a.as_bigint())),
@@ -2032,7 +2032,7 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     let q2_qinv = &q_inv * &q2_red;
     let pmq2_qinv = &q_inv * &pmq2_red;
 
-    let two_r_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(r_val).as_limbs());
+    let two_r_scalar = Scalar::from_limbs(*(BigInt::<4>::ONE << r_val).as_limbs());
     let p1_ker = &two_r_scalar * &p1_red;
     let q1_ker = &two_r_scalar * &q1_red;
     let pmq1_ker = &two_r_scalar * &pmq1_red;

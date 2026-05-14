@@ -147,7 +147,7 @@ impl RootOfUnity {
         // k = k' + 2^{e'} · k''
         let k_prime_big = BigInt::<4>::from(k_prime);
         let k_double_prime_big = BigInt::<4>::from(k_double_prime);
-        let k_high = k_double_prime_big.shl(e_prime.value());
+        let k_high = k_double_prime_big << e_prime.value();
         let k = k_prime_big.ct_add(&k_high);
         Scalar::from_limbs(*k.as_limbs())
     }
@@ -640,7 +640,7 @@ mod tests {
         let pq_full = e0_basis();
         let e_red: u32 = 128;
         let scale = TorsionExponent::FULL.value() - e_red;
-        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
+        let scale_scalar = Scalar::from_limbs(*(BigInt::<4>::ONE << scale).as_limbs());
 
         let one = Scalar::from_u64(1);
         let two = Scalar::from_u64(2);
@@ -681,7 +681,7 @@ mod tests {
         let pq_full = e0_basis();
         let e_red: u32 = 128;
         let scale = TorsionExponent::FULL.value() - e_red;
-        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
+        let scale_scalar = Scalar::from_limbs(*(BigInt::<4>::ONE << scale).as_limbs());
 
         let alpha = Scalar::from_u64(3);
         let beta = Scalar::from_u64(5);
@@ -741,7 +741,7 @@ mod tests {
         let e_full = TorsionExponent::FULL.value();
         let e_red: u32 = 128;
         let scale = e_full - e_red;
-        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
+        let scale_scalar = Scalar::from_limbs(*(BigInt::<4>::ONE << scale).as_limbs());
 
         let r = &scale_scalar * &basis.P;
         let s = &scale_scalar * &basis.PmQ;
@@ -1064,7 +1064,7 @@ mod tests {
         let target = basis.P;
         let k_bits = 60u32; // arbitrary, exercise the multi-bit ladder
 
-        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(k_bits).as_limbs());
+        let scale_scalar = Scalar::from_limbs(*(BigInt::<4>::ONE << k_bits).as_limbs());
         let via_mul = &scale_scalar * &target;
 
         let mut via_double = target;
@@ -1399,7 +1399,7 @@ mod tests {
         let canonical = e0_basis();
         let e_red: u32 = 128;
         let scale = TorsionExponent::FULL.value() - e_red;
-        let scale_scalar = Scalar::from_limbs(*BigInt::<4>::ONE.shl(scale).as_limbs());
+        let scale_scalar = Scalar::from_limbs(*(BigInt::<4>::ONE << scale).as_limbs());
         let e = TorsionExponent::try_from(e_red).expect("128 valid");
 
         // m_known: det = 3·5 − 4·1 = 11 (odd) → invertible mod 2^128.

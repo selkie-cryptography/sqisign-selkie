@@ -454,7 +454,7 @@ fn suitable_ideals_small_prime_norm() {
         // (u·d1 can exceed 256 bits).
         let u_w: BigInt<8> = r.u.into();
         let v_w: BigInt<8> = r.v.into();
-        let two_e = BigInt::<8>::ONE.shl(r.e.value());
+        let two_e = BigInt::<8>::ONE << r.e.value();
 
         // Verify: u · d1 + v · d2 = 2^e.
         let lhs = u_w.ct_mul(&d1_w).ct_add(&v_w.ct_mul(&d2_w));

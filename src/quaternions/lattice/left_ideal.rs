@@ -1503,7 +1503,7 @@ where
             // G_class = 2·nrd_bilinear / (d²·N), so
             // c^T·G_class·c = 2·nrd(α_int) / (d²·N) = 2·m.
             // Divide by 2 to get m.
-            let m = class_basis.eval_quadratic_form(&c).shr(1);
+            let m = class_basis.eval_quadratic_form(&c) >> 1;
 
             if m.is_probable_prime_w::<PRIME_W>(primality_rounds) {
                 // Reconstruct α = Σ c_i · col_i in the reduced basis.

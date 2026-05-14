@@ -759,7 +759,7 @@ fn from_hnf_columns_predictable_4cols_shifted() {
     let shift = 200;
     let big = |v: i64| -> BigInt<30> {
         let bi: BigInt<30> = BigInt::<30>::from(v);
-        bi.shl(shift)
+        bi << shift
     };
     let z = BigInt::<30>::ZERO;
     let cols = [

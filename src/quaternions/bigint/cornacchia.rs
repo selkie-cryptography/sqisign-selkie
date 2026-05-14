@@ -75,7 +75,7 @@ impl<const N: usize> BigInt<N> {
 
         // Step 1: Check Legendre symbol — -q must be a QR mod m.
         let neg_q = m.ct_sub(&q.ct_mod(m));
-        let exp = m.ct_sub(&Self::ONE).shr(1);
+        let exp = m.ct_sub(&Self::ONE) >> 1;
         let legendre = Self::pow_mod(&neg_q, &exp, m);
         if legendre != Self::ONE && !bool::from(neg_q.ct_mod(m).is_zero()) {
             return None;

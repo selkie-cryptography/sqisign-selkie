@@ -88,7 +88,7 @@ impl<const N: usize> BigInt<N> {
         // Write self - 1 = 2^s · d with d odd.
         let n_minus_1 = self.ct_sub(&Self::ONE);
         let s = n_minus_1.two_adic_val();
-        let d = n_minus_1.shr(s);
+        let d = n_minus_1 >> s;
 
         // Deterministic witnesses sufficient for values up to 3.3×10²⁴.
         let witnesses: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
