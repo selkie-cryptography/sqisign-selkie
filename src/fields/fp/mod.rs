@@ -326,10 +326,6 @@ impl Fp {
         &y * self
     }
 
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
-
     /// Propagate carries through the limbs. Returns a sign/borrow indicator.
     fn prop(&mut self) -> u64 {
         let mut carry = self.0[0] as i64;
