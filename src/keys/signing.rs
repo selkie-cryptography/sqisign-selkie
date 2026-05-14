@@ -655,7 +655,7 @@ impl SigningKey {
             #[cfg(test)]
             let _iter_start = std::time::Instant::now();
 
-            // --- Commitment (lines 4–9) ---
+            // Commitment (lines 4–9).
 
             // Line 4: I_com ← RandomIdealGivenNorm(D_mix, true).
             // Stored at `BigInt<30>` for the same reason as keygen:
@@ -726,10 +726,10 @@ impl SigningKey {
                 }
             };
 
-            // --- Challenge (line 10) ---
+            // Challenge (line 10).
             let chl = Challenge::derive(&self.verifying_key, &e_com, msg);
 
-            // --- Response (lines 11–38) ---
+            // Response (lines 11–38).
 
             // Line 11: (c₁, c₂) ← M_sk · (1, chl)
             //

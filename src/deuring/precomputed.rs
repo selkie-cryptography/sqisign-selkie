@@ -186,7 +186,7 @@ pub mod torsion_basis {
         }
     }
 
-    // ---- Curve 0 (E₀: y² = x³ + x, A = 0) ----
+    // Curve 0 (E₀: y² = x³ + x, A = 0).
 
     /// P_0 x-coordinate.
     pub(crate) const E0_P_X: Fp2 = Fp2::new(
@@ -242,7 +242,7 @@ pub mod torsion_basis {
         ]),
     );
 
-    // ---- Curve 1 ----
+    // Curve 1.
 
     /// P_1 x-coordinate.
     pub(crate) const E1_P_X: Fp2 = Fp2::new(
@@ -316,7 +316,7 @@ pub mod torsion_basis {
         ]),
     );
 
-    // ---- Curve 2 ----
+    // Curve 2.
 
     /// P_2 x-coordinate.
     pub(crate) const E2_P_X: Fp2 = Fp2::new(
@@ -390,7 +390,7 @@ pub mod torsion_basis {
         ]),
     );
 
-    // ---- Curve 3 ----
+    // Curve 3.
 
     /// P_3 x-coordinate.
     pub(crate) const E3_P_X: Fp2 = Fp2::new(
@@ -464,7 +464,7 @@ pub mod torsion_basis {
         ]),
     );
 
-    // ---- Curve 4 ----
+    // Curve 4.
 
     /// P_4 x-coordinate.
     pub(crate) const E4_P_X: Fp2 = Fp2::new(
@@ -538,7 +538,7 @@ pub mod torsion_basis {
         ]),
     );
 
-    // ---- Curve 5 ----
+    // Curve 5.
 
     /// P_5 x-coordinate.
     pub(crate) const E5_P_X: Fp2 = Fp2::new(
@@ -612,7 +612,7 @@ pub mod torsion_basis {
         ]),
     );
 
-    // ---- Curve 6 ----
+    // Curve 6.
 
     /// P_6 x-coordinate.
     pub(crate) const E6_P_X: Fp2 = Fp2::new(

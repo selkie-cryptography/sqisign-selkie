@@ -5,12 +5,13 @@ use rand_core::OsRng;
 use super::{
     super::{
         bigint::BigInt,
-        lattice::{ExtremalOrder, Lattice},
+        lattice::{ExtremalOrder, Lattice, LeftIdeal, NrdBasis},
+        linear::Vector,
         precomputed::{EXTREMAL_ORDERS, P_WIDE},
     },
     suitable_ideals::enumerate_hypercube,
 };
-use crate::curves::TorsionExponent;
+use crate::{curves::TorsionExponent, drbg::Aes256CtrDrbg, params::QUAT_PRIME_COFACTOR};
 
 /// Miller-Rabin width check: `pow_mod_w<W>` requires
 /// `64·W ≥ 2·bits(modulus) − 1`. For 379-bit moduli (aux-path
@@ -61,7 +62,6 @@ fn primality_w9_vs_w20_at_aux_magnitude() {
 #[test]
 #[ignore]
 fn represent_integer_aux_magnitude() {
-    use crate::params::QUAT_PRIME_COFACTOR;
     let order = ExtremalOrder::<8>::from(EXTREMAL_ORDERS[0]);
     // Simulate the aux-path input: `m = QUAT_PRIME_COFACTOR`
     // (~2^251) times a 126-bit `aux_norm`. Use a fixed odd
@@ -134,8 +134,6 @@ fn legendre_symbol() {
 
 #[test]
 fn random_ideal_prime_norm() {
-    use super::super::lattice::LeftIdeal;
-
     let n = BigInt::<4>::from_u64(7);
     let result = LeftIdeal::random_prime_norm(&n, &EXTREMAL_ORDERS[0]);
     if let Some(ideal) = result {
@@ -186,8 +184,6 @@ fn represent_integer_any_order_verifies_norm() {
 /// asserts self-consistency, not interop.
 #[test]
 fn represent_integer_deterministic_under_same_drbg_seed() {
-    use crate::drbg::Aes256CtrDrbg;
-
     // Pick a target large enough that the search loop runs.
     // M = p + 2 (smallest valid input ≥ p that's odd).
     let p: BigInt<8> = P_WIDE;
@@ -228,8 +224,6 @@ fn represent_integer_deterministic_under_same_drbg_seed() {
 
 #[test]
 fn gram_matrix_nrd_identity_basis() {
-    use super::super::{lattice::NrdBasis, linear::Vector};
-
     // Standard basis {1, i, j, k} has Gram matrix diag(1, 1, p, p).
     let cols: [Vector<8>; 4] = [
         Vector::new(BigInt::ONE, BigInt::ZERO, BigInt::ZERO, BigInt::ZERO),
@@ -272,8 +266,6 @@ fn gram_matrix_nrd_identity_basis() {
 /// column is scaled consistently relative to the stored denom.
 #[test]
 fn random_prime_norm_lattice_actually_has_norm() {
-    use super::super::lattice::LeftIdeal;
-
     let n = BigInt::<4>::from_u64(7);
     let Some(ideal) = LeftIdeal::random_prime_norm(&n, &EXTREMAL_ORDERS[0]) else {
         return;
@@ -314,8 +306,6 @@ fn random_prime_norm_lattice_actually_has_norm() {
 /// difference lives in `N · Z<1,i,j,k> ⊂ N · O_0 = O · N`.
 #[test]
 fn random_norm_lattice_actually_has_norm() {
-    use super::super::lattice::LeftIdeal;
-
     let n = BigInt::<4>::from_u64(143);
     let Some(ideal) = LeftIdeal::random_norm(&n, &EXTREMAL_ORDERS[0], &mut OsRng) else {
         return;
@@ -357,8 +347,6 @@ fn random_norm_lattice_actually_has_norm() {
 #[test]
 #[ignore] // Takes ~20 minutes; run explicitly with --include-ignored.
 fn suitable_ideals_composite_norm_smoke() {
-    use super::super::lattice::LeftIdeal;
-
     // Try a few small composites (products of coprime odd primes).
     // `random_norm` with composite norm has high rejection rate
     // because β must satisfy `gcd(nrd(β), N) = 1` and with
@@ -412,8 +400,6 @@ fn suitable_ideals_composite_norm_smoke() {
 /// [`Self::smallest_equiv`] (same reduced ideal).
 #[test]
 fn smallest_equiv_with_delta_consistent() {
-    use super::super::lattice::LeftIdeal;
-
     let n = BigInt::<4>::from_u64(13);
     let Some(ideal) = LeftIdeal::random_prime_norm(&n, &EXTREMAL_ORDERS[0]) else {
         return;
@@ -442,8 +428,6 @@ fn smallest_equiv_with_delta_consistent() {
 
 #[test]
 fn suitable_ideals_small_prime_norm() {
-    use super::super::lattice::LeftIdeal;
-
     // Create an ideal of small prime norm and test SuitableIdeals.
     let n = BigInt::<4>::from_u64(7);
     let Some(ideal) = LeftIdeal::random_prime_norm(&n, &EXTREMAL_ORDERS[0]) else {
