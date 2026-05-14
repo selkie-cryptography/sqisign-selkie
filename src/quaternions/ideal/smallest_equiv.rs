@@ -124,6 +124,9 @@ impl LeftIdeal<4> {
             Denominator::from_bigint_unchecked(delta_conj.denom.as_bigint().widen::<8>()),
         );
         let mut new_cols = [Vector::<8>::ZERO; 4];
+        // reason: the body writes new_cols[j] and reads lattice.basis_elem(j) in
+        // parallel; both are indexed by j, but lattice has no iterator over its
+        // basis elements, so iter_mut().enumerate() doesn't simplify here.
         #[allow(clippy::needless_range_loop)]
         for j in 0..4 {
             let bj = lattice.basis_elem(j);

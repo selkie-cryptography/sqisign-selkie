@@ -220,6 +220,9 @@ impl<const N: usize> Lattice<N> {
     /// (with GMP for arbitrary precision). We use the kernel
     /// method to avoid the cubic entry-size blow-up that makes
     /// the dual approach incompatible with fixed-width arithmetic.
+    // reason: the body indexes into multiple parallel arrays (basis,
+    // augmented identity, scaled cols) at matching positions; the
+    // iterator-zip rewrite obscures the linear-algebra correspondence.
     #[allow(clippy::needless_range_loop)]
     pub fn intersection_via_kernel<const W: usize>(&self, other: &Self) -> Option<HnfLattice<N>> {
         const { assert!(W >= N, "intersection_via_kernel: W must be >= N") };

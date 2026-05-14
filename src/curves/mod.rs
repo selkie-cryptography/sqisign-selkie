@@ -554,7 +554,7 @@ impl TorsionBasis {
         let m_bytes = m.to_le_bytes();
         let n_bytes = n.to_le_bytes();
 
-        // --- Recoding stage ---
+        // Recoding stage.
         // Determine sigma based on parity of m and n.
         let bit_m0 = m_bytes[0] & 1;
         let bit_n0 = n_bytes[0] & 1;
@@ -608,7 +608,7 @@ impl TorsionBasis {
             sigma0 = tmp;
         }
 
-        // --- Evaluation stage ---
+        // Evaluation stage.
         let mut R0 = ProjectiveXOnlyPoint::identity(curve);
         let sigma0_choice = subtle::Choice::from(sigma0 & 1);
         let mut R1 = ProjectiveXOnlyPoint::conditional_select(P, Q, sigma0_choice);
