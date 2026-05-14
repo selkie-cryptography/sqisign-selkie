@@ -2,7 +2,15 @@
 
 use rand_core::OsRng;
 
-use super::*;
+use super::{
+    super::{
+        bigint::BigInt,
+        lattice::{ExtremalOrder, Lattice},
+        precomputed::{EXTREMAL_ORDERS, P_WIDE},
+    },
+    suitable_ideals::enumerate_hypercube,
+};
+use crate::curves::TorsionExponent;
 
 /// Miller-Rabin width check: `pow_mod_w<W>` requires
 /// `64·W ≥ 2·bits(modulus) − 1`. For 379-bit moduli (aux-path
