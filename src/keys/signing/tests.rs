@@ -49,49 +49,6 @@ fn generated_verifying_key_roundtrips() {
 // (commit 91e9e464fe5400192d13e1f9240cbf180200a103). Run with
 // `cargo test --lib --release sign_kat -- --ignored`.
 
-/// Deterministic keygen from every KAT seed must produce the
-/// matching KAT pk and sk.
-///
-/// `#[ignore]`d: redundant with the per-vector `keygen_kat_NNN` tests,
-/// which give better parallelism (nextest shards across cores) and
-/// failure isolation. Run with: `cargo test --lib --release
-/// keygen_kat_all -- --ignored`.
-#[test]
-#[ignore = "redundant with per-vector keygen_kat_NNN tests"]
-fn keygen_kat_all() {
-    for (i, &(seed_hex, pk_hex, sk_hex, ..)) in
-        crate::keys::kat_data::KAT_VECTORS.iter().enumerate()
-    {
-        let seed_bytes = hex::decode(seed_hex).expect("valid hex");
-        let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
-
-        let sk = match SigningKey::generate_derand(&seed) {
-            Ok(sk) => sk,
-            Err(SignatureError::KeyGenFailed) => {
-                crate::selkie_trace!("keygen_kat_all: vector {i} exhausted retries (expected)");
-                continue;
-            }
-            Err(other) => panic!("vector {i}: unexpected keygen error: {other:?}"),
-        };
-
-        let pk_bytes = hex::decode(pk_hex).expect("valid hex");
-        assert_eq!(
-            &sk.verifying_key().to_bytes()[..],
-            pk_bytes.as_slice(),
-            "vector {i}: pk mismatch"
-        );
-
-        let sk_bytes = hex::decode(sk_hex).expect("valid hex");
-        assert_eq!(
-            &sk.to_bytes()[..],
-            sk_bytes.as_slice(),
-            "vector {i}: sk mismatch"
-        );
-
-        crate::selkie_trace!("keygen_kat_all: vector {i} OK");
-    }
-}
-
 /// Deterministic keygen on `KAT_VECTORS[idx]`: must match the KAT pk and sk.
 fn keygen_kat_idx_inner(idx: usize) {
     let (seed_hex, pk_hex, sk_hex, ..) = crate::keys::kat_data::KAT_VECTORS[idx];
@@ -618,44 +575,6 @@ fn keygen_kat_098() {
 #[test]
 fn keygen_kat_099() {
     keygen_kat_idx_inner(99);
-}
-
-/// Deserialize every KAT signing key, sign the corresponding
-/// message, and verify with the paired public key.
-///
-/// `#[ignore]`d: redundant with the per-vector `sign_kat_derand_NNN`
-/// tests, which give better parallelism (nextest shards across cores)
-/// and failure isolation; this aggregate also consistently exceeds
-/// nextest's 300s timeout running all 100 vectors serially. Run with:
-/// `cargo test --lib --release sign_kat_all -- --ignored`.
-#[test]
-#[ignore = "redundant with per-vector sign_kat_derand_NNN tests"]
-fn sign_kat_all() {
-    for (i, &(_, pk_hex, sk_hex, msg_hex, _)) in
-        crate::keys::kat_data::KAT_VECTORS.iter().enumerate()
-    {
-        let sk_bytes = hex::decode(sk_hex).expect("valid hex");
-        let pk_bytes = hex::decode(pk_hex).expect("valid hex");
-        let msg = hex::decode(msg_hex).expect("valid hex");
-
-        let sk = SigningKey::from_bytes(sk_bytes.as_slice().try_into().unwrap())
-            .expect("sk should parse");
-        let vk = VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap())
-            .expect("pk should parse");
-
-        let sig = match sk.sign(&msg, &mut OsRng) {
-            Ok(s) => s,
-            Err(SignatureError::SigningFailed) => {
-                crate::selkie_trace!("sign_kat_all: vector {i} SigningFailed (expected)");
-                continue;
-            }
-            Err(other) => panic!("vector {i}: unexpected sign error: {other:?}"),
-        };
-
-        vk.verify(&msg, &sig)
-            .unwrap_or_else(|_| panic!("vector {i}: signature did not verify"));
-        crate::selkie_trace!("sign_kat_all: vector {i} OK");
-    }
 }
 
 /// Every KAT signing key deserializes and its embedded verifying
@@ -1488,7 +1407,7 @@ fn keygen_drbg_total_bytes_seed_0() {
 /// and isolates whether the post-sampling pipeline (to_isogeny,
 /// to_hint, M_sk encoding) reproduces the C reference's output for
 /// a known-correct ideal. If it passes:
-/// - `keygen_kat_all` divergence is in the sampling/reduction path
+/// - Per-vector `keygen_kat_NNN` divergence is in the sampling/reduction path
 ///   (`random_prime_norm_wide`, `reduce_to_prime_norm`).
 /// - The to_isogeny-and-friends pipeline is interop-correct, which would also
 ///   be a strong signal for the still-open sign+verify mystery (since signing
@@ -1661,7 +1580,7 @@ fn survey_keygen_target_to_isogeny_first_10() {
 /// produce: secret-ideal norm, generator coordinates, and `M_sk`
 /// entries. Together with the public key bytes (already in
 /// `kat_sk_pk_match_all`), this is the canonical "what we're aiming
-/// at" for `keygen_kat_all`.
+/// at" for the per-vector `keygen_kat_NNN` tests.
 ///
 /// Run with:
 /// ```text
