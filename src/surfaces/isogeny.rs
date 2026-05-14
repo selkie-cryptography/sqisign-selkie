@@ -838,9 +838,6 @@ pub(crate) fn codomain_8torsion(
     let hs1 = T1.squared().hadamard();
     let hs2 = T2.squared().hadamard();
 
-    #[cfg(test)]
-    dump_step_internal_inputs(T1, T2, &hs1, &hs2);
-
     let xawb = &hs1.X * &hs2.Y;
     let zaxb = &hs2.X * &hs1.Y;
 
@@ -848,16 +845,6 @@ pub(crate) fn codomain_8torsion(
     let beta = &hs2.Y * &zaxb;
     let gamma = &hs2.Z * &xawb;
     let delta = &hs2.W * &zaxb;
-
-    #[cfg(test)]
-    dump_step_internal_pre_h(&alpha, &beta, &gamma, &delta);
-
-    #[cfg(test)]
-    {
-        if alpha == gamma {
-            crate::selkie_trace!("codomain_8torsion: alpha==gamma → after H: c=d=0!");
-        }
-    }
 
     let zgwd = &hs2.Z * &hs2.W;
     let alpha_inv = &hs1.Y * &zgwd;
@@ -1544,88 +1531,4 @@ pub(crate) fn theta_product_to_montgomery(
         ProjectiveXOnlyPoint::from_XZ(X1, Z1, &product.E1),
         ProjectiveXOnlyPoint::from_XZ(X2, Z2, &product.E2),
     )
-}
-
-/// Format an `Fp2` element as `(re, im)` little-endian hex strings.
-///
-/// Used by the `dump_step_internal_*` byte-interop diagnostics to emit
-/// the same line format the C reference's `[CHAIN_DUMP]` macros use,
-/// so a single `diff` run aligns lines between the two implementations.
-#[cfg(test)]
-fn dump_fp2_hex(value: &Fp2) -> (String, String) {
-    let bytes = value.to_bytes();
-    let re: String = bytes[..32]
-        .iter()
-        .rev()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    let im: String = bytes[32..]
-        .iter()
-        .rev()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    (re, im)
-}
-
-/// Emit `[CHAIN_DUMP] step=internal` lines for the four 8-torsion step
-/// inputs and their squared-Hadamard images, byte-formatted to match
-/// the C reference's `theta_isogeny_compute` instrumentation.
-///
-/// `T1`/`T2` are the kernel inputs (mapped `X→x`, `Y→y`, `Z→z`, `W→t`
-/// to align with the C reference's `theta_point_t` field names).
-/// `hs1`/`hs2` are `H ∘ S` of `T1`/`T2`, i.e. the C ref's `TT1`/`TT2`
-/// when `hadamard_bool_1 == 0`.
-///
-/// Reader correlates dump groups with the surrounding
-/// `[MODA] main {step}` / `[CHAIN_DUMP] step=main_<i>` markers emitted
-/// by the chain main loop after the step returns.
-#[cfg(test)]
-fn dump_step_internal_inputs(
-    T1: &JacobianPoint,
-    T2: &JacobianPoint,
-    hs1: &JacobianPoint,
-    hs2: &JacobianPoint,
-) {
-    let emit = |label: &str, value: &Fp2| {
-        let (re, im) = dump_fp2_hex(value);
-        crate::selkie_trace!("[CHAIN_DUMP] step=internal {label}.re=0x{re}");
-        crate::selkie_trace!("[CHAIN_DUMP] step=internal {label}.im=0x{im}");
-    };
-    emit("T1.x", &T1.X);
-    emit("T1.y", &T1.Y);
-    emit("T1.z", &T1.Z);
-    emit("T1.t", &T1.W);
-    emit("T2.x", &T2.X);
-    emit("T2.y", &T2.Y);
-    emit("T2.z", &T2.Z);
-    emit("T2.t", &T2.W);
-    emit("TT1.x", &hs1.X);
-    emit("TT1.y", &hs1.Y);
-    emit("TT1.z", &hs1.Z);
-    emit("TT1.t", &hs1.W);
-    emit("TT2.x", &hs2.X);
-    emit("TT2.y", &hs2.Y);
-    emit("TT2.z", &hs2.Z);
-    emit("TT2.t", &hs2.W);
-}
-
-/// Emit `[CHAIN_DUMP] step=internal pre_H.null.{a..d}` lines for the
-/// codomain null point before the final Hadamard.
-///
-/// In Selkie's [`codomain_8torsion`], `(α, β, γ, δ)` are the
-/// pre-Hadamard codomain coordinates: they correspond exactly to the
-/// C reference's `out->codomain.null_point.{x,y,z,t}` after the four
-/// `fp2_mul`s but before the `hadamard_bool_2` branch. Mapped to
-/// `{a,b,c,d}` so the labels match the post-Hadamard null dumps.
-#[cfg(test)]
-fn dump_step_internal_pre_h(alpha: &Fp2, beta: &Fp2, gamma: &Fp2, delta: &Fp2) {
-    let emit = |label: &str, value: &Fp2| {
-        let (re, im) = dump_fp2_hex(value);
-        crate::selkie_trace!("[CHAIN_DUMP] step=internal {label}.re=0x{re}");
-        crate::selkie_trace!("[CHAIN_DUMP] step=internal {label}.im=0x{im}");
-    };
-    emit("pre_H.null.a", alpha);
-    emit("pre_H.null.b", beta);
-    emit("pre_H.null.c", gamma);
-    emit("pre_H.null.d", delta);
 }
