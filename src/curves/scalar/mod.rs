@@ -85,7 +85,6 @@ impl Scalar {
         0
     }
 
-    // -----------------------------------------------------------------
     // Unsigned modular arithmetic mod 2^k.
     //
     // Every operation below is constant-time: fixed iteration counts,
@@ -98,7 +97,6 @@ impl Scalar {
     // application (e_rsp_prime + 2 + r_rsp). Other options: newtype
     // carrying k at runtime, or a `ScalarRing` builder. Revisit when
     // the signing flow stabilizes and the set of k values is clearer.
-    // -----------------------------------------------------------------
 
     /// Reduce mod 2^k by zeroing bits ≥ k.
     #[must_use]
