@@ -12,11 +12,16 @@ FROM rust:slim-bookworm AS builder
 WORKDIR /work
 
 # Manifests first so `cargo fetch` caches in its own layer.
+# Both workspace members need stubs so `cargo fetch` succeeds against
+# the root `Cargo.toml`'s `members = ["orchestrator", "ops"]` list;
+# we then overlay the real `orchestrator/src` for the actual build.
 COPY Cargo.toml Cargo.lock ./
 COPY orchestrator/Cargo.toml orchestrator/Cargo.toml
+COPY ops/Cargo.toml ops/Cargo.toml
 
-RUN mkdir -p orchestrator/src \
+RUN mkdir -p orchestrator/src ops/src \
   && echo "fn main() {}" > orchestrator/src/main.rs \
+  && echo "fn main() {}" > ops/src/main.rs \
   && cargo fetch --locked
 
 COPY orchestrator/src orchestrator/src

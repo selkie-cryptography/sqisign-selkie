@@ -100,6 +100,10 @@ fn deploy_orchestrator(extra: &[String]) -> Result<()> {
     println!("==> deploy orchestrator");
     let mut cmd = Command::new("fly");
     cmd.current_dir(infra_dir());
+    // Unlike runners, the orchestrator IS a long-running service
+    // that needs the full deploy step (Machine rolling update,
+    // not just a registry push). `[deploy] strategy = "immediate"`
+    // in `orchestrator/fly.toml` keeps the rollout short.
     cmd.args([
         "deploy",
         "--app",
@@ -117,6 +121,10 @@ fn deploy_runners(extra: &[String]) -> Result<()> {
     println!("==> deploy runtime runner image (FROM pinned base)");
     let mut cmd = Command::new("fly");
     cmd.current_dir(infra_dir().join("runners"));
+    // `--build-only --push` skips flyctl's deploy step (which has
+    // been hitting h2c gRPC failures against the remote builder
+    // after the push completes). We only need the image in the
+    // registry; the orchestrator spawns Machines from it on demand.
     cmd.args([
         "deploy",
         "--app",
@@ -125,6 +133,8 @@ fn deploy_runners(extra: &[String]) -> Result<()> {
         "latest",
         "--build-target",
         "runtime",
+        "--build-only",
+        "--push",
     ]);
     cmd.args(extra);
     run("fly deploy runners", &mut cmd)
@@ -135,6 +145,7 @@ fn deploy_runner_base(extra: &[String]) -> Result<()> {
 
     let mut cmd = Command::new("fly");
     cmd.current_dir(infra_dir().join("runners"));
+    // See `deploy_runners` for why `--build-only --push`.
     cmd.args([
         "deploy",
         "--app",
@@ -143,6 +154,8 @@ fn deploy_runner_base(extra: &[String]) -> Result<()> {
         "base",
         "--build-target",
         "base",
+        "--build-only",
+        "--push",
     ]);
     cmd.args(extra);
     run("fly deploy runner base", &mut cmd)?;
