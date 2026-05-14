@@ -101,6 +101,13 @@ impl FlyClient {
                     cpus,
                     memory_mb: cpus * 2048, // 2 GB per vCPU
                 },
+                // Extend the runtime overlayfs so jobs that install
+                // heavy deps at job time (e.g. `sage-precompute-check`
+                // conda-installing Sage ~4 GB into ~/sage-env) have
+                // room to write. The image-unpack ceiling (~8 GB,
+                // separate hard limit) isn't affected — the slim
+                // image still has to fit that on its own.
+                rootfs: SpawnRootfs { size_gb: 30 },
                 auto_destroy: true,
                 restart: SpawnRestart { policy: "no" },
             },
@@ -150,6 +157,7 @@ struct SpawnMachineConfig<'a> {
     env: std::collections::HashMap<&'a str, &'a str>,
     init: SpawnInit,
     guest: SpawnGuest,
+    rootfs: SpawnRootfs,
     auto_destroy: bool,
     restart: SpawnRestart,
 }
@@ -164,6 +172,19 @@ struct SpawnGuest {
     cpu_kind: &'static str,
     cpus: u32,
     memory_mb: u32,
+}
+
+/// Overlayfs sizing for the Machine's writable rootfs space. Maps
+/// to flyctl's `--rootfs-size` flag and to `MachineRootfs.SizeGB`
+/// in superfly/fly-go's `machine_types.go`. Lets jobs install
+/// runtime-heavy deps without filling the default 8 GB.
+///
+/// Separate from the image-unpack ceiling — that hard limit applies
+/// before the overlay is created, so the image itself still has to
+/// fit Fly's 8 GB-uncompressed budget.
+#[derive(Serialize)]
+struct SpawnRootfs {
+    size_gb: u32,
 }
 
 #[derive(Serialize)]

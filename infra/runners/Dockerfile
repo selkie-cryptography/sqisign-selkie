@@ -36,17 +36,18 @@ RUN apt-get update \
 #
 # Fly Machines enforce an 8 GB *uncompressed* image-unpack ceiling
 # at the platform level (separate from per-Machine rootfs sizing).
-# A Sage 10.6 conda env adds ~4-5 GB; with texlive removed and
-# Sage removed, the image stays comfortably under 8 GB and unpacks
-# fine on `shared-cpu-2x`.
+# A Sage 10.6 conda env adds ~4-5 GB; with texlive removed and Sage
+# removed, the image stays well under 8 GB and unpacks fine on
+# `shared-cpu-2x`.
 #
 # Workflows that need these:
-#   - `latex.yml` -> `ubuntu-latest` + `xu-cheng/latex-action` (Docker action).
-#   - `sage-precompute-check` -> `ubuntu-latest` + conda Sage install
-#     (with `actions/cache` for the env).
-#
-# If you ever want them on Fly: install at job time via apt/conda
-# in a workflow step, or build a separate `:base-with-sage` variant.
+#   - `latex.yml` -> `ubuntu-latest` + `xu-cheng/latex-action`
+#     (Docker action — Fly runners have no Docker daemon).
+#   - `sage-precompute-check` -> Fly self-hosted with conda install
+#     at job time. The orchestrator sizes the runtime overlayfs via
+#     `rootfs.size_gb` (see `orchestrator/src/fly.rs`) to leave room
+#     for the ~4 GB conda env, and `actions/cache` keeps warm runs
+#     to ~1-2 min.
 
 # Rustup stable + nightly + clippy/rustfmt. Cross-compile targets
 # stay on GitHub-hosted (Fly is x86_64-linux only).
