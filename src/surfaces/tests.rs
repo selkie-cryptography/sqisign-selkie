@@ -203,10 +203,10 @@ fn theta_product_to_montgomery_matches_formula() {
 /// dumps on either side) into a 32-byte little-endian array suitable for
 /// `Fp::from_bytes` / `Fp2::from_bytes`.
 ///
-/// Selkie's `dump_fp2_hex` and the C reference's `CHAIN_DUMP_FP2` macro
-/// both reverse the encoded LE bytes during printing, so the dumped hex
-/// is big-endian. `Fp::from_bytes` expects the encoded little-endian
-/// form, hence the reverse.
+/// The C reference's `CHAIN_DUMP_FP2` macro reverses the encoded LE
+/// bytes during printing, so the dumped hex is big-endian.
+/// `Fp::from_bytes` expects the encoded little-endian form, hence the
+/// reverse.
 fn fp32_le_from_dump_hex(be_hex: &str) -> [u8; 32] {
     let s = be_hex.strip_prefix("0x").unwrap_or(be_hex);
     let v = hex::decode(s).expect("valid 32-byte hex");
