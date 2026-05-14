@@ -23,6 +23,7 @@ mod neg;
 mod primes;
 mod rand;
 mod resize;
+mod shift;
 mod sqrt;
 mod sub;
 pub(crate) use modular::MontReducer;
@@ -319,36 +320,6 @@ impl<const N: usize> BigInt<N> {
         self.sign &= 1 - is_zero;
     }
 
-    /// Constant-time left shift by `s` bits (multiply by 2^s).
-    ///
-    /// Algorithm 3 (§3.3) from [Kouider et al.][ct-bigint]
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    /// Runs in constant time w.r.t. both the value and the shift amount.
-    pub fn shl(&self, s: u32) -> Self {
-        let limbs = Self::mag_shl(&self.limbs, s);
-        Self {
-            sign: self.sign,
-            limbs,
-        }
-    }
-
-    /// Constant-time right shift by `s` bits (divide by 2^s, rounding
-    /// toward zero).
-    ///
-    /// Algorithm 4 (§3.3) from [Kouider et al.][ct-bigint]
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    pub fn shr(&self, s: u32) -> Self {
-        let limbs = Self::mag_shr(&self.limbs, s);
-        // Canonicalize zero.
-        let is_zero = Self::mag_is_zero(&limbs);
-        Self {
-            sign: self.sign & (1 - is_zero),
-            limbs,
-        }
-    }
-
     /// Constant-time Euclidean division: returns `(quotient, remainder)`
     /// such that `self = quotient * divisor + remainder` with
     /// `0 <= remainder < |divisor|`.
@@ -517,65 +488,6 @@ impl<const N: usize> BigInt<N> {
         let mut i = 0;
         while i < N {
             result[i] = ct_select_u64(a[i], b[i], choice);
-            i += 1;
-        }
-        result
-    }
-
-    /// Constant-time left shift of magnitude by `s` bits.
-    ///
-    /// Algorithm 3 (§3.3) from [Kouider et al.][ct-bigint]
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    fn mag_shl(a: &[u64; N], s: u32) -> [u64; N] {
-        let r = (s % 64) as u64;
-        let j = (s / 64) as usize;
-        let mut result = [0u64; N];
-        // Indicator: 1 while i >= j (within the shifted range).
-        let mut l: u64 = 1;
-        let mut i = N;
-        while i > 0 {
-            i -= 1;
-            // Zero out limbs below the shift boundary.
-            result[i] = ct_select_u64(0, result[i], l);
-            // l transitions to 0 when i < j.
-            l &= (i >= j) as u64;
-            if i >= j {
-                // Shift the source limb and OR in the carry from the lower limb.
-                let src = if i >= j { a[i - j] } else { 0 };
-                let carry = if i > j { a[i - j - 1] } else { 0 };
-                // When r == 0 we must avoid shifting by 64 (undefined).
-                let shifted = if r == 0 {
-                    src
-                } else {
-                    (src << r) | (carry >> (64 - r))
-                };
-                result[i] = ct_select_u64(result[i], shifted, l);
-            }
-        }
-        result
-    }
-
-    /// Constant-time right shift of magnitude by `s` bits.
-    ///
-    /// Algorithm 4 (§3.3) from [Kouider et al.][ct-bigint]
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    fn mag_shr(a: &[u64; N], s: u32) -> [u64; N] {
-        let r = (s % 64) as u64;
-        let j = (s / 64) as usize;
-        let mut result = [0u64; N];
-        let mut i = 0;
-        while i < N {
-            let src_idx = i + j;
-            let carry_idx = i + j + 1;
-            let src = if src_idx < N { a[src_idx] } else { 0 };
-            let carry = if carry_idx < N { a[carry_idx] } else { 0 };
-            result[i] = if r == 0 {
-                src
-            } else {
-                (src >> r) | (carry << (64 - r))
-            };
             i += 1;
         }
         result
