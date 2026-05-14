@@ -11,7 +11,7 @@
 
 use core::{
     cmp::Ordering,
-    ops::{Mul, Neg, Sub},
+    ops::{Mul, Neg},
 };
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
@@ -25,6 +25,7 @@ mod primes;
 mod rand;
 mod resize;
 mod sqrt;
+mod sub;
 pub(crate) use modular::MontReducer;
 
 #[cfg(test)]
@@ -483,26 +484,6 @@ impl<const N: usize> BigInt<N> {
         r.is_zero()
     }
 
-    /// Constant-time unsigned subtraction of magnitudes. Returns `(limbs,
-    /// borrow)`. Borrow is 1 if `a < b` (unsigned).
-    ///
-    /// Same `b1 | b2` simplification as in [`Self::mag_add`] for tighter
-    /// `sbcs` chain codegen.
-    #[inline(always)]
-    const fn mag_sub(a: &[u64; N], b: &[u64; N]) -> ([u64; N], u64) {
-        let mut result = [0u64; N];
-        let mut borrow: u64 = 0;
-        let mut i = 0;
-        while i < N {
-            let (d1, b1) = a[i].overflowing_sub(b[i]);
-            let (d2, b2) = d1.overflowing_sub(borrow);
-            result[i] = d2;
-            borrow = (b1 | b2) as u64;
-            i += 1;
-        }
-        (result, borrow)
-    }
-
     /// Constant-time unsigned magnitude comparison.
     fn mag_cmp(a: &[u64; N], b: &[u64; N]) -> Ordering {
         let mut gt: u64 = 0;
@@ -880,13 +861,6 @@ impl<const N: usize> BigInt<N> {
         result
     }
 
-    /// Constant-time signed subtraction: `self - rhs`.
-    #[inline]
-    pub fn ct_sub(&self, rhs: &Self) -> Self {
-        let neg_rhs = rhs.wrapping_neg();
-        self.ct_add(&neg_rhs)
-    }
-
     /// Constant-time signed multiplication.
     ///
     /// Sign is XOR of input signs (Table 1, §3.1 of [Kouider et
@@ -990,30 +964,6 @@ impl<const N: usize> Ord for BigInt<N> {
 impl<const N: usize> PartialOrd for BigInt<N> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl<const N: usize> Sub for BigInt<N> {
-    type Output = Self;
-    #[inline]
-    fn sub(self, rhs: Self) -> Self {
-        self.ct_sub(&rhs)
-    }
-}
-
-impl<const N: usize> Sub<&BigInt<N>> for BigInt<N> {
-    type Output = Self;
-    #[inline]
-    fn sub(self, rhs: &Self) -> Self {
-        self.ct_sub(rhs)
-    }
-}
-
-impl<const N: usize> Sub<&BigInt<N>> for &BigInt<N> {
-    type Output = BigInt<N>;
-    #[inline]
-    fn sub(self, rhs: &BigInt<N>) -> BigInt<N> {
-        self.ct_sub(rhs)
     }
 }
 
