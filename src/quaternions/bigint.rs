@@ -14,6 +14,7 @@ use core::cmp::Ordering;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 mod add;
+mod bits;
 mod cornacchia;
 mod div;
 mod encoding;
@@ -252,95 +253,11 @@ impl<const N: usize> BigInt<N> {
         }
     }
 
-    /// Constant-time bit-size of the magnitude.
-    ///
-    /// Returns the position of the highest set bit (1-indexed), or 0
-    /// if the value is zero. Iterates over all `N` limbs unconditionally.
-    ///
-    /// Algorithm 2 (§3.2) from [Kouider et al.][ct-bigint]
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    pub fn bitsize(&self) -> u32 {
-        let mut k: u32 = 0;
-        let mut i = N;
-        while i > 0 {
-            i -= 1;
-            let s = nbits64(self.limbs[i]);
-            let r = (k == 0) as u32;
-            let t = r * s;
-            let m = ((k == 0) as u32) & ((s > 0) as u32);
-            k = k + t + (64 * i as u32) * m;
-        }
-        k
-    }
-
-    /// Returns `true` (as `Choice`) if the magnitude is even.
-    #[inline]
-    pub fn is_even(&self) -> Choice {
-        Choice::from(((self.limbs[0] & 1) == 0) as u8)
-    }
-
-    /// Returns `true` (as `Choice`) if the magnitude is odd.
-    #[inline]
-    pub fn is_odd(&self) -> Choice {
-        Choice::from((self.limbs[0] & 1) as u8)
-    }
-
-    /// Constant-time count of trailing zero bits (2-adic valuation).
-    ///
-    /// For zero, returns `N * 64`. Iterates over all `N` limbs and all
-    /// 64 bits per limb unconditionally, with no data-dependent branches
-    /// or memory accesses. Called on secret-derived values in
-    /// `SuitableIdeals` (dyadic valuation of `gcd(u, v)`).
-    ///
-    /// Counterpart to `ibz_two_adic` in the C reference, which delegates
-    /// to GMP's variable-time `mpz_scan1`.
-    pub fn trailing_zeros(&self) -> u32 {
-        let mut k: u32 = 0;
-        let mut found: u32 = 0;
-        let mut i: usize = 0;
-        while i < N {
-            let limb = self.limbs[i];
-            let tz = trailing_zeros(limb);
-            // 1 if `limb != 0`, else 0.
-            let limb_nz = ((limb | limb.wrapping_neg()) >> 63) as u32;
-            // 1 only at the first nonzero limb encountered, low to high.
-            let m = limb_nz & (1 - found);
-            k += m * (64 * i as u32 + tz);
-            found |= limb_nz;
-            i += 1;
-        }
-        // All-zero contract: return `N * 64`.
-        k + (1 - found) * (64 * N as u32)
-    }
-
     /// Normalizes the representation: ensures zero has sign 0.
     #[inline]
     pub fn normalize(&mut self) {
         let is_zero = bool::from(self.is_zero()) as u64;
         self.sign &= 1 - is_zero;
-    }
-
-    /// Returns the 2-adic valuation: the number of trailing zero bits
-    /// in the magnitude. Returns 0 for zero.
-    pub fn two_adic_val(&self) -> u32 {
-        // Count trailing zeros in constant time by iterating all limbs.
-        let mut count: u32 = 0;
-        let mut still_zero = 1u64; // 1 while all limbs so far are zero
-        let mut i = 0;
-        while i < N {
-            let limb = self.limbs[i];
-            // CT trailing zeros for this limb: if limb == 0, contribute 64;
-            // otherwise contribute trailing_zeros(limb).
-            let limb_nonzero = ((limb | limb.wrapping_neg()) >> 63) as u32;
-            let tz = if limb == 0 { 64 } else { limb.trailing_zeros() };
-            // Only count if all previous limbs were zero.
-            count += (still_zero as u32) * tz;
-            // Once we hit a nonzero limb, stop counting.
-            still_zero &= 1 - (limb_nonzero as u64);
-            i += 1;
-        }
-        count
     }
 
     /// Integer exponentiation: `self^exp`.
@@ -415,50 +332,6 @@ impl<const N: usize> BigInt<N> {
             i += 1;
         }
         result
-    }
-
-    /// Effective limb count of a magnitude (index of the highest nonzero
-    /// limb plus one; 0 for an all-zero input).
-    #[inline]
-    pub(super) fn mag_effective_len(a: &[u64; N]) -> usize {
-        let mut i = N;
-        while i > 0 {
-            if a[i - 1] != 0 {
-                return i;
-            }
-            i -= 1;
-        }
-        0
-    }
-
-    /// Variable-time trailing-zero count of a magnitude array.
-    ///
-    /// Returns `N * 64` for an all-zero input. Used by the Stein binary
-    /// GCD where vartime is the design choice.
-    pub(super) fn mag_trailing_zeros(a: &[u64; N]) -> u32 {
-        let mut i = 0;
-        while i < N {
-            if a[i] != 0 {
-                return (i as u32) * 64 + a[i].trailing_zeros();
-            }
-            i += 1;
-        }
-        (N as u32) * 64
-    }
-
-    /// Constant-time bitsize of a magnitude array.
-    pub(super) fn mag_bitsize(a: &[u64; N]) -> u32 {
-        let mut k: u32 = 0;
-        let mut i = N;
-        while i > 0 {
-            i -= 1;
-            let s = nbits64(a[i]);
-            let r = (k == 0) as u32;
-            let t = r * s;
-            let m = ((k == 0) as u32) & ((s > 0) as u32);
-            k = k + t + (64 * i as u32) * m;
-        }
-        k
     }
 }
 
