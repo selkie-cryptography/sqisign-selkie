@@ -9,13 +9,13 @@
 //! [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
 //! [cb]: https://github.com/RustCrypto/crypto-bigint
 
-use core::cmp::Ordering;
-
-use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+use subtle::Choice;
 
 mod add;
 mod bits;
+mod cmp;
 mod cornacchia;
+mod ct;
 mod div;
 mod encoding;
 mod gcd;
@@ -280,59 +280,6 @@ impl<const N: usize> BigInt<N> {
         }
         result
     }
-
-    /// Constant-time unsigned magnitude comparison.
-    pub(super) fn mag_cmp(a: &[u64; N], b: &[u64; N]) -> Ordering {
-        let mut gt: u64 = 0;
-        let mut lt: u64 = 0;
-        let mut i = N;
-        while i > 0 {
-            i -= 1;
-            let undecided = 1 - (gt | lt);
-            gt |= undecided & ct_gt_u64(a[i], b[i]);
-            lt |= undecided & ct_gt_u64(b[i], a[i]);
-        }
-        if gt == 1 {
-            Ordering::Greater
-        } else if lt == 1 {
-            Ordering::Less
-        } else {
-            Ordering::Equal
-        }
-    }
-
-    /// Constant-time unsigned magnitude equality.
-    pub(super) fn mag_eq(a: &[u64; N], b: &[u64; N]) -> u64 {
-        let mut acc = 0u64;
-        let mut i = 0;
-        while i < N {
-            acc |= a[i] ^ b[i];
-            i += 1;
-        }
-        (acc == 0) as u64
-    }
-
-    /// Constant-time unsigned magnitude is-zero test.
-    pub(super) fn mag_is_zero(a: &[u64; N]) -> u64 {
-        let mut acc = 0u64;
-        let mut i = 0;
-        while i < N {
-            acc |= a[i];
-            i += 1;
-        }
-        (acc == 0) as u64
-    }
-
-    /// Constant-time conditional select on limb arrays.
-    pub(super) fn mag_select(a: &[u64; N], b: &[u64; N], choice: u64) -> [u64; N] {
-        let mut result = [0u64; N];
-        let mut i = 0;
-        while i < N {
-            result[i] = ct_select_u64(a[i], b[i], choice);
-            i += 1;
-        }
-        result
-    }
 }
 
 impl<const N: usize> Copy for BigInt<N> where [u64; N]: Copy {}
@@ -358,63 +305,5 @@ impl<const N: usize> From<u64> for BigInt<N> {
 impl<const N: usize> From<i32> for BigInt<N> {
     fn from(val: i32) -> Self {
         Self::from_i64(val as i64)
-    }
-}
-
-impl<const N: usize> ConstantTimeEq for BigInt<N> {
-    fn ct_eq(&self, other: &Self) -> Choice {
-        let both_zero = Self::mag_is_zero(&self.limbs) & Self::mag_is_zero(&other.limbs);
-        let same_sign = ((self.sign ^ other.sign) == 0) as u64;
-        let same_mag = Self::mag_eq(&self.limbs, &other.limbs);
-        Choice::from(((both_zero | (same_sign & same_mag)) != 0) as u8)
-    }
-}
-
-impl<const N: usize> ConditionallySelectable for BigInt<N> {
-    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
-        let c = choice.unwrap_u8() as u64;
-        Self {
-            sign: ct_select_u64(a.sign, b.sign, c),
-            limbs: Self::mag_select(&a.limbs, &b.limbs, c),
-        }
-    }
-}
-
-impl<const N: usize> Eq for BigInt<N> {}
-
-impl<const N: usize> PartialEq for BigInt<N> {
-    fn eq(&self, other: &Self) -> bool {
-        self.ct_eq(other).into()
-    }
-}
-
-impl<const N: usize> Ord for BigInt<N> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let a_neg = bool::from(self.is_negative()) as u64;
-        let b_neg = bool::from(other.is_negative()) as u64;
-        let a_zero = Self::mag_is_zero(&self.limbs);
-        let b_zero = Self::mag_is_zero(&other.limbs);
-
-        let mag_cmp = Self::mag_cmp(&self.limbs, &other.limbs);
-
-        if a_neg == 0 && b_neg == 0 {
-            if a_zero == 1 && b_zero == 1 {
-                Ordering::Equal
-            } else {
-                mag_cmp
-            }
-        } else if a_neg == 1 && b_neg == 1 {
-            mag_cmp.reverse()
-        } else if a_neg == 1 {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    }
-}
-
-impl<const N: usize> PartialOrd for BigInt<N> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
     }
 }
