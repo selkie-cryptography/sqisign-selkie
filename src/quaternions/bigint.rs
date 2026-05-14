@@ -9,7 +9,7 @@
 //! [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
 //! [cb]: https://github.com/RustCrypto/crypto-bigint
 
-use core::{cmp::Ordering, ops::Neg};
+use core::cmp::Ordering;
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
@@ -19,6 +19,7 @@ mod encoding;
 mod gcd;
 mod modular;
 mod mul;
+mod neg;
 mod primes;
 mod rand;
 mod resize;
@@ -309,20 +310,6 @@ impl<const N: usize> BigInt<N> {
         }
         // All-zero contract: return `N * 64`.
         k + (1 - found) * (64 * N as u32)
-    }
-
-    /// Negation. Flips the sign bit.
-    ///
-    /// Table 1 (§3.1) from [Kouider et al.][ct-bigint]: `c_sign = 1 XOR
-    /// a_sign`.
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    #[inline]
-    pub fn wrapping_neg(&self) -> Self {
-        Self {
-            sign: self.sign ^ 1,
-            limbs: self.limbs,
-        }
     }
 
     /// Normalizes the representation: ensures zero has sign 0.
@@ -916,21 +903,5 @@ impl<const N: usize> Ord for BigInt<N> {
 impl<const N: usize> PartialOrd for BigInt<N> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl<const N: usize> Neg for BigInt<N> {
-    type Output = Self;
-    #[inline]
-    fn neg(self) -> Self {
-        self.wrapping_neg()
-    }
-}
-
-impl<const N: usize> Neg for &BigInt<N> {
-    type Output = BigInt<N>;
-    #[inline]
-    fn neg(self) -> BigInt<N> {
-        self.wrapping_neg()
     }
 }
