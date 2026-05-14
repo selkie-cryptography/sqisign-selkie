@@ -9,10 +9,7 @@
 //! [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
 //! [cb]: https://github.com/RustCrypto/crypto-bigint
 
-use core::{
-    cmp::Ordering,
-    ops::{Mul, Neg},
-};
+use core::{cmp::Ordering, ops::Neg};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
@@ -21,6 +18,7 @@ mod cornacchia;
 mod encoding;
 mod gcd;
 mod modular;
+mod mul;
 mod primes;
 mod rand;
 mod resize;
@@ -835,52 +833,6 @@ impl<const N: usize> BigInt<N> {
         }
         k
     }
-
-    /// Schoolbook multiplication of magnitudes, truncated to `N` limbs.
-    ///
-    /// Adapted from Table 1 (§3.1) of [Kouider et al.][ct-bigint] (schoolbook
-    /// limb-by-limb).
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    fn mag_mul(a: &[u64; N], b: &[u64; N]) -> [u64; N] {
-        let mut result = [0u64; N];
-        let mut i = 0;
-        while i < N {
-            let mut carry: u64 = 0;
-            let mut j = 0;
-            while j < N - i {
-                let (lo, hi) = widening_mul(a[i], b[j]);
-                let (s1, c1) = result[i + j].overflowing_add(lo);
-                let (s2, c2) = s1.overflowing_add(carry);
-                result[i + j] = s2;
-                carry = hi + (c1 as u64) + (c2 as u64);
-                j += 1;
-            }
-            i += 1;
-        }
-        result
-    }
-
-    /// Constant-time signed multiplication.
-    ///
-    /// Sign is XOR of input signs (Table 1, §3.1 of [Kouider et
-    /// al.][ct-bigint]).
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    /// Magnitude is schoolbook product, truncated to `N` limbs.
-    pub fn ct_mul(&self, rhs: &Self) -> Self {
-        let result_sign = self.sign ^ rhs.sign;
-        let result_limbs = Self::mag_mul(&self.limbs, &rhs.limbs);
-
-        // Canonicalize zero.
-        let is_zero = Self::mag_is_zero(&result_limbs);
-        let result_sign = result_sign & (1 - is_zero);
-
-        Self {
-            sign: result_sign,
-            limbs: result_limbs,
-        }
-    }
 }
 
 impl<const N: usize> Copy for BigInt<N> where [u64; N]: Copy {}
@@ -964,30 +916,6 @@ impl<const N: usize> Ord for BigInt<N> {
 impl<const N: usize> PartialOrd for BigInt<N> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl<const N: usize> Mul for BigInt<N> {
-    type Output = Self;
-    #[inline]
-    fn mul(self, rhs: Self) -> Self {
-        self.ct_mul(&rhs)
-    }
-}
-
-impl<const N: usize> Mul<&BigInt<N>> for BigInt<N> {
-    type Output = Self;
-    #[inline]
-    fn mul(self, rhs: &Self) -> Self {
-        self.ct_mul(rhs)
-    }
-}
-
-impl<const N: usize> Mul<&BigInt<N>> for &BigInt<N> {
-    type Output = BigInt<N>;
-    #[inline]
-    fn mul(self, rhs: &BigInt<N>) -> BigInt<N> {
-        self.ct_mul(rhs)
     }
 }
 
