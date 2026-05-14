@@ -494,6 +494,21 @@ impl<const N: usize> MontReducer<N> {
 }
 
 impl<const N: usize> BigInt<N> {
+    /// Modular reduction: `self mod modulus`. Returns a value in
+    /// `[0, |modulus|)`.
+    ///
+    /// Uses Euclidean division (Knuth Algorithm D) — see
+    /// [`div_rem`](Self::div_rem) for the underlying routine.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `modulus` is zero.
+    #[inline]
+    pub fn ct_mod(&self, modulus: &Self) -> Self {
+        let (_, r) = self.div_rem(modulus);
+        r
+    }
+
     /// Modular exponentiation: `base^exp mod modulus`.
     ///
     /// Uses Montgomery arithmetic when the modulus is odd (the common
