@@ -97,8 +97,8 @@ fn gluing_codomain_manual_check() {
     let _dual_count = isogeny::get_index_splitting_count(&dual_null);
 }
 
-/// `theta_to_product` (Algorithm 8.44) on a synthetic product null point
-/// must recover the two component Montgomery coefficients exactly.
+/// `EllipticProduct::from(&null)` (Algorithm 8.44) on a synthetic product null
+/// point must recover the two component Montgomery coefficients exactly.
 ///
 /// For a product theta null point `(α₁α₂, α₁β₂, β₁α₂, β₁β₂)` the algorithm
 /// is expected to yield curves with affine coefficients
@@ -125,7 +125,7 @@ fn theta_to_product_recovers_component_coefficients() {
         &beta1 * &beta2,
     );
 
-    let product = isogeny::theta_to_product(&null);
+    let product = EllipticProduct::from(&null);
 
     let four = |x: &Fp2| x.square().square();
     let expected_a = |alpha: &Fp2, beta: &Fp2| {

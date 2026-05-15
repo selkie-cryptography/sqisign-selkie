@@ -269,7 +269,6 @@ impl GluingKernel {
 ///
 /// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5
 struct TranslationData {
-    WX: Fp2,
     WZ: Fp2,
     UX: Fp2,
     UZ: Fp2,
@@ -292,7 +291,6 @@ fn translation_pre_invert(P_prime: &ProjectiveXOnlyPoint) -> TranslationData {
     let UZ = &U * &Z;
     let delta = &WX - &UZ;
     TranslationData {
-        WX,
         WZ,
         UX,
         UZ,

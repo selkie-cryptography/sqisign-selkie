@@ -39,7 +39,7 @@ use crate::{
     curves::montgomery::{
         AffineX, Curve, JacobianPoint, ProjectiveXOnlyPoint, differential_add_and_double,
     },
-    deuring::precomputed::ACTION_MATRICES,
+    deuring::precomputed::ENDOMORPHISM_MATRICES,
     fields::{fp::Fp, fp2::Fp2},
     params::TORSION_EVEN_POWER,
     quaternions::{
@@ -405,9 +405,9 @@ impl TorsionBasis {
         f: TorsionExponent,
     ) -> Option<LeftIdeal<4>> {
         // Action matrices for E₀: [i, j, k, gen2, gen3, gen4].
-        let m_i = &ACTION_MATRICES[0][0];
-        let m_j = &ACTION_MATRICES[0][1];
-        let m_gen4 = &ACTION_MATRICES[0][5];
+        let m_i = &ENDOMORPHISM_MATRICES[0][0];
+        let m_j = &ENDOMORPHISM_MATRICES[0][1];
+        let m_gen4 = &ENDOMORPHISM_MATRICES[0][5];
 
         let modulus = BigInt::<4>::ONE << f.value();
 
@@ -522,19 +522,19 @@ impl TorsionBasis {
     /// *differential* `P − Q` (the [`PmQ`](Self::PmQ) field), not the
     /// second basis point `Q`. C-ref's `ec_biscalar_mul` operates on
     /// the same convention positionally (see `basis.c:422-425`:
-    /// C-ref's `B.Q` slot stores `P − Q`). Selkie's [`ACTION_MATRICES`]
+    /// C-ref's `B.Q` slot stores `P − Q`). Selkie's [`ENDOMORPHISM_MATRICES`]
     /// table is byte-imported from C-ref and is therefore encoded
     /// against this convention — for an endomorphism `θ` with matrix
     /// `M`, applying `biscalar_mul(M[0][0], M[1][0])` yields
     /// `θ(P)`'s spec-permuted decomposition, which is what every
-    /// downstream consumer of `ACTION_MATRICES` expects.
+    /// downstream consumer of `ENDOMORPHISM_MATRICES` expects.
     ///
     /// Both scalars are [`Scalar`]s reduced mod 2^e, where `e` is the
     /// torsion exponent of the basis. Constant-time in the scalar values.
     ///
     /// Implements [LadderBiscalar][Alg. 8.8] ([Alg. 8.8][Alg. 8.8]).
     ///
-    /// [`ACTION_MATRICES`]: crate::deuring::precomputed::ACTION_MATRICES
+    /// [`ENDOMORPHISM_MATRICES`]: crate::deuring::precomputed::ENDOMORPHISM_MATRICES
     /// [Alg. 8.8]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.8
     pub fn biscalar_mul(&self, m: &Scalar, n: &Scalar, e: TorsionExponent) -> ProjectiveXOnlyPoint {
         let kbits = e.value() as usize;
@@ -943,6 +943,16 @@ impl ChangeOfBasisMatrix {
     /// Returns `None` if either basis fails to lift to Jacobian
     /// coordinates (e.g. a recomputed `P − Q` whose sqrt branch is
     /// inconsistent with `P` and `Q`'s y-coordinates).
+    ///
+    /// # X-only sign ambiguity
+    ///
+    /// On x-only inputs the dlogs `(r1, r2, s1, s2)` are only
+    /// determined up to a per-column sign: the matrices `M` and
+    /// `−M` produce x-only-equivalent images. The sqrt branch of
+    /// `lift` resolves this implicitly. Chain consumers go through
+    /// [`Self::mul`], which is itself x-only, so the resulting
+    /// images agree byte-for-byte with C-ref. Code that inspects
+    /// `entries` directly must not assume a textbook sign.
     ///
     /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
     pub fn from_bases(
