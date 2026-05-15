@@ -80,6 +80,7 @@ RUN apt-get update \
       libclang-dev \
       libicu-dev \
       libssl-dev \
+      mold \
       pkg-config \
       python3 \
       python3-pip \
