@@ -257,116 +257,6 @@ jobs:
       - run: cargo nextest run --target ${{ matrix.target }} ${{ matrix.flags || '' }}
       - run: cargo test --doc --target ${{ matrix.target }} ${{ matrix.flags || '' }}
 
-  # KAT matrix selector. Tiny job that runs in parallel with `gate`
-  # and emits the matrix consumed by the `kat` job below:
-  #   - PR: x86_64-linux only (single representative platform).
-  #   - push to main / nightly schedule / manual dispatch: full
-  #     Tier 1 matrix + no-default-features variant.
-  #
-  # `cargo nextest` already parallelizes the ~720-test suite across
-  # the runner's cores (perf-8x = 8 dedicated vCPUs, ~25s wallclock
-  # for the suite). One job per platform/variant.
-  #
-  # x86_64-linux rows route to self-hosted Fly runners
-  # (`[self-hosted, fly, linux, x64, perf-8x]`) on trusted triggers
-  # (push, schedule, dispatch, same-repo PR). Fork PRs route to
-  # GH-hosted `ubuntu-latest` so untrusted cargo build scripts can't
-  # execute on Fly. perf-8x = 8-vCPU dedicated; the orchestrator
-  # reads the size hint from the labels.
-  #
-  # Non-Linux rows (macOS/Windows) and the i686/aarch64 Linux rows
-  # stay on GitHub-hosted runners — Fly only provides x86_64 Linux.
-  kat-matrix:
-    name: Compute KAT matrix
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 2
-    outputs:
-      matrix: ${{ steps.compute.outputs.matrix }}
-    steps:
-      - id: compute
-        env:
-          EVENT: ${{ github.event_name }}
-          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        run: |
-          python3 - <<'PY'
-          import json, os
-          # x86_64-linux on fork PR routes to GH-hosted
-          # (`ubuntu-latest`) so untrusted cargo build scripts
-          # can't execute on Fly self-hosted Machines. Same-repo
-          # PR, push to main, nightly, and dispatch are trusted
-          # and route to Fly perf-8x for speed.
-          event = os.environ["EVENT"]
-          is_pr = event == "pull_request"
-          is_fork_pr = os.environ.get("IS_FORK_PR", "false") == "true"
-          fly_linux_x64 = ["self-hosted", "fly", "linux", "x64", "perf-8x"]
-          linux_x64 = "ubuntu-latest" if is_fork_pr else fly_linux_x64
-          full = [
-              {"os": linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64},
-              # i686-linux disabled: Fly runner image is x86_64-only
-              # (we removed gcc-multilib + i686 rustup target). Re-add
-              # to infra/runners/Dockerfile + uncomment to re-enable.
-              # {"os": "ubuntu-24.04", "target": "i686-unknown-linux-gnu", "bits": 32, "multilib": True},
-              # macOS + Windows rows disabled while the repo is
-              # private. Re-enable once the repo is public.
-              # {"os": "macos-latest", "target": "aarch64-apple-darwin", "bits": 64},
-              # {"os": "windows-latest", "target": "x86_64-pc-windows-msvc", "bits": 64},
-              # {"os": "windows-latest", "target": "i686-pc-windows-msvc", "bits": 32},
-              # aarch64-linux disabled — see comment in `platform`
-              # matrix above for context. Uncomment to re-enable.
-              # {"os": "ubuntu-24.04-arm", "target": "aarch64-unknown-linux-gnu", "bits": 64},
-              {"os": linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64,
-               "variant": "no-default-features", "flags": "--no-default-features"},
-          ]
-          slim = [
-              {"os": linux_x64, "target": "x86_64-unknown-linux-gnu", "bits": 64},
-          ]
-          rows = slim if is_pr else full
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"matrix={json.dumps({'include': rows})}\n")
-          PY
-
-  # KAT (per-vector keygen + sign + verify). On PR runs only on
-  # x86_64-linux; on push to main / nightly / manual dispatch runs
-  # the full Tier 1 matrix.
-  #
-  # Per-KAT sign tests take 30 s – 30 min each depending on the
-  # seed's rejection rate. With nextest parallelism + per-test
-  # timeouts via the `kat` profile, 6 h covers the long tail.
-  kat:
-    name: "KAT tests (${{ matrix.target }}, ${{ matrix.bits }}-bit${{ matrix.variant && format(', {0}', matrix.variant) || '' }})"
-    needs: [gate, kat-matrix]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.kat-matrix.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - name: Install 32-bit multilib (Linux i686)
-        if: matrix.multilib
-        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          key: kat-${{ matrix.target }}-${{ matrix.variant || 'default' }}
-      - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
-        with:
-          tool: cargo-nextest
-      # --run-ignored=all picks up the per-KAT keygen + sign tests.
-      # --cargo-profile kat: optimized build (like release) but keeps
-      # debug_assertions + overflow checks live, so invariants still
-      # trip during long-running KAT trajectories. Defined in
-      # Cargo.toml's [profile.kat]. Debug-mode `BigInt`/`Fp` is
-      # 10-100× slower than release, which dilates the rejection-
-      # sampling tail to hours; the 30-min `slow-timeout` in
-      # `.config/nextest.toml` `[profile.kat]` was sized assuming
-      # release-grade runtime.
-      - run: cargo nextest run --profile kat --run-ignored=all --cargo-profile kat --target ${{ matrix.target }} ${{ matrix.flags || '' }}
-
   # Tier 3 — Informational
   #
   # Deeper analysis that provides useful signal but does not block merge.
@@ -438,11 +328,12 @@ jobs:
 
   kat-report:
     name: KAT report
-    needs: [kat]
-    # Always run on push to main even if `kat` failed — the report
-    # script reads results from the GitHub API and surfaces the
-    # failure on the dashboard. Only fires on main (never PR), so
-    # safe on self-hosted Fly.
+    needs: [gate]
+    # Self-contained: runs `cargo test --lib -- kat_` and
+    # `cargo test --test wycheproof` itself (see
+    # `.github/scripts/kat-report.rs`) and uploads structured
+    # JSON to the CI dashboard. Only fires on main (never PR),
+    # so safe on self-hosted Fly.
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
@@ -472,7 +363,7 @@ jobs:
 
   platform-report:
     name: Platform coverage
-    needs: [platform, kat]
+    needs: [platform]
     # Only fires on main (never PR), so safe on self-hosted Fly.
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, fly, linux, x64]
