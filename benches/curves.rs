@@ -25,18 +25,19 @@ fn kat0_basis_pair() -> (Curve, TorsionBasis, TorsionBasis, TorsionExponent) {
     let (vk, ..) = common::kat0_vk_sig_msg();
     let curve = *vk.curve();
     let hint = BasisHint::from_byte(vk.as_bytes()[64]);
-    let canonical = TorsionBasis::from_hint(&curve, hint);
+    let canonical = TorsionBasis::from_hint(&curve, hint)
+        .expect("KAT[0] hint must recover the canonical 2^f basis on E_pk");
 
     let reduce_e = TORSION_EVEN_POWER - 8;
-    let mut r = canonical.R;
-    let mut s = canonical.S;
-    let mut rs = canonical.RS;
+    let mut p = canonical.P;
+    let mut pmq = canonical.PmQ;
+    let mut q = canonical.Q;
     for _ in 0..(TORSION_EVEN_POWER - reduce_e) {
-        r = r.double();
-        s = s.double();
-        rs = rs.double();
+        p = p.double();
+        pmq = pmq.double();
+        q = q.double();
     }
-    let reduced = TorsionBasis::from_propagated(r, rs, s);
+    let reduced = TorsionBasis::from_propagated(p, pmq, q);
     let e = TorsionExponent::try_from(reduce_e).unwrap();
     (curve, canonical, reduced, e)
 }
