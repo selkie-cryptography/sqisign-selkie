@@ -25,7 +25,7 @@ use crate::{fields::fp2::Fp2, surfaces::GluingMatrix};
 /// point on a product abelian surface `E₁ × E₂`. Multiple
 /// projective representatives exist for the same abstract surface,
 /// related by the symplectic group action. The deterministic
-/// `splitting_isomorphism` (Algorithm 8.42) picks one specific
+/// `From<&ThetaNullPoint> for GluingMatrix` (Algorithm 8.42) picks one specific
 /// representative — but that choice is a function of the kernel,
 /// and so leaks information about the kernel through the
 /// representative actually emitted. Pre-multiplying the splitting

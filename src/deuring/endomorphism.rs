@@ -4,6 +4,10 @@
 //! representing how quaternion order elements act on the torsion
 //! basis E_t[2^f]. Each action is a 2×2 matrix over Z/2^f Z.
 //!
+//! In representation-theoretic language, [`EndomorphismAction`] *is*
+//! the ring homomorphism ρ_t: O_t → M_2(Z/2^f Z) — the Deuring
+//! representation of End(E_t) ≅ O_t on the 2^f-torsion.
+//!
 //! See [§3.2.1.1] of the SQIsign specification.
 //!
 //! [§3.2.1.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.2.1.1
@@ -12,7 +16,11 @@ use subtle::{Choice, ConditionallySelectable};
 
 use crate::{
     curves::{TorsionBasis, TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
-    quaternions::bigint::BigInt,
+    quaternions::{
+        algebra::{Coordinate, Denominator, Element},
+        bigint::BigInt,
+        lattice::Lattice,
+    },
 };
 
 /// A 2×2 matrix over Z/2^f Z representing the action of an
@@ -22,20 +30,15 @@ use crate::{
 /// satisfies: `α(P) = [M[0][0]]P + [M[1][0]]Q` and
 /// `α(Q) = [M[0][1]]P + [M[1][1]]Q`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ActionMatrix {
+pub struct EndomorphismMatrix {
     /// Entries stored row-major: [[a, b], [c, d]].
     entries: [[Scalar; 2]; 2],
 }
 
-impl ActionMatrix {
+impl EndomorphismMatrix {
     /// The zero matrix.
     pub const ZERO: Self = Self {
         entries: [[Scalar::ZERO; 2]; 2],
-    };
-
-    /// The identity matrix.
-    pub const IDENTITY: Self = Self {
-        entries: [[Scalar::ONE, Scalar::ZERO], [Scalar::ZERO, Scalar::ONE]],
     };
 
     /// Creates a matrix from four entries (row-major).
@@ -58,27 +61,6 @@ impl ActionMatrix {
     /// Returns entry at (row, col).
     pub const fn entry(&self, row: usize, col: usize) -> &Scalar {
         &self.entries[row][col]
-    }
-
-    /// Add scalar * other to self, mod 2^f: self += scalar * other.
-    ///
-    /// The `scalar` argument is a `BigInt<4>` because callers in the
-    /// Deuring correspondence pass quaternion coordinates, which are
-    /// `BigInt<4>`.
-    pub fn add_scaled_mod(&self, scalar: &BigInt<4>, other: &Self, f: u32) -> Self {
-        let s = Scalar::from(*scalar);
-        Self {
-            entries: [
-                [
-                    self.entries[0][0].add_mod2k(&s.mul_mod2k(&other.entries[0][0], f), f),
-                    self.entries[0][1].add_mod2k(&s.mul_mod2k(&other.entries[0][1], f), f),
-                ],
-                [
-                    self.entries[1][0].add_mod2k(&s.mul_mod2k(&other.entries[1][0], f), f),
-                    self.entries[1][1].add_mod2k(&s.mul_mod2k(&other.entries[1][1], f), f),
-                ],
-            ],
-        }
     }
 
     /// Matrix-vector multiplication mod `2^f`: `M · [c1, c2]^T`.
@@ -149,7 +131,7 @@ impl ActionMatrix {
     /// sqrt-branch of `projective_difference` is not aligned with
     /// such a history, and a downstream `Kernel::from_montgomery →
     /// kernel.isogeny` chain that depends on it can produce a
-    /// terminal theta null with `count_splitting_indices = 0`.
+    /// terminal theta null with `splitting_index_count() = 0`.
     pub fn apply_scaled_basis(
         &self,
         scalar: &BigInt<4>,
@@ -233,7 +215,7 @@ impl ActionMatrix {
     }
 }
 
-impl ConditionallySelectable for ActionMatrix {
+impl ConditionallySelectable for EndomorphismMatrix {
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         Self {
             entries: [
@@ -250,24 +232,133 @@ impl ConditionallySelectable for ActionMatrix {
     }
 }
 
-/// Precomputed data for one extremal order's curve: the curve,
-/// its torsion basis, and the action matrices for the order's
-/// basis elements.
+/// The action of a maximal order `O_t ≅ End(E_t)` on the
+/// 2^f-torsion of `E_t`.
 ///
-/// For each order O_t with basis (b_{t,1}, ..., b_{t,4}), the
-/// matrices M_{t,u} represent the action of b_{t,u} on E_t[2^f]
-/// with respect to the basis (P_t, Q_t).
+/// Carries the data needed to evaluate the Deuring representation
+/// ρ_t: O_t → M_2(Z/2^f Z) on any element α ∈ O_t:
+///
+/// - [`order`](Self::order): the maximal order `O_t`, used to decompose α from
+///   the `{1, i, j, k}` basis of `B_{p,∞}` onto `O_t`'s column basis.
+/// - [`generators`](Self::generators): the action matrices of the three
+///   non-identity generators (`gen2`, `gen3`, `gen4` — i.e., the 2nd, 3rd, 4th
+///   order-basis elements). The identity for the 1st basis element is
+///   synthesized at evaluation time.
+///
+/// Evaluate via [`Self::apply`].
 ///
 /// See [§3.2.1.1] of the spec.
 ///
 /// [§3.2.1.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.2.1.1
-pub struct CurveEndomorphisms {
-    /// Action matrices for the four basis elements of the order.
-    /// `M[u]` represents the action of the u-th basis element.
-    pub action: [ActionMatrix; 4],
-    // TODO: Add curve (ec_curve_t) and torsion basis (P_t, Q_t)
-    // once we define the bridge between quaternion and curve types.
-    // These require Fp2 coordinates which live in the curves module.
+pub(crate) struct EndomorphismAction {
+    /// The maximal order `O_t ≅ End(E_t)`. The element to be acted
+    /// on is decomposed onto this order's column basis.
+    pub(crate) order: &'static Lattice<4>,
+    /// Action matrices for the three non-identity order generators.
+    pub(crate) generators: [EndomorphismMatrix; 3],
+}
+
+impl EndomorphismAction {
+    /// Apply this representation to `alpha ∈ O_t ≅ End(E_t)`,
+    /// returning the action matrix on `E_t[2^f]`.
+    ///
+    /// Decomposes `alpha` from the `{1, i, j, k}` basis into the
+    /// order's column basis `(c₀, c₁, c₂, c₃)`, then assembles:
+    ///
+    /// `ρ_t(alpha) = c₀·I + c₁·M_{gen2} + c₂·M_{gen3} + c₃·M_{gen4}  (mod 2^f)`
+    ///
+    /// Returns `None` if `alpha ∉ O_t` (decomposition fails).
+    ///
+    /// Implements the matrix-assembly half of
+    /// [IdealToKernel][Alg. 3.14]; the surrounding column-pick step
+    /// (used inside [`super::compute_even_response`]) is inlined at
+    /// the call site.
+    ///
+    /// [Alg. 3.14]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.14
+    pub(crate) fn apply(
+        &self,
+        alpha: &Element<4>,
+        f: TorsionExponent,
+    ) -> Option<EndomorphismMatrix> {
+        // Decompose at width 20 — for p-extremal orders with `q ≥ 5`
+        // the basis entries reach ~250 bits (e.g. q=97 row 1 col 3 ≈
+        // 2^250), and `Lattice::decompose` computes a 4×4 adjugate
+        // whose 3×3 minors accumulate up to ~3·250 = 750 bits. Then
+        // `adjugate · rhs` (rhs ≈ basis_entry ≈ 250 bits) reaches
+        // ~1000 bits before `/ det`. Width 8 silently overflows;
+        // width 20 is comfortable margin for all NIST-I orders. Same
+        // width pitfall as `ExtremalOrder::represent_integer`.
+        let elem_w = Element::<20>::new(
+            Coordinate::from_bigint(alpha.a.as_bigint().widen::<20>()),
+            Coordinate::from_bigint(alpha.b.as_bigint().widen::<20>()),
+            Coordinate::from_bigint(alpha.c.as_bigint().widen::<20>()),
+            Coordinate::from_bigint(alpha.d.as_bigint().widen::<20>()),
+            Denominator::from_bigint_unchecked(BigInt::<4>::from(alpha.denom).widen::<20>()),
+        );
+        let order_w: Lattice<20> = {
+            let basis4 = self.order.basis();
+            let mut basis_w = crate::quaternions::linear::Matrix::<20>::ZERO;
+            for row in 0..4 {
+                for col in 0..4 {
+                    basis_w[row][col] = basis4[row][col].widen::<20>();
+                }
+            }
+            Lattice::new(basis_w, self.order.denom().widen::<20>())
+        };
+        let coords_w = order_w.decompose(&elem_w)?;
+        let coords: [BigInt<4>; 4] = [
+            coords_w[0].narrow_to::<4>()?,
+            coords_w[1].narrow_to::<4>()?,
+            coords_w[2].narrow_to::<4>()?,
+            coords_w[3].narrow_to::<4>()?,
+        ];
+        #[cfg(test)]
+        {
+            crate::selkie_trace!("CREF_FDI coeffs[0]={}", coords[0]);
+            crate::selkie_trace!("CREF_FDI coeffs[1]={}", coords[1]);
+            crate::selkie_trace!("CREF_FDI coeffs[2]={}", coords[2]);
+            crate::selkie_trace!("CREF_FDI coeffs[3]={}", coords[3]);
+        }
+
+        // Reduce all coefficients mod 2^f. For negative coefficients,
+        // ct_mod returns a negative remainder (truncated division),
+        // so add the modulus to get the canonical representative in
+        // [0, 2^f).
+        let modulus = BigInt::<4>::ONE << f.value();
+        let reduce = |c: &BigInt<4>| -> Scalar {
+            let r = c.ct_mod(&modulus);
+            if bool::from(r.is_negative()) {
+                Scalar::from(r.ct_add(&modulus))
+            } else {
+                Scalar::from(r)
+            }
+        };
+
+        let c0_scalar = reduce(&coords[0]);
+        let mut result = EndomorphismMatrix::new(c0_scalar, Scalar::ZERO, Scalar::ZERO, c0_scalar);
+
+        for k in 0..3 {
+            let s = reduce(&coords[k + 1]);
+            let other = &self.generators[k];
+            let fv = f.value();
+            result = EndomorphismMatrix::new(
+                result
+                    .entry(0, 0)
+                    .add_mod2k(&s.mul_mod2k(other.entry(0, 0), fv), fv),
+                result
+                    .entry(0, 1)
+                    .add_mod2k(&s.mul_mod2k(other.entry(0, 1), fv), fv),
+                result
+                    .entry(1, 0)
+                    .add_mod2k(&s.mul_mod2k(other.entry(1, 0), fv), fv),
+                result
+                    .entry(1, 1)
+                    .add_mod2k(&s.mul_mod2k(other.entry(1, 1), fv), fv),
+            );
+        }
+
+        Some(result)
+    }
 }
 
 #[cfg(test)]
@@ -275,24 +366,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn action_matrix_identity() {
-        let id = ActionMatrix::IDENTITY;
-        let c1 = BigInt::<4>::from(7i64);
-        let c2 = BigInt::<4>::from(11i64);
-        let (r0, r1) = id.eval_mod(&c1, &c2, 248);
-        assert_eq!(r0, c1);
-        assert_eq!(r1, c2);
-    }
-
-    #[test]
     fn action_matrix_mul() {
-        let a = ActionMatrix::new(
+        let a = EndomorphismMatrix::new(
             Scalar::from_u64(1),
             Scalar::from_u64(2),
             Scalar::from_u64(3),
             Scalar::from_u64(4),
         );
-        let b = ActionMatrix::new(
+        let b = EndomorphismMatrix::new(
             Scalar::from_u64(5),
             Scalar::from_u64(6),
             Scalar::from_u64(7),

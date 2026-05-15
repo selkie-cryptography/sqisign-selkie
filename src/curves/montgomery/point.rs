@@ -105,7 +105,8 @@ impl ProjectiveXOnlyPoint {
     /// [`DoublingConstants`]).
     ///
     /// Use this for kernel-prep doublings on a curve that came out
-    /// of `theta_to_product` (and whose downstream consumers expect
+    /// of `EllipticProduct::from(&ThetaNullPoint)` (and whose
+    /// downstream consumers expect
     /// the un-normalized rep, like C ref's
     /// `double_couple_point_iter` on a freshly returned
     /// `Fu_codomain.E1`). Required for byte-equality with C ref on

@@ -508,7 +508,7 @@ impl<const W: usize> NrdBasis<W> {
 /// that produced `sv1`; `(order2, parent_ideal2)` is the same for
 /// `sv2`. For the `t = 0` single-order search both pairs are
 /// identical; for the multi-order search they select different
-/// rows of `ACTION_MATRICES` and different `nrd(J_t · I)` scaling
+/// rows of `ENDOMORPHISM_MATRICES` and different `nrd(J_t · I)` scaling
 /// factors downstream. Carrying each β's origin through to the
 /// resulting [`IdealFactor`] keeps the `nrd(β) = degree ·
 /// nrd(parent_ideal)` invariant local to each factor.
@@ -687,7 +687,8 @@ impl<const N: usize> LeftIdeal<N> {
         //   `J_t = connecting_ideal(t)` is the precomputed left-O_0 ideal with
         //   right-order O_t. `pushforward` returns the left-O_t ideal `J_t^{-1} · (J_t
         //   ∩ self)`, which has the same norm as `self` but lives in a different
-        //   lattice — β's enumerated here act on `E_t` via `ACTION_MATRICES[t][*]`.
+        //   lattice — β's enumerated here act on `E_t` via
+        //   `ENDOMORPHISM_MATRICES[t][*]`.
         //
         // The C reference (`dim2id2iso.c:535-609`) does an equivalent
         // multi-order L2 reduction + enumeration via

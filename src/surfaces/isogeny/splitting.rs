@@ -2,9 +2,10 @@
 //! `Jacobian → EllipticProduct`. The domain Jacobian's theta null
 //! point has product structure, allowing recovery of the component
 //! curves and a return to the elliptic-curve setting. Includes the
-//! `SplittingIndex` machinery, the `splitting_isomorphism` normaliser,
-//! and the `theta_to_product` / `theta_product_to_montgomery` final
-//! conversions.
+//! `SplittingIndex` machinery, the [`GluingMatrix`]-from-null
+//! normaliser (Algorithm 8.42, [`From<&ThetaNullPoint> for
+//! GluingMatrix`]), and the [`EllipticProduct`]-from-null /
+//! `theta_product_to_montgomery` final conversions.
 //!
 //! See [§8.5.7] and [§8.5.8].
 //!
@@ -40,7 +41,8 @@ impl SplittingKernel {
     /// Returns the codomain product E₃ × E₄ and the images of `pts`
     /// converted back to Montgomery coordinates, or [`None`] if the
     /// chain's final theta null does not admit a product splitting
-    /// (i.e., [`count_splitting_indices`] is not exactly 1).
+    /// (i.e., [`ThetaNullPoint::splitting_index_count`] is not
+    /// exactly 1).
     ///
     /// Implements `SplittingIsomorphism` + `ThetaToProduct` +
     /// `ThetaProductPointToMontgomery` ([§8.5.7]).
@@ -73,7 +75,7 @@ impl SplittingKernel {
         // correspond to a product of elliptic curves. Anything
         // else is a malformed chain output (see Divergences
         // above).
-        let split_count = count_splitting_indices(&self.domain.null);
+        let split_count = self.domain.null.splitting_index_count();
         if split_count != 1 {
             #[cfg(test)]
             crate::selkie_trace!("    [chain] splitting: zeros={split_count}");
@@ -81,7 +83,7 @@ impl SplittingKernel {
         }
 
         // 1. SplittingIsomorphism: find the matrix M (Algorithm 8.42).
-        let mut M = splitting_isomorphism(&self.domain.null);
+        let mut M = GluingMatrix::from(&self.domain.null);
 
         // Apply a random level-2 normalization matrix when the caller
         // requested randomization. See `NORMALIZATION_TRANSFORMS` for
@@ -102,7 +104,7 @@ impl SplittingKernel {
         let product_null = M.apply_null(&self.domain.null);
 
         // 3. ThetaToProduct: recover (A₁:C₁), (A₂:C₂) (Algorithm 8.44).
-        let product = theta_to_product(&product_null);
+        let product = EllipticProduct::from(&product_null);
 
         // 4. ThetaProductPointToMontgomery for each point (Algorithm 8.45).
         let images = pts
@@ -198,43 +200,44 @@ fn chi(i: usize, j: usize) -> i8 {
     }
 }
 
-/// Counts how many of the 10 `U_{i,j}(0)` coordinates vanish at this
-/// theta null point.
-///
-/// For a chain that ends at a product of elliptic curves, exactly one
-/// `U_{i,j}(0)` is zero (it identifies which product decomposition
-/// applies). Any other count — particularly 0 — signals that the
-/// codomain is not a product and the splitting machinery will produce
-/// bad output if applied.
-pub(crate) fn count_splitting_indices(null: &ThetaNullPoint) -> u32 {
-    let coords = [&null.a, &null.b, &null.c, &null.d];
-    let mut count = 0u32;
-    for &(i, j, _idx) in &SPLITTING_INDICES {
-        let mut U = Fp2::ZERO;
-        for t in 0..4 {
-            let chi_val = chi(i, t) as i64;
-            if chi_val != 0 {
-                let term = coords[j ^ t] * coords[t];
-                if chi_val > 0 {
-                    U = &U + &term;
-                } else {
-                    U = &U - &term;
+impl ThetaNullPoint {
+    /// Counts how many of the 10 `U_{i,j}(0)` coordinates vanish at
+    /// this theta null point.
+    ///
+    /// For a chain that ends at a product of elliptic curves, exactly
+    /// one `U_{i,j}(0)` is zero (it identifies which product
+    /// decomposition applies). Any other count — particularly 0 —
+    /// signals that the codomain is not a product and the splitting
+    /// machinery will produce bad output if applied.
+    pub(crate) fn splitting_index_count(&self) -> u32 {
+        let coords = [&self.a, &self.b, &self.c, &self.d];
+        let mut count = 0u32;
+        for &(i, j, _idx) in &SPLITTING_INDICES {
+            let mut U = Fp2::ZERO;
+            for t in 0..4 {
+                let chi_val = chi(i, t) as i64;
+                if chi_val != 0 {
+                    let term = coords[j ^ t] * coords[t];
+                    if chi_val > 0 {
+                        U = &U + &term;
+                    } else {
+                        U = &U - &term;
+                    }
                 }
             }
+            if U == Fp2::ZERO {
+                count += 1;
+            }
         }
-        if U == Fp2::ZERO {
-            count += 1;
-        }
+        count
     }
-    count
 }
 
-/// Test alias for [`count_splitting_indices`], kept so diagnostic
-/// callers in `surfaces::mod` continue to compile with the original
-/// name.
+/// Test alias kept so diagnostic callers in `surfaces::mod` continue
+/// to compile with the original spec name.
 #[cfg(test)]
 pub(crate) fn get_index_splitting_count(null: &ThetaNullPoint) -> u32 {
-    count_splitting_indices(null)
+    null.splitting_index_count()
 }
 
 /// Find the splitting index such that U_{i,j}(0) = 0
@@ -269,134 +272,146 @@ fn get_index_splitting(null: &ThetaNullPoint) -> SplittingIndex {
     result
 }
 
-/// Compute `SplittingIsomorphism` (Algorithm 8.42).
-///
-/// Returns the 4×4 matrix M whose action on the null point recovers
-/// the product theta structure.
-fn splitting_isomorphism(null: &ThetaNullPoint) -> GluingMatrix {
-    let idx = get_index_splitting(null);
-    let one = Fp2::ONE;
-    let neg = -&one;
-    let zero = Fp2::ZERO;
+impl From<&ThetaNullPoint> for GluingMatrix {
+    /// Compute `SplittingIsomorphism` (Algorithm 8.42).
+    ///
+    /// Returns the 4×4 matrix `M` whose action on `null` recovers the
+    /// product theta structure. Defined only when the input is a
+    /// terminal theta null (exactly one vanishing `U_{i,j}(0)`); the
+    /// caller is expected to gate with
+    /// [`ThetaNullPoint::splitting_index_count`].
+    fn from(null: &ThetaNullPoint) -> Self {
+        let idx = get_index_splitting(null);
+        let one = Fp2::ONE;
+        let neg = -&one;
+        let zero = Fp2::ZERO;
 
-    // The matrices for each (i,j) case come from Algorithm 8.42.
-    // For simplicity, only implement the cases that arise in
-    // Isogeny22Chain (the spec guarantees (i,j) = (0,0) or (1,1)
-    // for SQIsign's chain via Algorithm 8.47).
-    use SplittingIndex::*;
-    GluingMatrix(match idx {
-        I00 => {
-            // C reference: SPLITTING_TRANSFORMS[0] for (i,j) = (0,0).
-            // Uses i = sqrt(-1) in Fp2.
-            let i_val = Fp2::I;
-            let neg_i = -&i_val;
-            [
-                [one, i_val, one, i_val],
-                [one, neg_i, neg, i_val],
-                [one, i_val, neg, neg_i],
-                [neg, i_val, neg, i_val],
-            ]
-        }
-        I10 => [
-            [one, one, one, one],
-            [one, neg, neg, one],
-            [one, one, neg, neg],
-            [neg, one, neg, one],
-        ],
-        I20 => [
-            [one, one, one, one],
-            [one, neg, one, neg],
-            [one, neg, neg, one],
-            [neg, neg, one, one],
-        ],
-        I30 => [
-            [one, one, one, one],
-            [one, neg, one, neg],
-            [one, one, neg, neg],
-            [neg, one, one, neg],
-        ],
-        I01 => [
-            [one, zero, zero, zero],
-            [zero, zero, zero, one],
-            [zero, zero, one, zero],
-            [zero, neg, zero, zero],
-        ],
-        I21 => [
-            [one, one, one, one],
-            [one, neg, one, neg],
-            [one, neg, neg, one],
-            [one, one, neg, neg],
-        ],
-        I02 => [
-            [one, zero, zero, zero],
-            [zero, one, zero, zero],
-            [zero, zero, zero, one],
-            [zero, zero, neg, zero],
-        ],
-        I12 => [
-            [one, zero, zero, zero],
-            [zero, one, zero, zero],
-            [zero, zero, zero, one],
-            [zero, zero, one, zero],
-        ],
-        I03 => [
-            [one, zero, zero, zero],
-            [zero, one, zero, zero],
-            [zero, zero, one, zero],
-            [zero, zero, zero, neg],
-        ],
-        I33 => [
-            [one, zero, zero, zero],
-            [zero, one, zero, zero],
-            [zero, zero, one, zero],
-            [zero, zero, zero, one],
-        ],
-    })
+        // The matrices for each (i,j) case come from Algorithm 8.42.
+        // For simplicity, only implement the cases that arise in
+        // Isogeny22Chain (the spec guarantees (i,j) = (0,0) or (1,1)
+        // for SQIsign's chain via Algorithm 8.47).
+        use SplittingIndex::*;
+        GluingMatrix(match idx {
+            I00 => {
+                // C reference: SPLITTING_TRANSFORMS[0] for (i,j) = (0,0).
+                // Uses i = sqrt(-1) in Fp2.
+                let i_val = Fp2::I;
+                let neg_i = -&i_val;
+                [
+                    [one, i_val, one, i_val],
+                    [one, neg_i, neg, i_val],
+                    [one, i_val, neg, neg_i],
+                    [neg, i_val, neg, i_val],
+                ]
+            }
+            I10 => [
+                [one, one, one, one],
+                [one, neg, neg, one],
+                [one, one, neg, neg],
+                [neg, one, neg, one],
+            ],
+            I20 => [
+                [one, one, one, one],
+                [one, neg, one, neg],
+                [one, neg, neg, one],
+                [neg, neg, one, one],
+            ],
+            I30 => [
+                [one, one, one, one],
+                [one, neg, one, neg],
+                [one, one, neg, neg],
+                [neg, one, one, neg],
+            ],
+            I01 => [
+                [one, zero, zero, zero],
+                [zero, zero, zero, one],
+                [zero, zero, one, zero],
+                [zero, neg, zero, zero],
+            ],
+            I21 => [
+                [one, one, one, one],
+                [one, neg, one, neg],
+                [one, neg, neg, one],
+                [one, one, neg, neg],
+            ],
+            I02 => [
+                [one, zero, zero, zero],
+                [zero, one, zero, zero],
+                [zero, zero, zero, one],
+                [zero, zero, neg, zero],
+            ],
+            I12 => [
+                [one, zero, zero, zero],
+                [zero, one, zero, zero],
+                [zero, zero, zero, one],
+                [zero, zero, one, zero],
+            ],
+            I03 => [
+                [one, zero, zero, zero],
+                [zero, one, zero, zero],
+                [zero, zero, one, zero],
+                [zero, zero, zero, neg],
+            ],
+            I33 => [
+                [one, zero, zero, zero],
+                [zero, one, zero, zero],
+                [zero, zero, one, zero],
+                [zero, zero, zero, one],
+            ],
+        })
+    }
 }
 
-/// Recover Montgomery coefficients from a product theta null point
-/// (Algorithm 8.44).
-///
-/// Constructs each component curve via
-/// `Curve::from(ProjectiveCoefficient)`, preserving the un-reduced
-/// `(A : C)` form that comes out of the formulas (`A = -2(x⁴ + z⁴)`,
-/// `C = x⁴ − z⁴`). The cached `DoublingConstants` is still normalized
-/// to `(A₂₄/C₂₄ : 1)`, so `.double()` produces the normalized
-/// `xDBL_A24` representative used in most downstream code paths.
-///
-/// The original `(A : C)` is still readable via `curve.projective`.
-/// Code paths that need to byte-match C ref's un-normalized `xDBL`
-/// (e.g., the outer-chain prep doublings in `to_isogeny`, where C ref
-/// skips `ec_curve_normalize_A24`) use
-/// [`ProjectiveXOnlyPoint::double_unnormalized`] instead.
-pub(crate) fn theta_to_product(null: &ThetaNullPoint) -> EllipticProduct {
-    use crate::curves::montgomery::ProjectiveCoefficient;
+impl From<&ThetaNullPoint> for EllipticProduct {
+    /// Recover the component Montgomery curves from a product theta
+    /// null point (Algorithm 8.44).
+    ///
+    /// Constructs each component curve via
+    /// `Curve::from(ProjectiveCoefficient)`, preserving the un-reduced
+    /// `(A : C)` form that comes out of the formulas
+    /// (`A = -2(x⁴ + z⁴)`, `C = x⁴ − z⁴`). The cached
+    /// `DoublingConstants` is still normalized to `(A₂₄/C₂₄ : 1)`, so
+    /// `.double()` produces the normalized `xDBL_A24` representative
+    /// used in most downstream code paths.
+    ///
+    /// The original `(A : C)` is still readable via
+    /// `curve.projective`. Code paths that need to byte-match C-ref's
+    /// un-normalized `xDBL` (e.g., the outer-chain prep doublings in
+    /// `to_isogeny`, where C-ref skips `ec_curve_normalize_A24`) use
+    /// [`ProjectiveXOnlyPoint::double_unnormalized`] instead.
+    ///
+    /// Defined only when `null` has product theta structure (`ad =
+    /// bc`); callers must gate by
+    /// [`ThetaNullPoint::splitting_index_count`] returning `1`.
+    fn from(null: &ThetaNullPoint) -> Self {
+        use crate::curves::montgomery::ProjectiveCoefficient;
 
-    let (a, b, c, d) = (&null.a, &null.b, &null.c, &null.d);
+        let (a, b, c, d) = (&null.a, &null.b, &null.c, &null.d);
 
-    // Check product structure: ad == bc.
-    debug_assert!(
-        &(a * d) == &(b * c),
-        "ThetaToProduct: not a product theta structure"
-    );
+        // Check product structure: ad == bc.
+        debug_assert!(
+            &(a * d) == &(b * c),
+            "ThetaToProduct: not a product theta structure"
+        );
 
-    let x = a.square().square(); // a⁴
-    let y = b.square().square(); // b⁴
-    let z = c.square().square(); // c⁴
+        let x = a.square().square(); // a⁴
+        let y = b.square().square(); // b⁴
+        let z = c.square().square(); // c⁴
 
-    // (A₂ : C₂) for E₂: A₂ = -2(x + y), C₂ = x - y
-    let pc2 = ProjectiveCoefficient {
-        A: -&(&(&x + &y) + &(&x + &y)),
-        C: &x - &y,
-    };
+        // (A₂ : C₂) for E₂: A₂ = -2(x + y), C₂ = x - y
+        let pc2 = ProjectiveCoefficient {
+            A: -&(&(&x + &y) + &(&x + &y)),
+            C: &x - &y,
+        };
 
-    // (A₁ : C₁) for E₁: A₁ = -2(x + z), C₁ = x - z
-    let pc1 = ProjectiveCoefficient {
-        A: -&(&(&x + &z) + &(&x + &z)),
-        C: &x - &z,
-    };
+        // (A₁ : C₁) for E₁: A₁ = -2(x + z), C₁ = x - z
+        let pc1 = ProjectiveCoefficient {
+            A: -&(&(&x + &z) + &(&x + &z)),
+            C: &x - &z,
+        };
 
-    EllipticProduct::new(Curve::from(pc1), Curve::from(pc2))
+        EllipticProduct::new(Curve::from(pc1), Curve::from(pc2))
+    }
 }
 
 /// Convert a theta point with product structure to Montgomery

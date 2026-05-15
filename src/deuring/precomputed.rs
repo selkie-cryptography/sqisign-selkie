@@ -7,7 +7,7 @@
 //! Generated from the SQIsign reference implementation's
 //! `endomorphism_action.c` for `lvl1`.
 
-use super::endomorphism::ActionMatrix;
+use super::endomorphism::EndomorphismMatrix;
 
 pub mod torsion_basis {
     //! Torsion basis x-coordinates for all 7 extremal order curves.
@@ -34,7 +34,7 @@ pub mod torsion_basis {
 
     use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-    use super::{ACTION_MATRICES, ActionMatrix};
+    use super::{ENDOMORPHISM_MATRICES, EndomorphismMatrix};
     use crate::fields::{fp::Fp, fp2::Fp2};
 
     /// Index of one of the seven extremal-order curves.
@@ -44,9 +44,8 @@ pub mod torsion_basis {
     /// [`TryFrom<usize>`] to construct at the boundary with an
     /// unbounded index (e.g. the result of `Iterator::position`).
     ///
-    /// Discriminants match the `EXTREMAL_ORDERS` / `ACTION_MATRICES`
-    /// array indexing; [`ExtremalCurve::as_index`] exposes the
-    /// `usize` form for those lookups.
+    /// Discriminants match the `EXTREMAL_ORDERS` / `ENDOMORPHISM_MATRICES`
+    /// array indexing — cast via `self as usize` to get a slot.
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     #[repr(u8)]
     pub enum ExtremalCurve {
@@ -77,12 +76,6 @@ pub mod torsion_basis {
             Self::E5,
             Self::E6,
         ];
-
-        /// Position in the `EXTREMAL_ORDERS` / `ACTION_MATRICES`
-        /// arrays.
-        pub const fn as_index(self) -> usize {
-            self as usize
-        }
 
         /// Torsion basis and Montgomery coefficient.
         ///
@@ -125,7 +118,7 @@ pub mod torsion_basis {
         }
 
         /// The three generator action matrices for this curve:
-        /// `ACTION_MATRICES[self.as_index()][3..6]`.
+        /// `ENDOMORPHISM_MATRICES[self as usize][3..6]`.
         ///
         /// # Constant-time
         ///
@@ -133,15 +126,15 @@ pub mod torsion_basis {
         /// [`Self::basis`]: linear-scan `conditional_select` over all
         /// seven curves, so the index is never used to dereference
         /// secret-dependent memory.
-        pub fn gen_matrices(self) -> [ActionMatrix; 3] {
+        pub fn gen_matrices(self) -> [EndomorphismMatrix; 3] {
             let idx = self as u8;
-            let seed = &ACTION_MATRICES[0];
+            let seed = &ENDOMORPHISM_MATRICES[0];
             let mut out = [seed[3], seed[4], seed[5]];
-            for (i, row) in ACTION_MATRICES.iter().enumerate().skip(1) {
+            for (i, row) in ENDOMORPHISM_MATRICES.iter().enumerate().skip(1) {
                 let matches: Choice = (i as u8).ct_eq(&idx);
-                out[0] = ActionMatrix::conditional_select(&out[0], &row[3], matches);
-                out[1] = ActionMatrix::conditional_select(&out[1], &row[4], matches);
-                out[2] = ActionMatrix::conditional_select(&out[2], &row[5], matches);
+                out[0] = EndomorphismMatrix::conditional_select(&out[0], &row[3], matches);
+                out[1] = EndomorphismMatrix::conditional_select(&out[1], &row[4], matches);
+                out[2] = EndomorphismMatrix::conditional_select(&out[2], &row[5], matches);
             }
             out
         }
@@ -714,17 +707,17 @@ pub mod torsion_basis {
 /// comment on `<TorsionBasis as From<(P, Q)>>::from` for the
 /// underlying memory layout.
 ///
-/// Verified by `action_matrix_consistent_with_basis` (x-only
-/// check against known endomorphism) and `action_matrix_scalar_three`
-/// (decomposition of scalar elements produces the identity matrix).
+/// Decomposition of scalar elements producing the identity matrix
+/// is verified by `action_matrix_scalar_three` and its
+/// alternate-orders variant.
 ///
 /// [`biscalar_mul`]: crate::curves::TorsionBasis::biscalar_mul
 /// [`scalar_mul_add`]: crate::curves::TorsionBasis::scalar_mul_add
 /// [`TorsionBasis`]: crate::curves::TorsionBasis
-pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
+pub const ENDOMORPHISM_MATRICES: [[EndomorphismMatrix; 6]; 7] = [
     // Curve 0
     [
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xC5D3BDA21B5456DB,
                 0x74759780861DDD06,
@@ -750,7 +743,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00354B8E55738073,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x36BAD5FD54900ABF,
                 0x00D14EEA4A59DA0F,
@@ -776,7 +769,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00825D2D3219AFFB,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xB19C16401AF2231B,
                 0xF39A683EE470F713,
@@ -802,7 +795,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00BBAA0395F32A59,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xC5D3BDA21B5456DB,
                 0x74759780861DDD06,
@@ -828,7 +821,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00354B8E55738073,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xFE4749CFB7F230CD,
                 0xBAA37335683BDB8A,
@@ -854,7 +847,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00DBD45DC3C69837,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xD8CE0B200D79118E,
                 0xF9CD341F72387B89,
@@ -883,7 +876,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
     ],
     // Curve 1
     [
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xE4058CEBA8DCEF13,
                 0x3BBE28ACFDA5E2F5,
@@ -909,7 +902,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x006A1098E1CCE6DF,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xB19C16401AF2231B,
                 0xF39A683EE470F713,
@@ -935,7 +928,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00BBAA0395F32A59,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xE776F94C38F88D79,
                 0x867742422D2E2BDF,
@@ -961,7 +954,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x005B44AAB44EAD53,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xE4058CEBA8DCEF13,
                 0x3BBE28ACFDA5E2F5,
@@ -987,7 +980,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x006A1098E1CCE6DF,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xD8CE0B200D79118E,
                 0xF9CD341F72387B89,
@@ -1013,7 +1006,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00DDD501CAF9952C,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x994175298B307029,
                 0x4553E3D77B3F2BE8,
@@ -1042,7 +1035,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
     ],
     // Curve 2
     [
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xE75D52B3A5945FF1,
                 0xD9767D25D267DD09,
@@ -1068,7 +1061,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x008F517B721C176B,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xB19C16401AF2231B,
                 0xF39A683EE470F713,
@@ -1094,7 +1087,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00BBAA0395F32A59,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x56C4C7EF1FBEFFC3,
                 0x1CED36AAFA5C2834,
@@ -1120,7 +1113,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x003D67431097782D,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xE75D52B3A5945FF1,
                 0xD9767D25D267DD09,
@@ -1146,7 +1139,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x008F517B721C176B,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xD8CE0B200D79118E,
                 0xF9CD341F72387B89,
@@ -1172,7 +1165,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00DDD501CAF9952C,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x7E74CC3F1BD65D2B,
                 0xD6D49F84FBA04FEA,
@@ -1201,7 +1194,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
     ],
     // Curve 3
     [
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x415C44557ED2323F,
                 0xCC1176EF42825876,
@@ -1227,7 +1220,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x003A83E0E886EEAA,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x4E63E9BFE50DDCE5,
                 0x0C6597C11B8F08EC,
@@ -1253,7 +1246,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x004455FC6A0CD5A6,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xB6E0C901BE7A7363,
                 0xD659BC42779D6A56,
@@ -1279,7 +1272,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00FC2A06ABED9057,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x415C44557ED2323F,
                 0xCC1176EF42825876,
@@ -1305,7 +1298,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x003A83E0E886EEAA,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x2731F4DFF286EE73,
                 0x0632CBE08DC78476,
@@ -1331,7 +1324,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00222AFE35066AD3,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x490C34A61036CA5B,
                 0x1C171590771BC0ED,
@@ -1360,7 +1353,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
     ],
     // Curve 4
     [
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x206AB453D052900D,
                 0xFB21C57931F2E61D,
@@ -1386,7 +1379,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x0014A72EB80E7C55,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xB19C16401AF2231B,
                 0xF39A683EE470F713,
@@ -1412,7 +1405,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00BBAA0395F32A59,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x89600CFE1B002417,
                 0x222CC00F42D2662E,
@@ -1438,7 +1431,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00E4B3A591A12463,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x206AB453D052900D,
                 0xFB21C57931F2E61D,
@@ -1464,7 +1457,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x0014A72EB80E7C55,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xD8CE0B200D79118E,
                 0xF9CD341F72387B89,
@@ -1490,7 +1483,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00DDD501CAF9952C,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x731AACBF269320F0,
                 0xF8361BCDD8CEB0F3,
@@ -1519,7 +1512,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
     ],
     // Curve 5
     [
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xCD7513E0493127CB,
                 0x9FF95A913DE76846,
@@ -1545,7 +1538,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00C0AD031B47F4BB,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x4E63E9BFE50DDCE5,
                 0x0C6597C11B8F08EC,
@@ -1571,7 +1564,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x004455FC6A0CD5A6,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xEBB2CD7F6DC794DF,
                 0x0C882825811DB290,
@@ -1597,7 +1590,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00CDE115EF95E956,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xCD7513E0493127CB,
                 0x9FF95A913DE76846,
@@ -1623,7 +1616,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00C0AD031B47F4BB,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x2731F4DFF286EE73,
                 0x0632CBE08DC78476,
@@ -1649,7 +1642,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00222AFE35066AD3,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x01EE9A31F187D647,
                 0x9418BFEDEEC2193B,
@@ -1678,7 +1671,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
     ],
     // Curve 6
     [
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xC57273DEB1867177,
                 0xFE177031C0EE9802,
@@ -1704,7 +1697,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00E10A436006E340,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xB19C16401AF2231B,
                 0xF39A683EE470F713,
@@ -1730,7 +1723,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00BBAA0395F32A59,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0x9CBE086C2B021975,
                 0x737ED9A7B1C37576,
@@ -1756,7 +1749,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00F7155E23D3B407,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xC57273DEB1867177,
                 0xFE177031C0EE9802,
@@ -1782,7 +1775,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00E10A436006E340,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xD8CE0B200D79118E,
                 0xF9CD341F72387B89,
@@ -1808,7 +1801,7 @@ pub const ACTION_MATRICES: [[ActionMatrix; 6]; 7] = [
                 0x00DDD501CAF9952C,
             ],
         ),
-        ActionMatrix::from_limbs(
+        EndomorphismMatrix::from_limbs(
             [
                 0xC440BCC48AD184A0,
                 0x784E15C646EA94E1,
