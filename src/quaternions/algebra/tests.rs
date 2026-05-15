@@ -280,22 +280,22 @@ fn equality_across_denominators() {
 
 proptest! {
     #[test]
-    fn element_add_commutative(a in arb_element4(), b in arb_element4()) {
+    fn prop_element_add_commutative(a in arb_element4(), b in arb_element4()) {
         prop_assert_eq!(a.add(&b), b.add(&a));
     }
 
     #[test]
-    fn element_add_associative(a in arb_element4(), b in arb_element4(), c in arb_element4()) {
+    fn prop_element_add_associative(a in arb_element4(), b in arb_element4(), c in arb_element4()) {
         prop_assert_eq!(a.add(&b).add(&c), a.add(&b.add(&c)));
     }
 
     #[test]
-    fn element_add_identity(a in arb_element4()) {
+    fn prop_element_add_identity(a in arb_element4()) {
         prop_assert_eq!(a.add(&Element::ZERO), a);
     }
 
     #[test]
-    fn element_sub_is_add_neg(a in arb_element4(), b in arb_element4()) {
+    fn prop_element_sub_is_add_neg(a in arb_element4(), b in arb_element4()) {
         // a - b should equal a + (-b).
         let neg_b = b.scalar_mul(&BigInt::MINUS_ONE);
         prop_assert_eq!(a.sub(&b), a.add(&neg_b));
@@ -310,20 +310,20 @@ proptest! {
     // conjugation involution.
 
     #[test]
-    fn element_conjugate_involution(a in arb_element4()) {
+    fn prop_element_conjugate_involution(a in arb_element4()) {
         // conj(conj(a)) == a
         prop_assert_eq!(a.conjugate().conjugate(), a);
     }
 
     #[test]
-    fn element_norm_of_conjugate(a in arb_element4()) {
+    fn prop_element_norm_of_conjugate(a in arb_element4()) {
         // nrd(conj(a)) == nrd(a) — uses widening norm() → BigInt<8>.
         prop_assert_eq!(a.norm(), a.conjugate().norm());
     }
 
     /// Conjugation is linear: conj(a + b) == conj(a) + conj(b).
     #[test]
-    fn element_conjugate_linear(a in arb_element4(), b in arb_element4()) {
+    fn prop_element_conjugate_linear(a in arb_element4(), b in arb_element4()) {
         prop_assert_eq!(
             a.add(&b).conjugate(),
             a.conjugate().add(&b.conjugate())
@@ -332,7 +332,7 @@ proptest! {
 
     /// `scalar_mul` distributes: (a + b) * s == a*s + b*s.
     #[test]
-    fn element_scalar_mul_distributive(a in arb_element4(), b in arb_element4(), s in any::<i8>()) {
+    fn prop_element_scalar_mul_distributive(a in arb_element4(), b in arb_element4(), s in any::<i8>()) {
         let scalar = BigInt::from_i64(s as i64);
         prop_assert_eq!(
             a.add(&b).scalar_mul(&scalar),
@@ -342,19 +342,19 @@ proptest! {
 
     /// `scalar_mul` by 1 is identity.
     #[test]
-    fn element_scalar_mul_identity(a in arb_element4()) {
+    fn prop_element_scalar_mul_identity(a in arb_element4()) {
         prop_assert_eq!(a.scalar_mul(&BigInt::ONE), a);
     }
 
     /// `scalar_mul` by 0 is zero.
     #[test]
-    fn element_scalar_mul_zero(a in arb_element4()) {
+    fn prop_element_scalar_mul_zero(a in arb_element4()) {
         prop_assert!(a.scalar_mul(&BigInt::ZERO).is_zero());
     }
 
     /// Norm is non-negative: nrd(a) >= 0 for all a.
     #[test]
-    fn element_norm_nonnegative(a in arb_element4()) {
+    fn prop_element_norm_nonnegative(a in arb_element4()) {
         let (num, den) = a.norm();
         // Both numerator and denominator should be non-negative.
         prop_assert!(!bool::from(num.is_negative()));
