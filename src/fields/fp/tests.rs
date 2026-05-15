@@ -86,84 +86,84 @@ fn sqrt_of_square() {
 
 proptest! {
     #[test]
-    fn fp_add_commutative(a in arb_fp(), b in arb_fp()) {
+    fn prop_fp_add_commutative(a in arb_fp(), b in arb_fp()) {
         prop_assert_eq!(a + b, b + a);
     }
 
     #[test]
-    fn fp_add_associative(a in arb_fp(), b in arb_fp(), c in arb_fp()) {
+    fn prop_fp_add_associative(a in arb_fp(), b in arb_fp(), c in arb_fp()) {
         prop_assert_eq!((a + b) + c, a + (b + c));
     }
 
     #[test]
-    fn fp_add_identity(a in arb_fp()) {
+    fn prop_fp_add_identity(a in arb_fp()) {
         prop_assert_eq!(a + Fp::ZERO, a);
         prop_assert_eq!(Fp::ZERO + a, a);
     }
 
     #[test]
-    fn fp_add_inverse(a in arb_fp()) {
+    fn prop_fp_add_inverse(a in arb_fp()) {
         prop_assert_eq!(a + (-a), Fp::ZERO);
         prop_assert_eq!((-a) + a, Fp::ZERO);
     }
 
     #[test]
-    fn fp_mul_commutative(a in arb_fp(), b in arb_fp()) {
+    fn prop_fp_mul_commutative(a in arb_fp(), b in arb_fp()) {
         prop_assert_eq!(a * b, b * a);
     }
 
     #[test]
-    fn fp_mul_associative(a in arb_fp(), b in arb_fp(), c in arb_fp()) {
+    fn prop_fp_mul_associative(a in arb_fp(), b in arb_fp(), c in arb_fp()) {
         prop_assert_eq!((a * b) * c, a * (b * c));
     }
 
     #[test]
-    fn fp_mul_identity(a in arb_fp()) {
+    fn prop_fp_mul_identity(a in arb_fp()) {
         prop_assert_eq!(a * Fp::ONE, a);
         prop_assert_eq!(Fp::ONE * a, a);
     }
 
     #[test]
-    fn fp_mul_zero(a in arb_fp()) {
+    fn prop_fp_mul_zero(a in arb_fp()) {
         prop_assert_eq!(a * Fp::ZERO, Fp::ZERO);
     }
 
     #[test]
-    fn fp_distributive(a in arb_fp(), b in arb_fp(), c in arb_fp()) {
+    fn prop_fp_distributive(a in arb_fp(), b in arb_fp(), c in arb_fp()) {
         prop_assert_eq!(a * (b + c), a * b + a * c);
     }
 
     #[test]
-    fn fp_sub_is_add_neg(a in arb_fp(), b in arb_fp()) {
+    fn prop_fp_sub_is_add_neg(a in arb_fp(), b in arb_fp()) {
         prop_assert_eq!(a - b, a + (-b));
     }
 
     #[test]
-    fn fp_double_neg(a in arb_fp()) {
+    fn prop_fp_double_neg(a in arb_fp()) {
         prop_assert_eq!(-(-a), a);
     }
 
     #[test]
-    fn fp_serialization_roundtrip(a in arb_fp()) {
+    fn prop_fp_serialization_roundtrip(a in arb_fp()) {
         let bytes = a.to_bytes();
         let b = Fp::from_bytes(&bytes);
         prop_assert_eq!(a, b);
     }
 
     #[test]
-    fn fp_square_equals_mul(a in arb_fp()) {
+    fn prop_fp_square_equals_mul(a in arb_fp()) {
         prop_assert_eq!(a.square(), a * a);
     }
 
     #[test]
-    fn fp_inversion(a in arb_fp()) {
+    fn prop_fp_inversion(a in arb_fp()) {
         // Skip zero (not invertible).
         prop_assume!(!bool::from(a.ct_eq(&Fp::ZERO)));
         prop_assert_eq!(a * a.invert(), Fp::ONE);
     }
 
     #[test]
-    fn fp_sqrt_of_square(a in arb_fp()) {
+    fn prop_fp_sqrt_of_square(a in arb_fp()) {
         let a2 = a.square();
         prop_assert!(bool::from(a2.is_square()));
         let s = a2.sqrt();
@@ -172,7 +172,7 @@ proptest! {
     }
 
     #[test]
-    fn fp_non_square_detected(a in arb_fp()) {
+    fn prop_fp_non_square_detected(a in arb_fp()) {
         // If a is a square, a * non_square should be a non-square
         // (product of QR x QNR = QNR). Use -1 as the QNR since
         // p = 3 (mod 4) implies -1 is not a quadratic residue.

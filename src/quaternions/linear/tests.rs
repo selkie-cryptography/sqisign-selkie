@@ -424,42 +424,42 @@ fn hnf_mod_folds_in_modulus() {
 
 proptest! {
     #[test]
-    fn vector_add_commutative(a in arb_vector4(), b in arb_vector4()) {
+    fn prop_vector_add_commutative(a in arb_vector4(), b in arb_vector4()) {
         prop_assert_eq!(a + b, b + a);
     }
 
     #[test]
-    fn vector_add_associative(a in arb_vector4(), b in arb_vector4(), c in arb_vector4()) {
+    fn prop_vector_add_associative(a in arb_vector4(), b in arb_vector4(), c in arb_vector4()) {
         prop_assert_eq!((a + b) + c, a + (b + c));
     }
 
     #[test]
-    fn vector_sub_is_add_neg(a in arb_vector4(), b in arb_vector4()) {
+    fn prop_vector_sub_is_add_neg(a in arb_vector4(), b in arb_vector4()) {
         prop_assert_eq!(a - b, a + (-b));
     }
 
     #[test]
-    fn vector_double_neg(a in arb_vector4()) {
+    fn prop_vector_double_neg(a in arb_vector4()) {
         prop_assert_eq!(-(-a), a);
     }
 
     #[test]
-    fn vector_dot_commutative(a in arb_vector4(), b in arb_vector4()) {
+    fn prop_vector_dot_commutative(a in arb_vector4(), b in arb_vector4()) {
         prop_assert_eq!(a.dot(&b), b.dot(&a));
     }
 
     #[test]
-    fn vector_dot_zero(a in arb_vector4()) {
+    fn prop_vector_dot_zero(a in arb_vector4()) {
         prop_assert!(bool::from(a.dot(&Vector::ZERO).is_zero()));
     }
 
     #[test]
-    fn vector_eq_reflexive(a in arb_vector4()) {
+    fn prop_vector_eq_reflexive(a in arb_vector4()) {
         prop_assert_eq!(a, a);
     }
 
     #[test]
-    fn vector_ne_different(a in arb_small_bigint4(), b in arb_small_bigint4()) {
+    fn prop_vector_ne_different(a in arb_small_bigint4(), b in arb_small_bigint4()) {
         // Two vectors that differ in one component must not be equal.
         let v1 = Vector::new(a, BigInt::ZERO, BigInt::ZERO, BigInt::ZERO);
         let v2 = Vector::new(b, BigInt::ZERO, BigInt::ZERO, BigInt::ZERO);
@@ -481,46 +481,46 @@ fn scalar_matrix(s: BigInt<4>) -> Matrix<4> {
 
 proptest! {
     #[test]
-    fn matrix_transpose_involution(a in arb_matrix4()) {
+    fn prop_matrix_transpose_involution(a in arb_matrix4()) {
         prop_assert_eq!(a.transpose().transpose(), a);
     }
 
     #[test]
-    fn matrix_mul_identity(a in arb_matrix4()) {
+    fn prop_matrix_mul_identity(a in arb_matrix4()) {
         prop_assert_eq!(a.mat_mul(&Matrix::IDENTITY), a);
         prop_assert_eq!(Matrix::IDENTITY.mat_mul(&a), a);
     }
 
     #[test]
-    fn matrix_mul_associative(a in arb_matrix4(), b in arb_matrix4(), c in arb_matrix4()) {
+    fn prop_matrix_mul_associative(a in arb_matrix4(), b in arb_matrix4(), c in arb_matrix4()) {
         prop_assert_eq!(a.mat_mul(&b).mat_mul(&c), a.mat_mul(&b.mat_mul(&c)));
     }
 
     #[test]
-    fn matrix_eval_identity(v in arb_vector4()) {
+    fn prop_matrix_eval_identity(v in arb_vector4()) {
         prop_assert_eq!(Matrix::<4>::IDENTITY.eval(&v), v);
     }
 
     #[test]
-    fn matrix_eval_linearity(m in arb_matrix4(), u in arb_vector4(), v in arb_vector4()) {
+    fn prop_matrix_eval_linearity(m in arb_matrix4(), u in arb_vector4(), v in arb_vector4()) {
         // M(u + v) == M(u) + M(v)
         prop_assert_eq!(m.eval(&(u + v)), m.eval(&u) + m.eval(&v));
     }
 
     #[test]
-    fn matrix_eval_composition(a in arb_matrix4(), b in arb_matrix4(), v in arb_vector4()) {
+    fn prop_matrix_eval_composition(a in arb_matrix4(), b in arb_matrix4(), v in arb_vector4()) {
         // (A * B)(v) == A(B(v))
         prop_assert_eq!(a.mat_mul(&b).eval(&v), a.eval(&b.eval(&v)));
     }
 
     #[test]
-    fn matrix_det_of_transpose(a in arb_matrix4()) {
+    fn prop_matrix_det_of_transpose(a in arb_matrix4()) {
         // det(A^T) == det(A)
         prop_assert_eq!(a.transpose().det(), a.det());
     }
 
     #[test]
-    fn matrix_adjugate_identity(a in arb_matrix4()) {
+    fn prop_matrix_adjugate_identity(a in arb_matrix4()) {
         // A * adj(A) == det(A) * I
         let product = a.mat_mul(&a.adjugate());
         let det_i = scalar_matrix(a.det());
@@ -528,7 +528,7 @@ proptest! {
     }
 
     #[test]
-    fn matrix_transpose_of_product(a in arb_matrix4(), b in arb_matrix4()) {
+    fn prop_matrix_transpose_of_product(a in arb_matrix4(), b in arb_matrix4()) {
         // (A * B)^T == B^T * A^T
         prop_assert_eq!(
             a.mat_mul(&b).transpose(),

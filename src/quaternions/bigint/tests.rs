@@ -729,79 +729,79 @@ fn arb_small_bigint4() -> impl Strategy<Value = BigInt<4>> {
 
 proptest! {
     #[test]
-    fn bigint_add_commutative(a in arb_bigint4(), b in arb_bigint4()) {
+    fn prop_bigint_add_commutative(a in arb_bigint4(), b in arb_bigint4()) {
         prop_assert_eq!(a + b, b + a);
     }
 
     // Uses small values to avoid overflow — BigInt<4> addition wraps on
     // 256-bit overflow, breaking associativity for full-range inputs.
     #[test]
-    fn bigint_add_associative(a in arb_small_bigint4(), b in arb_small_bigint4(), c in arb_small_bigint4()) {
+    fn prop_bigint_add_associative(a in arb_small_bigint4(), b in arb_small_bigint4(), c in arb_small_bigint4()) {
         prop_assert_eq!((a + b) + c, a + (b + c));
     }
 
     #[test]
-    fn bigint_add_identity(a in arb_bigint4()) {
+    fn prop_bigint_add_identity(a in arb_bigint4()) {
         prop_assert_eq!(a + BigInt::ZERO, a);
         prop_assert_eq!(BigInt::ZERO + a, a);
     }
 
     #[test]
-    fn bigint_add_inverse(a in arb_bigint4()) {
+    fn prop_bigint_add_inverse(a in arb_bigint4()) {
         prop_assert_eq!(a + (-a), BigInt::ZERO);
         prop_assert_eq!((-a) + a, BigInt::ZERO);
     }
 
     #[test]
-    fn bigint_sub_is_add_neg(a in arb_bigint4(), b in arb_bigint4()) {
+    fn prop_bigint_sub_is_add_neg(a in arb_bigint4(), b in arb_bigint4()) {
         prop_assert_eq!(a - b, a + (-b));
     }
 
     #[test]
-    fn bigint_double_neg(a in arb_bigint4()) {
+    fn prop_bigint_double_neg(a in arb_bigint4()) {
         prop_assert_eq!(-(-a), a);
     }
 
     #[test]
-    fn bigint_mul_commutative(a in arb_small_bigint4(), b in arb_small_bigint4()) {
+    fn prop_bigint_mul_commutative(a in arb_small_bigint4(), b in arb_small_bigint4()) {
         prop_assert_eq!(a * b, b * a);
     }
 
     #[test]
-    fn bigint_mul_identity(a in arb_bigint4()) {
+    fn prop_bigint_mul_identity(a in arb_bigint4()) {
         prop_assert_eq!(a * BigInt::ONE, a);
         prop_assert_eq!(BigInt::ONE * a, a);
     }
 
     #[test]
-    fn bigint_mul_zero(a in arb_bigint4()) {
+    fn prop_bigint_mul_zero(a in arb_bigint4()) {
         prop_assert_eq!(a * BigInt::ZERO, BigInt::ZERO);
     }
 
     #[test]
-    fn bigint_mul_minus_one(a in arb_bigint4()) {
+    fn prop_bigint_mul_minus_one(a in arb_bigint4()) {
         prop_assert_eq!(a * BigInt::MINUS_ONE, -a);
     }
 
     #[test]
-    fn bigint_distributive(a in arb_small_bigint4(), b in arb_small_bigint4(), c in arb_small_bigint4()) {
+    fn prop_bigint_distributive(a in arb_small_bigint4(), b in arb_small_bigint4(), c in arb_small_bigint4()) {
         prop_assert_eq!(a * (b + c), a * b + a * c);
     }
 
     #[test]
-    fn bigint_mul_associative(a in arb_small_bigint4(), b in arb_small_bigint4(), c in arb_small_bigint4()) {
+    fn prop_bigint_mul_associative(a in arb_small_bigint4(), b in arb_small_bigint4(), c in arb_small_bigint4()) {
         prop_assert_eq!((a * b) * c, a * (b * c));
     }
 
     #[test]
-    fn bigint_abs_nonnegative(a in arb_bigint4()) {
+    fn prop_bigint_abs_nonnegative(a in arb_bigint4()) {
         let abs_a = a.abs();
         // abs(a) is non-negative (sign == 0) unless a is zero.
         prop_assert!(!bool::from(abs_a.is_negative()) || bool::from(abs_a.is_zero()));
     }
 
     #[test]
-    fn bigint_abs_idempotent(a in arb_bigint4()) {
+    fn prop_bigint_abs_idempotent(a in arb_bigint4()) {
         prop_assert_eq!(a.abs().abs(), a.abs());
     }
 }
@@ -809,7 +809,7 @@ proptest! {
 // Division and GCD properties.
 proptest! {
     #[test]
-    fn bigint_div_rem_identity(a in arb_small_bigint4(), d in arb_small_bigint4()) {
+    fn prop_bigint_div_rem_identity(a in arb_small_bigint4(), d in arb_small_bigint4()) {
         // a = q * d + r, with 0 <= r < |d|.
         prop_assume!(!bool::from(d.is_zero()));
         let (q, r) = a.div_rem(&d);
@@ -817,19 +817,19 @@ proptest! {
     }
 
     #[test]
-    fn bigint_div_rem_remainder_nonnegative(a in arb_small_bigint4(), d in arb_small_bigint4()) {
+    fn prop_bigint_div_rem_remainder_nonnegative(a in arb_small_bigint4(), d in arb_small_bigint4()) {
         prop_assume!(!bool::from(d.is_zero()));
         let (_, r) = a.div_rem(&d);
         prop_assert!(!bool::from(r.is_negative()));
     }
 
     #[test]
-    fn bigint_gcd_commutative(a in arb_small_bigint4(), b in arb_small_bigint4()) {
+    fn prop_bigint_gcd_commutative(a in arb_small_bigint4(), b in arb_small_bigint4()) {
         prop_assert_eq!(a.gcd(&b), b.gcd(&a));
     }
 
     #[test]
-    fn bigint_gcd_divides_both(a in arb_small_bigint4(), b in arb_small_bigint4()) {
+    fn prop_bigint_gcd_divides_both(a in arb_small_bigint4(), b in arb_small_bigint4()) {
         let g = a.gcd(&b);
         if !bool::from(g.is_zero()) {
             let (_, ra) = a.div_rem(&g);
@@ -840,13 +840,13 @@ proptest! {
     }
 
     #[test]
-    fn bigint_gcd_with_zero(a in arb_small_bigint4()) {
+    fn prop_bigint_gcd_with_zero(a in arb_small_bigint4()) {
         // gcd(a, 0) = |a|.
         prop_assert_eq!(a.gcd(&BigInt::ZERO), a.abs());
     }
 
     #[test]
-    fn bigint_gcd_idempotent(a in arb_small_bigint4()) {
+    fn prop_bigint_gcd_idempotent(a in arb_small_bigint4()) {
         // gcd(a, a) = |a|.
         prop_assert_eq!(a.gcd(&a), a.abs());
     }
@@ -855,31 +855,31 @@ proptest! {
 // Shift and valuation properties.
 proptest! {
     #[test]
-    fn bigint_shl_shr_roundtrip(a in arb_small_bigint4(), k in 0u32..64) {
+    fn prop_bigint_shl_shr_roundtrip(a in arb_small_bigint4(), k in 0u32..64) {
         // (a << k) >> k == a for small a where no bits are lost.
         let shifted = (a << k) >> k;
         prop_assert_eq!(shifted, a);
     }
 
     #[test]
-    fn bigint_shl_zero(a in arb_bigint4()) {
+    fn prop_bigint_shl_zero(a in arb_bigint4()) {
         prop_assert_eq!(a << 0, a);
     }
 
     #[test]
-    fn bigint_shr_zero(a in arb_bigint4()) {
+    fn prop_bigint_shr_zero(a in arb_bigint4()) {
         prop_assert_eq!(a >> 0, a);
     }
 
     #[test]
-    fn bigint_two_adic_val_of_power_of_two(k in 1u32..200) {
+    fn prop_bigint_two_adic_val_of_power_of_two(k in 1u32..200) {
         // v_2(2^k) = k.
         let val = BigInt::<4>::ONE << k;
         prop_assert_eq!(val.two_adic_val(), k);
     }
 
     #[test]
-    fn bigint_two_adic_val_of_odd(a in arb_small_bigint4()) {
+    fn prop_bigint_two_adic_val_of_odd(a in arb_small_bigint4()) {
         // An odd number has v_2 = 0.
         prop_assume!(!bool::from(a.is_zero()));
         let odd = (a.abs() << 1) + BigInt::ONE; // 2|a| + 1 is always odd
