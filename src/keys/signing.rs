@@ -1157,7 +1157,7 @@ impl SigningKey {
             // resulting `I_inter` is no longer the same ideal as the
             // C reference's `lideal_aux_resp_com`. The downstream
             // kernel-isotropy condition in `SplitAuxiliaryIsogeny`
-            // breaks (`count_splitting_indices = 0` on every input).
+            // breaks (`splitting_index_count() = 0` on every input).
             // Keeping width 8 fits `~2^257` norms with room to spare.
             let i_com_rsp = match i_com_rsp_w.narrow_to::<8>() {
                 Some(i) => i,
@@ -1298,7 +1298,7 @@ impl SigningKey {
                 // `(u, v, β₁, β₂)` decomposition differs from what the
                 // C reference produces — `SplitAuxiliaryIsogeny`'s
                 // kernel-isotropy condition then fails with
-                // `count_splitting_indices = 0`.
+                // `splitting_index_count() = 0`.
                 let (e_aux_prime, p_aux_prime, q_aux_prime, pmq_aux_prime) =
                     match i_inter_w.to_isogeny(rng) {
                         Some(r) => {
@@ -1865,7 +1865,7 @@ pub(crate) fn compute_challenge_isogeny(
 /// fourth return value. Recomputing them via `projective_difference`
 /// at this site picks a sqrt branch that is not aligned with the
 /// chain's evaluation history, and the resulting kernel produces a
-/// terminal theta null with `count_splitting_indices = 0`.
+/// terminal theta null with `splitting_index_count() = 0`.
 ///
 /// Returns `(E_aux, P_aux, Q_aux, E_chl, P_chl, Q_chl)`.
 ///
@@ -1938,15 +1938,16 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     // the chain's expected order. Our `Kernel::isogeny` always
     // computes exactly `e` doubling-down steps before gluing, so
     // any extra torsion shifts the strategy bottom away from the
-    // gluing's required 8-torsion level — `count_splitting_indices`
-    // returns 0 and the chain returns `None`.
+    // gluing's required 8-torsion level —
+    // `ThetaNullPoint::splitting_index_count` returns 0 and the
+    // chain returns `None`.
     //
     // The kernel `PmQ` projective reps come from `pmq1`/`pmq2`
     // inputs, scaled alongside `P` and `Q` to keep the projective
     // history aligned. Recomputing via `projective_difference` on
     // post-scaling kernel points picks a sqrt branch that the
     // chain's `lift_basis` then rejects, again surfacing as
-    // `count_splitting_indices = 0`.
+    // `splitting_index_count() = 0`.
     //
     // # Divergences
     //

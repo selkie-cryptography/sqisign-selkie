@@ -1,7 +1,7 @@
 // TODO: Consider moving the network-dependent test (c_ref_basis_cross_check)
 // to an integration test in tests/.
 
-use precomputed::{ACTION_MATRICES, torsion_basis};
+use precomputed::{ENDOMORPHISM_MATRICES, torsion_basis};
 
 use super::*;
 use crate::{
@@ -12,54 +12,6 @@ use crate::{
 /// Pinned commit of the SQIsign C reference implementation.
 /// Used by cross-check tests that fetch precomputed data.
 const C_REF_COMMIT: &str = "91e9e464fe5400192d13e1f9240cbf180200a103";
-
-#[test]
-fn action_matrix_via_trait() {
-    let elem = Element::<4>::from_i64(1, 0, 0, 0);
-    let basis_matrices: [ActionMatrix; 4] = [
-        ACTION_MATRICES[0][0],
-        ACTION_MATRICES[0][1],
-        ACTION_MATRICES[0][2],
-        ACTION_MATRICES[0][3],
-    ];
-    use crate::curves::TorsionExponent;
-    let m = elem.action_matrix(&basis_matrices, TorsionExponent::FULL);
-    assert_eq!(*m.entry(0, 0), *ACTION_MATRICES[0][0].entry(0, 0));
-    assert_eq!(*m.entry(1, 1), *ACTION_MATRICES[0][0].entry(1, 1));
-}
-
-#[test]
-fn action_matrix_linear_combination() {
-    let a = Element::<4>::from_i64(1, 0, 0, 0);
-    let b = Element::<4>::from_i64(0, 1, 0, 0);
-    let ab = Element::<4>::from_i64(1, 1, 0, 0);
-
-    let basis_matrices: [ActionMatrix; 4] = [
-        ACTION_MATRICES[0][0],
-        ACTION_MATRICES[0][1],
-        ACTION_MATRICES[0][2],
-        ACTION_MATRICES[0][3],
-    ];
-    use crate::curves::TorsionExponent;
-    let f = TorsionExponent::FULL;
-
-    let m_a = a.action_matrix(&basis_matrices, f);
-    let m_b = b.action_matrix(&basis_matrices, f);
-    let m_ab = ab.action_matrix(&basis_matrices, f);
-
-    for row in 0..2 {
-        for col in 0..2 {
-            let sum = m_a
-                .entry(row, col)
-                .add_mod2k(m_b.entry(row, col), f.value());
-            assert_eq!(
-                sum,
-                *m_ab.entry(row, col),
-                "linearity failed at [{row}][{col}]"
-            );
-        }
-    }
-}
 
 #[test]
 fn torsion_basis_points_on_e0() {
@@ -302,7 +254,7 @@ fn c_ref_all_bases_cross_check() {
     const BLOCKS_PER_CURVE: usize = 20;
 
     for curve in torsion_basis::ExtremalCurve::ALL {
-        let t = curve.as_index();
+        let t = curve as usize;
         let base = t * BLOCKS_PER_CURVE;
 
         let c_ref_px_re = convert(&blocks[base + 8]);
@@ -341,9 +293,9 @@ fn c_ref_all_bases_cross_check() {
 fn action_matrix_nontrivial_element() {
     let order = &EXTREMAL_ORDERS[0];
     let gen_matrices = [
-        ACTION_MATRICES[0][3],
-        ACTION_MATRICES[0][4],
-        ACTION_MATRICES[0][5],
+        ENDOMORPHISM_MATRICES[0][3],
+        ENDOMORPHISM_MATRICES[0][4],
+        ENDOMORPHISM_MATRICES[0][5],
     ];
     let f = TorsionExponent::FULL;
 
@@ -388,9 +340,14 @@ fn action_matrix_nontrivial_element() {
         Coordinate::from_bigint(BigInt::ZERO),
         Denominator::TWO,
     );
-    let m_computed = action_matrix(&gen3_elem, order.order(), &gen_matrices, f)
-        .expect("action_matrix should succeed for gen3");
-    let m_precomp = &ACTION_MATRICES[0][4]; // gen3
+    let endo = EndomorphismAction {
+        order: order.order(),
+        generators: gen_matrices,
+    };
+    let m_computed = endo
+        .apply(&gen3_elem, f)
+        .expect("apply should succeed for gen3");
+    let m_precomp = &ENDOMORPHISM_MATRICES[0][4]; // gen3
 
     crate::selkie_trace!(
         "gen3 computed[0][0] == precomp[0][0]: {}",
@@ -407,78 +364,25 @@ fn action_matrix_nontrivial_element() {
     );
 }
 
-/// Documents an inconsistency between standard `(P, Q)`-basis matrix
-/// semantics and the spec-permuted application convention SQIsign
-/// inherited from its C reference.
-///
-/// The textbook reading of an action matrix
-/// `M_θ = [[m00, m01], [m10, m11]]` for an endomorphism `θ` is
-/// "`θ(P) = m00·P + m10·Q`". This test asserts exactly that: take
-/// `M_i` for the `i: (x, y) → (-x, iy)` endomorphism on E₀, apply
-/// column 0 via [`eval_decomposition`], and expect `i(P₀) = (−x_P, …)`.
-///
-/// **The assertion does not hold.** Production code (and C-ref)
-/// applies action matrices via [`biscalar_mul`], which on this
-/// codebase computes `[m]·P + [n]·(P − Q)` — *not* `[m]·P + [n]·Q`
-/// — because the SQIsign spec stores torsion bases in the
-/// permuted-slot layout `(P, P−Q, Q)` and the biladder reads slot 2
-/// positionally (see [`biscalar_mul`] doc + `basis.c:422-425` in the
-/// C reference). The `ACTION_MATRICES` table is byte-imported from
-/// C-ref and is calibrated *for that non-standard application*, so
-/// applying column 0 standardly does not recover `θ(P)`.
-///
-/// Sign/verify byte-equality with C-ref is the load-bearing invariant
-/// — both implementations apply matrices via the spec-permuted
-/// convention and agree on the resulting (non-textbook) point. The
-/// test is left here as documentation of the discrepancy; a future
-/// "matrices in standard `(P, Q)` basis" rework would need to
-/// `T = [[1,1],[0,-1]]`-transform every entry of `ACTION_MATRICES`
-/// at build time.
-///
-/// [`eval_decomposition`]: crate::curves::TorsionBasis::eval_decomposition
-/// [`biscalar_mul`]: crate::curves::TorsionBasis::biscalar_mul
-#[test]
-#[ignore = "documents the standard-vs-spec-permuted matrix-basis mismatch; see fn doc"]
-fn action_matrix_consistent_with_basis() {
-    use crate::curves::{
-        TorsionBasis,
-        montgomery::{Curve, ProjectiveXOnlyPoint},
-        scalar::Scalar,
-    };
-
-    let p0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_P_X, &Curve::E0);
-    let q0 = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_Q_X, &Curve::E0);
-    let basis = TorsionBasis::from((p0, q0));
-
-    let m_i = &ACTION_MATRICES[0][0];
-
-    let a = Scalar::from_limbs(*m_i.entry(0, 0).as_limbs());
-    let b = Scalar::from_limbs(*m_i.entry(1, 0).as_limbs());
-    let result = basis.eval_decomposition(&a, &b);
-
-    let neg_px = -torsion_basis::E0_P_X;
-    let i_of_p = ProjectiveXOnlyPoint::from_affine_x(neg_px, &Curve::E0);
-
-    assert_eq!(
-        result, i_of_p,
-        "M_i · (1, 0)^T applied to basis does not match i(P₀)"
-    );
-}
-
 /// Action matrix for θ=3 (scalar element) should produce [3]P.
 ///
-/// This tests whether action_matrix(3·1) produces the identity
-/// matrix scaled by 3, as expected for a scalar endomorphism.
+/// This tests whether `Element::action_matrix(3·1)` produces the
+/// identity matrix scaled by 3, as expected for a scalar
+/// endomorphism.
 #[test]
 fn action_matrix_scalar_three() {
     let order = &EXTREMAL_ORDERS[0];
     let elem = Element::<4>::from_i64(3, 0, 0, 0);
-    let gen_matrices = [
-        ACTION_MATRICES[0][3],
-        ACTION_MATRICES[0][4],
-        ACTION_MATRICES[0][5],
-    ];
-    let m = action_matrix(&elem, order.order(), &gen_matrices, TorsionExponent::FULL)
+    let endo = EndomorphismAction {
+        order: order.order(),
+        generators: [
+            ENDOMORPHISM_MATRICES[0][3],
+            ENDOMORPHISM_MATRICES[0][4],
+            ENDOMORPHISM_MATRICES[0][5],
+        ],
+    };
+    let m = endo
+        .apply(&elem, TorsionExponent::FULL)
         .expect("decompose should succeed for scalar element");
 
     // For θ = 3·1, the action matrix should be 3·I = [[3,0],[0,3]].
@@ -491,19 +395,23 @@ fn action_matrix_scalar_three() {
 
 /// Action matrix for θ=3 (scalar element) on O_t (t > 0) should
 /// also produce 3·I. Probes whether the q ≥ 5 paths in
-/// `action_matrix` (decompose at width 8) and `ACTION_MATRICES[t]`
+/// `action_matrix` (decompose at width 8) and `ENDOMORPHISM_MATRICES[t]`
 /// (the `gen_matrices` table) are correct.
 #[test]
 fn action_matrix_scalar_three_alternate_orders() {
     for t in 1..crate::quaternions::precomputed::NUM_EXTREMAL_ORDERS {
         let order = &EXTREMAL_ORDERS[t];
         let elem = Element::<4>::from_i64(3, 0, 0, 0);
-        let gen_matrices = [
-            ACTION_MATRICES[t][3],
-            ACTION_MATRICES[t][4],
-            ACTION_MATRICES[t][5],
-        ];
-        let m = action_matrix(&elem, order.order(), &gen_matrices, TorsionExponent::FULL)
+        let endo = EndomorphismAction {
+            order: order.order(),
+            generators: [
+                ENDOMORPHISM_MATRICES[t][3],
+                ENDOMORPHISM_MATRICES[t][4],
+                ENDOMORPHISM_MATRICES[t][5],
+            ],
+        };
+        let m = endo
+            .apply(&elem, TorsionExponent::FULL)
             .expect("decompose should succeed for scalar element");
         let three = Scalar::from_u64(3);
         assert_eq!(*m.entry(0, 0), three, "t={t}: m00 should be 3");
@@ -587,7 +495,7 @@ fn all_torsion_bases_on_curve() {
     use crate::curves::montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint};
 
     for curve_idx in torsion_basis::ExtremalCurve::ALL {
-        let t = curve_idx.as_index();
+        let t = curve_idx as usize;
         let (px, qx, _pmq_x, a) = curve_idx.basis();
         let curve = Curve::from(Coefficient::from(a));
         let p = ProjectiveXOnlyPoint::from_affine_x(px, &curve);
@@ -644,7 +552,7 @@ fn alternate_curves_pmq_consistent() {
     // Q flips which is which.
     let f = TorsionExponent::FULL.value();
     for curve_idx in &torsion_basis::ExtremalCurve::ALL[1..] {
-        let t = curve_idx.as_index();
+        let t = *curve_idx as usize;
         let (px, qx, pmq_x, a) = curve_idx.basis();
         let curve = Curve::from(Coefficient::from(a));
 
@@ -700,9 +608,9 @@ fn alternate_curves_pmq_consistent() {
 fn action_matrix_composition_equals_direct() {
     let order = &EXTREMAL_ORDERS[0];
     let gen_matrices = [
-        ACTION_MATRICES[0][3],
-        ACTION_MATRICES[0][4],
-        ACTION_MATRICES[0][5],
+        ENDOMORPHISM_MATRICES[0][3],
+        ENDOMORPHISM_MATRICES[0][4],
+        ENDOMORPHISM_MATRICES[0][5],
     ];
     let f = TorsionExponent::FULL;
     let fv = f.value();
@@ -742,18 +650,25 @@ fn action_matrix_composition_equals_direct() {
             Denominator::from_bigint_unchecked(BigInt::<4>::from_i64(*dn2)),
         );
 
-        let m_beta1 = action_matrix(&beta1, order.order(), &gen_matrices, f)
-            .unwrap_or_else(|| panic!("case {n}: action_matrix(β₁) failed"));
-        let m_beta2 = action_matrix(&beta2, order.order(), &gen_matrices, f)
-            .unwrap_or_else(|| panic!("case {n}: action_matrix(β₂) failed"));
+        let endo = EndomorphismAction {
+            order: order.order(),
+            generators: gen_matrices,
+        };
+        let m_beta1 = endo
+            .apply(&beta1, f)
+            .unwrap_or_else(|| panic!("case {n}: apply(β₁) failed"));
+        let m_beta2 = endo
+            .apply(&beta2, f)
+            .unwrap_or_else(|| panic!("case {n}: apply(β₂) failed"));
 
         // Route A: matrix composition, M_{β₂} · adj(M_{β₁}).
         let m_composed = m_beta2.mat_mul_mod(&m_beta1.adjugate_mod(fv), fv);
 
-        // Route B: direct action_matrix on the quaternion product.
+        // Route B: direct apply on the quaternion product.
         let theta = beta2.mul(&beta1.conjugate());
-        let m_direct = action_matrix(&theta, order.order(), &gen_matrices, f)
-            .unwrap_or_else(|| panic!("case {n}: action_matrix(θ) failed"));
+        let m_direct = endo
+            .apply(&theta, f)
+            .unwrap_or_else(|| panic!("case {n}: apply(θ) failed"));
 
         for row in 0..2 {
             for col in 0..2 {
