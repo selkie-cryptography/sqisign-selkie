@@ -57,70 +57,70 @@ fn roundtrip_bytes() {
 
 proptest! {
     #[test]
-    fn fp2_add_commutative(a in arb_fp2(), b in arb_fp2()) {
+    fn prop_fp2_add_commutative(a in arb_fp2(), b in arb_fp2()) {
         prop_assert_eq!(a + b, b + a);
     }
 
     #[test]
-    fn fp2_add_associative(a in arb_fp2(), b in arb_fp2(), c in arb_fp2()) {
+    fn prop_fp2_add_associative(a in arb_fp2(), b in arb_fp2(), c in arb_fp2()) {
         prop_assert_eq!((a + b) + c, a + (b + c));
     }
 
     #[test]
-    fn fp2_add_identity(a in arb_fp2()) {
+    fn prop_fp2_add_identity(a in arb_fp2()) {
         prop_assert_eq!(a + Fp2::ZERO, a);
     }
 
     #[test]
-    fn fp2_mul_commutative(a in arb_fp2(), b in arb_fp2()) {
+    fn prop_fp2_mul_commutative(a in arb_fp2(), b in arb_fp2()) {
         prop_assert_eq!(a * b, b * a);
     }
 
     #[test]
-    fn fp2_mul_associative(a in arb_fp2(), b in arb_fp2(), c in arb_fp2()) {
+    fn prop_fp2_mul_associative(a in arb_fp2(), b in arb_fp2(), c in arb_fp2()) {
         prop_assert_eq!((a * b) * c, a * (b * c));
     }
 
     #[test]
-    fn fp2_mul_identity(a in arb_fp2()) {
+    fn prop_fp2_mul_identity(a in arb_fp2()) {
         prop_assert_eq!(a * Fp2::ONE, a);
     }
 
     #[test]
-    fn fp2_distributive(a in arb_fp2(), b in arb_fp2(), c in arb_fp2()) {
+    fn prop_fp2_distributive(a in arb_fp2(), b in arb_fp2(), c in arb_fp2()) {
         prop_assert_eq!(a * (b + c), a * b + a * c);
     }
 
     #[test]
-    fn fp2_sub_is_add_neg(a in arb_fp2(), b in arb_fp2()) {
+    fn prop_fp2_sub_is_add_neg(a in arb_fp2(), b in arb_fp2()) {
         prop_assert_eq!(a - b, a + (-b));
     }
 
     #[test]
-    fn fp2_double_neg(a in arb_fp2()) {
+    fn prop_fp2_double_neg(a in arb_fp2()) {
         prop_assert_eq!(-(-a), a);
     }
 
     #[test]
-    fn fp2_square_equals_mul(a in arb_fp2()) {
+    fn prop_fp2_square_equals_mul(a in arb_fp2()) {
         prop_assert_eq!(a.square(), a * a);
     }
 
     #[test]
-    fn fp2_inversion(a in arb_fp2()) {
+    fn prop_fp2_inversion(a in arb_fp2()) {
         prop_assume!(!bool::from(a.ct_eq(&Fp2::ZERO)));
         prop_assert_eq!(a * a.invert(), Fp2::ONE);
     }
 
     #[test]
-    fn fp2_conjugate_mul_is_norm(a in arb_fp2()) {
+    fn prop_fp2_conjugate_mul_is_norm(a in arb_fp2()) {
         // a * conj(a) should be a real element (imaginary part zero).
         let n = a * a.conjugate();
         prop_assert_eq!(n, n.conjugate());
     }
 
     #[test]
-    fn fp2_norm_multiplicative(a in arb_fp2(), b in arb_fp2()) {
+    fn prop_fp2_norm_multiplicative(a in arb_fp2(), b in arb_fp2()) {
         // norm(a*b) == norm(a) * norm(b), where norm = a * conj(a).
         let norm_a = a * a.conjugate();
         let norm_b = b * b.conjugate();
@@ -129,14 +129,14 @@ proptest! {
     }
 
     #[test]
-    fn fp2_conjugate_anti_automorphism(a in arb_fp2(), b in arb_fp2()) {
+    fn prop_fp2_conjugate_anti_automorphism(a in arb_fp2(), b in arb_fp2()) {
         // conj(a * b) == conj(b) * conj(a)
         // (for commutative Fp2 this equals conj(a) * conj(b))
         prop_assert_eq!((a * b).conjugate(), a.conjugate() * b.conjugate());
     }
 
     #[test]
-    fn fp2_serialization_roundtrip(a in arb_fp2()) {
+    fn prop_fp2_serialization_roundtrip(a in arb_fp2()) {
         let bytes = a.to_bytes();
         let b = Fp2::from_bytes(&bytes);
         prop_assert_eq!(a, b);

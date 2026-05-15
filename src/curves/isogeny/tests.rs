@@ -139,7 +139,7 @@ fn arb_curve() -> impl Strategy<Value = Curve> {
 proptest! {
     /// c0 and c1 must both be nonzero for any curve.
     #[test]
-    fn two_isogeny_singular_constants_nonzero(curve in arb_curve()) {
+    fn prop_two_isogeny_singular_constants_nonzero(curve in arb_curve()) {
         let iso = TwoIsogenySingular::from_curve(&curve);
         prop_assert!(!bool::from(iso.c0.ct_eq(&Fp2::ZERO)));
         prop_assert!(!bool::from(iso.c1.ct_eq(&Fp2::ZERO)));
@@ -147,7 +147,7 @@ proptest! {
 
     /// The codomain j-invariant must differ from the domain's.
     #[test]
-    fn two_isogeny_singular_changes_j(curve in arb_curve()) {
+    fn prop_two_isogeny_singular_changes_j(curve in arb_curve()) {
         let iso = TwoIsogenySingular::from_curve(&curve);
         prop_assert_ne!(curve.j_invariant(), iso.codomain.j_invariant());
     }
