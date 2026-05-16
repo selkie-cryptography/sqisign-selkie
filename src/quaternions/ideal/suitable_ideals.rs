@@ -44,6 +44,10 @@ pub(crate) struct IdealFactor<const N: usize> {
     /// it through [`LeftIdeal::norm`] on this field rather than
     /// reaching for the caller-supplied ideal whose norm no longer
     /// matches β after the reduction step.
+    // reason: read-side wiring is documented but not yet hooked up
+    // downstream; the field is assigned/copied so the invariant
+    // travels with each factor.
+    #[allow(dead_code)]
     pub(crate) parent_ideal: LeftIdeal<N>,
 }
 

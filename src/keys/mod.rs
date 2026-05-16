@@ -269,24 +269,6 @@ impl core::ops::Deref for ChallengeMatrix {
     }
 }
 
-impl ChallengeMatrix {
-    /// Compute the challenge matrix from two torsion bases via the
-    /// Tate pairing ([Alg. 2.5][Alg. 2.5]).
-    ///
-    /// [Alg. 2.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.5
-    pub(crate) fn encode(
-        full_basis: &TorsionBasis,
-        target_basis: &TorsionBasis,
-        e: TorsionExponent,
-    ) -> Option<Self> {
-        Some(Self(crate::curves::ChangeOfBasisMatrix::from_bases(
-            full_basis,
-            target_basis,
-            e,
-        )?))
-    }
-}
-
 impl From<crate::curves::ChangeOfBasisMatrix> for ChallengeMatrix {
     fn from(m: crate::curves::ChangeOfBasisMatrix) -> Self {
         Self(m)
