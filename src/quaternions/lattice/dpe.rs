@@ -172,29 +172,6 @@ impl DoublePlusExponent {
         r
     }
 
-    /// Approximate `f64` value. May overflow to ±inf for very
-    /// large exponents.
-    pub fn to_f64(self) -> f64 {
-        if self.m == 0.0 {
-            return 0.0;
-        }
-        ldexp(self.m, self.e as i32)
-    }
-
-    /// Absolute value (matches `dpe_abs`).
-    pub fn abs(self) -> Self {
-        Self {
-            m: self.m.abs(),
-            e: self.e,
-        }
-    }
-
-    /// Round the represented value to the nearest integer (as
-    /// `f64`). For values that fit in `i64`, this is exact.
-    pub fn round(self) -> f64 {
-        self.to_f64().round()
-    }
-
     fn normalize(mut self) -> Self {
         if self.m == 0.0 {
             self.e = 0;

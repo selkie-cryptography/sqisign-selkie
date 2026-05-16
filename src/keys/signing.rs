@@ -1886,23 +1886,6 @@ type SplitResult = (
     ProjectiveXOnlyPoint,
 );
 
-/// Returns the smallest `k` such that `x^(2^k) = 1`, capped at `max`.
-///
-/// Used by [`split_auxiliary_isogeny`]'s pairing diagnostics to
-/// quantify how non-Lagrangian a kernel is.
-#[cfg(test)]
-fn log2_order_fp2(x: &Fp2, max: u32) -> i32 {
-    use subtle::ConstantTimeEq;
-    let mut y = *x;
-    for k in 0..=max {
-        if bool::from(y.ct_eq(&Fp2::ONE)) {
-            return k as i32;
-        }
-        y = y.square();
-    }
-    -1
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     e1: &Curve,

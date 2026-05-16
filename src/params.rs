@@ -6,7 +6,7 @@
 //! [§4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.2
 //! [§5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.5.2
 
-use crate::quaternions::bigint::{BigInt, MontReducer};
+use crate::quaternions::bigint::BigInt;
 
 /// Security parameter λ = 128.
 pub const SECURITY_BITS: u32 = 128;
@@ -15,6 +15,9 @@ pub const SECURITY_BITS: u32 = 128;
 ///
 /// The cofactor c = 5 and the 2-valuation f = 248, so p = c · 2^f − 1.
 /// p ≡ 3 (mod 4), which gives us i² = −1 in F_{p²}.
+// reason: NIST-I parameter set constant, kept on the public API surface
+// even though no internal code path references it.
+#[allow(dead_code)]
 pub const COFACTOR: u64 = 5;
 
 /// The 2-valuation f of p + 1: the largest integer such that 2^f divides p + 1.
@@ -118,17 +121,10 @@ pub const D_MIX: BigInt<9> = BigInt::from_limbs([0x4B, 0, 0, 0, 0, 0, 0, 0, 1]);
 
 /// `D_mix` widened to 18 limbs — the working width for `pow_mod_w::<18>`
 /// chains. Same value as [`D_MIX`], zero-padded.
+// reason: used by benches/bigint.rs (lib build doesn't see benches).
+#[allow(dead_code)]
 pub const D_MIX_W18: BigInt<18> =
     BigInt::from_limbs([0x4B, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-
-/// Precomputed Montgomery reducer for `D_mix` at width 18, built at
-/// compile time. Eliminates the runtime `MontReducer::new` cost
-/// (Newton iteration for `n_inv` + `128·N` doublings for `R²`) for
-/// every pow_mod / Miller-Rabin / Cornacchia call against `D_mix`.
-///
-/// Use directly via `D_MIX_W18_MOD.pow(base, exp)`, or pass to any
-/// `*_with_ctx` API that accepts a `&MontReducer<18>`.
-pub(crate) const D_MIX_W18_MOD: MontReducer<18> = MontReducer::const_new(&D_MIX_W18);
 
 use crate::fields::{fp::Fp, fp2::Fp2};
 
@@ -189,6 +185,12 @@ pub const BASIS_E0_Q_X: Fp2 = Fp2::new(
 ///
 /// Precomputed from `projective_difference(P₀, Q₀)` on E₀.
 /// Stored in Montgomery form, radix-51 representation.
+// reason: public spec constant; production E₀ paths recompute the
+// difference on the fly, so the only consumers are the round-trip
+// tests in `params.rs` and the bench/test fixtures in
+// `deuring/tests.rs` + `curves/pairing.rs::tests` that verify the
+// precomputed value matches `projective_difference(P₀, Q₀)`.
+#[allow(dead_code)]
 pub const BASIS_E0_PMQ_X: Fp2 = Fp2::new(
     Fp::from_limbs([
         270480358487834,

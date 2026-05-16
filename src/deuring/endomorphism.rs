@@ -35,6 +35,13 @@ pub struct EndomorphismMatrix {
     entries: [[Scalar; 2]; 2],
 }
 
+// reason: the matrix-algebra surface (`ZERO`, `det_mod`,
+// `apply_scaled`, `apply_to_basis`) is part of the public type but
+// not currently reached from any production path — keygen/sign route
+// through `EndomorphismAction::apply` and the propagated-PmQ
+// `apply_scaled_basis` variant. Kept as a stable surface for
+// downstream consumers (`expose-internals`).
+#[allow(dead_code)]
 impl EndomorphismMatrix {
     /// The zero matrix.
     pub const ZERO: Self = Self {
