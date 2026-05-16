@@ -842,3 +842,20 @@ fn intersection_via_kernel_lcm_diagonal() {
         "L1 ∩ L2: expected covolume 12^4 / denom^4 (det={det:?}, denom={denom:?})"
     );
 }
+
+/// Exercises [`ExtremalOrder::from_raw_limbs`] at runtime so it shows
+/// up in `cargo llvm-cov` coverage. Every production call site is a
+/// `const` initializer in [`crate::quaternions::precomputed`], so the
+/// compiler folds the work into the binary and the runtime
+/// instrumentation never sees it. This `#[test]` calls it with
+/// non-const inputs to force a runtime execution.
+#[test]
+fn from_raw_limbs_smoke() {
+    let denom = (0u64, [1u64, 0, 0, 0]);
+    let zero = (0u64, [0u64; 4]);
+    // Diagonal-ish basis with denominator slot at basis[0][0] = 1.
+    let basis = [[denom, zero, zero, zero]; 4];
+    let z = [zero; 4];
+    let order = ExtremalOrder::<4>::from_raw_limbs(basis, z, 0);
+    assert_eq!(order.q(), 0);
+}
