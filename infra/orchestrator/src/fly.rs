@@ -2,8 +2,11 @@
 //!
 //! API reference: <https://fly.io/docs/machines/api/>
 
+use std::time::{Duration, SystemTime};
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const FLY_API_BASE: &str = "https://api.machines.dev/v1";
 
@@ -145,11 +148,121 @@ impl FlyClient {
             resp.json().await.context("parse Machines API response")?;
         Ok(MachineId(parsed.id))
     }
+
+    /// List every Machine in the bound app. Used by the reaper to
+    /// find leaked / stale-image runner Machines.
+    pub async fn list_machines(&self) -> Result<Vec<Machine>> {
+        let url = format!("{FLY_API_BASE}/apps/{}/machines", self.app);
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .with_context(|| format!("send GET {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
+            anyhow::bail!("GET {url} returned HTTP {status}; body: {body}");
+        }
+
+        resp.json().await.context("parse Machines list response")
+    }
+
+    /// Force-destroy a Machine. Equivalent to `flyctl machine destroy
+    /// --force`: skips graceful shutdown and removes the Machine
+    /// immediately. The reaper only ever targets Machines it has
+    /// already classified as zombies, so the runner-side shutdown
+    /// dance has no value here.
+    pub async fn destroy_machine(&self, id: &MachineId) -> Result<()> {
+        let url = format!(
+            "{FLY_API_BASE}/apps/{}/machines/{}?force=true",
+            self.app, id.0
+        );
+        let resp = self
+            .http
+            .delete(&url)
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .with_context(|| format!("send DELETE {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
+            anyhow::bail!("DELETE {url} returned HTTP {status}; body: {body}");
+        }
+        Ok(())
+    }
 }
 
 /// Opaque Machine identifier returned by the Fly Machines API.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MachineId(pub String);
+
+/// Subset of `GET /v1/apps/<app>/machines` response fields the reaper
+/// needs. The full payload has many more fields; deserializing only
+/// what is used keeps the schema decoupled from upstream churn.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Machine {
+    /// Machine identifier (e.g. `9080d1ddc21078`).
+    pub id: MachineId,
+    /// RFC 3339 timestamp at which Fly created the Machine record,
+    /// e.g. `2026-05-15T17:22:25Z`. Parsed lazily by
+    /// [`Machine::created_at_systemtime`].
+    pub created_at: String,
+    /// Container image the Machine is running. The reaper compares
+    /// `image_ref.digest` across Machines to detect stale-image
+    /// survivors after an image rollover.
+    pub image_ref: MachineImageRef,
+}
+
+impl Machine {
+    /// Parses `created_at` into a [`SystemTime`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `created_at` is not valid RFC 3339 or if
+    /// the parsed instant is before the Unix epoch (which Fly never
+    /// emits in practice, but the conversion would still fail).
+    pub fn created_at_systemtime(&self) -> Result<SystemTime> {
+        let dt = OffsetDateTime::parse(&self.created_at, &Rfc3339)
+            .with_context(|| format!("parse created_at: {}", self.created_at))?;
+        let secs =
+            u64::try_from(dt.unix_timestamp()).context("created_at predates the Unix epoch")?;
+        Ok(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
+    }
+
+    /// Returns how long ago this Machine was created, relative to
+    /// `now`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `created_at` fails to parse or is in the
+    /// future relative to `now` (impossible in normal operation, but
+    /// would indicate clock skew between the orchestrator and Fly).
+    pub fn age(&self, now: SystemTime) -> Result<Duration> {
+        let created = self.created_at_systemtime()?;
+        now.duration_since(created)
+            .context("Machine created_at is in the future")
+    }
+}
+
+/// Image reference fields the reaper inspects.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MachineImageRef {
+    /// Content-addressable image digest (e.g.
+    /// `sha256:3b266fd9…`). Reapers compare digests across Machines
+    /// to detect a rollover.
+    pub digest: String,
+}
 
 // Request/response shapes for `POST /v1/apps/<app>/machines`.
 // See <https://fly.io/docs/machines/api/> for field semantics.
