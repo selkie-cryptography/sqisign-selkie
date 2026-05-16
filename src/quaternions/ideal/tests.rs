@@ -55,12 +55,9 @@ fn primality_w9_vs_w20_at_aux_magnitude() {
 }
 
 /// Timing benchmark for `represent_integer` at aux-path
-/// magnitudes (`M ≈ 2^377`). Run with
-/// `cargo test --lib --release represent_integer_aux_magnitude
-///   -- --ignored --nocapture` and read the elapsed time
-/// printed on success.
+/// magnitudes (`M ≈ 2^377`). Run with `--nocapture` to read the
+/// elapsed time printed on success.
 #[test]
-#[ignore]
 fn represent_integer_aux_magnitude() {
     let order = ExtremalOrder::<8>::from(EXTREMAL_ORDERS[0]);
     // Simulate the aux-path input: `m = QUAT_PRIME_COFACTOR`
@@ -345,7 +342,6 @@ fn random_norm_lattice_actually_has_norm() {
 /// ideal for the chosen composite). It's a harness for future
 /// iteration more than an assertion of current behavior.
 #[test]
-#[ignore] // Takes ~20 minutes; run explicitly with --include-ignored.
 fn suitable_ideals_composite_norm_smoke() {
     // Try a few small composites (products of coprime odd primes).
     // `random_norm` with composite norm has high rejection rate

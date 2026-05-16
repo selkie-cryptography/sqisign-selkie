@@ -9,7 +9,7 @@ use sqisign_selkie::{
         montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
     },
-    params::{BASIS_E0_P_X, BASIS_E0_PMQ_X, BASIS_E0_Q_X, TORSION_EVEN_POWER},
+    params::{BASIS_E0_P_X, BASIS_E0_Q_X, TORSION_EVEN_POWER},
 };
 
 fn main() {
@@ -72,7 +72,7 @@ fn xadd(bencher: divan::Bencher) {
     let curve = Curve::E0;
     let P = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_P_X, &curve);
     let Q = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_Q_X, &curve);
-    let PmQ = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_PMQ_X, &curve);
+    let PmQ = ProjectiveXOnlyPoint::from_affine_x(common::BASIS_E0_PMQ_X, &curve);
     bencher.bench(|| {
         divan::black_box(&P).differential_add(divan::black_box(&Q), divan::black_box(&PmQ))
     });
