@@ -1,8 +1,17 @@
-use sqisign_selkie::{params::D_MIX_W18, quaternions::bigint::BigInt};
+use sqisign_selkie::quaternions::bigint::BigInt;
 
 fn main() {
     divan::main();
 }
+
+/// Commitment-isogeny degree `D_mix = 2^512 + 75` at width 18 — the
+/// fixed modulus the [`is_probable_prime_d_mix`] bench targets.
+///
+/// Mirrors the value the production signing flow uses; lives here
+/// rather than in `params` because nothing in the library reads it
+/// (production uses `BigInt<9>`-sized `D_mix` directly).
+const D_MIX_W18: BigInt<18> =
+    BigInt::from_limbs([0x4B, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
 fn sample_a() -> BigInt<4> {
     BigInt::from_limbs([

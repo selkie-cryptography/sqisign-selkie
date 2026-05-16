@@ -1,12 +1,14 @@
 #![allow(non_snake_case)]
 
+mod common;
+
 use sqisign_selkie::{
     curves::{
         TorsionBasis, TorsionExponent,
         montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
     },
-    params::{BASIS_E0_P_X, BASIS_E0_PMQ_X, BASIS_E0_Q_X, TORSION_EVEN_POWER},
+    params::{BASIS_E0_P_X, BASIS_E0_Q_X, TORSION_EVEN_POWER},
     surfaces::{EllipticProduct, Kernel},
 };
 
@@ -18,7 +20,7 @@ fn e0_product_kernel(e: u32) -> Option<(Kernel, TorsionExponent)> {
     let curve = Curve::E0;
     let P = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_P_X, &curve);
     let Q = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_Q_X, &curve);
-    let PmQ = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_PMQ_X, &curve);
+    let PmQ = ProjectiveXOnlyPoint::from_affine_x(common::BASIS_E0_PMQ_X, &curve);
 
     let doublings = TORSION_EVEN_POWER - e - 2;
     let mut P1 = P;
@@ -51,7 +53,7 @@ fn from_montgomery(bencher: divan::Bencher) {
     let curve = Curve::E0;
     let P = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_P_X, &curve);
     let Q = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_Q_X, &curve);
-    let PmQ = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_PMQ_X, &curve);
+    let PmQ = ProjectiveXOnlyPoint::from_affine_x(common::BASIS_E0_PMQ_X, &curve);
     let product = EllipticProduct::new(curve, curve);
 
     bencher.bench(|| {

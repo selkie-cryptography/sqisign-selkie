@@ -11,15 +11,6 @@ use crate::quaternions::bigint::BigInt;
 /// Security parameter λ = 128.
 pub const SECURITY_BITS: u32 = 128;
 
-/// The prime p = 5 · 2^248 − 1.
-///
-/// The cofactor c = 5 and the 2-valuation f = 248, so p = c · 2^f − 1.
-/// p ≡ 3 (mod 4), which gives us i² = −1 in F_{p²}.
-// reason: NIST-I parameter set constant, kept on the public API surface
-// even though no internal code path references it.
-#[allow(dead_code)]
-pub const COFACTOR: u64 = 5;
-
 /// The 2-valuation f of p + 1: the largest integer such that 2^f divides p + 1.
 ///
 /// This is the exponent of the full even torsion subgroup E[2^f].
@@ -119,13 +110,6 @@ pub const QUAT_PRIME_COFACTOR: BigInt<4> = BigInt::from_limbs([0x41, 0, 0, 0x080
 /// [§4.2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.4.2.1
 pub const D_MIX: BigInt<9> = BigInt::from_limbs([0x4B, 0, 0, 0, 0, 0, 0, 0, 1]);
 
-/// `D_mix` widened to 18 limbs — the working width for `pow_mod_w::<18>`
-/// chains. Same value as [`D_MIX`], zero-padded.
-// reason: used by benches/bigint.rs (lib build doesn't see benches).
-#[allow(dead_code)]
-pub const D_MIX_W18: BigInt<18> =
-    BigInt::from_limbs([0x4B, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-
 use crate::fields::{fp::Fp, fp2::Fp2};
 
 /// x-coordinate of the first basis point P₀ of E₀\[2^f\],
@@ -180,34 +164,6 @@ pub const BASIS_E0_Q_X: Fp2 = Fp2::new(
     ]),
 );
 
-/// x-coordinate of the difference point P₀ − Q₀ of E₀\[2^f\],
-/// where f = [`TORSION_EVEN_POWER`].
-///
-/// Precomputed from `projective_difference(P₀, Q₀)` on E₀.
-/// Stored in Montgomery form, radix-51 representation.
-// reason: public spec constant; production E₀ paths recompute the
-// difference on the fly, so the only consumers are the round-trip
-// tests in `params.rs` and the bench/test fixtures in
-// `deuring/tests.rs` + `curves/pairing.rs::tests` that verify the
-// precomputed value matches `projective_difference(P₀, Q₀)`.
-#[allow(dead_code)]
-pub const BASIS_E0_PMQ_X: Fp2 = Fp2::new(
-    Fp::from_limbs([
-        270480358487834,
-        2072266045736319,
-        1674191439884908,
-        2200260875474967,
-        6907110771017,
-    ]),
-    Fp::from_limbs([
-        1752869285732728,
-        495365606488051,
-        1818143936964406,
-        314346222928849,
-        165077940050103,
-    ]),
-);
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,21 +188,5 @@ mod tests {
     #[test]
     fn basis_e0_points_are_distinct() {
         assert_ne!(BASIS_E0_P_X, BASIS_E0_Q_X);
-    }
-
-    #[test]
-    fn basis_e0_pmq_is_on_curve() {
-        assert!(is_on_e0(&BASIS_E0_PMQ_X), "P₀−Q₀ x-coordinate is not on E₀");
-    }
-
-    #[test]
-    fn basis_e0_pmq_matches_projective_difference() {
-        use crate::curves::montgomery::{Curve, ProjectiveXOnlyPoint};
-        let curve = Curve::E0;
-        let p = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_P_X, &curve);
-        let q = ProjectiveXOnlyPoint::from_affine_x(BASIS_E0_Q_X, &curve);
-        let pmq = p.projective_difference(&q);
-        let x = pmq.to_affine_x();
-        assert_eq!(*x.as_fp2(), BASIS_E0_PMQ_X);
     }
 }
