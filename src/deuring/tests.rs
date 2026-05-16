@@ -427,7 +427,7 @@ fn ladder_vs_biladder_agree() {
     let curve = Curve::E0;
     let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_P_X, &curve);
     let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_Q_X, &curve);
-    let pmq = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve);
+    let pmq = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_PMQ_X, &curve);
 
     let three = Scalar::from_u64(3);
     let ladder_result = &three * &p;
@@ -453,7 +453,7 @@ fn scalar_mul_kernel_splits() {
     let curve = Curve::E0;
     let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_P_X, &curve);
     let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_Q_X, &curve);
-    let pmq = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_PMQ_X, &curve);
+    let pmq = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_PMQ_X, &curve);
 
     // [3]P, [3](P-Q), [3]Q via direct Montgomery scalar mul.
     let three = Scalar::from_u64(3);
@@ -524,11 +524,11 @@ fn all_torsion_bases_on_curve() {
     }
 }
 
-/// Verify precomputed P − Q matches curve 0's existing
-/// `BASIS_E0_PMQ_X` and that on alternate curves the stored `pmq_x`
-/// is the x-coordinate of `P − Q` (or `P + Q` — the x-only basis
-/// admits a sign swap that the biladder tolerates) for SOME y-sign
-/// choice of `P` and `Q`.
+/// Verify the precomputed `P − Q` on each curve `E_t` is the
+/// x-coordinate of `P − Q` (or `P + Q` — the x-only basis admits a
+/// sign swap that the biladder tolerates) for SOME y-sign choice of
+/// `P` and `Q`. Curve 0 also gets a direct round-trip against
+/// [`ProjectiveXOnlyPoint::projective_difference`].
 #[test]
 fn alternate_curves_pmq_consistent() {
     use crate::{
@@ -536,14 +536,19 @@ fn alternate_curves_pmq_consistent() {
         fields::fp2::Fp2,
     };
 
-    // Curve 0: check consistency with the existing standalone
-    // constant in `params.rs`.
-    let (_, _, pmq0, _) = torsion_basis::ExtremalCurve::E0.basis();
-    assert_eq!(
-        pmq0,
-        crate::params::BASIS_E0_PMQ_X,
-        "ExtremalCurve::E0.basis().pmq_x must match BASIS_E0_PMQ_X"
-    );
+    // Curve 0: the precomputed `E0_PMQ_X` must match what
+    // `projective_difference(P₀, Q₀)` produces on the fly. Catches
+    // any silent corruption of the precomputed constant.
+    {
+        let p = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_P_X, &Curve::E0);
+        let q = ProjectiveXOnlyPoint::from_affine_x(torsion_basis::E0_Q_X, &Curve::E0);
+        let pmq = p.projective_difference(&q);
+        assert_eq!(
+            *pmq.to_affine_x().as_fp2(),
+            torsion_basis::E0_PMQ_X,
+            "E0_PMQ_X must match projective_difference(E0_P_X, E0_Q_X)"
+        );
+    }
 
     // Curves 1..6: pmq_x must be the x-coordinate of (±P ± Q) for
     // some y-sign choice. We check all four sign combinations and

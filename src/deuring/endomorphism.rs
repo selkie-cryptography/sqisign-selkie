@@ -35,19 +35,7 @@ pub struct EndomorphismMatrix {
     entries: [[Scalar; 2]; 2],
 }
 
-// reason: the matrix-algebra surface (`ZERO`, `det_mod`,
-// `apply_scaled`, `apply_to_basis`) is part of the public type but
-// not currently reached from any production path — keygen/sign route
-// through `EndomorphismAction::apply` and the propagated-PmQ
-// `apply_scaled_basis` variant. Kept as a stable surface for
-// downstream consumers (`expose-internals`).
-#[allow(dead_code)]
 impl EndomorphismMatrix {
-    /// The zero matrix.
-    pub const ZERO: Self = Self {
-        entries: [[Scalar::ZERO; 2]; 2],
-    };
-
     /// Creates a matrix from four entries (row-major).
     pub const fn new(a: Scalar, b: Scalar, c: Scalar, d: Scalar) -> Self {
         Self {
@@ -86,39 +74,6 @@ impl EndomorphismMatrix {
             .mul_mod2k(&s1, f)
             .add_mod2k(&self.entries[1][1].mul_mod2k(&s2, f), f);
         (BigInt::from(r0), BigInt::from(r1))
-    }
-
-    /// Apply this matrix, scaled by a scalar, to a pair of points.
-    ///
-    /// Computes P' = [s·m₀₀]P + [s·m₁₀]Q and
-    ///          Q' = [s·m₀₁]P + [s·m₁₁]Q, all mod 2^f.
-    ///
-    /// The input difference `P − Q` is recovered via
-    /// `projective_difference`. Callers that already carry a
-    /// propagated `PmQ` should use [`Self::apply_scaled_basis`]
-    /// instead; otherwise the sqrt-branch of `projective_difference`
-    /// will yield a `PmQ' = projective_difference(P', Q')` whose
-    /// projective rep is inconsistent with downstream consumers
-    /// like `Kernel::from_montgomery`.
-    pub fn apply_scaled(
-        &self,
-        scalar: &BigInt<4>,
-        p: ProjectiveXOnlyPoint,
-        q: ProjectiveXOnlyPoint,
-        f: TorsionExponent,
-    ) -> (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint) {
-        let s = Scalar::from(*scalar);
-        let fv = f.value();
-
-        let s00 = s.mul_mod2k(self.entry(0, 0), fv);
-        let s01 = s.mul_mod2k(self.entry(0, 1), fv);
-        let s10 = s.mul_mod2k(self.entry(1, 0), fv);
-        let s11 = s.mul_mod2k(self.entry(1, 1), fv);
-
-        let basis = TorsionBasis::from((p, q));
-        let p_prime = basis.eval_decomposition(&s00, &s10);
-        let q_prime = basis.eval_decomposition(&s01, &s11);
-        (p_prime, q_prime)
     }
 
     /// Apply this matrix, scaled by a scalar, to a propagated basis.
@@ -162,28 +117,6 @@ impl EndomorphismMatrix {
         let pmq_prime =
             basis.eval_decomposition(&s00.sub_mod2k(&s01, fv), &s10.sub_mod2k(&s11, fv));
         (p_prime, q_prime, pmq_prime)
-    }
-
-    /// Apply this action matrix to a torsion basis, returning a new
-    /// basis for the endomorphism image.
-    ///
-    /// Computes `θ(P) = [m00]P + [m10]Q` and `θ(Q) = [m01]P + [m11]Q`,
-    /// then derives `θ(P) − θ(Q)` via `projective_difference` to
-    /// ensure the Okeya-Sakurai y-recovery produces consistent
-    /// Jacobian coordinates. The resulting basis is safe to pass to
-    /// `TorsionBasis::lift`.
-    #[must_use]
-    pub fn apply_to_basis(&self, basis: &TorsionBasis, f: TorsionExponent) -> TorsionBasis {
-        let p_prime = basis.biscalar_mul(self.entry(0, 0), self.entry(1, 0), f);
-        let q_prime = basis.biscalar_mul(self.entry(0, 1), self.entry(1, 1), f);
-        TorsionBasis::from((p_prime, q_prime))
-    }
-
-    /// Determinant mod 2^f: `ad − bc`.
-    pub fn det_mod(&self, f: u32) -> Scalar {
-        self.entries[0][0]
-            .mul_mod2k(&self.entries[1][1], f)
-            .sub_mod2k(&self.entries[0][1].mul_mod2k(&self.entries[1][0], f), f)
     }
 
     /// Classical adjugate mod 2^f: `[[d, −b], [−c, a]]`.

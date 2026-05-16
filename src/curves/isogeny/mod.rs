@@ -187,16 +187,6 @@ impl Kernel {
         Kernel(generator)
     }
 
-    /// The generator point.
-    // reason: pub accessor for the kernel's generator; production
-    // builds the Kernel and drops it through `isogeny` without
-    // re-reading the generator, but the accessor is part of the
-    // public API.
-    #[allow(dead_code)]
-    pub fn generator(&self) -> &ProjectiveXOnlyPoint {
-        &self.0
-    }
-
     /// Compute the 2^e-isogeny defined by this kernel and push
     /// points through it.
     ///

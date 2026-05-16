@@ -21,8 +21,35 @@
 
 use sqisign_selkie::{
     SIGNATURE_BYTES, SIGNING_KEY_BYTES, Signature, SigningKey, VERIFYING_KEY_BYTES, VerifyingKey,
+    fields::{fp::Fp, fp2::Fp2},
     keys::kat_data::KAT_VECTORS,
 };
+
+/// Precomputed x-coordinate of `P₀ − Q₀` on E₀, used by surface and
+/// curve benches that need a propagated `PmQ` to seed differential
+/// addition / Tate-pairing fixtures.
+///
+/// Same value as
+/// `sqisign_selkie::deuring::precomputed::torsion_basis::E0_PMQ_X`,
+/// which is `pub(crate)` and not reachable from benches; lives here
+/// rather than in `params` because production code recomputes
+/// `P − Q` on the fly via `projective_difference`.
+pub const BASIS_E0_PMQ_X: Fp2 = Fp2::new(
+    Fp::from_limbs([
+        270480358487834,
+        2072266045736319,
+        1674191439884908,
+        2200260875474967,
+        6907110771017,
+    ]),
+    Fp::from_limbs([
+        1752869285732728,
+        495365606488051,
+        1818143936964406,
+        314346222928849,
+        165077940050103,
+    ]),
+);
 
 /// KAT[0] tuple: `(seed, pk, sk, msg, sm)`.
 fn kat0() -> (

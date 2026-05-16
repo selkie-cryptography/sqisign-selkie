@@ -3,12 +3,9 @@ use rand_core::OsRng;
 use super::*;
 
 /// `SigningKey::generate` runs to completion (success or
-/// `KeyGenFailed`) without panicking. Marked `#[ignore]` because each
-/// run takes a few seconds: `to_isogeny` does a (2,2)-isogeny chain.
-///
-/// Run with: `cargo test --lib generate_runs -- --ignored`.
+/// `KeyGenFailed`) without panicking. Uses `OsRng`, so the exact
+/// result is non-deterministic.
 #[test]
-#[ignore]
 fn generate_runs() {
     let result = SigningKey::generate(&mut OsRng);
     match result {
@@ -28,7 +25,6 @@ fn generate_runs() {
 /// must round-trip through `VerifyingKey::to_bytes` /
 /// `VerifyingKey::from_bytes`.
 #[test]
-#[ignore]
 fn generated_verifying_key_roundtrips() {
     let sk = match SigningKey::generate(&mut OsRng) {
         Ok(sk) => sk,
@@ -1292,9 +1288,11 @@ fn verify_kat_zero_cref_sig() {
 
 /// Generate a fresh key, sign a random message, verify.
 ///
-/// Run with: `cargo test --lib --release sign_fresh -- --ignored`.
+/// Uses `OsRng`; rejection sampling in the response phase can
+/// stretch a single iteration, so this test sits under the
+/// `sign_fresh` / `sign_kat_derand_*` override in
+/// `.config/nextest.toml` (180 s `slow-timeout`).
 #[test]
-#[ignore]
 fn sign_fresh() {
     let sk = SigningKey::generate(&mut OsRng).expect("keygen should succeed");
     let mut msg = [0u8; 64];
