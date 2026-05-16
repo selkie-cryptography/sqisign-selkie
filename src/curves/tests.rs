@@ -14,10 +14,6 @@ fn arb_fp2() -> impl Strategy<Value = Fp2> {
         .prop_map(|(a, b)| Fp2::new(Fp::from_bytes(&a), Fp::from_bytes(&b)))
 }
 
-fn arb_curve() -> impl Strategy<Value = Curve> {
-    arb_fp2().prop_map(|a| Curve::from(Coefficient::from(a)))
-}
-
 proptest! {
     #[test]
     fn torsion_exponent_checked_sub_none_on_underflow(

@@ -3,10 +3,6 @@
 // lowercase for affine coordinates.
 #![allow(non_snake_case)]
 #![allow(clippy::op_ref)]
-// Many items are work-in-progress (sign() and keygen are not yet wired
-// up end-to-end). Re-enable dead_code lints once the signing flow is
-// complete and unused infrastructure has been pruned.
-#![allow(dead_code)]
 #![deny(missing_docs, clippy::unwrap_used)]
 // Tests are allowed to use unwrap() / Option::unwrap() / Result::unwrap();
 // production code is not (enforced by the deny above). This must come

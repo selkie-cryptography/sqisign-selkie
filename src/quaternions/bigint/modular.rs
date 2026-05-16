@@ -12,8 +12,8 @@ use super::BigInt;
 ///
 /// Distinct from [`crate::fields::fp::Fp`] (which hardcodes the SQIsign
 /// curve prime in its type identity): a `MontReducer<N>` is built at
-/// runtime — or compile time via [`MontReducer::const_new`] — for any
-/// odd `n < 2^{64N}`. The same struct shape backs every modulus used in
+/// runtime via [`MontReducer::new`] for any odd `n < 2^{64N}`. The
+/// same struct shape backs every modulus used in
 /// signing's quaternion-side arithmetic (`D_mix`, ramification primes,
 /// Miller-Rabin candidates during `random_prime_norm`). Operates on
 /// canonical-form [`BigInt<N>`] values; the Montgomery representation
@@ -65,33 +65,6 @@ impl<const N: usize> MontReducer<N> {
             n_inv_neg,
             r_squared,
         })
-    }
-
-    /// Returns a reducer at compile time for a known-fixed odd modulus.
-    ///
-    /// Use this for moduli known at build time (`D_mix`, ramification
-    /// primes, `2^e` torsion moduli) — folds the Newton iteration for
-    /// `n_inv_neg` and the `128·N` doublings for `R²` into build-time
-    /// constant evaluation, eliminating ~tens of µs of runtime setup
-    /// per operation.
-    ///
-    /// # Panics
-    ///
-    /// Compile-time-panics if `modulus` is even (so callers embedding
-    /// this in a `const` get a build error instead of a runtime
-    /// `None`). At runtime this still panics on even input, but valid
-    /// callers go through [`Self::new`].
-    pub(crate) const fn const_new(modulus: &BigInt<N>) -> Self {
-        let n = modulus.limbs;
-        assert!(n[0] & 1 == 1, "MontReducer::const_new: modulus must be odd");
-        // Odd implies nonzero (`n[0] >= 1`), so no further check.
-        let n_inv_neg = Self::neg_inv_mod_2_64(n[0]);
-        let r_squared = Self::compute_r_squared(&n);
-        Self {
-            n,
-            n_inv_neg,
-            r_squared,
-        }
     }
 
     /// Returns the modulus this reducer was built for, as a limb slice.
@@ -458,9 +431,10 @@ impl<const N: usize> MontReducer<N> {
     /// Montgomery form via a single multiply.
     ///
     /// Computed by `128·N` rounds of doubling-and-conditional-subtract
-    /// (`O(N²)` time, one-shot per modulus). `const fn` so
-    /// [`Self::const_new`] can fold the entire setup into compile-time
-    /// constant evaluation. The conditional subtract is driven by
+    /// (`O(N²)` time, one-shot per modulus). `const fn` so callers
+    /// embedding a fixed modulus can fold the entire setup into
+    /// compile-time constant evaluation. The conditional subtract is
+    /// driven by
     /// `mag_sub`'s borrow flag rather than `mag_cmp` because
     /// `mag_cmp` returns `Ordering`, which isn't `const`-callable in
     /// this crate's `MSRV` window — the borrow flag tells us
