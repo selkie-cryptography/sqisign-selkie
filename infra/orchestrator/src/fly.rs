@@ -217,6 +217,18 @@ impl FlyClient {
         Ok(digest)
     }
 
+    /// First Machine whose `name` starts with `prefix`, or `None` if
+    /// no match. Used by the `completed` webhook handler to find the
+    /// Machine spawned for a given `workflow_job.id` without keeping
+    /// any in-memory mapping.
+    pub async fn find_machine_by_name_prefix(&self, prefix: &str) -> Result<Option<Machine>> {
+        Ok(self
+            .list_machines()
+            .await?
+            .into_iter()
+            .find(|m| m.name.starts_with(prefix)))
+    }
+
     /// Force-destroy a Machine. Equivalent to `flyctl machine destroy
     /// --force`: skips graceful shutdown and removes the Machine
     /// immediately. The reaper only ever targets Machines it has
@@ -258,6 +270,11 @@ pub struct MachineId(pub String);
 pub struct Machine {
     /// Machine identifier (e.g. `9080d1ddc21078`).
     pub id: MachineId,
+    /// Machine name. Orchestrator-spawned runner Machines are named
+    /// `fly-{workflow_job.id}-{short_hex}`, used by the completed
+    /// webhook handler to look up the Machine without per-replica
+    /// in-memory state.
+    pub name: String,
     /// RFC 3339 timestamp at which Fly created the Machine record,
     /// e.g. `2026-05-15T17:22:25Z`. Parsed lazily by
     /// [`Machine::created_at_systemtime`].

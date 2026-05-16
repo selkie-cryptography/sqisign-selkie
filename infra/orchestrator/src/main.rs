@@ -12,11 +12,7 @@ mod fly;
 mod github;
 mod reaper;
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -30,7 +26,7 @@ use axum::{
 use tracing::{error, info, warn};
 
 use crate::{
-    fly::{FlyClient, MachineId, MachineSize},
+    fly::{FlyClient, MachineSize},
     github::{GitHubAppClient, WorkflowJobEvent, verify_webhook_signature},
     reaper::Reaper,
 };
@@ -48,12 +44,6 @@ struct AppState {
     fly: FlyClient,
     github: GitHubAppClient,
     webhook_secret: Vec<u8>,
-    /// Maps `workflow_job.id` → the Machine the orchestrator spawned
-    /// for that job. Populated on `queued`, consumed on `completed`
-    /// so the orchestrator can deterministically destroy the Machine
-    /// even when its runner crashes without exiting (the case that
-    /// breaks Fly's `auto_destroy: true` happy path).
-    spawned: Mutex<HashMap<u64, MachineId>>,
 }
 
 #[tokio::main]
@@ -109,7 +99,6 @@ impl AppState {
             fly: FlyClient::new(fly_token, fly_app, fly_region, image_ref),
             github: GitHubAppClient::new(app_id, installation_id, private_key, org),
             webhook_secret,
-            spawned: Mutex::new(HashMap::new()),
         })
     }
 }
@@ -237,21 +226,6 @@ async fn handle_queued(state: &Arc<AppState>, event: WorkflowJobEvent) -> axum::
     match state.fly.spawn_runner(size, &jit).await {
         Ok(id) => {
             info!(machine = ?id, job_id = event.workflow_job.id, "runner spawned");
-            // Track the spawn so a later `completed` webhook can find
-            // the Machine. Mutex is uncontended (single insert per
-            // webhook) and the critical section never awaits, so a
-            // std Mutex is the right primitive here.
-            match state.spawned.lock() {
-                Ok(mut map) => {
-                    map.insert(event.workflow_job.id, id.clone());
-                }
-                Err(poisoned) => {
-                    warn!("spawned map poisoned; recovering");
-                    poisoned
-                        .into_inner()
-                        .insert(event.workflow_job.id, id.clone());
-                }
-            }
             (StatusCode::OK, Json(serde_json::json!({"machine": id}))).into_response()
         }
         Err(e) => {
@@ -261,48 +235,56 @@ async fn handle_queued(state: &Arc<AppState>, event: WorkflowJobEvent) -> axum::
     }
 }
 
-/// `workflow_job: completed` handler. Looks up the Machine the
-/// orchestrator spawned for this job and force-destroys it.
+/// `workflow_job: completed` handler. Finds the Machine the
+/// orchestrator spawned for this job by name prefix and force-destroys
+/// it, defending against the case where `auto_destroy: true` doesn't
+/// fire (runner crashed without clean exit).
 ///
-/// Defense in depth against Fly's `auto_destroy: true` happy path:
-/// when a runner crashes hard enough that `./run.sh --jitconfig`
-/// never returns, the Machine survives the job and would otherwise
-/// only get reaped by the periodic [`Reaper`] sweep after
-/// `REAPER_MAX_AGE_SECS`. Reacting to the `completed` event makes
-/// the common case sub-second instead of minutes.
+/// Machine name is `fly-{workflow_job.id}-{short_hex}`, so the prefix
+/// `fly-{job_id}-` uniquely identifies the spawn. No per-replica
+/// in-memory state needed: every orchestrator replica sees the same
+/// Fly Machines API, so this works correctly under any replica count.
 ///
-/// No-op for jobs we did not spawn (e.g. GH-hosted runs, or
-/// orchestrator restarts that lost the in-memory mapping). The
-/// periodic reaper still catches those.
+/// No-op for jobs we did not spawn or that `auto_destroy` already
+/// cleaned up. The periodic reaper covers anything missed.
 async fn handle_completed(
     state: &Arc<AppState>,
     event: WorkflowJobEvent,
 ) -> axum::response::Response {
-    let machine = match state.spawned.lock() {
-        Ok(mut map) => map.remove(&event.workflow_job.id),
-        Err(poisoned) => poisoned.into_inner().remove(&event.workflow_job.id),
-    };
+    let job_id = event.workflow_job.id;
+    let prefix = format!("fly-{job_id}-");
 
-    let Some(machine_id) = machine else {
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({"untracked_job": event.workflow_job.id})),
-        )
-            .into_response();
+    let machine = match state.fly.find_machine_by_name_prefix(&prefix).await {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({"untracked_job": job_id})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            warn!(
+                error = format!("{e:#}"),
+                "list_machines failed in completed handler"
+            );
+            return (StatusCode::INTERNAL_SERVER_ERROR, "list failed").into_response();
+        }
     };
 
     info!(
-        job_id = event.workflow_job.id,
-        machine = %machine_id.0,
+        job_id,
+        machine = %machine.id.0,
+        name = %machine.name,
         "destroying Machine for completed job"
     );
 
-    if let Err(e) = state.fly.destroy_machine(&machine_id).await {
-        // Common-case: `auto_destroy: true` already fired and the
-        // Machine is gone (HTTP 404). Log at info; the periodic
-        // reaper would catch the rare leak that survives.
+    if let Err(e) = state.fly.destroy_machine(&machine.id).await {
+        // Common-case: `auto_destroy: true` raced us and the Machine
+        // is already gone (HTTP 404). The periodic reaper would catch
+        // anything else that survives.
         info!(
-            machine = %machine_id.0,
+            machine = %machine.id.0,
             error = format!("{e:#}"),
             "destroy on completed (likely already auto-destroyed)"
         );
@@ -310,7 +292,7 @@ async fn handle_completed(
 
     (
         StatusCode::OK,
-        Json(serde_json::json!({"destroyed": machine_id})),
+        Json(serde_json::json!({"destroyed": machine.id})),
     )
         .into_response()
 }
