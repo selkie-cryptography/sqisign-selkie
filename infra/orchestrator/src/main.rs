@@ -3,11 +3,20 @@
 //! Receives `workflow_job` webhooks; for each job that targets the
 //! self-hosted Fly label set, mints a JIT runner config and spawns
 //! an ephemeral Fly Machine to run it.
+//!
+//! A background [`Reaper`] task periodically force-destroys Machines
+//! that leaked past their job (e.g. runner crash without clean exit,
+//! or stale image after a runner-image rollover).
 
 mod fly;
 mod github;
+mod reaper;
 
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -21,15 +30,30 @@ use axum::{
 use tracing::{error, info, warn};
 
 use crate::{
-    fly::{FlyClient, MachineSize},
+    fly::{FlyClient, MachineId, MachineSize},
     github::{GitHubAppClient, WorkflowJobEvent, verify_webhook_signature},
+    reaper::Reaper,
 };
 
-#[derive(Clone)]
+/// Default reaper sweep interval (10 min). Overridable via
+/// `REAPER_SWEEP_INTERVAL_SECS`.
+const DEFAULT_REAPER_INTERVAL_SECS: u64 = 600;
+
+/// Default max age before a stale-digest Machine is reaped (45 min).
+/// Overridable via `REAPER_MAX_AGE_SECS`. Should comfortably exceed
+/// the longest single job that may run on a runner Machine.
+const DEFAULT_REAPER_MAX_AGE_SECS: u64 = 45 * 60;
+
 struct AppState {
     fly: FlyClient,
     github: GitHubAppClient,
     webhook_secret: Vec<u8>,
+    /// Maps `workflow_job.id` → the Machine the orchestrator spawned
+    /// for that job. Populated on `queued`, consumed on `completed`
+    /// so the orchestrator can deterministically destroy the Machine
+    /// even when its runner crashes without exiting (the case that
+    /// breaks Fly's `auto_destroy: true` happy path).
+    spawned: Mutex<HashMap<u64, MachineId>>,
 }
 
 #[tokio::main]
@@ -41,12 +65,16 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let state = AppState::from_env().context("loading env")?;
+    let state = Arc::new(AppState::from_env().context("loading env")?);
+
+    let reaper_interval = env_secs("REAPER_SWEEP_INTERVAL_SECS", DEFAULT_REAPER_INTERVAL_SECS);
+    let reaper_max_age = env_secs("REAPER_MAX_AGE_SECS", DEFAULT_REAPER_MAX_AGE_SECS);
+    tokio::spawn(Reaper::new(state.fly.clone(), reaper_interval, reaper_max_age).run());
 
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/webhook", post(webhook))
-        .with_state(Arc::new(state));
+        .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     info!("orchestrator listening on :8080");
@@ -72,12 +100,30 @@ impl AppState {
             fly: FlyClient::new(fly_token, fly_app, fly_region, image_ref),
             github: GitHubAppClient::new(app_id, installation_id, private_key, org),
             webhook_secret,
+            spawned: Mutex::new(HashMap::new()),
         })
     }
 }
 
 fn require_env(name: &str) -> Result<String> {
     std::env::var(name).map_err(|_| anyhow::anyhow!("missing required env var: {name}"))
+}
+
+/// Reads an optional integer env var with a fallback default, in
+/// seconds. Logs and falls back to the default on a parse error so a
+/// typo in a Fly secret never takes the orchestrator down.
+fn env_secs(name: &str, default: u64) -> Duration {
+    let secs = match std::env::var(name) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(n) => n,
+            Err(e) => {
+                warn!(name, raw, error = %e, "invalid env var, using default");
+                default
+            }
+        },
+        Err(_) => default,
+    };
+    Duration::from_secs(secs)
 }
 
 async fn healthz() -> &'static str {
@@ -125,14 +171,22 @@ async fn webhook(
         }
     };
 
-    if event.action != "queued" {
-        return (
+    match event.action.as_str() {
+        "queued" => handle_queued(&state, event).await,
+        "completed" => handle_completed(&state, event).await,
+        other => (
             StatusCode::OK,
-            Json(serde_json::json!({"ignored_action": event.action})),
+            Json(serde_json::json!({"ignored_action": other})),
         )
-            .into_response();
+            .into_response(),
     }
+}
 
+/// `workflow_job: queued` handler. Mints a JIT config, spawns a
+/// Machine, and records the `(job_id, machine_id)` mapping so the
+/// matching `completed` event can deterministically destroy the
+/// Machine even if the runner inside crashes without a clean exit.
+async fn handle_queued(state: &Arc<AppState>, event: WorkflowJobEvent) -> axum::response::Response {
     if !event.workflow_job.labels.iter().any(|l| l == "fly") {
         return (
             StatusCode::OK,
@@ -146,6 +200,7 @@ async fn webhook(
 
     info!(
         job = %event.workflow_job.name,
+        job_id = event.workflow_job.id,
         labels = ?event.workflow_job.labels,
         size = ?size,
         "spawning runner"
@@ -172,7 +227,22 @@ async fn webhook(
 
     match state.fly.spawn_runner(size, &jit).await {
         Ok(id) => {
-            info!(machine = ?id, "runner spawned");
+            info!(machine = ?id, job_id = event.workflow_job.id, "runner spawned");
+            // Track the spawn so a later `completed` webhook can find
+            // the Machine. Mutex is uncontended (single insert per
+            // webhook) and the critical section never awaits, so a
+            // std Mutex is the right primitive here.
+            match state.spawned.lock() {
+                Ok(mut map) => {
+                    map.insert(event.workflow_job.id, id.clone());
+                }
+                Err(poisoned) => {
+                    warn!("spawned map poisoned; recovering");
+                    poisoned
+                        .into_inner()
+                        .insert(event.workflow_job.id, id.clone());
+                }
+            }
             (StatusCode::OK, Json(serde_json::json!({"machine": id}))).into_response()
         }
         Err(e) => {
@@ -180,6 +250,60 @@ async fn webhook(
             (StatusCode::INTERNAL_SERVER_ERROR, "spawn failed").into_response()
         }
     }
+}
+
+/// `workflow_job: completed` handler. Looks up the Machine the
+/// orchestrator spawned for this job and force-destroys it.
+///
+/// Defense in depth against Fly's `auto_destroy: true` happy path:
+/// when a runner crashes hard enough that `./run.sh --jitconfig`
+/// never returns, the Machine survives the job and would otherwise
+/// only get reaped by the periodic [`Reaper`] sweep after
+/// `REAPER_MAX_AGE_SECS`. Reacting to the `completed` event makes
+/// the common case sub-second instead of minutes.
+///
+/// No-op for jobs we did not spawn (e.g. GH-hosted runs, or
+/// orchestrator restarts that lost the in-memory mapping). The
+/// periodic reaper still catches those.
+async fn handle_completed(
+    state: &Arc<AppState>,
+    event: WorkflowJobEvent,
+) -> axum::response::Response {
+    let machine = match state.spawned.lock() {
+        Ok(mut map) => map.remove(&event.workflow_job.id),
+        Err(poisoned) => poisoned.into_inner().remove(&event.workflow_job.id),
+    };
+
+    let Some(machine_id) = machine else {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({"untracked_job": event.workflow_job.id})),
+        )
+            .into_response();
+    };
+
+    info!(
+        job_id = event.workflow_job.id,
+        machine = %machine_id.0,
+        "destroying Machine for completed job"
+    );
+
+    if let Err(e) = state.fly.destroy_machine(&machine_id).await {
+        // Common-case: `auto_destroy: true` already fired and the
+        // Machine is gone (HTTP 404). Log at info; the periodic
+        // reaper would catch the rare leak that survives.
+        info!(
+            machine = %machine_id.0,
+            error = format!("{e:#}"),
+            "destroy on completed (likely already auto-destroyed)"
+        );
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"destroyed": machine_id})),
+    )
+        .into_response()
 }
 
 fn short_hex_now() -> String {
