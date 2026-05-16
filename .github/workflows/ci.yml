@@ -76,7 +76,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          persist-credentials: false
+          # Narrow exception (other jobs use false): reviewdog's PR-
+          # diff lookup falls back from the API to `git fetch` when
+          # it can't get the diff via the API. The fetch fails with
+          # "could not read Username" if credentials aren't loaded.
+          persist-credentials: true
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
@@ -133,20 +137,12 @@ jobs:
       - run: cargo nextest run
       - run: cargo test --doc
 
-  proptest:
-    name: Property tests
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          shared-key: linux-x64-default-stable
-      - name: Run property tests
-        run: cargo test --lib -- proptest
+  # Property tests are covered by `gate`'s unfiltered
+  # `cargo nextest run` — every `proptest! { #[test] fn foo(...) }`
+  # block produces a regular test function that nextest picks up.
+  # A standalone `proptest` job filtered with `-- proptest` was
+  # previously here but matched zero of ~720 lib tests (the macro
+  # doesn't put "proptest" in test names), so it was deleted.
 
   doc:
     name: Documentation
@@ -179,63 +175,82 @@ jobs:
           echo "put /tmp/rustdoc.tar.gz /data/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
           flyctl ssh console -a sqisign-selkie-ci -C "sh -c 'set -e; rm -rf /data/rustdoc && mkdir -p /data/rustdoc && tar -xzf /data/rustdoc.tar.gz -C /data/rustdoc && rm /data/rustdoc.tar.gz'"
 
-  # Tier 2 — Platform matrix (lib + doc only)
+  # Tier 2 — Platform sanity (lib + doc only)
   #
-  # Cross-platform sanity check: lib + doc compile and pass on every
-  # Rust Tier 1 target plus the no-default-features variant. KATs
-  # live in the dedicated `kat` job below.
+  # Cross-platform check that lib + doc compile and pass on every
+  # Rust Tier 1 target plus the no-default-features variant. Skipped
+  # on PR — `gate` already covers x86_64-linux default features
+  # there, and the full matrix per PR push is expensive (Windows
+  # bills 2×, macOS 10×). Runs on push to main, the nightly
+  # schedule, and manual dispatch.
   #
-  # Skipped on PR — `gate` already covers x86_64-linux default
-  # features there, and exercising the full matrix per PR push is
-  # expensive (Windows bills 2×, macOS 10×). Runs on push to main,
-  # the nightly schedule, and manual dispatch.
+  # Split into two jobs so the public-repo gate can be applied to
+  # the GH-hosted (billed) targets without affecting the Linux
+  # no-defaults row that runs on Fly self-hosted. (The job-level
+  # `if:` can't reference `matrix.*`, so a single matrix can't
+  # express "this row gated on visibility, that row not".)
 
-  platform:
-    name: "lib + doc tests (${{ matrix.target }}, ${{ matrix.bits }}-bit${{ matrix.variant && format(', {0}', matrix.variant) || '' }})"
+  platform-fly:
+    name: "lib + doc tests (x86_64-unknown-linux-gnu, 64-bit, no-default-features)"
     needs: [gate]
     if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: x86_64-unknown-linux-gnu-no-default-features
+      - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --target x86_64-unknown-linux-gnu --no-default-features
+      - run: cargo test --doc --target x86_64-unknown-linux-gnu --no-default-features
+
+  # macOS + Windows targets run on GH-hosted (Fly is x86_64-linux
+  # only). Gated on `repository.visibility == 'public'` so the
+  # workflow no-ops while the repo is private — those minutes are
+  # billed at 10× / 2× respectively.
+  #
+  # i686 and aarch64 Linux rows stay commented out for now:
+  #   - i686-unknown-linux-gnu would need `gcc-multilib` + the i686
+  #     rustup target back on the runner image. Both were dropped to
+  #     slim the image since Fly is x86_64-only.
+  #   - aarch64-unknown-linux-gnu would land on the `ubuntu-24.04-arm`
+  #     GH-hosted runner which bills regular minutes.
+  platform-billed:
+    name: "lib + doc tests (${{ matrix.target }}, ${{ matrix.bits }}-bit)"
+    needs: [gate]
+    if: |
+      github.event_name != 'pull_request' &&
+      github.event.repository.visibility == 'public'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          # x86_64-linux default features is covered by `gate`; not
-          # repeated here.
-          #
-          # Note: the 32-bit Linux (i686) row is commented out until
-          # the Fly runner image grows back the multilib + i686
-          # rustup target. Both were dropped to slim the image since
-          # Fly is x86_64-only; re-add to infra/runners/Dockerfile if
-          # you want this row again.
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bits: 64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bits: 64
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            bits: 32
           # - os: ubuntu-24.04
           #   target: i686-unknown-linux-gnu
           #   bits: 32
           #   multilib: true
-          # macOS + Windows rows disabled while the repo is
-          # private. Re-enable once the repo is public.
-          # - os: macos-latest
-          #   target: aarch64-apple-darwin
-          #   bits: 64
-          # - os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   bits: 64
-          # - os: windows-latest
-          #   target: i686-pc-windows-msvc
-          #   bits: 32
-          # aarch64-linux row disabled — Fly is x86_64-only and the
-          # GH-hosted `ubuntu-24.04-arm` runners bill regular minutes
-          # we'd rather spend elsewhere. Uncomment to re-enable.
           # - os: ubuntu-24.04-arm
           #   target: aarch64-unknown-linux-gnu
           #   bits: 64
-          # Minimum config: no default features (zeroize off). Routes
-          # to Fly self-hosted.
-          - os: [self-hosted, fly, linux, x64]
-            target: x86_64-unknown-linux-gnu
-            bits: 64
-            variant: no-default-features
-            flags: --no-default-features
     steps:
       - uses: actions/checkout@v6
         with:
@@ -250,12 +265,12 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
-          key: ${{ matrix.target }}-${{ matrix.variant || 'default' }}
+          key: ${{ matrix.target }}
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
           tool: cargo-nextest
-      - run: cargo nextest run --target ${{ matrix.target }} ${{ matrix.flags || '' }}
-      - run: cargo test --doc --target ${{ matrix.target }} ${{ matrix.flags || '' }}
+      - run: cargo nextest run --target ${{ matrix.target }}
+      - run: cargo test --doc --target ${{ matrix.target }}
 
   # Tier 3 — Informational
   #
@@ -363,7 +378,7 @@ jobs:
 
   platform-report:
     name: Platform coverage
-    needs: [platform]
+    needs: [platform-fly, platform-billed]
     # Only fires on main (never PR), so safe on self-hosted Fly.
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, fly, linux, x64]

@@ -36,13 +36,16 @@ RUN apt-get update \
 #
 # Fly Machines enforce an 8 GB *uncompressed* image-unpack ceiling
 # at the platform level (separate from per-Machine rootfs sizing).
-# A Sage 10.6 conda env adds ~4-5 GB; with texlive removed and Sage
-# removed, the image stays well under 8 GB and unpacks fine on
-# `shared-cpu-2x`.
+# `texlive-full` alone is ~5 GB; a Sage 10.6 conda env adds ~4-5 GB.
+# Including both pushed past the ceiling. We include the smaller
+# `texlive-latex-extra` family below (~1-1.5 GB) so `latex.yml`
+# can run on Fly with direct `latexmk`. Sage stays out — workflows
+# that need it install at job time via conda + actions/cache.
 #
 # Workflows that need these:
-#   - `latex.yml` -> `ubuntu-latest` + `xu-cheng/latex-action`
-#     (Docker action — Fly runners have no Docker daemon).
+#   - `latex.yml` -> Fly self-hosted, direct `latexmk` against the
+#     `texlive-latex-extra` set below. If a tex package is missing,
+#     add the specific `texlive-*` sub-package to the apt list.
 #   - `sage-precompute-check` -> Fly self-hosted with conda install
 #     at job time. The orchestrator sizes the runtime overlayfs via
 #     `rootfs.size_gb` (see `orchestrator/src/fly.rs`) to leave room
@@ -62,21 +65,29 @@ RUN useradd -m -s /bin/bash runner \
   && rustup component add rustfmt clippy --toolchain nightly \
   && chown -R runner:runner "$RUSTUP_HOME" "$CARGO_HOME"
 
-# Smaller system tools. Separate layer so adding/removing one of
-# these doesn't invalidate texlive above.
+# System tools + TeX Live (latex-extra family, ~1-1.5 GB).
 #
 # `libclang-dev` is needed by the `crabgrind` build script (uses
 # `bindgen` to generate Valgrind FFI). Without it, every `cargo
 # build` of the main crate panics with "Unable to find libclang".
 # Previously came in transitively via Sage's conda env; pinned
 # explicitly now that Sage is no longer in the image.
+#
+# `mold` is wired into `.cargo/config.toml` as the linker for
+# `x86_64-unknown-linux-gnu`. Cuts cargo link time ~15-30%.
+#
+# `texlive-*` + `latexmk` + `biber` power `latex.yml` on Fly
+# self-hosted (replacing the previous `xu-cheng/latex-action`
+# Docker-action path which required a Docker daemon we don't run).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+      biber \
       build-essential \
       cmake \
       docker.io \
       git \
       jq \
+      latexmk \
       libclang-dev \
       libicu-dev \
       libssl-dev \
@@ -85,6 +96,10 @@ RUN apt-get update \
       python3 \
       python3-pip \
       sudo \
+      texlive-bibtex-extra \
+      texlive-fonts-extra \
+      texlive-latex-extra \
+      texlive-science \
       valgrind \
   && rm -rf /var/lib/apt/lists/*
 
