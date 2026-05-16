@@ -268,12 +268,6 @@ impl From<ExtremalOrder<4>> for ExtremalOrder<8> {
     }
 }
 
-impl From<ExtremalOrder<4>> for ExtremalOrder<9> {
-    fn from(order: ExtremalOrder<4>) -> Self {
-        order.widen()
-    }
-}
-
 impl From<ExtremalOrder<4>> for ExtremalOrder<30> {
     fn from(order: ExtremalOrder<4>) -> Self {
         order.widen()
