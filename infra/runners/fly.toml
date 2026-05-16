@@ -3,7 +3,18 @@
 # never runs always-on Machines itself.
 
 app = "sqisign-infra-runners"
-primary_region = "ord"
+# `iad` (Ashburn, VA) is co-located with Azure East US 2, where
+# GitHub Actions and its blob-storage backend live. Cuts cache-heavy
+# CI restore time (`actions/cache`, `Swatinem/rust-cache`) by
+# ~5–15s vs. `ord`. Fallback if capacity-constrained at peak: `ord`.
+#
+# This `primary_region` only affects always-on Machines created by
+# `flyctl deploy` (none, for this app — deploys are `--build-only`).
+# Ephemeral runner Machines spawned by the orchestrator pick up
+# region from the orchestrator's `FLY_RUNNER_REGION` env var at
+# spawn time (see `orchestrator/src/main.rs`); this setting is
+# documentation / consistency.
+primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"

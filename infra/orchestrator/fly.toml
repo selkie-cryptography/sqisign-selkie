@@ -10,7 +10,11 @@
 #     --dockerfile orchestrator/Dockerfile
 
 app = "sqisign-infra-orchestrator"
-primary_region = "ord"
+# Co-located with the runners app in `iad` — close to Azure East US 2
+# (GitHub Actions / api.machines.dev / api.github.com). Webhook
+# ingest latency drops a few ms; not critical for correctness, but
+# keeps everything in one region.
+primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"

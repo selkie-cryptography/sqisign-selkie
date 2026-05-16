@@ -91,7 +91,16 @@ impl AppState {
         let fly_token = require_env("FLY_API_TOKEN")?;
         let fly_app =
             std::env::var("FLY_RUNNER_APP").unwrap_or_else(|_| "sqisign-infra-runners".into());
-        let fly_region = std::env::var("FLY_REGION").unwrap_or_else(|_| "ord".into());
+        // Region runner Machines spawn into. Distinct from `FLY_REGION`,
+        // which Fly auto-injects with the orchestrator's *own* region —
+        // we want the runners' region to be settable independently.
+        //
+        // `iad` (Ashburn, VA) is co-located with Azure East US 2 where
+        // GitHub Actions + its blob-storage backend run, so cache-heavy
+        // CI restore time is materially faster than from `ord`. Set
+        // `FLY_RUNNER_REGION=ord` (Fly secret) to fall back if iad
+        // capacity is constrained.
+        let fly_region = std::env::var("FLY_RUNNER_REGION").unwrap_or_else(|_| "iad".into());
         let image_ref = std::env::var("FLY_RUNNER_IMAGE")
             .unwrap_or_else(|_| format!("registry.fly.io/{fly_app}:latest"));
         let org = std::env::var("GITHUB_ORG").unwrap_or_else(|_| "selkie-cryptography".into());
