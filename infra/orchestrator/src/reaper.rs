@@ -1,23 +1,18 @@
 //! Periodic GC for leaked runner Machines.
 //!
-//! Each runner Machine is spawned with `auto_destroy: true`, so in the
-//! happy path it self-destroys when its JIT-bound runner finishes its
-//! one job and exits. Two failure modes leak Machines anyway:
+//! Runner Machines spawn with `auto_destroy: true`, so the happy path
+//! is self-cleanup on runner exit. Failures that leak Machines anyway:
 //!
-//! - **Runner crashes without a clean exit.** `auto_destroy` never fires; the
-//!   Machine sits idle forever on whatever image it booted with.
-//! - **Image rollover.** A new `:latest` is pushed; existing Machines keep
-//!   running their job on the old image. In the normal case `auto_destroy`
-//!   reaps them on exit, but a crash here leaves a Machine that is BOTH idle
-//!   AND on a stale image, ready to fail any future job somehow routed to it.
+//! - **Runner crash without clean exit.** `auto_destroy` never fires.
+//! - **Image rollover + crash.** Old-image Machine survives because its runner
+//!   didn't exit; will fail any job routed to it next.
 //!
-//! The reaper handles both: any Machine whose `image_ref.digest`
-//! differs from the most-recently-spawned Machine's digest AND whose
-//! age exceeds `max_age` is force-destroyed. The "newest digest"
-//! baseline adapts across rollovers — as soon as the orchestrator
-//! spawns the first Machine on the new image, every older Machine on
-//! the previous digest becomes a reap candidate once it ages past
-//! `max_age` (chosen to comfortably exceed the longest single job).
+//! Strategy: resolve canonical `:latest` digest from the registry,
+//! force-destroy any Machine whose digest differs AND whose age
+//! exceeds `max_age`. Asking the registry beats an in-list heuristic:
+//! a lone stale Machine compared only against its peers becomes its
+//! own baseline and is never reaped. Falls back to "newest spawn's
+//! digest" if the registry call fails.
 
 #[cfg(test)]
 mod tests;
@@ -30,7 +25,7 @@ use tracing::{info, warn};
 use crate::fly::{FlyClient, Machine, MachineId};
 
 /// Background sweeper that periodically force-destroys stale-image,
-/// old-enough Machines in the bound runner app.
+/// old-enough Machines.
 #[derive(Debug)]
 pub struct Reaper {
     fly: FlyClient,
@@ -39,8 +34,8 @@ pub struct Reaper {
 }
 
 impl Reaper {
-    /// Construct a reaper bound to `fly`, waking every `interval` and
-    /// reaping stale-digest Machines older than `max_age`.
+    /// Construct a reaper waking every `interval`, reaping stale-digest
+    /// Machines older than `max_age`.
     pub fn new(fly: FlyClient, interval: Duration, max_age: Duration) -> Self {
         Self {
             fly,
@@ -49,9 +44,8 @@ impl Reaper {
         }
     }
 
-    /// Run forever: sweep, sleep `interval`, repeat. Errors in any
-    /// single sweep are logged and the loop continues — a transient
-    /// Fly API failure should not take the reaper down.
+    /// Sweep-sleep-repeat forever. Sweep errors are logged and the
+    /// loop continues.
     pub async fn run(self) {
         info!(
             interval_s = self.interval.as_secs(),
@@ -66,11 +60,14 @@ impl Reaper {
         }
     }
 
-    /// Execute one sweep: list Machines, classify, destroy survivors.
+    /// One sweep: list, resolve canonical, classify, destroy.
     async fn sweep(&self) -> Result<()> {
         let machines = self.fly.list_machines().await?;
+        let Some(canonical) = self.canonical_digest(&machines).await else {
+            return Ok(());
+        };
         let now = SystemTime::now();
-        let candidates = reap_candidates(&machines, now, self.max_age);
+        let candidates = reap_candidates(&machines, &canonical, now, self.max_age);
 
         if candidates.is_empty() {
             return Ok(());
@@ -81,38 +78,39 @@ impl Reaper {
                 machine = %id.0,
                 age_s = age.as_secs(),
                 digest = %digest,
+                canonical = %canonical,
                 "reaping stale-image Machine"
             );
             if let Err(e) = self.fly.destroy_machine(id).await {
-                warn!(
-                    machine = %id.0,
-                    error = format!("{e:#}"),
-                    "destroy failed"
-                );
+                warn!(machine = %id.0, error = format!("{e:#}"), "destroy failed");
             }
         }
         Ok(())
     }
+
+    /// Registry digest first, in-list fallback on failure.
+    async fn canonical_digest(&self, machines: &[Machine]) -> Option<String> {
+        match self.fly.resolve_latest_digest().await {
+            Ok(d) => Some(d),
+            Err(e) => {
+                warn!(
+                    error = format!("{e:#}"),
+                    "registry digest resolve failed; falling back to newest-spawn digest"
+                );
+                newest_spawn_digest(machines).map(str::to_owned)
+            }
+        }
+    }
 }
 
-/// Classify the Machines a sweep should destroy.
-///
-/// Pure function for testability: takes the snapshot and policy in,
-/// returns the (id, age, digest) of each survivor. Decoupled from
-/// [`FlyClient`] so unit tests don't need a mock HTTP server.
-///
-/// Returns an empty list if there's no canonical digest to compare
-/// against (zero or one Machine), or if every Machine matches the
-/// canonical digest.
-fn reap_candidates(
-    machines: &[Machine],
+/// Pure classifier: given snapshot + canonical digest + policy,
+/// return the Machines to destroy.
+fn reap_candidates<'a>(
+    machines: &'a [Machine],
+    canonical: &str,
     now: SystemTime,
     max_age: Duration,
-) -> Vec<(&MachineId, Duration, &str)> {
-    let Some(canonical) = canonical_digest(machines) else {
-        return Vec::new();
-    };
-
+) -> Vec<(&'a MachineId, Duration, &'a str)> {
     machines
         .iter()
         .filter(|m| m.image_ref.digest != canonical)
@@ -123,17 +121,10 @@ fn reap_candidates(
         .collect()
 }
 
-/// Digest of the most-recently-created Machine in `machines`, or
-/// `None` if the slice is empty or no Machine has a parseable
-/// `created_at`.
-///
-/// Using "newest spawn's digest" as the canonical image lets the
-/// reaper auto-adapt across rollovers without an out-of-band
-/// "current `:latest`" lookup. The first new-image Machine to be
-/// spawned after a deploy immediately becomes the baseline; every
-/// older Machine on the previous digest is then a reap candidate
-/// once it ages past `max_age`.
-fn canonical_digest(machines: &[Machine]) -> Option<&str> {
+/// Fallback canonical when the registry is unreachable. A lone stale
+/// Machine becomes its own baseline here — the registry path exists
+/// to handle that case.
+fn newest_spawn_digest(machines: &[Machine]) -> Option<&str> {
     machines
         .iter()
         .filter_map(|m| m.created_at_systemtime().ok().map(|t| (t, m)))

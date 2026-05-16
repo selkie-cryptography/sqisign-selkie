@@ -173,6 +173,50 @@ impl FlyClient {
         resp.json().await.context("parse Machines list response")
     }
 
+    /// Resolves the tag in `self.image_ref` to its current sha256
+    /// digest via the registry's manifest endpoint. Uses Basic auth
+    /// with `x:$FLY_API_TOKEN` (same credential as `docker login
+    /// registry.fly.io`). Single-platform manifests only — a
+    /// multi-arch index would return a digest that won't match any
+    /// Machine's platform digest.
+    pub async fn resolve_latest_digest(&self) -> Result<String> {
+        let (host, rest) = self
+            .image_ref
+            .split_once('/')
+            .context("image_ref missing '/' separator")?;
+        let (name, tag) = rest
+            .split_once(':')
+            .context("image_ref missing ':tag' suffix")?;
+
+        let url = format!("https://{host}/v2/{name}/manifests/{tag}");
+        let resp = self
+            .http
+            .head(&url)
+            .header(
+                "Accept",
+                "application/vnd.oci.image.manifest.v1+json,\
+                 application/vnd.docker.distribution.manifest.v2+json",
+            )
+            .basic_auth("x", Some(&self.api_token))
+            .send()
+            .await
+            .with_context(|| format!("send HEAD {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            anyhow::bail!("HEAD {url} returned HTTP {status}");
+        }
+
+        let digest = resp
+            .headers()
+            .get("docker-content-digest")
+            .and_then(|v| v.to_str().ok())
+            .context("response missing Docker-Content-Digest header")?
+            .to_string();
+
+        Ok(digest)
+    }
+
     /// Force-destroy a Machine. Equivalent to `flyctl machine destroy
     /// --force`: skips graceful shutdown and removes the Machine
     /// immediately. The reaper only ever targets Machines it has
