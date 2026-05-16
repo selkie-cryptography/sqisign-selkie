@@ -13,6 +13,7 @@ use crate::fly::Machine;
 fn machine(id: &str, created_at: &str, digest: &str) -> Machine {
     serde_json::from_value(json!({
         "id": id,
+        "name": id,
         "created_at": created_at,
         "image_ref": { "digest": digest },
     }))
