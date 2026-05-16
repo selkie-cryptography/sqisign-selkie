@@ -28,6 +28,10 @@ Cargo.lock
 # Proptest regression files (tests are in-tree, regressions are local)
 **/proptest-regressions/
 
+# Diagnostic report written by `tests/zeroize.rs` next to where the
+# test runs (worktree root by default).
+/zeroize-report.json
+
 # LaTeX
 **/*.toc
 
