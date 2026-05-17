@@ -77,8 +77,6 @@ impl SplittingKernel {
         // above).
         let split_count = self.domain.null.splitting_index_count();
         if split_count != 1 {
-            #[cfg(test)]
-            crate::selkie_trace!("    [chain] splitting: zeros={split_count}");
             return None;
         }
 

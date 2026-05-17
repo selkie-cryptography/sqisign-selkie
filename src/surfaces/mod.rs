@@ -386,14 +386,12 @@ impl Kernel {
         let (p1, q1) = match TorsionBasis::from_propagated(P.0, Q.0, PmQ.0).lift(&domain.E1) {
             Some(r) => r,
             None => {
-                crate::selkie_trace!("    from_montgomery: lift E1 failed");
                 return None;
             }
         };
         let (p2, q2) = match TorsionBasis::from_propagated(P.1, Q.1, PmQ.1).lift(&domain.E2) {
             Some(r) => r,
             None => {
-                crate::selkie_trace!("    from_montgomery: lift E2 failed");
                 return None;
             }
         };
@@ -473,35 +471,7 @@ impl Kernel {
         let prod = w1.as_fp2() * w2.as_fp2();
         // ζ^64 = ((ζ^2)^4)^4·... — six squarings: ζ^2, ζ^4, ζ^8, ζ^16, ζ^32, ζ^64.
         let prod64 = prod.square().square().square().square().square().square();
-        let ok = prod64 == Fp2::ONE;
-        #[cfg(test)]
-        if !ok {
-            // Dump the two component pairings + their product so the
-            // caller can localize the bug. A pairing equal to `Fp2::ONE`
-            // indicates a generator-order failure (P or Q not of full
-            // 2^e_kernel order); both nontrivial pairings whose product
-            // is not `1` indicates a kernel-construction bug (the two
-            // sides' scalings don't compensate under the product
-            // polarization).
-            let fp2_hex = |v: &Fp2| -> String {
-                let b = v.to_bytes();
-                let re: String = b[..32].iter().rev().map(|x| format!("{x:02x}")).collect();
-                let im: String = b[32..].iter().rev().map(|x| format!("{x:02x}")).collect();
-                format!("re={re} im={im}")
-            };
-            let w1f = w1.as_fp2();
-            let w2f = w2.as_fp2();
-            crate::selkie_trace!(
-                "[is_isotropic] FAIL e_kernel={} w1={} w2={} prod={} (w1==1: {}, w2==1: {})",
-                e_kernel.value(),
-                fp2_hex(w1f),
-                fp2_hex(w2f),
-                fp2_hex(&prod),
-                *w1f == Fp2::ONE,
-                *w2f == Fp2::ONE,
-            );
-        }
-        ok
+        prod64 == Fp2::ONE
     }
 
     /// Compute the (2^e, 2^e)-isogeny defined by this kernel via a
@@ -685,103 +655,9 @@ impl Kernel {
             T2: gluing_T2_mont,
             T2_jac: gluing_T2_jac,
         };
-        #[cfg(test)]
-        {
-            let fp2_hex = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re} + i*0x{im}")
-            };
-            crate::selkie_trace!("GLUE_IN T1.0.X={}", fp2_hex(&gluing.T1.0.X));
-            crate::selkie_trace!("GLUE_IN T1.0.Z={}", fp2_hex(&gluing.T1.0.Z));
-            crate::selkie_trace!("GLUE_IN T1.1.X={}", fp2_hex(&gluing.T1.1.X));
-            crate::selkie_trace!("GLUE_IN T1.1.Z={}", fp2_hex(&gluing.T1.1.Z));
-            crate::selkie_trace!("GLUE_IN T2.0.X={}", fp2_hex(&gluing.T2.0.X));
-            crate::selkie_trace!("GLUE_IN T2.0.Z={}", fp2_hex(&gluing.T2.0.Z));
-            crate::selkie_trace!("GLUE_IN T2.1.X={}", fp2_hex(&gluing.T2.1.X));
-            crate::selkie_trace!("GLUE_IN T2.1.Z={}", fp2_hex(&gluing.T2.1.Z));
-        }
-
         let (gluing_data, _) = gluing.isogeny(&[]);
 
         // Check the gluing codomain's null point for zero components
-        #[cfg(test)]
-        {
-            let null = &gluing_data.codomain.null;
-            let comps = [
-                ("a", &null.a),
-                ("b", &null.b),
-                ("c", &null.c),
-                ("d", &null.d),
-            ];
-            let zeros: Vec<&str> = comps
-                .iter()
-                .filter(|(_, v)| **v == Fp2::ZERO)
-                .map(|(n, _)| *n)
-                .collect();
-            if !zeros.is_empty() {
-                crate::selkie_trace!("GLUE CODOMAIN: zero components: {zeros:?}");
-            }
-            let pc = null.precompute();
-            let pc_zeros: Vec<&str> = [
-                ("c1", &pc.c1),
-                ("c2", &pc.c2),
-                ("c3", &pc.c3),
-                ("c4", &pc.c4),
-                ("c5", &pc.c5),
-                ("c6", &pc.c6),
-                ("c7", &pc.c7),
-                ("c8", &pc.c8),
-            ]
-            .iter()
-            .filter(|(_, v)| **v == Fp2::ZERO)
-            .map(|(n, _)| *n)
-            .collect();
-            if !pc_zeros.is_empty() {
-                crate::selkie_trace!("GLUE PRECOMP: zero values: {pc_zeros:?}");
-            }
-        }
-
-        #[cfg(test)]
-        {
-            let null = &gluing_data.codomain.null;
-            let fp2_hex = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                (re, im)
-            };
-            let (ar, ai) = fp2_hex(&null.a);
-            let (br, bi) = fp2_hex(&null.b);
-            let (cr, ci) = fp2_hex(&null.c);
-            let (dr, di) = fp2_hex(&null.d);
-            crate::selkie_trace!("[MODA] glue null.a.re=0x{ar}");
-            crate::selkie_trace!("[MODA] glue null.a.im=0x{ai}");
-            crate::selkie_trace!("[MODA] glue null.b.re=0x{br}");
-            crate::selkie_trace!("[MODA] glue null.b.im=0x{bi}");
-            crate::selkie_trace!("[MODA] glue null.c.re=0x{cr}");
-            crate::selkie_trace!("[MODA] glue null.c.im=0x{ci}");
-            crate::selkie_trace!("[MODA] glue null.d.re=0x{dr}");
-            crate::selkie_trace!("[MODA] glue null.d.im=0x{di}");
-        }
-
         // Push passenger points through the gluing.
         let mut theta_pts: Vec<JacobianPoint> = pts
             .iter()
@@ -868,25 +744,6 @@ impl Kernel {
                     R = R.double();
                     S = S.double();
                 }
-                #[cfg(test)]
-                {
-                    let any_zero = |p: &JacobianPoint| {
-                        p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
-                    };
-                    if any_zero(&R) || any_zero(&S) {
-                        crate::selkie_trace!(
-                            "CHAIN pushdown: after {n} doublings from level {}, R or S is ZERO",
-                            k - 1
-                        );
-                    }
-                    let hs = S.squared().hadamard();
-                    if hs.X == hs.Z {
-                        crate::selkie_trace!(
-                            "CHAIN pushdown: after {n} dbls from lvl {}, S has H(S²).X==H(S²).Z",
-                            k - 1
-                        );
-                    }
-                }
                 if k >= theta_strat.len() {
                     theta_strat.push((R, S));
                     orders.push(orders[k - 1] - n);
@@ -906,64 +763,6 @@ impl Kernel {
             // The splitting step expects the codomain in dual form
             // (without the final Hadamard), which is what bool_2=0
             // produces.
-            #[cfg(test)]
-            {
-                let t1 = &theta_strat[k].0;
-                let t2 = &theta_strat[k].1;
-                let any_zero = |p: &JacobianPoint| {
-                    p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
-                };
-                if any_zero(t1) || any_zero(t2) {
-                    crate::selkie_trace!(
-                        "CHAIN step {_step_index}: 8-torsion input is ZERO (k={k})"
-                    );
-                }
-                if _step_index == 0 {
-                    let fp2_hex = |v: &Fp2| -> String {
-                        let b = v.to_bytes();
-                        let r: String =
-                            b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
-                        format!("0x{r}")
-                    };
-                    crate::selkie_trace!(
-                        "STEP0 T2.X={} T2.Y={} T2.Z={} T2.W={}",
-                        fp2_hex(&t2.X),
-                        fp2_hex(&t2.Y),
-                        fp2_hex(&t2.Z),
-                        fp2_hex(&t2.W)
-                    );
-                    // Check if T2 has Z == 0 or W == 0 component
-                    if t2.Z == Fp2::ZERO {
-                        crate::selkie_trace!("STEP0: T2.Z is ZERO!");
-                    }
-                    if t2.W == Fp2::ZERO {
-                        crate::selkie_trace!("STEP0: T2.W is ZERO!");
-                    }
-                    // Check for X == Z relationship (which causes alpha==gamma)
-                    let hs = t2.squared().hadamard();
-                    if hs.X == hs.Z {
-                        crate::selkie_trace!(
-                            "STEP0: H(T2²).X == H(T2²).Z → will cause alpha==gamma"
-                        );
-                    }
-                }
-                // Check ALL strategy points before eval.
-                for (si, sp) in theta_strat.iter().enumerate() {
-                    if any_zero(&sp.0) {
-                        crate::selkie_trace!("CHAIN step {_step_index}: strat[{si}].0 is ZERO");
-                    }
-                    if any_zero(&sp.1) {
-                        crate::selkie_trace!("CHAIN step {_step_index}: strat[{si}].1 is ZERO");
-                    }
-                }
-                // Check null point.
-                let null = &current_jacobian.null;
-                let null_zero = null.a == Fp2::ZERO && null.b == Fp2::ZERO;
-                if null_zero {
-                    crate::selkie_trace!("CHAIN step {_step_index}: codomain null is ZERO");
-                }
-            }
-
             // The C ref (theta_isogenies.c:1221-1226) uses three
             // hadamard_bool configurations, keyed on the step index:
             //   Penultimate (i == n-2): bool_1=0, bool_2=0
@@ -1001,89 +800,12 @@ impl Kernel {
                 theta_strat[i].0 = eval_fn(&theta_strat[i].0);
                 theta_strat[i].1 = eval_fn(&theta_strat[i].1);
                 orders[i] -= 1;
-
-                #[cfg(test)]
-                {
-                    let any_zero = |p: &JacobianPoint| {
-                        p.X == Fp2::ZERO && p.Y == Fp2::ZERO && p.Z == Fp2::ZERO && p.W == Fp2::ZERO
-                    };
-                    if any_zero(&theta_strat[i].0) || any_zero(&theta_strat[i].1) {
-                        crate::selkie_trace!(
-                            "CHAIN step {_step_index}: strat[{i}] became ZERO AFTER eval"
-                        );
-                    }
-                }
             }
 
             theta_strat.truncate(k);
             orders.truncate(k);
             k = k.saturating_sub(1);
             current_jacobian = new_jac;
-
-            #[cfg(test)]
-            {
-                let null = &current_jacobian.null;
-                let zero_components: Vec<&str> = [
-                    ("a", &null.a),
-                    ("b", &null.b),
-                    ("c", &null.c),
-                    ("d", &null.d),
-                ]
-                .iter()
-                .filter(|(_, v)| **v == Fp2::ZERO)
-                .map(|(n, _)| *n)
-                .collect();
-                if !zero_components.is_empty() {
-                    crate::selkie_trace!(
-                        "CHAIN step {_step_index}: null has zero components: {zero_components:?}"
-                    );
-                }
-            }
-
-            #[cfg(test)]
-            if _step_index < 3 || steps_remaining <= 2 {
-                crate::selkie_trace!(
-                    "step {_step_index}: k={k}, orders={orders:?}, remaining={steps_remaining}"
-                );
-            }
-
-            #[cfg(test)]
-            {
-                let n = &current_jacobian.null;
-                let fp2_hex = |v: &Fp2| {
-                    let bytes = v.to_bytes();
-                    let re: String = bytes[..32]
-                        .iter()
-                        .rev()
-                        .map(|b| format!("{b:02x}"))
-                        .collect();
-                    let im: String = bytes[32..]
-                        .iter()
-                        .rev()
-                        .map(|b| format!("{b:02x}"))
-                        .collect();
-                    (re, im)
-                };
-                let (ar, ai) = fp2_hex(&n.a);
-                let (br, bi) = fp2_hex(&n.b);
-                let (cr, ci) = fp2_hex(&n.c);
-                let (dr, di) = fp2_hex(&n.d);
-                let label = if steps_remaining == 1 {
-                    "ult"
-                } else if steps_remaining == 2 {
-                    "pen"
-                } else {
-                    "main"
-                };
-                crate::selkie_trace!("[MODA] {label} {_step_index} null.a.re=0x{ar}");
-                crate::selkie_trace!("[MODA] {label} {_step_index} null.a.im=0x{ai}");
-                crate::selkie_trace!("[MODA] {label} {_step_index} null.b.re=0x{br}");
-                crate::selkie_trace!("[MODA] {label} {_step_index} null.b.im=0x{bi}");
-                crate::selkie_trace!("[MODA] {label} {_step_index} null.c.re=0x{cr}");
-                crate::selkie_trace!("[MODA] {label} {_step_index} null.c.im=0x{ci}");
-                crate::selkie_trace!("[MODA] {label} {_step_index} null.d.re=0x{dr}");
-                crate::selkie_trace!("[MODA] {label} {_step_index} null.d.im=0x{di}");
-            }
 
             _step_index += 1;
             steps_remaining -= 1;
@@ -1095,39 +817,6 @@ impl Kernel {
         // (without the final Hadamard transform on the null point).
         // The penultimate and ultimate steps use bool_2=0, producing
         // dual form directly — no post-chain Hadamard needed.
-        #[cfg(test)]
-        {
-            let count = isogeny::get_index_splitting_count(&current_jacobian.null);
-            crate::selkie_trace!("splitting: zeros={count}");
-            // Print null point in same hex format as C ref for comparison.
-            let null = &current_jacobian.null;
-            let fp2_hex = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                // First 32 bytes = real, next 32 = imag (little-endian each)
-                let re_hex: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im_hex: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                (re_hex, im_hex)
-            };
-            for (name, fp2val) in [
-                ("a", &null.a),
-                ("b", &null.b),
-                ("c", &null.c),
-                ("d", &null.d),
-            ] {
-                let (re, im) = fp2_hex(fp2val);
-                crate::selkie_trace!("SPLIT null_{name}_re=0x{re}");
-                crate::selkie_trace!("SPLIT null_{name}_im=0x{im}");
-            }
-        }
-
         let splitter = SplittingKernel {
             domain: current_jacobian,
         };
@@ -1159,25 +848,6 @@ impl Kernel {
         pts: &[ProductPoint],
         randomize: Option<&mut dyn rand_core::RngCore>,
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
-        // Full-hex (re, im) pair for `[NOEX]` step dumps, matching the
-        // format the C ref uses in `[CHAIN_DUMP]` lines so per-step
-        // diffs are mechanical.
-        #[cfg(test)]
-        fn fp2_hex(v: &Fp2) -> (String, String) {
-            let bytes = v.to_bytes();
-            let re: String = bytes[..32]
-                .iter()
-                .rev()
-                .map(|b| format!("{b:02x}"))
-                .collect();
-            let im: String = bytes[32..]
-                .iter()
-                .rev()
-                .map(|b| format!("{b:02x}"))
-                .collect();
-            (re, im)
-        }
-
         let e = e.value();
         assert!(
             e >= 4,
@@ -1246,23 +916,6 @@ impl Kernel {
 
         let mut current_jacobian = gluing_data.codomain.clone();
 
-        #[cfg(test)]
-        {
-            let n = &current_jacobian.null;
-            let (ar, ai) = fp2_hex(&n.a);
-            let (br, bi) = fp2_hex(&n.b);
-            let (cr, ci) = fp2_hex(&n.c);
-            let (dr, di) = fp2_hex(&n.d);
-            crate::selkie_trace!("[NOEX] glue null.a.re=0x{ar}");
-            crate::selkie_trace!("[NOEX] glue null.a.im=0x{ai}");
-            crate::selkie_trace!("[NOEX] glue null.b.re=0x{br}");
-            crate::selkie_trace!("[NOEX] glue null.b.im=0x{bi}");
-            crate::selkie_trace!("[NOEX] glue null.c.re=0x{cr}");
-            crate::selkie_trace!("[NOEX] glue null.c.im=0x{ci}");
-            crate::selkie_trace!("[NOEX] glue null.d.re=0x{dr}");
-            crate::selkie_trace!("[NOEX] glue null.d.im=0x{di}");
-        }
-
         // Phase 3: main loop — ALL steps use normal hadamard.
         // Track the last step's `(dual, codomain)` and the level-0
         // kernel point separately so we can push the level-0 point
@@ -1271,8 +924,6 @@ impl Kernel {
         // thetaQ1[0]); }` at `theta_isogenies.c:1252`).
         let mut last_step: Option<(DualThetaNullPoint, Jacobian)> = None;
         let mut last_kernel: Option<(JacobianPoint, JacobianPoint)> = None;
-        #[cfg(test)]
-        let mut step_idx: u32 = 0;
 
         while !orders.is_empty() && (k > 0 || orders[0] != 0) {
             // Push down with ThetaDBL until order = 1.
@@ -1314,24 +965,6 @@ impl Kernel {
             orders.truncate(k);
             k = k.saturating_sub(1);
             current_jacobian = new_jac;
-
-            #[cfg(test)]
-            {
-                step_idx += 1;
-                let n = &current_jacobian.null;
-                let (ar, ai) = fp2_hex(&n.a);
-                let (br, bi) = fp2_hex(&n.b);
-                let (cr, ci) = fp2_hex(&n.c);
-                let (dr, di) = fp2_hex(&n.d);
-                crate::selkie_trace!("[NOEX] main {step_idx} null.a.re=0x{ar}");
-                crate::selkie_trace!("[NOEX] main {step_idx} null.a.im=0x{ai}");
-                crate::selkie_trace!("[NOEX] main {step_idx} null.b.re=0x{br}");
-                crate::selkie_trace!("[NOEX] main {step_idx} null.b.im=0x{bi}");
-                crate::selkie_trace!("[NOEX] main {step_idx} null.c.re=0x{cr}");
-                crate::selkie_trace!("[NOEX] main {step_idx} null.c.im=0x{ci}");
-                crate::selkie_trace!("[NOEX] main {step_idx} null.d.re=0x{dr}");
-                crate::selkie_trace!("[NOEX] main {step_idx} null.d.im=0x{di}");
-            }
         }
 
         // Post-loop: push the level-0 kernel point through the last
@@ -1355,23 +988,6 @@ impl Kernel {
         theta_pts = theta_pts_after_4iso;
         current_jacobian = codomain_after_4iso;
 
-        #[cfg(test)]
-        {
-            let n = &current_jacobian.null;
-            let (ar, ai) = fp2_hex(&n.a);
-            let (br, bi) = fp2_hex(&n.b);
-            let (cr, ci) = fp2_hex(&n.c);
-            let (dr, di) = fp2_hex(&n.d);
-            crate::selkie_trace!("[NOEX] tail4 null.a.re=0x{ar}");
-            crate::selkie_trace!("[NOEX] tail4 null.a.im=0x{ai}");
-            crate::selkie_trace!("[NOEX] tail4 null.b.re=0x{br}");
-            crate::selkie_trace!("[NOEX] tail4 null.b.im=0x{bi}");
-            crate::selkie_trace!("[NOEX] tail4 null.c.re=0x{cr}");
-            crate::selkie_trace!("[NOEX] tail4 null.c.im=0x{ci}");
-            crate::selkie_trace!("[NOEX] tail4 null.d.re=0x{dr}");
-            crate::selkie_trace!("[NOEX] tail4 null.d.im=0x{di}");
-        }
-
         // Dedicated ultimate: 2-isogeny.
         // C ref: `theta_isogeny_compute_2(step, theta, thetaQ1[0],
         // thetaQ2[0], 1, 0)` at `theta_isogenies.c:1266`. Algorithm
@@ -1383,23 +999,6 @@ impl Kernel {
             isogeny::GenericKernel2::isogeny_ultimate(&current_jacobian, &theta_pts);
         theta_pts = theta_pts_after_2iso;
         current_jacobian = codomain_after_2iso;
-
-        #[cfg(test)]
-        {
-            let n = &current_jacobian.null;
-            let (ar, ai) = fp2_hex(&n.a);
-            let (br, bi) = fp2_hex(&n.b);
-            let (cr, ci) = fp2_hex(&n.c);
-            let (dr, di) = fp2_hex(&n.d);
-            crate::selkie_trace!("[NOEX] tail2 null.a.re=0x{ar}");
-            crate::selkie_trace!("[NOEX] tail2 null.a.im=0x{ai}");
-            crate::selkie_trace!("[NOEX] tail2 null.b.re=0x{br}");
-            crate::selkie_trace!("[NOEX] tail2 null.b.im=0x{bi}");
-            crate::selkie_trace!("[NOEX] tail2 null.c.re=0x{cr}");
-            crate::selkie_trace!("[NOEX] tail2 null.c.im=0x{ci}");
-            crate::selkie_trace!("[NOEX] tail2 null.d.re=0x{dr}");
-            crate::selkie_trace!("[NOEX] tail2 null.d.im=0x{di}");
-        }
 
         // Phase 4: splitting.
         let splitter = SplittingKernel {

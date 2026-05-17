@@ -7,10 +7,6 @@
 
 use subtle::ConstantTimeEq;
 
-#[cfg(test)]
-use crate::curves::montgomery::ProjectiveXOnlyPoint;
-#[cfg(test)]
-use crate::curves::scalar::Scalar;
 use crate::{
     curves::{
         BasisHint, TorsionBasis, TorsionExponent, VerifyingKeyHint,
@@ -88,26 +84,6 @@ impl VerifyingKey {
         let f = TORSION_EVEN_POWER;
         let e_rsp = E_RSP;
 
-        #[cfg(test)]
-        {
-            let fp2_hex_short = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re}+i*0x{im}")
-            };
-            crate::selkie_trace!("VK: j(E_pk)={}", fp2_hex_short(&self.curve.j_invariant()));
-            crate::selkie_trace!("VK: n_bt={} r_rsp={}", sig.n_bt.value(), sig.r_rsp.value());
-        }
-
         // Algorithm 4.9, line 6–7: compute e'_rsp.
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
         let e_rsp_prime = e_rsp
@@ -129,57 +105,10 @@ impl VerifyingKey {
         // Line 9: challenge isogeny.
         // Compute kernel: P_pk + [chl]Q_pk, then [2^n_bt] of that.
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
-        #[cfg(test)]
-        crate::selkie_trace!("VK: sig.chl = {:?}", sig.chl.as_ref());
-
-        #[cfg(test)]
-        {
-            let fp2_hex_short = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re}")
-            };
-            // Check all three basis points
-            let R_aff = &basis_pk.P.X * &basis_pk.P.Z.invert();
-            let S_aff = &basis_pk.PmQ.X * &basis_pk.PmQ.Z.invert();
-            let RS_aff = &basis_pk.Q.X * &basis_pk.Q.Z.invert();
-            crate::selkie_trace!("VK: R(=P) affine = {}", fp2_hex_short(&R_aff));
-            crate::selkie_trace!("VK: S(=P-Q) affine = {}", fp2_hex_short(&S_aff));
-            crate::selkie_trace!("VK: RS(=Q) affine = {}", fp2_hex_short(&RS_aff));
-        }
-
         let kernel_gen = basis_pk.scalar_mul_add(sig.chl.as_ref());
         let mut K_chl = kernel_gen;
         for _ in 0..sig.n_bt.value() {
             K_chl = K_chl.double();
-        }
-
-        #[cfg(test)]
-        {
-            let fp2_hex_short = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re}+i*0x{im}")
-            };
-            crate::selkie_trace!("VK: basis_pk.P.X={}", fp2_hex_short(&basis_pk.P.X));
-            crate::selkie_trace!("VK: basis_pk.P.Z={}", fp2_hex_short(&basis_pk.P.Z));
-            crate::selkie_trace!("VK: K_chl.X={}", fp2_hex_short(&K_chl.X));
-            crate::selkie_trace!("VK: K_chl.Z={}", fp2_hex_short(&K_chl.Z));
-            let k_aff = &K_chl.X * &K_chl.Z.invert();
-            crate::selkie_trace!("VK: K_chl affine={}", fp2_hex_short(&k_aff));
         }
 
         let (curve_chl, _) = CurveKernel::new(K_chl).isogeny(
@@ -188,28 +117,6 @@ impl VerifyingKey {
             &[],
         );
 
-        #[cfg(test)]
-        {
-            let fp2_hex_short = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re}+i*0x{im}")
-            };
-            crate::selkie_trace!(
-                "VK: j(E_chl) after challenge isogeny = {}",
-                fp2_hex_short(&curve_chl.j_invariant())
-            );
-        }
-
         // Lines 10–11: torsion bases on E_aux and E_chl.
         let basis_aux =
             TorsionBasis::from_hint(&sig.curve_aux, BasisHint::from_byte(u8::from(sig.hint_aux)))
@@ -217,28 +124,6 @@ impl VerifyingKey {
         let basis_chl =
             TorsionBasis::from_hint(&curve_chl, BasisHint::from_byte(u8::from(sig.hint_chl)))
                 .ok_or(SignatureError::VerificationFailed)?;
-
-        #[cfg(test)]
-        {
-            let fp2_hex = |fp2val: &Fp2| -> String {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re}+i*0x{im}")
-            };
-            let aff = |p: &ProjectiveXOnlyPoint| -> String { fp2_hex(&(&p.X * &p.Z.invert())) };
-            crate::selkie_trace!("TRACE basis_chl.P aff={}", aff(&basis_chl.P));
-            crate::selkie_trace!("TRACE basis_chl.PmQ aff={}", aff(&basis_chl.PmQ));
-            crate::selkie_trace!("TRACE basis_aux.P aff={}", aff(&basis_aux.P));
-        }
 
         // Algorithm 4.9 line 11:
         // Scale aux basis: double f − e'_rsp − 2 times.
@@ -279,42 +164,6 @@ impl VerifyingKey {
             basis_chl_transformed.Q,
         );
 
-        #[cfg(test)]
-        {
-            let fp2_short = |v: &Fp2| -> String {
-                let bytes = v.to_bytes();
-                let r: String = bytes[..8]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{r}")
-            };
-            let aff = |p: &ProjectiveXOnlyPoint| -> String { fp2_short(&(&p.X * &p.Z.invert())) };
-            crate::selkie_trace!(
-                "VERIFY post-M_chl: R={}, S={}, RS={}, R==S={}, R==RS={}",
-                aff(&P_chl),
-                aff(&Q_chl),
-                aff(&PmQ_chl),
-                P_chl == Q_chl,
-                P_chl == PmQ_chl,
-            );
-            let dump = |s: &Scalar| -> String {
-                let l = s.as_limbs();
-                format!("{:016x}_{:016x}_{:016x}_{:016x}", l[3], l[2], l[1], l[0])
-            };
-            crate::selkie_trace!("VERIFY M_chl[0][0]={}", dump(&sig.M_chl.entries[0][0]));
-            crate::selkie_trace!("VERIFY M_chl[0][1]={}", dump(&sig.M_chl.entries[0][1]));
-            crate::selkie_trace!("VERIFY M_chl[1][0]={}", dump(&sig.M_chl.entries[1][0]));
-            crate::selkie_trace!("VERIFY M_chl[1][1]={}", dump(&sig.M_chl.entries[1][1]));
-            crate::selkie_trace!(
-                "VERIFY basis_chl_scaled (det_chl): R={}, S={}, RS={}",
-                aff(&basis_chl_scaled.P),
-                aff(&basis_chl_scaled.PmQ),
-                aff(&basis_chl_scaled.Q),
-            );
-        }
-
         // Lines 15–20: even response isogeny.
         //
         // Push ALL THREE basis points (P, Q, PmQ) through the
@@ -322,28 +171,6 @@ impl VerifyingKey {
         // `two_response_isogeny_verify`. Never recompute PmQ via
         // projective_difference — the sqrt would pick a different
         // branch.
-        #[cfg(test)]
-        {
-            let fp2_hex = |fp2val: &Fp2| -> String {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re}")
-            };
-            crate::selkie_trace!(
-                "EVEN_RSP: r_rsp={}, first_col_even={}",
-                sig.r_rsp.value(),
-                sig.M_chl.first_column_even()
-            );
-            crate::selkie_trace!("EVEN_RSP: P_chl X_re={}", fp2_hex(&P_chl.X));
-            crate::selkie_trace!(
-                "EVEN_RSP: j(curve_chl) before={}",
-                fp2_hex(&curve_chl.j_invariant())
-            );
-        }
         let mut curve_chl = curve_chl;
         if sig.r_rsp.value() > 0 {
             let kernel_pt = if sig.M_chl.first_column_even() {
@@ -367,23 +194,6 @@ impl VerifyingKey {
             P_chl = images[0];
             Q_chl = images[1];
             PmQ_chl = images[2];
-
-            #[cfg(test)]
-            {
-                let fp2_hex = |fp2val: &Fp2| -> String {
-                    let bytes = fp2val.to_bytes();
-                    let re: String = bytes[..32]
-                        .iter()
-                        .rev()
-                        .map(|b| format!("{:02x}", b))
-                        .collect();
-                    format!("0x{re}")
-                };
-                crate::selkie_trace!(
-                    "EVEN_RSP: j(curve_chl) after={}",
-                    fp2_hex(&curve_chl.j_invariant())
-                );
-            }
         }
 
         // Lines 21–23: if e'_rsp = 0, skip (2,2)-isogeny.
@@ -408,42 +218,6 @@ impl VerifyingKey {
         // pushed through the even response isogeny — NEVER recompute
         // via projective_difference (ambiguous square root).
         let product = surfaces::EllipticProduct::new(curve_chl, sig.curve_aux);
-
-        #[cfg(test)]
-        {
-            let fp2_hex = |fp2val: &Fp2| {
-                let bytes = fp2val.to_bytes();
-                let re: String = bytes[..32]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                let im: String = bytes[32..]
-                    .iter()
-                    .rev()
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
-                format!("0x{re}+i*0x{im}")
-            };
-            crate::selkie_trace!(
-                "VERIFY: e_rsp_prime={e_rsp_prime} n_bt={} r_rsp={}",
-                sig.n_bt.value(),
-                sig.r_rsp.value()
-            );
-            crate::selkie_trace!("VERIFY: curve_chl j={}", fp2_hex(&curve_chl.j_invariant()));
-            let aux_A = *sig.curve_aux.coefficient().as_fp2();
-            crate::selkie_trace!("VERIFY: curve_aux A={}", fp2_hex(&aux_A));
-            crate::selkie_trace!(
-                "VERIFY: j(sig.curve_aux)={}",
-                fp2_hex(&sig.curve_aux.j_invariant())
-            );
-            crate::selkie_trace!("VERIFY: P_chl.X={}", fp2_hex(&P_chl.X));
-            crate::selkie_trace!("VERIFY: P_chl.Z={}", fp2_hex(&P_chl.Z));
-            crate::selkie_trace!("VERIFY: Q_chl.X={}", fp2_hex(&Q_chl.X));
-            crate::selkie_trace!("VERIFY: Q_chl.Z={}", fp2_hex(&Q_chl.Z));
-            crate::selkie_trace!("VERIFY: P_aux.X={}", fp2_hex(&P_aux.X));
-            crate::selkie_trace!("VERIFY: P_aux.Z={}", fp2_hex(&P_aux.Z));
-        }
 
         let kernel = surfaces::Kernel::from_montgomery(
             product,
