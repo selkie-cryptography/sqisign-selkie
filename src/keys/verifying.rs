@@ -226,16 +226,28 @@ impl VerifyingKey {
             (PmQ_chl, PmQ_aux),
         )
         .ok_or(SignatureError::VerificationFailed)?;
+
+        // Reject (vk, sig) inputs whose recovered kernel is not
+        // isotropic for the 2^(e+2)-Weil pairing — i.e. cannot be
+        // the kernel of any legitimate (2,2)-isogeny. Inside
+        // `Kernel::isogeny` this same condition is a debug-only
+        // invariant (sign-side kernels are isotropic by construction);
+        // verify promotes it to a release-build rejection so a bogus
+        // signature fails fast instead of running the chain on garbage
+        // and rejecting on the final j-invariant compare.
+        let e = TorsionExponent::try_from(e_rsp_prime)
+            .map_err(|_| SignatureError::VerificationFailed)?;
+        let kernel_e = TorsionExponent::try_from(e_rsp_prime + 2)
+            .map_err(|_| SignatureError::VerificationFailed)?;
+        if !kernel.is_isotropic(kernel_e) {
+            return Err(SignatureError::VerificationFailed);
+        }
+
+        // Verification uses the deterministic
+        // `theta_chain_compute_and_eval_verify` in C ref —
+        // `randomize=false`. No RNG consumed.
         let (codomain, _) = kernel
-            .isogeny(
-                TorsionExponent::try_from(e_rsp_prime)
-                    .map_err(|_| SignatureError::VerificationFailed)?,
-                &[],
-                // Verification uses the deterministic
-                // `theta_chain_compute_and_eval_verify` in C ref —
-                // `randomize=false`. No RNG consumed.
-                None,
-            )
+            .isogeny(e, &[], None)
             .ok_or(SignatureError::VerificationFailed)?;
 
         // Lines 29–30: recompute challenge.
