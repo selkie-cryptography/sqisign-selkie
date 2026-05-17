@@ -433,6 +433,7 @@ fn smallest_equiv_narrow_basic() {
     let Some(reduced) = ideal.smallest_equiv_narrow::<8>() else {
         return;
     };
+
     let rn = *reduced.norm();
     assert!(!bool::from(rn.is_zero()), "reduced norm must be nonzero");
     assert_ne!(rn, BigInt::<4>::ONE, "reduced norm must be > 1 (non-unit)");
@@ -456,6 +457,7 @@ fn smallest_equiv_narrow_larger_norm() {
     let Some(reduced) = ideal.smallest_equiv_narrow::<8>() else {
         return;
     };
+
     let rn = *reduced.norm();
     assert!(!bool::from(rn.is_zero()));
     assert_ne!(rn, BigInt::<4>::ONE);

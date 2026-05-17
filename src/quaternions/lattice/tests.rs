@@ -843,12 +843,10 @@ fn intersection_via_kernel_lcm_diagonal() {
     );
 }
 
-/// Exercises [`ExtremalOrder::from_raw_limbs`] at runtime so it shows
-/// up in `cargo llvm-cov` coverage. Every production call site is a
-/// `const` initializer in [`crate::quaternions::precomputed`], so the
-/// compiler folds the work into the binary and the runtime
-/// instrumentation never sees it. This `#[test]` calls it with
-/// non-const inputs to force a runtime execution.
+/// Calls `from_raw_limbs` at runtime so llvm-cov sees it.
+/// Production sites are `const` initializers in
+/// `crate::quaternions::precomputed`, invisible to runtime
+/// instrumentation.
 #[test]
 fn from_raw_limbs_smoke() {
     let denom = (0u64, [1u64, 0, 0, 0]);
