@@ -109,6 +109,14 @@ name = "iai"
 harness = false
 required-features = ["expose-internals"]
 
+# Utility example: seeds `fuzz/corpus/fuzz_verify/` from the bundled
+# KAT vectors so libFuzzer can start mutating from parseable inputs
+# instead of bouncing at Signature::from_bytes. Requires the
+# `expose-internals` feature because it reads `keys::kat_data`.
+[[example]]
+name = "seed-fuzz-corpus"
+required-features = ["expose-internals"]
+
 # Build profile used by KAT tests in CI's `kat` job and the manual
 # `kat.yml` workflow. Optimized like `release`, but keeps
 # `debug_assertions` and overflow checks live so invariant violations

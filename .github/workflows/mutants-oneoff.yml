@@ -29,10 +29,10 @@ on:
         required: true
         default: 'src/keys/verifying.rs'
       filter:
-        description: 'nextest filter expression (excludes slow KATs by default)'
+        description: 'nextest filter expression. Default excludes slow tests so per-mutant cost stays bounded; widen for more thorough mutation kill.'
         type: string
         required: true
-        default: 'not test(/sign_kat_derand_/)'
+        default: 'not test(/sign_kat_derand_|bit_flip_sweep|swap_n_bt_and_r_rsp|zeroed_chl|rewritten_hint|zeroed_m_chl|nonce_independence|sign_derand_is_deterministic|sign_(empty|large)_message|sig_binds_to_message/)'
 
 concurrency:
   group: mutants-oneoff-${{ github.ref }}
