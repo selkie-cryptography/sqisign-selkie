@@ -99,6 +99,7 @@ RUN apt-get update \
       texlive-bibtex-extra \
       texlive-fonts-extra \
       texlive-latex-extra \
+      texlive-plain-generic \
       texlive-science \
       valgrind \
   && rm -rf /var/lib/apt/lists/*
