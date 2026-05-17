@@ -422,15 +422,8 @@ fn smallest_equiv_with_delta_consistent() {
     );
 }
 
-/// `smallest_equiv_narrow<W>` on a `LeftIdeal<4>` exercises the
-/// generic wide-width path that the response phase relies on
-/// (production calls it on `LeftIdeal<30>` intersections).
-///
-/// Returning `None` is acceptable — the brute-force enumeration may
-/// not find a `δ` whose equivalent ideal narrows / has non-unit
-/// odd norm. The test just guarantees no panic and, on success,
-/// that the output is a structurally valid `LeftIdeal<4>` of
-/// non-trivial norm.
+/// `smallest_equiv_narrow<W>` on a small-prime ideal: no panic and
+/// the result, if any, has non-trivial odd norm.
 #[test]
 fn smallest_equiv_narrow_basic() {
     let n = BigInt::<4>::from_u64(13);
@@ -449,11 +442,8 @@ fn smallest_equiv_narrow_basic() {
     );
 }
 
-/// Higher-norm input exercises the L2-on-class-gram reduction more
-/// thoroughly than the small-prime case. Pairs with
-/// [`smallest_equiv_narrow_basic`] to cover both the
-/// fits-in-storage-width happy path and the "Gram entries get
-/// large enough that DPE actually matters" regime.
+/// `smallest_equiv_narrow` on a ~64-bit-prime ideal — exercises
+/// the L2-on-class-gram path where DPE precision matters.
 #[test]
 fn smallest_equiv_narrow_larger_norm() {
     // ~64-bit prime; large enough that the class-gram entries
