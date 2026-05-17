@@ -115,7 +115,11 @@ jobs:
   gate:
     name: lib + doc tests (x86_64-linux)
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 30
+    # 90 min: lib tests (~10 min) + integration tests
+    # (sign_properties.rs ~12 min; bit_flip_sweep ~3 min;
+    # malleability mutation tests ~5 min; wycheproof, alloc_budget,
+    # ctgrind ~few min) leave headroom for a slow KAT trajectory.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
         with:

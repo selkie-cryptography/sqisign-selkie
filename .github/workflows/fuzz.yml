@@ -37,6 +37,12 @@ jobs:
           - fuzz_verifying_key_parse
           - fuzz_signing_key_parse
           - fuzz_verify
+          # keygen + sign targets are slow (seconds-to-minutes per
+          # iter), so each 10-min slot yields tens of execs rather
+          # than thousands. Kept anyway — they target the panic-on-
+          # input bug class that exec/s doesn't reflect.
+          - fuzz_keygen_panic
+          - fuzz_sign_panic
     steps:
       - uses: actions/checkout@v6
         with:
@@ -67,6 +73,16 @@ jobs:
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-${{ matrix.target }}-
+
+      # Seed the verify corpus with parseable KAT-derived inputs
+      # before each run. The cache restore (above) brings forward the
+      # most recent fuzz-grown corpus; the seeder then ensures the
+      # 100 KAT-derived `pk||sig||msg` triples are present even on
+      # cold caches. libFuzzer deduplicates on content hash, so this
+      # is idempotent.
+      - name: Seed fuzz_verify corpus from KAT vectors
+        if: matrix.target == 'fuzz_verify'
+        run: cargo run --release --features expose-internals --example seed-fuzz-corpus
 
       # cargo-fuzz on x86_64 Linux defaults to `--target
       # x86_64-unknown-linux-musl` (static-link convenience), but the

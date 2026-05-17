@@ -40,14 +40,21 @@ path = "fuzz_targets/verify.rs"
 test = false
 doc = false
 
-# TODO: Add keygen and sign fuzz targets once they're fast enough.
-# Each invocation takes seconds, making coverage-guided fuzzing
-# impractical (libFuzzer needs millions of executions).
-#
-# [[bin]]
-# name = "fuzz_keygen"
-# path = "fuzz_targets/keygen.rs"
-#
-# [[bin]]
-# name = "fuzz_sign"
-# path = "fuzz_targets/sign.rs"
+# Slow targets: keygen and sign each take seconds-to-minutes per
+# iteration, so coverage-guided fuzzing is impractical for the
+# millions-of-executions metric libFuzzer normally wants. Kept
+# because they catch a different bug class — panic-on-input — that
+# raw exec/s doesn't reflect. Worth running for hours after touching
+# keygen/sign internals, even at single-digit exec/s; one panic is
+# enough.
+[[bin]]
+name = "fuzz_keygen_panic"
+path = "fuzz_targets/keygen_panic.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_sign_panic"
+path = "fuzz_targets/sign_panic.rs"
+test = false
+doc = false
