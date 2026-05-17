@@ -13,7 +13,9 @@
 //! signatures) that are clearer expressed in Rust than in the
 //! C2SP/wycheproof JSON schema.
 
-use sqisign_selkie::{SIGNING_KEY_BYTES, SigningKey};
+use sqisign_selkie::{
+    SIGNING_KEY_BYTES, SignatureError, SigningKey, VERIFYING_KEY_BYTES, VerifyingKey,
+};
 
 /// KAT[0]'s signing key, copied from `tests/vectors/sqisign_keygen.json`
 /// (which mirrors NIST's `PQCsignKAT_…rsp` line 1). Lets the
@@ -92,4 +94,45 @@ fn sign_large_message_roundtrips() {
     sk.verifying_key()
         .verify(&msg, &sig)
         .expect("large-msg signature verifies");
+}
+
+/// `VerifyingKey`'s public accessors / standard-trait surface
+/// (`as_bytes`, `AsRef<[u8]>`, `TryFrom<&[u8]>`) all round-trip
+/// against the same byte representation as `to_bytes`/`from_bytes`.
+/// These are the bytes-in / bytes-out boundary; a consumer wiring
+/// SQIsign into a TLS handshake or storing it in a keystore relies
+/// on each form agreeing.
+#[test]
+fn verifying_key_byte_surface_roundtrips() {
+    let vk_bytes: [u8; VERIFYING_KEY_BYTES] = kat0_sk().verifying_key().to_bytes();
+
+    let vk = VerifyingKey::from_bytes(&vk_bytes).expect("vk parses");
+
+    assert_eq!(
+        vk.as_bytes(),
+        &vk_bytes,
+        "as_bytes matches from_bytes input"
+    );
+    assert_eq!(
+        <VerifyingKey as AsRef<[u8]>>::as_ref(&vk),
+        &vk_bytes[..],
+        "AsRef<[u8]> matches"
+    );
+
+    // TryFrom<&[u8]> accepts exactly VERIFYING_KEY_BYTES.
+    let vk2 = VerifyingKey::try_from(&vk_bytes[..]).expect("try_from slice");
+    assert_eq!(vk2.to_bytes(), vk_bytes);
+
+    // Wrong length is rejected with InvalidLength carrying the
+    // expected/actual sizes.
+    let short = &vk_bytes[..VERIFYING_KEY_BYTES - 1];
+    match VerifyingKey::try_from(short) {
+        Err(SignatureError::InvalidLength {
+            expected, actual, ..
+        }) => {
+            assert_eq!(expected, VERIFYING_KEY_BYTES);
+            assert_eq!(actual, VERIFYING_KEY_BYTES - 1);
+        }
+        other => panic!("expected InvalidLength, got {other:?}"),
+    }
 }

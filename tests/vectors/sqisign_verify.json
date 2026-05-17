@@ -1,7 +1,7 @@
 {
   "algorithm": "SQIsign_248",
   "schema": "sqisign_verify_schema.json",
-  "numberOfTests": 49,
+  "numberOfTests": 52,
   "header": [
     "SQIsign_248: f=248, p = 5*2^248 - 1 (NIST security level I).",
     "Negative and vulnerability test vectors for SQIsign_248 verification.",
@@ -80,6 +80,14 @@
       "bugType": "BASIC",
       "description": "Hint byte causes x-coordinate search loop counter to overflow (u8 wrapping). Prior to fix, caused panic in debug mode. Must be rejected gracefully.",
       "links": []
+    },
+    "DegenerateCurve": {
+      "bugType": "EDGE_CASE",
+      "description": "Signatures whose curve_aux is degenerate (singular, identity, or equal to curve_pk) must be rejected."
+    },
+    "Truncated": {
+      "bugType": "INVALID_SIGNATURE",
+      "description": "Signature byte length does not equal SIGNATURE_BYTES; parsing must reject before any cryptographic check."
     }
   },
   "testGroups": [
@@ -497,6 +505,36 @@
           "result": "invalid",
           "flags": [
             "HintOverflow"
+          ]
+        },
+        {
+          "tcId": 50,
+          "comment": "n_bt=125, r_rsp=1 sums to e_rsp=126 \u2192 trips e_rsp_prime==0 short-circuit; hash mismatch rejects",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC017D01D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010202",
+          "result": "invalid",
+          "flags": [
+            "BitFlip"
+          ]
+        },
+        {
+          "tcId": 51,
+          "comment": "sig.curve_aux equals pk.curve_pk (degenerate aux-equals-public; auxiliary isogeny is identity)",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "07CCD21425136F6E865E497D2D4D208F0054AD81372066E817480787AAF7B2029550C89E892D618CE3230F23510BFBE68FCCDDAEA51DB1436B462ADFAF008A010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010202",
+          "result": "invalid",
+          "flags": [
+            "DegenerateCurve"
+          ]
+        },
+        {
+          "tcId": 52,
+          "comment": "sig truncated to 147 bytes (one byte short of SIGNATURE_BYTES) - parse rejects via length check",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB300102",
+          "result": "invalid",
+          "flags": [
+            "Truncated"
           ]
         }
       ]
