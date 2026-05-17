@@ -26,10 +26,10 @@ fuzz_target!(|data: &[u8]| {
     };
 
     // Verify must not panic. Ok (unlikely with random data) or Err.
-    // Use catch_unwind because some code paths currently panic
-    // instead of returning Err (known issue in splitting step).
-    let vk_copy = vk;
-    let sig_copy = sig;
-    let msg_copy = msg.to_vec();
-    let _ = std::panic::catch_unwind(move || vk_copy.verify(&msg_copy, &sig_copy));
+    // Any panic libFuzzer catches here is a real bug — verify should
+    // return `Err(SignatureError::VerificationFailed)` on every
+    // non-matching input. (Previously this site `catch_unwind`'d the
+    // call to mask known panic paths in the splitting / (2,2)-chain
+    // step; that workaround was hiding the bugs we now want to find.)
+    let _ = vk.verify(msg, &sig);
 });
