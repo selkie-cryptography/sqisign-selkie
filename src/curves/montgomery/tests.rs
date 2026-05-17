@@ -144,6 +144,37 @@ fn lift_basis_round_trip() {
     assert_eq!(lhs, rhs, "Q_jac should be on curve");
 }
 
+/// `Coefficient::is_singular` flags exactly `A == ±2` — the two
+/// Montgomery coefficients where the discriminant `Δ = 4(A² − 4)`
+/// vanishes. Anything else (including the start-curve `A = 0` and
+/// arbitrary non-singular values) must be reported non-singular.
+#[test]
+fn coefficient_is_singular_flags_plus_minus_two() {
+    use crate::fields::fp::Fp;
+
+    let two = Fp2::from_fp(Fp::from_small(2));
+    let neg_two = -&two;
+
+    assert!(
+        Coefficient::from(two).is_singular(),
+        "A = 2 must be singular"
+    );
+    assert!(
+        Coefficient::from(neg_two).is_singular(),
+        "A = -2 must be singular"
+    );
+
+    assert!(
+        !Coefficient::ZERO.is_singular(),
+        "A = 0 (E_0) is non-singular"
+    );
+    let three = Fp2::from_fp(Fp::from_small(3));
+    assert!(
+        !Coefficient::from(three).is_singular(),
+        "A = 3 is non-singular"
+    );
+}
+
 /// Verify that jac_to_xz (From<JacobianPoint>) round-trips correctly.
 #[test]
 fn jac_to_xz_round_trip() {

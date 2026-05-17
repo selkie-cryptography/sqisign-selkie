@@ -43,13 +43,29 @@ pub struct VerifyingKey {
 
 impl VerifyingKey {
     /// Deserialize a verifying key from a fixed-length byte array.
+    ///
+    /// Rejects with [`SignatureError::InvalidCurve`] when the encoded
+    /// coefficient yields a singular Montgomery model (`A = ±2`),
+    /// matching the C reference's `ec_curve_verify_A` parse-time
+    /// check. Supersingularity beyond non-singularity is *not*
+    /// checked here — the spec ([§4.5], Algorithm 4.9 steps 3–4)
+    /// allows that check to be a byproduct of the verify chain
+    /// rather than an explicit parse-time test, and that's what we
+    /// rely on. See `docs/spec-compliance.md` (TODO) for the full
+    /// table.
+    ///
+    /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
     pub fn from_bytes(bytes: &[u8; VERIFYING_KEY_BYTES]) -> Result<VerifyingKey, SignatureError> {
         let a_bytes: &[u8; 64] = bytes[..64]
             .try_into()
             .map_err(|_| SignatureError::NonCanonical)?;
         let A = Fp2::from_bytes(a_bytes);
+        let coefficient = Coefficient::from(A);
+        if coefficient.is_singular() {
+            return Err(SignatureError::InvalidCurve);
+        }
         let hint = VerifyingKeyHint::from(bytes[64]);
-        let curve = Curve::from(Coefficient::from(A));
+        let curve = Curve::from(coefficient);
 
         Ok(VerifyingKey {
             curve,
@@ -198,6 +214,36 @@ impl VerifyingKey {
 
         // Lines 21–23: if e'_rsp = 0, skip (2,2)-isogeny.
         if e_rsp_prime == 0 {
+            // With no (2,2)-chain to run, there's no implicit
+            // supersingularity certificate from "chain succeeded" —
+            // the chain's correct completion is what the spec
+            // (§4.5) cites as the byproduct check on every other
+            // verify branch. Mirror C ref's explicit
+            // `ec_is_basis_four_torsion(B_chall_can, E_chall)` from
+            // `verify.c:226`: assert that the canonical basis on
+            // E_chl actually spans `E_chl[4]`. Equivalently: P, Q
+            // both have order exactly 4, and `2P ≠ 2Q` (their
+            // 2-torsion images generate independent subgroups).
+            //
+            // Without this check, a non-supersingular E_chl whose
+            // basis happens to collapse to lower torsion would
+            // proceed straight to the j-invariant compare and be
+            // rejected by the final hash check — but the chain has
+            // no opportunity to fail, so the implementation-level
+            // signal the spec relies on never fires.
+            let two_p = P_chl.double();
+            let two_q = Q_chl.double();
+            let four_p = two_p.double();
+            let four_q = two_q.double();
+            let p_has_order_4 =
+                bool::from(four_p.is_identity()) && !bool::from(two_p.is_identity());
+            let q_has_order_4 =
+                bool::from(four_q.is_identity()) && !bool::from(two_q.is_identity());
+            let independent = two_p != two_q;
+            if !(p_has_order_4 && q_has_order_4 && independent) {
+                return Err(SignatureError::VerificationFailed);
+            }
+
             let j = curve_chl.j_invariant();
             let chl_prime = hash::hash(self, &j, msg);
             return if sig.chl == Challenge::from(chl_prime) {
