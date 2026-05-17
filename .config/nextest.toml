@@ -29,6 +29,17 @@ slow-timeout = { period = "180s", terminate-after = 1 }
 [profile.coverage]
 slow-timeout = { period = "60s", terminate-after = 30 }
 
+# Sign-side tests under coverage instrumentation can take materially
+# longer than the 180s default-profile cap allows: `sign_kat_derand_063`
+# / `_072` reproducibly exceed 180s under llvm-cov's
+# `-C instrument-coverage` (debug profile, single-threaded). Give
+# them the `kat`-profile-style 30-minute slow-timeout so the
+# coverage run completes; tests that hang for real still die at the
+# 30·60 = 1800s mark.
+[[profile.coverage.overrides]]
+filter = 'test(/sign_kat_derand_/) | test(=sign_fresh) | test(=sign_with_kat_key)'
+slow-timeout = { period = "60s", terminate-after = 30 }
+
 # `kat` profile: long per-test budget for sign_kat_derand_NNN tests.
 # Each test runs `sign_derand` + `verify` on one KAT vector. Some
 # KAT seeds drop into deterministically-rejection-heavy trajectories
