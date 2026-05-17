@@ -422,6 +422,62 @@ fn smallest_equiv_with_delta_consistent() {
     );
 }
 
+/// `smallest_equiv_narrow<W>` on a `LeftIdeal<4>` exercises the
+/// generic wide-width path that the response phase relies on
+/// (production calls it on `LeftIdeal<30>` intersections).
+///
+/// Returning `None` is acceptable — the brute-force enumeration may
+/// not find a `δ` whose equivalent ideal narrows / has non-unit
+/// odd norm. The test just guarantees no panic and, on success,
+/// that the output is a structurally valid `LeftIdeal<4>` of
+/// non-trivial norm.
+#[test]
+fn smallest_equiv_narrow_basic() {
+    let n = BigInt::<4>::from_u64(13);
+    let Some(ideal) = LeftIdeal::random_prime_norm(&n, &EXTREMAL_ORDERS[0]) else {
+        return;
+    };
+    let Some(reduced) = ideal.smallest_equiv_narrow::<8>() else {
+        return;
+    };
+    let rn = *reduced.norm();
+    assert!(!bool::from(rn.is_zero()), "reduced norm must be nonzero");
+    assert_ne!(rn, BigInt::<4>::ONE, "reduced norm must be > 1 (non-unit)");
+    assert!(
+        !bool::from(rn.is_even()),
+        "smallest_equiv_narrow must return an odd-norm equivalent (parent_norm even breaks invmod downstream)"
+    );
+}
+
+/// Higher-norm input exercises the L2-on-class-gram reduction more
+/// thoroughly than the small-prime case. Pairs with
+/// [`smallest_equiv_narrow_basic`] to cover both the
+/// fits-in-storage-width happy path and the "Gram entries get
+/// large enough that DPE actually matters" regime.
+#[test]
+fn smallest_equiv_narrow_larger_norm() {
+    // ~64-bit prime; large enough that the class-gram entries
+    // scale with `N(I) ≈ 2^64` but still inside `BigInt<4>` for
+    // the input ideal.
+    let n = BigInt::<4>::from_u64(0xFFFF_FFFF_FFFF_FFC5); // 2^64 - 59 (prime)
+    let Some(ideal) = LeftIdeal::random_prime_norm(&n, &EXTREMAL_ORDERS[0]) else {
+        return;
+    };
+    let Some(reduced) = ideal.smallest_equiv_narrow::<8>() else {
+        return;
+    };
+    let rn = *reduced.norm();
+    assert!(!bool::from(rn.is_zero()));
+    assert_ne!(rn, BigInt::<4>::ONE);
+    assert!(!bool::from(rn.is_even()));
+    // LLL on the class gram should typically shrink an ~2^64 norm
+    // to ~2^(p/2) = 2^126. We just check it doesn't grow.
+    assert!(
+        reduced.norm().bitsize() <= ideal.norm().bitsize() + 2,
+        "reduced norm shouldn't be materially larger than input"
+    );
+}
+
 #[test]
 fn suitable_ideals_small_prime_norm() {
     // Create an ideal of small prime norm and test SuitableIdeals.
