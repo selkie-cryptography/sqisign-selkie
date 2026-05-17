@@ -136,12 +136,18 @@ impl Signature {
         let sig = bytes;
 
         // E_aux: Montgomery coefficient A ∈ F_{p²} (64 bytes).
+        // Rejects A = ±2 (singular Montgomery model) — matches the
+        // C reference's `ec_curve_verify_A` (`ec.c:169`).
         let A_aux = Fp2::from_bytes(
             sig[..64]
                 .try_into()
                 .map_err(|_| SignatureError::NonCanonical)?,
         );
-        let curve_aux = Curve::from(Coefficient::from(A_aux));
+        let coefficient_aux = Coefficient::from(A_aux);
+        if coefficient_aux.is_singular() {
+            return Err(SignatureError::InvalidCurve);
+        }
+        let curve_aux = Curve::from(coefficient_aux);
 
         // n_bt, r_rsp: 1 byte each, bounded by f=248.
         let n_bt =
@@ -362,6 +368,12 @@ pub enum SignatureError {
     NotSupersingular,
     /// The encoded field element is not canonical (>= p).
     NonCanonical,
+    /// The Montgomery curve coefficient describes a singular curve
+    /// (`A == ±2`, i.e. discriminant `Δ = 4(A² − 4) = 0`). Such
+    /// coefficients are rejected at parse — both for `VerifyingKey`'s
+    /// `A` and `Signature`'s `A_aux` — to match the C reference's
+    /// `ec_curve_verify_A` (`ec.c:169`).
+    InvalidCurve,
     /// The verification equation was not satisfied.
     VerificationFailed,
     /// Key generation failed (probabilistic algorithm exhausted retries).
@@ -382,6 +394,9 @@ impl core::fmt::Display for SignatureError {
             }
             SignatureError::NotSupersingular => write!(f, "curve is not supersingular"),
             SignatureError::NonCanonical => write!(f, "non-canonical field element encoding"),
+            SignatureError::InvalidCurve => {
+                write!(f, "singular Montgomery curve coefficient (A = ±2)")
+            }
             SignatureError::VerificationFailed => write!(f, "signature verification failed"),
             SignatureError::KeyGenFailed => write!(f, "key generation failed"),
             SignatureError::SigningFailed => write!(f, "signing failed"),

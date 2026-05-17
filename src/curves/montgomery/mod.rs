@@ -103,6 +103,17 @@ impl Coefficient {
     pub fn from_bytes(bytes: &[u8; crate::params::CURVE_ENCODED_BYTES]) -> Coefficient {
         Coefficient(Fp2::from_bytes(bytes))
     }
+
+    /// `true` iff the Montgomery model `y² = x³ + Ax² + x` is
+    /// singular. Singularity occurs exactly when the discriminant
+    /// `Δ = 4(A² − 4)` vanishes, i.e., when `A == 2` or `A == −2`.
+    /// Such coefficients are not valid Montgomery curves; verify's
+    /// parse path rejects them, matching the C reference's
+    /// `ec_curve_verify_A` (`ec.c:169`).
+    pub fn is_singular(&self) -> bool {
+        let two = Fp2::from_fp(Fp::from_small(2));
+        self.0 == two || self.0 == -&two
+    }
 }
 
 impl From<Fp2> for Coefficient {
