@@ -671,11 +671,7 @@ fn sign_kat_idx_probe_inner(kat_idx: usize) {
 
     // One DRBG, threaded through keygen then sign — the same
     // sequential consumption pattern C-ref uses for KAT generation.
-    // Wrap in `TracingDrbg` so `crate::drbg::debug::offset()` reports
-    // the cumulative byte offset at every checkpoint.
-    let inner = crate::drbg::Aes256CtrDrbg::new(&seed);
-    let mut drbg = TracingDrbg::new(inner);
-    crate::drbg::debug::reset();
+    let mut drbg = crate::drbg::Aes256CtrDrbg::new(&seed);
     let sk =
         SigningKey::generate_with_rng(&mut drbg).expect("keygen must succeed within retry budget");
 
@@ -1391,53 +1387,3 @@ fn random_prime_norm_wide_byte_aligned_with_cref_kat0() {
     // Sanity: produced an ideal of the requested norm.
     assert_eq!(*ideal.norm(), d_mix_wide);
 }
-
-/// DRBG wrapper that publishes the cumulative byte offset to a
-/// thread-local on every `fill_bytes` call.
-///
-/// Used by [`sign_kat_idx_probe_inner`] so that
-/// [`crate::drbg::debug::offset`] checkpoint reads in `signing.rs` /
-/// `deuring/mod.rs` report a meaningful byte position into the DRBG
-/// output stream rather than 0. The wrapper itself is otherwise a
-/// transparent forwarder.
-#[derive(Debug)]
-struct TracingDrbg<R: rand_core::RngCore> {
-    inner: R,
-    cumulative: usize,
-}
-
-impl<R: rand_core::RngCore> TracingDrbg<R> {
-    fn new(inner: R) -> Self {
-        Self {
-            inner,
-            cumulative: 0,
-        }
-    }
-}
-
-impl<R: rand_core::RngCore> rand_core::RngCore for TracingDrbg<R> {
-    fn next_u32(&mut self) -> u32 {
-        let mut buf = [0u8; 4];
-        self.fill_bytes(&mut buf);
-        u32::from_le_bytes(buf)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let mut buf = [0u8; 8];
-        self.fill_bytes(&mut buf);
-        u64::from_le_bytes(buf)
-    }
-
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.inner.fill_bytes(dest);
-        self.cumulative += dest.len();
-        crate::drbg::debug::set(self.cumulative);
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
-
-impl<R: rand_core::CryptoRng + rand_core::RngCore> rand_core::CryptoRng for TracingDrbg<R> {}

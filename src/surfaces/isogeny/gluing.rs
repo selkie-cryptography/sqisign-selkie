@@ -370,19 +370,6 @@ fn theta_change_of_basis(
     ];
     let invs = batch_invert(&to_invert);
 
-    #[cfg(test)]
-    {
-        let zero_count = [&d_G.delta, &d_Gp.delta, &d_H.delta, &d_Hp.delta]
-            .iter()
-            .filter(|d| **d == &Fp2::ZERO)
-            .count();
-        if zero_count > 0 {
-            crate::selkie_trace!(
-                "GLUING: {zero_count}/4 delta(s) are ZERO (degenerate ActionByTranslation)"
-            );
-        }
-    }
-
     // Complete each ActionByTranslation with the batched inverses.
     let G = translation_finish(&d_G, &invs[0], &invs[1]);
     let Gp = translation_finish(&d_Gp, &invs[2], &invs[3]);

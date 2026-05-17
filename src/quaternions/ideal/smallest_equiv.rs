@@ -335,15 +335,6 @@ impl<const N: usize> LeftIdeal<N> {
         }
         candidates.sort_by_key(|c| c.1);
         candidates.truncate(TOP_K);
-        #[cfg(test)]
-        if let Some((_, min_nrd)) = candidates.first() {
-            crate::selkie_trace!(
-                "[smallest_equiv_narrow] self.norm={} bits, min brute-force nrd={} bits (ratio={} bits)",
-                self.norm().bitsize(),
-                min_nrd.bitsize(),
-                min_nrd.bitsize() as i64 - self.norm().bitsize() as i64,
-            );
-        }
 
         // Try each candidate in ascending `nrd` order; return the
         // first equivalent ideal that narrows to `BigInt<4>` AND
@@ -359,11 +350,6 @@ impl<const N: usize> LeftIdeal<N> {
             if let Some(mut result) = self.build_equiv_from_delta::<W>(best_v, denom_w) {
                 let rn = *result.norm();
                 if rn == BigInt::<4>::ONE || bool::from(rn.is_zero()) {
-                    #[cfg(test)]
-                    crate::selkie_trace!(
-                        "[smallest_equiv_narrow] skipping trivial candidate, norm={} bits",
-                        rn.bitsize()
-                    );
                     continue;
                 }
                 // Verify the constructed lattice's covolume matches
@@ -381,20 +367,10 @@ impl<const N: usize> LeftIdeal<N> {
                 // ideal), the refreshed value is the
                 // mathematically correct one.
                 if result.refresh_norm::<24>().is_none() {
-                    #[cfg(test)]
-                    crate::selkie_trace!(
-                        "[smallest_equiv_narrow] refresh_norm failed on candidate, stored norm={} bits",
-                        _stored_norm.bitsize()
-                    );
                     continue;
                 }
                 let refreshed_norm = *result.norm();
                 if refreshed_norm == BigInt::<4>::ONE || bool::from(refreshed_norm.is_zero()) {
-                    #[cfg(test)]
-                    crate::selkie_trace!(
-                        "[smallest_equiv_narrow] skipping trivial post-refresh, norm={} bits",
-                        refreshed_norm.bitsize()
-                    );
                     continue;
                 }
                 // Skip even-norm candidates: `to_isogeny` scales
@@ -404,27 +380,11 @@ impl<const N: usize> LeftIdeal<N> {
                 // `quat_lideal_prime_norm_reduced_equivalent`,
                 // which only accepts prime-norm candidates.
                 if bool::from(refreshed_norm.is_even()) {
-                    #[cfg(test)]
-                    crate::selkie_trace!(
-                        "[smallest_equiv_narrow] skipping even-norm candidate, norm={} bits",
-                        refreshed_norm.bitsize()
-                    );
                     continue;
                 }
-                #[cfg(test)]
-                crate::selkie_trace!(
-                    "[smallest_equiv_narrow] accepted candidate, brute-force norm={} bits, \
-                     refresh norm={} bits",
-                    _stored_norm.bitsize(),
-                    refreshed_norm.bitsize(),
-                );
                 return Some(result);
             }
         }
-        #[cfg(test)]
-        crate::selkie_trace!(
-            "[smallest_equiv_narrow] no TOP_K={TOP_K} candidate yielded a narrow-able equivalent ideal"
-        );
         None
     }
 
@@ -600,11 +560,6 @@ impl<const N: usize> LeftIdeal<N> {
                 match hnf_w[row][col].narrow_to::<4>() {
                     Some(v) => basis_4[row][col] = v,
                     None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!(
-                            "[build_equiv_from_delta] basis[{row}][{col}] narrow_to<4> None: hnf_w bits={}",
-                            hnf_w[row][col].bitsize(),
-                        );
                         return None;
                     }
                 }
@@ -613,11 +568,6 @@ impl<const N: usize> LeftIdeal<N> {
         let denom_4: BigInt<4> = match o_alpha_denom.narrow_to() {
             Some(d) => d,
             None => {
-                #[cfg(test)]
-                crate::selkie_trace!(
-                    "[build_equiv_from_delta] denom narrow_to<4> None: o_alpha_denom bits={}",
-                    o_alpha_denom.bitsize(),
-                );
                 return None;
             }
         };

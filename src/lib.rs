@@ -16,14 +16,15 @@
 // per-iteration progress prints during local debugging. Compiles to
 // nothing in non-test builds (the body's `#[cfg(test)]` strips the
 // `if` statement).
+#[cfg(test)]
 macro_rules! selkie_trace {
     ($($arg:tt)*) => {{
-        #[cfg(test)]
         if ::std::env::var_os("SELKIE_TRACE").is_some() {
             ::std::eprintln!($($arg)*);
         }
     }};
 }
+#[cfg(test)]
 pub(crate) use selkie_trace;
 
 // Internal modules: pub(crate) by default, pub with expose-internals.
