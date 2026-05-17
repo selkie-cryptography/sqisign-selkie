@@ -1,6 +1,6 @@
 //! Property-based tests for the public API serialization roundtrips.
 //!
-//! Run with: `cargo test --test proptest_api`
+//! Run with: `cargo test --test api_properties`
 
 use proptest::prelude::*;
 use sqisign_selkie::{SIGNATURE_BYTES, Signature, VERIFYING_KEY_BYTES, VerifyingKey};

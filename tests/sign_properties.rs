@@ -3,8 +3,11 @@
 //! impl) because these are property assertions — e.g. "two seeds,
 //! two signatures" — that don't fit the wycheproof schema cleanly.
 
+use proptest::prelude::*;
 use rand_core::OsRng;
-use sqisign_selkie::{SignatureError, SigningKey, VERIFYING_KEY_BYTES, VerifyingKey};
+use sqisign_selkie::{
+    SIGNATURE_BYTES, Signature, SignatureError, SigningKey, VERIFYING_KEY_BYTES, VerifyingKey,
+};
 
 /// Fresh signing key from `OsRng`. Retries on the rare probabilistic
 /// `KeyGenFailed` so a flake doesn't fail the test.
@@ -167,5 +170,89 @@ fn verifying_key_byte_surface_roundtrips() {
             assert_eq!(actual, VERIFYING_KEY_BYTES - 1);
         }
         other => panic!("expected InvalidLength, got {other:?}"),
+    }
+}
+
+/// Helper: keygen, rejecting the proptest case on the rare
+/// probabilistic flake (`KeyGenFailed`) but panicking on anything
+/// unexpected so new error classes can't sneak past silently.
+fn try_keygen(seed: &[u8; 48]) -> Result<SigningKey, TestCaseError> {
+    match SigningKey::generate_derand(seed) {
+        Ok(sk) => Ok(sk),
+        Err(SignatureError::KeyGenFailed) => Err(TestCaseError::reject("keygen exhausted retries")),
+        Err(e) => panic!("unexpected keygen error: {e:?}"),
+    }
+}
+
+/// Helper: sign, rejecting the proptest case on `SigningFailed`,
+/// panicking on anything unexpected.
+fn try_sign(sk: &SigningKey, msg: &[u8], seed: &[u8; 48]) -> Result<Signature, TestCaseError> {
+    match sk.sign_derand(msg, seed) {
+        Ok(sig) => Ok(sig),
+        Err(SignatureError::SigningFailed) => Err(TestCaseError::reject("sign exhausted retries")),
+        Err(e) => panic!("unexpected sign error: {e:?}"),
+    }
+}
+
+// Each case runs keygen + (sometimes) sign + verify — ~10–30 s in
+// release builds. `#[ignore]`d so the default `cargo test` / nextest
+// PR job stays under its 30-min timeout. Run explicitly via:
+//
+//     cargo nextest run --release \
+//         --run-ignored=ignored-only \
+//         -E 'test(/sig_under_wrong_key_rejects|flipped_sig_rejects/)'
+//
+// Bump case count for bug hunting with `PROPTEST_CASES=128 ...`. The
+// fuzz target `fuzz/fuzz_targets/verify.rs` covers the same panic-on-
+// adversarial-input surface continuously on main pushes.
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(8))]
+
+    /// A signature made under `sk_a` must not verify under `sk_b`'s
+    /// `vk`, and verify must return `Err(VerificationFailed)` rather
+    /// than panic on the recovered-but-invalid (2,2)-isogeny kernel.
+    /// Generalizes `sig_binds_to_key` over random seed pairs.
+    #[test]
+    #[ignore = "slow: keygen+sign+verify per case; run on demand or nightly"]
+    fn sig_under_wrong_key_rejects(
+        seed_a in any::<[u8; 48]>(),
+        seed_b in any::<[u8; 48]>(),
+        sign_seed in any::<[u8; 48]>(),
+        msg in proptest::collection::vec(any::<u8>(), 0..128),
+    ) {
+        prop_assume!(seed_a != seed_b);
+        let sk_a = try_keygen(&seed_a)?;
+        let sk_b = try_keygen(&seed_b)?;
+        let sig = try_sign(&sk_a, &msg, &sign_seed)?;
+        prop_assert!(sk_a.verifying_key().verify(&msg, &sig).is_ok(),
+            "sig didn't verify under its own vk");
+        prop_assert!(sk_b.verifying_key().verify(&msg, &sig).is_err(),
+            "sig accidentally verified under wrong vk");
+    }
+
+    /// A single bit-flip on a valid signature must not verify and
+    /// must not panic on any code path. Sweeps the 1184-bit signature
+    /// surface a few bits at a time.
+    #[test]
+    #[ignore = "slow: keygen+sign+verify per case; run on demand or nightly"]
+    fn flipped_sig_rejects(
+        seed in any::<[u8; 48]>(),
+        sign_seed in any::<[u8; 48]>(),
+        msg in proptest::collection::vec(any::<u8>(), 0..128),
+        flip_bit in 0usize..(SIGNATURE_BYTES * 8),
+    ) {
+        let sk = try_keygen(&seed)?;
+        let sig = try_sign(&sk, &msg, &sign_seed)?;
+
+        let mut bytes = sig.to_bytes();
+        bytes[flip_bit / 8] ^= 1 << (flip_bit % 8);
+
+        // Parse rejection (`NonCanonical`, `NotSupersingular`, etc.)
+        // is a valid outcome — that's the input filter doing its job.
+        // Only follow through to `verify` when parse succeeds.
+        if let Ok(sig_mut) = Signature::from_bytes(&bytes) {
+            prop_assert!(sk.verifying_key().verify(&msg, &sig_mut).is_err(),
+                "bit-flipped sig at bit {} accidentally verified", flip_bit);
+        }
     }
 }
