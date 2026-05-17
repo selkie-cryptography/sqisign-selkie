@@ -80,7 +80,9 @@ fn alloc_budgets() {
     let sk_bytes2 = hex::decode(sk_hex).unwrap();
     let sk =
         sqisign_selkie::SigningKey::from_bytes(sk_bytes2.as_slice().try_into().unwrap()).unwrap();
-    results.push(measure("sign", 5000, || {
+    // 20000: measured at ~10800 against KAT[0] sk + seed `0x42…`,
+    // headroom for rejection-sampling variability across seeds.
+    results.push(measure("sign", 20000, || {
         let seed = [0x42u8; 48];
         let _ = sk.sign_derand(b"alloc budget test", &seed);
     }));

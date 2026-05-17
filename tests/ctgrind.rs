@@ -1,4 +1,12 @@
-#![cfg(unix)]
+// Gated to Linux because crabgrind's `bindgen(libclang)` build step
+// looks up `<valgrind/valgrind.h>` on the system include paths. The
+// header is not present on a stock darwin / macOS install (Valgrind
+// is effectively unmaintained on macOS since Big Sur, no homebrew
+// formula ships the dev headers), so the build script panics at test
+// time even though the call sites are guarded by `#[cfg(unix)]`.
+// CI runs this suite on the Linux runner image where Valgrind is
+// installed via `infra/runners/Dockerfile`.
+#![cfg(target_os = "linux")]
 //! Secret-dependent memory access tests using Valgrind memcheck.
 //!
 //! Marks secret inputs as "undefined" using Valgrind client requests,
