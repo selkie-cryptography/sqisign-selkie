@@ -91,6 +91,7 @@ RUN apt-get update \
       libclang-dev \
       libicu-dev \
       libssl-dev \
+      lmodern \
       mold \
       pkg-config \
       python3 \
@@ -98,6 +99,7 @@ RUN apt-get update \
       sudo \
       texlive-bibtex-extra \
       texlive-fonts-extra \
+      texlive-fonts-recommended \
       texlive-latex-extra \
       texlive-plain-generic \
       texlive-science \
