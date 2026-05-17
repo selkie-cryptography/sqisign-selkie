@@ -21,8 +21,6 @@ use core::{
     ops::Deref,
 };
 
-#[cfg(test)]
-use crate::fields::fp2::Fp2;
 use crate::{
     curves::{
         AuxiliaryHint, BasisHint, ChallengeHint, ChangeOfBasisMatrix, TorsionBasis,
@@ -258,12 +256,6 @@ impl SigningKey {
         // Bound the retry loop. Each iteration may fail in
         // reduce_to_prime_norm, narrow, or to_isogeny.
         for _iter in 0..1000 {
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[keygen iter={_iter}] before random_prime_norm_wide: drbg_offset=0x{:x}",
-                crate::drbg::debug::offset()
-            );
-
             // Line 2: I_sk ← RandomIdealGivenNorm(D_mix, true).
             // D_MIX = 2^512 + 75. The ideal is stored at `BigInt<30>`
             // so that `p · g_i ≈ 2^769` entries and the downstream
@@ -278,12 +270,6 @@ impl SigningKey {
                 None => continue,
             };
 
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[keygen iter={_iter}] before reduce_to_prime_norm: drbg_offset=0x{:x}",
-                crate::drbg::debug::offset()
-            );
-
             // Line 4: I_sk ← RandomEquivalentPrimeIdeal(I_sk).
             // `reduce_to_prime_norm` operates at the ideal's storage
             // width `N=30`; `PRIME_W=30` keeps the internal pow_mod
@@ -297,23 +283,11 @@ impl SigningKey {
                 None => continue,
             };
 
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[keygen iter={_iter}] before to_isogeny: drbg_offset=0x{:x}",
-                crate::drbg::debug::offset()
-            );
-
             // Line 5: E_pk, φ_sk(P₀), φ_sk(Q₀) ← IdealToIsogeny(I_sk).
             let (e_pk, phi_p, phi_q, phi_pmq) = match i_sk_narrow.to_isogeny(rng) {
                 Some(r) => r,
                 None => continue,
             };
-
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[keygen iter={_iter}] after to_isogeny: drbg_offset=0x{:x}",
-                crate::drbg::debug::offset()
-            );
 
             // Line 8: (P_pk, Q_pk), hint_pk ← TorsionBasisToHint(E_pk).
             let (basis_pk, basis_hint) = TorsionBasis::to_hint(&e_pk);
@@ -668,16 +642,12 @@ impl SigningKey {
             ) {
                 Some(i) => i,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: random_prime_norm_wide None");
                     continue;
                 }
             };
 
             // Lines 5–6: RandomEquivalentPrimeIdeal.
             if !i_com.reduce_to_prime_norm::<30, _>(rng) {
-                #[cfg(test)]
-                crate::selkie_trace!("[sign {_iter}] DROP: reduce_to_prime_norm false");
                 continue;
             }
 
@@ -685,8 +655,6 @@ impl SigningKey {
             let i_com_narrow = match i_com.narrow() {
                 Some(i) => i,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: i_com.narrow None");
                     continue;
                 }
             };
@@ -698,30 +666,9 @@ impl SigningKey {
             // (2,2)-chain's `lift_basis` sees a projective rep
             // consistent with the chain's evaluation history of
             // `P_com` and `Q_com`.
-            #[cfg(test)]
-            crate::selkie_trace!("[sign {_iter}] commitment to_isogeny...");
             let (e_com, p_com, q_com, pmq_com) = match i_com_narrow.to_isogeny(rng) {
-                Some(r) => {
-                    #[cfg(test)]
-                    crate::selkie_trace!(
-                        "[sign {_iter}] commitment OK ({:?})",
-                        _iter_start.elapsed()
-                    );
-                    #[cfg(test)]
-                    {
-                        let j = r.0.j_invariant();
-                        crate::selkie_trace!(
-                            "[sign {_iter}] E_com.j = {}",
-                            hex::encode(j.to_bytes())
-                        );
-                    }
-                    r
-                }
+                Some(r) => r,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!(
-                        "[sign {_iter}] DROP: commitment i_com_narrow.to_isogeny None"
-                    );
                     continue;
                 }
             };
@@ -764,8 +711,6 @@ impl SigningKey {
                 match TorsionBasis::kernel_to_ideal(&c1_big, &c2_big, TorsionExponent::FULL) {
                     Some(ideal) => ideal,
                     None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!("[sign {_iter}] DROP: kernel_to_ideal None");
                         continue;
                     }
                 };
@@ -774,21 +719,6 @@ impl SigningKey {
             let i_sk_w = self.ideal.widen::<N_RESP>();
             let i_com_w = i_com.widen::<N_RESP>();
             let i_chl_prime_w = i_chl_prime.widen::<N_RESP>();
-
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[sign {_iter}] norms: N(I_sk)={} bits, N(I_com)={} bits, N(I_chl')={} bits",
-                i_sk_w.norm().bitsize(),
-                i_com_w.norm().bitsize(),
-                i_chl_prime_w.norm().bitsize(),
-            );
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[sign {_iter}] N(I_com) limbs = {:016x}{:016x}{:016x}",
-                i_com.norm().as_limbs()[2],
-                i_com.norm().as_limbs()[1],
-                i_com.norm().as_limbs()[0],
-            );
 
             // Line 14: α_rsp ← RandomEquivalentQuaternion(I_com ∩ I_sk · I_chl)
             //
@@ -835,18 +765,9 @@ impl SigningKey {
             let i_chl_sk = match i_chl_lat.intersection_via_kernel::<150>(&i_sk_lat) {
                 Some(l) => l,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: intersection_via_kernel 1 None");
                     continue;
                 }
             };
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[sign {_iter}] intersection 1: {:?} (cumul {:?})",
-                _t_int.elapsed(),
-                _iter_start.elapsed()
-            );
-
             let i_com_conj = i_com_w.lattice().conjugate();
             let i_chl_sk_lat = Lattice::<N_RESP>::from(i_chl_sk);
             let i_com_conj_lat = Lattice::<N_RESP>::from(i_com_conj);
@@ -864,19 +785,9 @@ impl SigningKey {
                 match i_chl_sk_lat.intersection_via_dual_sum_dual::<500>(&i_com_conj_lat) {
                     Some(l) => l,
                     None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!(
-                            "[sign {_iter}] DROP: intersection_via_dual_sum_dual 2 None"
-                        );
                         continue;
                     }
                 };
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[sign {_iter}] intersection 2: {:?} (cumul {:?})",
-                _t_int2.elapsed(),
-                _iter_start.elapsed()
-            );
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
 
             // Sampling radius — C-ref formula, not spec.
@@ -932,14 +843,6 @@ impl SigningKey {
             let two_to_e_rsp: BigInt<N_RESP> = BigInt::<N_RESP>::ONE << e_rsp;
             let two_e_rsp_minus_one = two_to_e_rsp.ct_sub(&BigInt::<N_RESP>::ONE);
             let radius = two_e_rsp_minus_one.ct_mul(&lattice_content_r);
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[sign {_iter}] radius: bits={}, lattice_content bits={}, e_rsp={}",
-                radius.bitsize(),
-                lattice_content_r.bitsize(),
-                e_rsp,
-            );
-
             // The intersection lattice has entries up to ~1920 bits
             // (BigInt<30>). The gram computation squares these:
             // ~3840 bits ≈ 60 limbs. Use W=64 for margin.
@@ -956,12 +859,6 @@ impl SigningKey {
             // of times within one iter before giving up.
             #[cfg(test)]
             let _t_sample = std::time::Instant::now();
-
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[sign {_iter}] before sample_from_ball: drbg_offset=0x{:x}",
-                crate::drbg::debug::offset()
-            );
 
             let mut sample_result: Option<(_, u32, BigInt<N_RESP>, BigInt<N_RESP>)> = None;
             for _try in 0..8u32 {
@@ -987,25 +884,9 @@ impl SigningKey {
             let (alpha_rsp_w, n_bt, nrd_num_w, nrd_den_w) = match sample_result {
                 Some(t) => t,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!(
-                        "[sign {_iter}] DROP: 8 samples failed divisibility ({:?} cumul {:?})",
-                        _t_sample.elapsed(),
-                        _iter_start.elapsed()
-                    );
                     continue;
                 }
             };
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[sign {_iter}] sample+bt OK: n_bt={}, nrd_num bits={}, nrd_den bits={} ({:?} cumul {:?})",
-                n_bt,
-                nrd_num_w.bitsize(),
-                nrd_den_w.bitsize(),
-                _t_sample.elapsed(),
-                _iter_start.elapsed()
-            );
-
             // Lines 16–20: degree computations — C-ref formula.
             //
             // # Divergences
@@ -1052,24 +933,10 @@ impl SigningKey {
             let d_rsp_wide = {
                 let (q1, r1) = nrd_num_w.div_rem(&nrd_den_w);
                 if !bool::from(r1.is_zero()) {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: nrd not exact by denom²");
                     continue;
                 }
                 let (q2, r2) = q1.div_rem(&lattice_content);
                 if !bool::from(r2.is_zero()) {
-                    #[cfg(test)]
-                    {
-                        let g = q1.gcd(&lattice_content);
-                        crate::selkie_trace!(
-                            "[sign {_iter}] DROP: nrd not divisible by N(I_com)·N(I_chl_sec): \
-                             q1 bits={}, lattice_content bits={}, rem bits={}, gcd(q1, lc) bits={}",
-                            q1.bitsize(),
-                            lattice_content.bitsize(),
-                            r2.bitsize(),
-                            g.bitsize(),
-                        );
-                    }
                     continue;
                 }
                 q2
@@ -1083,8 +950,6 @@ impl SigningKey {
             let q_rsp: BigInt<4> = match d_rsp_shifted.narrow_to::<4>() {
                 Some(q) => q,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: q_rsp narrow_to::<4>() None");
                     continue;
                 }
             };
@@ -1133,8 +998,6 @@ impl SigningKey {
             ) {
                 Some(i) => i,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: from_generator_mod_hnf None");
                     continue;
                 }
             };
@@ -1146,8 +1009,6 @@ impl SigningKey {
             // `smallest_equiv_narrow` rejects valid δ when `self.norm`
             // is inflated.
             if i_com_rsp_w.refresh_norm::<120>().is_none() {
-                #[cfg(test)]
-                crate::selkie_trace!("[sign {_iter}] DROP: refresh_norm None");
                 continue;
             }
             // Narrow `i_com_rsp` to `LeftIdeal<8>` for the intersection
@@ -1162,8 +1023,6 @@ impl SigningKey {
             let i_com_rsp = match i_com_rsp_w.narrow_to::<8>() {
                 Some(i) => i,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: i_com_rsp narrow_to::<8> None");
                     continue;
                 }
             };
@@ -1183,27 +1042,12 @@ impl SigningKey {
                 // (norm ~2^126) produces a ~141-bit norm ideal,
                 // within FixedDegreeIsogeny's bound (< 2^246).
                 let aux_norm = (BigInt::<4>::ONE << e_rsp_prime).ct_sub(&q_rsp);
-                #[cfg(test)]
-                crate::selkie_trace!(
-                    "[sign {_iter}] aux_norm step starting, aux_norm bits={} (cumul {:?})",
-                    aux_norm.bitsize(),
-                    _iter_start.elapsed()
-                );
                 let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0], rng) {
                     Some(i) => i,
                     None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!("[sign {_iter}] DROP: i_aux random_norm None");
                         continue;
                     }
                 };
-                #[cfg(test)]
-                crate::selkie_trace!(
-                    "[sign {_iter}] i_aux done, norm={} bits (cumul {:?})",
-                    i_aux.norm().bitsize(),
-                    _iter_start.elapsed()
-                );
-
                 // Line 24: E_aux, P_aux, Q_aux ← IdealToIsogeny(I_{com,rsp} ∩ I_aux)
                 //
                 // Use the true lattice intersection via
@@ -1243,19 +1087,9 @@ impl SigningKey {
                     match i_com_rsp_lat_w.intersection_via_dual_sum_dual::<200>(&i_aux_lat_w) {
                         Some(h) => h,
                         None => {
-                            #[cfg(test)]
-                            crate::selkie_trace!(
-                                "[sign {_iter}] DROP: i_inter intersection_via_dual_sum_dual None"
-                            );
                             continue;
                         }
                     };
-                #[cfg(test)]
-                crate::selkie_trace!(
-                    "[sign {_iter}] i_inter intersection_via_kernel: {:?} (cumul {:?})",
-                    _t_inter.elapsed(),
-                    _iter_start.elapsed()
-                );
                 let inter_norm_w8: BigInt<8> = i_com_rsp
                     .norm()
                     .widen::<8>()
@@ -1266,27 +1100,11 @@ impl SigningKey {
                 #[cfg(test)]
                 let _t_refresh = std::time::Instant::now();
                 if i_inter_w.refresh_norm::<40>().is_none() {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: i_inter.refresh_norm None");
                     continue;
                 }
-                #[cfg(test)]
-                crate::selkie_trace!(
-                    "[sign {_iter}] i_inter refresh_norm OK: {:?}, norm={} bits (cumul {:?})",
-                    _t_refresh.elapsed(),
-                    i_inter_w.norm().bitsize(),
-                    _iter_start.elapsed()
-                );
                 if *i_inter_w.norm() == BigInt::<8>::ONE {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[sign {_iter}] DROP: i_inter collapsed to O_0");
                     continue;
                 }
-                #[cfg(test)]
-                crate::selkie_trace!(
-                    "[sign {_iter}] response to_isogeny (wide N=8)... (cumul {:?})",
-                    _iter_start.elapsed()
-                );
                 // Pass the un-reduced `i_inter_w` (at width 8) directly
                 // to `to_isogeny`. The C reference's
                 // `dim2id2iso_arbitrary_isogeny_evaluation` is invoked
@@ -1301,17 +1119,8 @@ impl SigningKey {
                 // `splitting_index_count() = 0`.
                 let (e_aux_prime, p_aux_prime, q_aux_prime, pmq_aux_prime) =
                     match i_inter_w.to_isogeny(rng) {
-                        Some(r) => {
-                            #[cfg(test)]
-                            crate::selkie_trace!(
-                                "[sign {_iter}] response to_isogeny OK (cumul {:?})",
-                                _iter_start.elapsed()
-                            );
-                            r
-                        }
+                        Some(r) => r,
                         None => {
-                            #[cfg(test)]
-                            crate::selkie_trace!("[sign {_iter}] DROP: i_inter.to_isogeny() None");
                             continue;
                         }
                     };
@@ -1332,8 +1141,6 @@ impl SigningKey {
                 ) {
                     Some(r) => r,
                     None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!("[sign {_iter}] DROP: split_auxiliary_isogeny None");
                         continue;
                     }
                 };
@@ -1345,60 +1152,11 @@ impl SigningKey {
                 p_chl = split.5;
                 q_chl = split.6;
                 pmq_chl = split.7;
-
-                #[cfg(test)]
-                {
-                    let fp2_hex = |fp2val: &Fp2| -> String {
-                        let bytes = fp2val.to_bytes();
-                        let re: String = bytes[..32]
-                            .iter()
-                            .rev()
-                            .map(|b| format!("{:02x}", b))
-                            .collect();
-                        format!("0x{re}")
-                    };
-                    crate::selkie_trace!(
-                        "[sign {_iter}] post-split-aux: j(E_chl_2)={} j(E_aux_2)={}",
-                        fp2_hex(&e_chl.j_invariant()),
-                        fp2_hex(&curve_aux.j_invariant()),
-                    );
-                }
-
-                #[cfg(test)]
-                {
-                    let fp2_short = |v: &Fp2| -> String {
-                        let bytes = v.to_bytes();
-                        let r: String = bytes[..8]
-                            .iter()
-                            .rev()
-                            .map(|b| format!("{:02x}", b))
-                            .collect();
-                        format!("0x{r}")
-                    };
-                    let aff = |p: &ProjectiveXOnlyPoint| -> String {
-                        let v = &p.X * &p.Z.invert();
-                        fp2_short(&v)
-                    };
-                    crate::selkie_trace!(
-                        "[sign {_iter}] split_aux out: P_aux={}, Q_aux={}, PmQ_aux={}, P_chl={}, Q_chl={}, PmQ_chl={}, P_chl==Q_chl={}",
-                        aff(&p_aux),
-                        aff(&q_aux),
-                        aff(&pmq_aux),
-                        aff(&p_chl),
-                        aff(&q_chl),
-                        aff(&pmq_chl),
-                        p_chl == q_chl,
-                    );
-                }
             } else {
                 // Lines 28–31: direct path
                 let (ec, pc, qc, pc_pmq) = match i_com_narrow.to_isogeny(rng) {
                     Some(r) => r,
                     None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!(
-                            "[sign {_iter}] DROP: direct-path i_com_narrow.to_isogeny() None"
-                        );
                         continue;
                     }
                 };
@@ -1434,31 +1192,9 @@ impl SigningKey {
                 let alpha_narrow = match reduced_w.narrow_to::<4>() {
                     Some(a) => a,
                     None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!(
-                            "[sign {_iter}] DROP: reduced_w.narrow_to::<4>() None"
-                        );
                         continue;
                     }
                 };
-                #[cfg(test)]
-                crate::selkie_trace!(
-                    "[sign {_iter}] alpha_narrow: a={:?} b={:?} c={:?} d={:?} denom={:?}",
-                    alpha_narrow.a.as_bigint(),
-                    alpha_narrow.b.as_bigint(),
-                    alpha_narrow.c.as_bigint(),
-                    alpha_narrow.d.as_bigint(),
-                    alpha_narrow.denom.as_bigint()
-                );
-                #[cfg(test)]
-                crate::selkie_trace!(
-                    "[sign {_iter}] alpha_rsp_w (before mod): a={:?} b={:?} c={:?} d={:?} denom={:?}",
-                    alpha_rsp_w.a.as_bigint(),
-                    alpha_rsp_w.b.as_bigint(),
-                    alpha_rsp_w.c.as_bigint(),
-                    alpha_rsp_w.d.as_bigint(),
-                    alpha_rsp_w.denom.as_bigint()
-                );
                 let (ec, pc, qc, pc_pmq) = match deuring::compute_even_response(
                     &e_chl,
                     &p_chl,
@@ -1470,8 +1206,6 @@ impl SigningKey {
                 ) {
                     Some(r) => r,
                     None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!("[sign {_iter}] DROP: compute_even_response None");
                         continue;
                     }
                 };
@@ -1479,59 +1213,18 @@ impl SigningKey {
                 p_chl = pc;
                 q_chl = qc;
                 pmq_chl = pc_pmq;
-
-                #[cfg(test)]
-                {
-                    let fp2_hex = |fp2val: &Fp2| -> String {
-                        let bytes = fp2val.to_bytes();
-                        let re: String = bytes[..32]
-                            .iter()
-                            .rev()
-                            .map(|b| format!("{:02x}", b))
-                            .collect();
-                        format!("0x{re}")
-                    };
-                    crate::selkie_trace!(
-                        "[sign {_iter}] post-even-response: j(E_chl_3)={}",
-                        fp2_hex(&e_chl.j_invariant()),
-                    );
-                }
             }
 
             // Line 36: ComputeChallengeIsogeny
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[sign {_iter}] entering compute_challenge_isogeny (n_bt={})",
-                n_bt_te.value()
-            );
             let (e_chl_final, p_chl_final, q_chl_final, pmq_chl_final) =
                 match compute_challenge_isogeny(
                     &basis_pk, &chl, &e_chl, &p_chl, &q_chl, &pmq_chl, n_bt_te,
                 ) {
                     Some(r) => r,
                     None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!("[sign {_iter}] DROP: compute_challenge_isogeny None");
                         continue;
                     }
                 };
-            #[cfg(test)]
-            {
-                let fp2_hex = |fp2val: &Fp2| -> String {
-                    let bytes = fp2val.to_bytes();
-                    let re: String = bytes[..32]
-                        .iter()
-                        .rev()
-                        .map(|b| format!("{:02x}", b))
-                        .collect();
-                    format!("0x{re}")
-                };
-                crate::selkie_trace!(
-                    "[sign {_iter}] post-challenge-isogeny: j(e_chl_final)={}",
-                    fp2_hex(&e_chl_final.j_invariant()),
-                );
-            }
-
             // Line 37: SetChangeOfBasisMatrix (Algorithm 4.8, inlined).
             // TODO: refactor into ChallengeMatrix::from_response_endpoints()
             // that takes (E_aux, E_chl, P_aux, Q_aux, P_chl, Q_chl, e)
@@ -1561,10 +1254,6 @@ impl SigningKey {
             let m1 = match ChangeOfBasisMatrix::from_bases_invert(&det_aux, &basis_aux, e_cob) {
                 Some(m) => m,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!(
-                        "[sign {_iter}] DROP: ChangeOfBasisMatrix::from_bases_invert (m1) None"
-                    );
                     continue;
                 }
             };
@@ -1574,34 +1263,6 @@ impl SigningKey {
             let basis_chl = TorsionBasis::from_propagated(p_chl_final, pmq_chl_final, q_chl_final);
             let transformed = m1.mul(&basis_chl);
 
-            #[cfg(test)]
-            {
-                let fp2_short = |v: &Fp2| -> String {
-                    let bytes = v.to_bytes();
-                    let r: String = bytes[..8]
-                        .iter()
-                        .rev()
-                        .map(|b| format!("{:02x}", b))
-                        .collect();
-                    format!("0x{r}")
-                };
-                let aff =
-                    |p: &ProjectiveXOnlyPoint| -> String { fp2_short(&(&p.X * &p.Z.invert())) };
-                crate::selkie_trace!(
-                    "[sign {_iter}] basis_chl: R={}, S={}, RS={}, R==S={}",
-                    aff(&basis_chl.P),
-                    aff(&basis_chl.PmQ),
-                    aff(&basis_chl.Q),
-                    basis_chl.P == basis_chl.PmQ,
-                );
-                crate::selkie_trace!(
-                    "[sign {_iter}] transformed: R={}, S={}, RS={}, R==S={}",
-                    aff(&transformed.P),
-                    aff(&transformed.PmQ),
-                    aff(&transformed.Q),
-                    transformed.P == transformed.PmQ,
-                );
-            }
             // m_chl = "coords of transformed in det_chl at 2^e_cob".
             // C ref's `change_of_basis_matrix_tate` (non-invert):
             // canonical = det_chl (full order), reduced = transformed
@@ -1609,94 +1270,9 @@ impl SigningKey {
             let m_chl = match ChangeOfBasisMatrix::from_bases(&det_chl, &transformed, e_cob) {
                 Some(m) => m,
                 None => {
-                    #[cfg(test)]
-                    crate::selkie_trace!(
-                        "[sign {_iter}] DROP: ChangeOfBasisMatrix::from_bases (m_chl) None"
-                    );
                     continue;
                 }
             };
-
-            #[cfg(test)]
-            {
-                let dump = |s: &Scalar| -> String {
-                    let l = s.as_limbs();
-                    format!("{:016x}_{:016x}_{:016x}_{:016x}", l[3], l[2], l[1], l[0])
-                };
-                let fp2_short = |v: &Fp2| -> String {
-                    let bytes = v.to_bytes();
-                    let r: String = bytes[..8]
-                        .iter()
-                        .rev()
-                        .map(|b| format!("{:02x}", b))
-                        .collect();
-                    format!("0x{r}")
-                };
-                let aff =
-                    |p: &ProjectiveXOnlyPoint| -> String { fp2_short(&(&p.X * &p.Z.invert())) };
-                crate::selkie_trace!(
-                    "[sign {_iter}] j(e_chl_final)={} hint_chl_raw={:08b}",
-                    fp2_short(&e_chl_final.j_invariant()),
-                    hint_chl_raw.to_byte(),
-                );
-                crate::selkie_trace!(
-                    "[sign {_iter}] det_chl: R={}, S={}, RS={}",
-                    aff(&det_chl.P),
-                    aff(&det_chl.PmQ),
-                    aff(&det_chl.Q),
-                );
-                crate::selkie_trace!(
-                    "[sign {_iter}] m_chl e={} entries: [00]={} [01]={} [10]={} [11]={}",
-                    m_chl.e.value(),
-                    dump(&m_chl.entries[0][0]),
-                    dump(&m_chl.entries[0][1]),
-                    dump(&m_chl.entries[1][0]),
-                    dump(&m_chl.entries[1][1]),
-                );
-            }
-
-            #[cfg(test)]
-            {
-                let fp2_hex = |v: &Fp2| -> String {
-                    let b = v.to_bytes();
-                    let r: String = b[..32].iter().rev().map(|x| format!("{:02x}", x)).collect();
-                    let i: String = b[32..].iter().rev().map(|x| format!("{:02x}", x)).collect();
-                    format!("0x{r}+i*0x{i}")
-                };
-                crate::selkie_trace!(
-                    "[SIGN_FINAL] curve_aux.A={}",
-                    fp2_hex(curve_aux.coefficient().as_fp2())
-                );
-                crate::selkie_trace!(
-                    "[SIGN_FINAL] e_chl_final.j={}",
-                    fp2_hex(&e_chl_final.j_invariant())
-                );
-                crate::selkie_trace!(
-                    "[SIGN_FINAL] e_rsp_prime={e_rsp_prime} r_rsp={} n_bt={}",
-                    r_rsp.value(),
-                    n_bt_te.value()
-                );
-                crate::selkie_trace!("[SIGN_FINAL] P_chl.X={}", fp2_hex(&p_chl_final.X));
-                crate::selkie_trace!("[SIGN_FINAL] P_chl.Z={}", fp2_hex(&p_chl_final.Z));
-                crate::selkie_trace!("[SIGN_FINAL] Q_chl.X={}", fp2_hex(&q_chl_final.X));
-                crate::selkie_trace!("[SIGN_FINAL] Q_chl.Z={}", fp2_hex(&q_chl_final.Z));
-                crate::selkie_trace!("[SIGN_FINAL] P_aux.X={}", fp2_hex(&p_aux.X));
-                crate::selkie_trace!("[SIGN_FINAL] P_aux.Z={}", fp2_hex(&p_aux.Z));
-                crate::selkie_trace!("[SIGN_FINAL] Q_aux.X={}", fp2_hex(&q_aux.X));
-                crate::selkie_trace!("[SIGN_FINAL] Q_aux.Z={}", fp2_hex(&q_aux.Z));
-                crate::selkie_trace!(
-                    "[SIGN_FINAL] hint_aux={:08b} hint_chl={:08b}",
-                    hint_aux_raw.to_byte(),
-                    hint_chl_raw.to_byte()
-                );
-                crate::selkie_trace!(
-                    "[SIGN_FINAL] m_chl entries: [00]={:?} [01]={:?} [10]={:?} [11]={:?}",
-                    m_chl.entries[0][0],
-                    m_chl.entries[0][1],
-                    m_chl.entries[1][0],
-                    m_chl.entries[1][1]
-                );
-            }
 
             // Line 38: assemble signature.
             let hint_aux = AuxiliaryHint::from(hint_aux_raw.to_byte());
@@ -1705,8 +1281,6 @@ impl SigningKey {
             // Convert ChangeOfBasisMatrix → ChallengeMatrix for Signature.
             let sig_matrix = ChallengeMatrix::from(m_chl);
 
-            #[cfg(test)]
-            crate::selkie_trace!("[sign {_iter}] SUCCESS (cumul {:?})", _iter_start.elapsed());
             return Ok(Signature {
                 curve_aux,
                 n_bt: n_bt_te,
@@ -1823,25 +1397,6 @@ pub(crate) fn compute_challenge_isogeny(
     // is mathematically meaningless — the signature passes
     // serialization but verify rejects at the (2,2)-chain step.
     if e_prime.j_invariant() != curve_chl.j_invariant() {
-        #[cfg(test)]
-        {
-            let fp2_hex = |v: &Fp2| -> String {
-                let bytes = v.to_bytes();
-                let mut a = bytes[..32].to_vec();
-                a.reverse();
-                let mut b = bytes[32..].to_vec();
-                b.reverse();
-                format!("0x{} + i*0x{}", hex::encode(a), hex::encode(b))
-            };
-            crate::selkie_trace!(
-                "[compute_challenge_isogeny] DROP: j(e_prime)   ={}",
-                fp2_hex(&e_prime.j_invariant()),
-            );
-            crate::selkie_trace!(
-                "[compute_challenge_isogeny] DROP: j(curve_chl)={}",
-                fp2_hex(&curve_chl.j_invariant()),
-            );
-        }
         return None;
     }
     let iso = e_prime.isomorphism(&curve_chl)?;
@@ -1953,10 +1508,6 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     {
         Some(o) if o <= f => o,
         _ => {
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[split_aux] reduced_order out of range: e_prime={e_prime_val}, r={r_val}, f={f}"
-            );
             return None;
         }
     };
@@ -1991,15 +1542,6 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     let q_inv = match q_scalar.inv_mod2k(reduced_order) {
         Some(v) => v,
         None => {
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[split_aux] q.inv_mod2k None: q_rsp parity={:?}, reduced_order={reduced_order}",
-                if bool::from(q_rsp.is_even()) {
-                    "even"
-                } else {
-                    "odd"
-                }
-            );
             return None;
         }
     };
@@ -2034,8 +1576,6 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     ) {
         Some(k) => k,
         None => {
-            #[cfg(test)]
-            crate::selkie_trace!("[split_aux] Kernel::from_montgomery None");
             return None;
         }
     };
@@ -2063,76 +1603,11 @@ pub(crate) fn split_auxiliary_isogeny<R: rand_core::CryptoRngCore>(
     // produces a different `j(E_chl_3)`. With `Some(rng)`, both
     // implementations consume the same DRBG bytes and produce the
     // same projective representative of the codomain product surface.
-    let (codomain, images) = match kernel.isogeny(
+    let (codomain, images) = kernel.isogeny(
         e_chain,
         &[(p1_red, zero_e2), (q1_red, zero_e2), (pmq1_red, zero_e2)],
         Some(rng),
-    ) {
-        Some(r) => r,
-        None => {
-            #[cfg(test)]
-            crate::selkie_trace!(
-                "[split_aux] kernel.isogeny None: e_chain={}, reduced_order={reduced_order}",
-                e_chain.value()
-            );
-            // When `DUMP_FAIL_KERNEL=<dir>` is set, write the input to
-            // a binary file so a C ref harness can run
-            // `theta_chain_compute_and_eval_randomized` on the same
-            // bytes and report whether C ref's chain accepts where
-            // ours rejects (or vice versa). Distinguishes a residual
-            // projective-rep / branch-selection bug from an
-            // inherent-rejection-sampling property.
-            //
-            // Format (little-endian, no padding):
-            //   u32 e_chain
-            //   u32 reduced_order
-            //   Fp2 e1.A_aff (64 B)        -- chl-side curve A coefficient (affine)
-            //   Fp2 e2.A_aff (64 B)        -- aux-side curve A coefficient
-            //   For each of T1.P1, T1.P2, T2.P1, T2.P2, T1m2.P1, T1m2.P2:
-            //     Fp2 X (64 B), Fp2 Z (64 B)
-            //   Total: 8 + 128 + 6*128 = 904 B.
-            //
-            // Note: kernel inputs `p{1,2}_ker`, `q{1,2}_ker`,
-            // `pmq{1,2}_ker` are the post-reduction, post-q_inv,
-            // post-`2^r` doubling points actually fed into
-            // `Kernel::from_montgomery`. Those are the same bytes
-            // C ref's `dim_two_ker.{T1,T2,T1m2}.P{1,2}` would carry.
-            #[cfg(test)]
-            if let Ok(dir) = std::env::var("DUMP_FAIL_KERNEL") {
-                let mut buf = Vec::with_capacity(904);
-                buf.extend_from_slice(&e_chain.value().to_le_bytes());
-                buf.extend_from_slice(&(reduced_order as u32).to_le_bytes());
-                buf.extend_from_slice(&e1.coefficient().as_fp2().to_bytes());
-                buf.extend_from_slice(&e2.coefficient().as_fp2().to_bytes());
-                let dump_pt = |buf: &mut Vec<u8>, p: &ProjectiveXOnlyPoint| {
-                    buf.extend_from_slice(&p.X.to_bytes());
-                    buf.extend_from_slice(&p.Z.to_bytes());
-                };
-                dump_pt(&mut buf, &p1_ker);
-                dump_pt(&mut buf, &p2_ker);
-                dump_pt(&mut buf, &q1_ker);
-                dump_pt(&mut buf, &q2_ker);
-                dump_pt(&mut buf, &pmq1_ker);
-                dump_pt(&mut buf, &pmq2_ker);
-                let _ = std::fs::create_dir_all(&dir);
-                let h = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
-                let path = format!("{dir}/split_aux_fail_{h}.bin");
-                if let Err(e) = std::fs::write(&path, &buf) {
-                    crate::selkie_trace!("[split_aux] DUMP_FAIL_KERNEL write error: {e}");
-                } else {
-                    crate::selkie_trace!(
-                        "[split_aux] DUMP_FAIL_KERNEL wrote {} ({} B)",
-                        path,
-                        buf.len()
-                    );
-                }
-            }
-            return None;
-        }
-    };
+    )?;
 
     // Line 6: return (curve_aux, P_aux, Q_aux, PmQ_aux,
     //                 curve_chl, P_chl, Q_chl, PmQ_chl).

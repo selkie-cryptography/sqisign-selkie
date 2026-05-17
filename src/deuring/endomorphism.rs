@@ -252,14 +252,6 @@ impl EndomorphismAction {
             coords_w[2].narrow_to::<4>()?,
             coords_w[3].narrow_to::<4>()?,
         ];
-        #[cfg(test)]
-        {
-            crate::selkie_trace!("CREF_FDI coeffs[0]={}", coords[0]);
-            crate::selkie_trace!("CREF_FDI coeffs[1]={}", coords[1]);
-            crate::selkie_trace!("CREF_FDI coeffs[2]={}", coords[2]);
-            crate::selkie_trace!("CREF_FDI coeffs[3]={}", coords[3]);
-        }
-
         // Reduce all coefficients mod 2^f. For negative coefficients,
         // ct_mod returns a negative remainder (truncated division),
         // so add the modulus to get the canonical representative in

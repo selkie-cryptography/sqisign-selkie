@@ -364,30 +364,6 @@ impl<const W: usize> NrdBasis<W> {
         let width = (2 * m + 1) as usize;
         let mut vectors = Vec::with_capacity(width.pow(4) - 1);
 
-        #[cfg(test)]
-        if std::env::var("ENUM_TRACE").is_ok() {
-            // Print G[0][0], G[0][1], G[1][1] and the divisor once so we
-            // can see if divisor divides G[i][i] (which is nrd(α_i)·denom²
-            // for the i-th basis column).
-            crate::selkie_trace!(
-                "[enum-trace] G[0][0]={}, G[1][1]={}, G[2][2]={}, G[3][3]={}, divisor={}",
-                self.gram()[0][0],
-                self.gram()[1][1],
-                self.gram()[2][2],
-                self.gram()[3][3],
-                divisor,
-            );
-            // Check divisibility of each diagonal.
-            for i in 0..4 {
-                let (_, rem) = self.gram()[i][i].div_rem(&divisor);
-                crate::selkie_trace!(
-                    "[enum-trace] G[{i}][{i}] / divisor: rem = {} (is_zero={})",
-                    rem,
-                    bool::from(rem.is_zero()),
-                );
-            }
-        }
-
         let need_remove_symmetry =
             self.gram()[0][0] == self.gram()[1][1] && self.gram()[3][3] == self.gram()[2][2];
 
@@ -779,22 +755,7 @@ impl<const N: usize> LeftIdeal<N> {
                 let ideal_w2 = LeftIdeal::<W2>::from_parts(prod_lat, prod_norm, parent_o0);
                 match ideal_w2.narrow_to::<N>() {
                     Some(p) => p,
-                    None => {
-                        #[cfg(test)]
-                        crate::selkie_trace!(
-                            "[suitable_ideals] t={t}: conj_reduced·J_t narrow_to::<{N}> failed (basis max={}, denom={} bits, norm={} bits)",
-                            {
-                                let b = ideal_w2.lattice().basis();
-                                (0..4)
-                                    .flat_map(|r| (0..4).map(move |c| b[r][c].bitsize()))
-                                    .max()
-                                    .unwrap_or(0)
-                            },
-                            ideal_w2.lattice().denom().bitsize(),
-                            ideal_w2.norm().bitsize(),
-                        );
-                        continue;
-                    }
+                    None => continue,
                 }
             };
 
@@ -895,8 +856,6 @@ impl<const N: usize> LeftIdeal<N> {
                 let div = denom_sq.ct_mul(&norm_t0_w2);
                 let (k_norm, rem) = nrd_delta_num.div_rem(&div);
                 if !bool::from(rem.is_zero()) {
-                    #[cfg(test)]
-                    crate::selkie_trace!("[suitable_ideals] reduced_id k extraction non-integer");
                     continue;
                 }
 
@@ -963,44 +922,6 @@ impl<const N: usize> LeftIdeal<N> {
                     for sv2 in &svs_t[inner_start..] {
                         _pairs_tried += 1;
                         if let Some(result) = try_find_uv(sv1, sv2, batch_s, batch_t, &two_f, f) {
-                            #[cfg(test)]
-                            {
-                                crate::selkie_trace!(
-                                    "[suitable_ideals] selected (s={s}, t={t}) after {_pairs_tried} pairs \
-                                     | norm={} bits, batch sizes={:?}",
-                                    self.norm().bitsize(),
-                                    short_vecs_per_order
-                                        .iter()
-                                        .map(|v| v.len())
-                                        .collect::<Vec<_>>(),
-                                );
-                                if std::env::var("SUITABLE_IDEALS_TRACE").is_ok() {
-                                    crate::selkie_trace!(
-                                        "[suitable_ideals] u={} v={} e={}",
-                                        result.u,
-                                        result.v,
-                                        result.e.value(),
-                                    );
-                                    crate::selkie_trace!(
-                                        "[suitable_ideals] beta_s coord=[{}, {}, {}, {}] denom={} d_s={}",
-                                        result.factor1.beta.a.as_bigint(),
-                                        result.factor1.beta.b.as_bigint(),
-                                        result.factor1.beta.c.as_bigint(),
-                                        result.factor1.beta.d.as_bigint(),
-                                        result.factor1.beta.denom.as_bigint(),
-                                        result.factor1.degree.to_bigint(),
-                                    );
-                                    crate::selkie_trace!(
-                                        "[suitable_ideals] beta_t coord=[{}, {}, {}, {}] denom={} d_t={}",
-                                        result.factor2.beta.a.as_bigint(),
-                                        result.factor2.beta.b.as_bigint(),
-                                        result.factor2.beta.c.as_bigint(),
-                                        result.factor2.beta.d.as_bigint(),
-                                        result.factor2.beta.denom.as_bigint(),
-                                        result.factor2.degree.to_bigint(),
-                                    );
-                                }
-                            }
                             // Cross-order beta post-processing
                             // (C ref `dim2id2iso.c:651-672`):
                             //
@@ -1069,16 +990,6 @@ impl<const N: usize> LeftIdeal<N> {
             }
         }
 
-        #[cfg(test)]
-        crate::selkie_trace!(
-            "[suitable_ideals] EXHAUSTED after {_pairs_tried} pairs \
-             | norm={} bits, batch sizes={:?}",
-            self.norm().bitsize(),
-            short_vecs_per_order
-                .iter()
-                .map(|v| v.len())
-                .collect::<Vec<_>>(),
-        );
         None
     }
 }

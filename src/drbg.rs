@@ -159,44 +159,6 @@ impl RngCore for Aes256CtrDrbg {
 
 impl CryptoRng for Aes256CtrDrbg {}
 
-/// Test-only byte-offset checkpoint helpers for tracing DRBG-stream
-/// alignment between Selkie and the SQIsign C reference.
-///
-/// `TracingDrbg` (see `keys::signing::tests`) updates [`debug::set`]
-/// on every `fill_bytes` call. Code anywhere in the keygen / sign
-/// pipeline can call [`debug::offset`] to query the current cumulative
-/// DRBG byte offset and `selkie_trace!` it as a checkpoint, without
-/// having to thread the wrapper through generic `R: CryptoRngCore`
-/// arguments.
-///
-/// Compiled out of release builds (`#[cfg(test)]`).
-#[cfg(test)]
-pub(crate) mod debug {
-    use std::cell::Cell;
-
-    thread_local! {
-        static BYTE_OFFSET: Cell<usize> = const { Cell::new(0) };
-    }
-
-    /// Reset the byte-offset counter to 0. Call at the start of each
-    /// trace test so checkpoint values aren't carried across runs.
-    pub(crate) fn reset() {
-        BYTE_OFFSET.with(|c| c.set(0));
-    }
-
-    /// Set the cumulative byte offset. Called by `TracingDrbg` on
-    /// each `fill_bytes` after the inner DRBG returns.
-    pub(crate) fn set(offset: usize) {
-        BYTE_OFFSET.with(|c| c.set(offset));
-    }
-
-    /// Read the current cumulative byte offset. Returns 0 if no
-    /// `TracingDrbg` is active on this thread.
-    pub(crate) fn offset() -> usize {
-        BYTE_OFFSET.with(|c| c.get())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
