@@ -68,6 +68,73 @@ fn sign_large_message_roundtrips() {
         .expect("large-msg signature verifies");
 }
 
+/// `sign_derand` is deterministic: same `(sk, msg, seed)` → same
+/// signature bytes. Catches hidden RNG draws / non-deterministic
+/// rejection-sampling state.
+#[test]
+fn sign_derand_is_deterministic() {
+    let sk = fresh_sk();
+    let msg = b"determinism test";
+    let seed = [0x5Au8; 48];
+    let sig_a = sk.sign_derand(msg, &seed).expect("sign 1");
+    let sig_b = sk.sign_derand(msg, &seed).expect("sign 2");
+    assert_eq!(
+        sig_a.to_bytes(),
+        sig_b.to_bytes(),
+        "sign_derand non-deterministic"
+    );
+}
+
+/// Sig binds to the message: same `(sk, seed)`, different msgs →
+/// different signatures. Catches a missing-message-in-challenge-hash
+/// regression.
+#[test]
+fn sig_binds_to_message() {
+    let sk = fresh_sk();
+    let seed = [0x6Bu8; 48];
+    let sig_a = sk.sign_derand(b"message A", &seed).expect("sign a");
+    let sig_b = sk.sign_derand(b"message B", &seed).expect("sign b");
+    assert_ne!(
+        sig_a.to_bytes(),
+        sig_b.to_bytes(),
+        "sig didn't bind to message"
+    );
+}
+
+/// Sig binds to the key: `sk_a`'s sig must not verify under `vk_b`.
+#[test]
+fn sig_binds_to_key() {
+    let sk_a = fresh_sk();
+    let sk_b = fresh_sk();
+    let msg = b"key-binding test";
+    let seed = [0x7Cu8; 48];
+
+    let sig_a = sk_a.sign_derand(msg, &seed).expect("sign with sk_a");
+    sk_a.verifying_key()
+        .verify(msg, &sig_a)
+        .expect("sig_a verifies under vk_a");
+
+    assert!(
+        sk_b.verifying_key().verify(msg, &sig_a).is_err(),
+        "sig_a accidentally verified under vk_b"
+    );
+}
+
+/// Different seeds produce different keys. Asserts DRBG diversity at
+/// the keygen entry point.
+#[test]
+fn distinct_seeds_distinct_keys() {
+    let seed_a = [0x8Du8; 48];
+    let seed_b = [0x9Eu8; 48];
+    let sk_a = SigningKey::generate_derand(&seed_a).expect("keygen a");
+    let sk_b = SigningKey::generate_derand(&seed_b).expect("keygen b");
+    assert_ne!(
+        sk_a.to_bytes(),
+        sk_b.to_bytes(),
+        "two seeds produced identical keys"
+    );
+}
+
 /// `as_bytes` / `AsRef<[u8]>` / `TryFrom<&[u8]>` agree with
 /// `to_bytes` / `from_bytes`; wrong-length input is rejected with
 /// `InvalidLength`.
