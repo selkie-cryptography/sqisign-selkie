@@ -120,10 +120,31 @@ jobs:
           rustc -O .github/scripts/fuzz-report.rs -o /tmp/fuzz-report
           /tmp/fuzz-report target "${{ matrix.target }}" "${{ github.sha }}" fuzz/fuzz-output.txt > fuzz-result.json
 
+      # Ship per-target results through the Fly volume to the `report`
+      # consolidator job. GHA artifact storage is quota-capped, and the
+      # consolidator runs in the same workflow so we don't need a public
+      # artifact — Fly is strictly cheaper. Same shape as the mutants
+      # shard transport (migration target: Tigris bucket).
+      #
+      # Only on main pushes — the report job itself is push-on-main only,
+      # so there's nothing to consume the shard JSON otherwise.
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Ship fuzz result to Fly
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          SHA: ${{ github.sha }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          DIR="/data/fuzz/shards/${SHA}"
+          flyctl ssh console -a sqisign-selkie-ci -C "mkdir -p ${DIR}"
+          echo "put fuzz-result.json ${DIR}/${TARGET}.json" \
+            | flyctl ssh sftp shell -a sqisign-selkie-ci
+
       # Crash inputs flow directly into a fuzz-crash/ branch + PR via
-      # the next step. No artifact upload (GHA storage is quota-capped
-      # and the upload step was the only thing making the workflow go
-      # red on no-crash nightly runs).
+      # the next step. Corpora are kept locally in fuzz/artifacts/ and
+      # never leave the runner.
 
       - name: Open PR on crash
         if: always()
@@ -186,21 +207,44 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download results
-        uses: actions/download-artifact@v8
-        with:
-          pattern: fuzz-*
-          path: results
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Pull per-target results from Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          DIR="/data/fuzz/shards/${SHA}"
+          mkdir -p results
+          NAMES=$(flyctl ssh console -a sqisign-selkie-ci -C "sh -c 'ls ${DIR} 2>/dev/null || true'" | tr -d '\r')
+          if [ -z "$NAMES" ]; then
+            echo "::error::No fuzz shard results found at ${DIR}"
+            exit 1
+          fi
+          BATCH=$(mktemp)
+          for f in $NAMES; do
+            echo "get ${DIR}/${f} results/${f}" >> "$BATCH"
+          done
+          flyctl ssh sftp shell -a sqisign-selkie-ci < "$BATCH"
+          ls -la results
 
       - name: Merge results
         run: |
           rustc -O .github/scripts/fuzz-report.rs -o /tmp/fuzz-report
           /tmp/fuzz-report merge "${{ github.sha }}" results > fuzz.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - name: Verify fuzz payload has data
         run: jq -e '.targets | length > 0' fuzz.json > /dev/null || { echo "::error::fuzz.json has no targets"; cat fuzz.json >&2; exit 1; }
       - name: Upload to CI site
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload fuzz fuzz.json "${{ github.sha }}"
+
+      # Sweep the per-SHA shard intermediates now that the merged
+      # fuzz.json is published. Only on success — keep shards for
+      # manual reruns if the merge or upload failed.
+      - name: Prune shard intermediates from Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/fuzz/shards/${SHA}"
