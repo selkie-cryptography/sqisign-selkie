@@ -50,8 +50,7 @@ impl VerifyingKey {
     /// checked here — the spec ([§4.5], Algorithm 4.9 steps 3–4)
     /// allows that check to be a byproduct of the verify chain
     /// rather than an explicit parse-time test, and that's what we
-    /// rely on. See `docs/spec-compliance.md` (TODO) for the full
-    /// table.
+    /// rely on.
     ///
     /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
     pub fn from_bytes(bytes: &[u8; VERIFYING_KEY_BYTES]) -> Result<VerifyingKey, SignatureError> {
