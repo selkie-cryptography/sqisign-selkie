@@ -218,6 +218,20 @@
       vertical-align: 1px;
     }
 
+    /* Dim and desaturate the body of a stale panel so the staleness
+       is communicated visually, not just by the pill. The pill itself
+       sits in the section header outside this scope and stays at
+       full opacity / saturation. */
+    .is-stale {
+      opacity: 0.55;
+      filter: saturate(0.55);
+      transition: opacity 0.2s ease, filter 0.2s ease;
+    }
+    .is-stale:hover {
+      opacity: 0.9;
+      filter: saturate(0.85);
+    }
+
     /* Coverage table */
     .cov-table {
       width: 100%;
@@ -459,6 +473,61 @@
       text-transform: uppercase;
       color: var(--fg-dim);
       padding: 12px 8px 4px;
+    }
+
+    /* Collapsible per-group benchmark sections.
+       The summary row carries the group name + bench count + min/max
+       time so the user can scan all 7 groups without expanding any. */
+    .bench-controls {
+      padding: 6px 0 12px;
+      border-bottom: 1px solid var(--border-faint);
+      margin-bottom: 8px;
+    }
+
+    .bench-group-details {
+      border-bottom: 1px solid var(--border-faint);
+    }
+    .bench-group-details:last-child { border-bottom: none; }
+
+    .bench-group-summary {
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 8px;
+      user-select: none;
+    }
+    .bench-group-summary::-webkit-details-marker { display: none; }
+    .bench-group-summary::before {
+      content: "▶";
+      display: inline-block;
+      width: 12px;
+      font-size: 9px;
+      color: var(--fg-dim);
+      transition: transform 0.15s ease;
+    }
+    .bench-group-details[open] > .bench-group-summary::before {
+      transform: rotate(90deg);
+    }
+    .bench-group-summary:hover { background: var(--bar-bg); }
+
+    .bench-group-name {
+      flex: 1;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+    .bench-group-stats {
+      font-size: 12px;
+      color: var(--fg-dim);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bench-group-details > .bench-table {
+      margin: 0 0 8px 24px;
     }
 
     /* Mutants */
@@ -1662,6 +1731,24 @@
       return ` <a href="${url}" target="_blank" rel="noopener" style="font-size:11px;color:var(--fg-dim);text-decoration:none;margin-left:6px">\u2197</a>`;
     }
 
+    // How many entries between the panel's data SHA and the currently-
+    // selected SHA, walking the unified commit list (buildCommitList).
+    // Returns a positive integer if the panel's data is older than the
+    // selected commit, negative if newer, or null when either SHA isn't
+    // in the list or the SHAs match. The list is built from the
+    // coverage/bench/mutants indices + head.json — so this is "data
+    // uploads behind" rather than literal git distance, which is the
+    // right granularity for the dashboard (and avoids needing GitHub
+    // API auth in the browser).
+    function commitsBehind(panelSha, refSha) {
+      if (!panelSha || !refSha || panelSha === refSha) return null;
+      const list = buildCommitList();
+      const panelIdx = list.findIndex(c => c.sha === panelSha);
+      const refIdx = list.findIndex(c => c.sha === refSha);
+      if (panelIdx < 0 || refIdx < 0) return null;
+      return panelIdx - refIdx;
+    }
+
     // Renders a "STALE" pill when this panel's data couldn't be found
     // for the currently-selected commit and we fell back to /latest.json
     // (which has a different SHA). Made deliberately prominent because
@@ -1671,7 +1758,22 @@
     function staleTag(data) {
       if (!data || !data._stale) return '';
       const sha = data.sha ? data.sha.slice(0, 7) : '?';
-      return `<span class="stale-pill" title="No data uploaded for the selected commit. Showing the most recent run (${sha}).">STALE &middot; from ${sha}</span>`;
+      const n = commitsBehind(data.sha, selectedSha);
+      let behind = '';
+      if (n != null && n > 0) {
+        behind = `${n} run${n === 1 ? '' : 's'} behind &middot; `;
+      } else if (n != null && n < 0) {
+        behind = `${-n} run${n === -1 ? '' : 's'} ahead &middot; `;
+      }
+      return `<span class="stale-pill" title="No data uploaded for the selected commit. Showing the most recent run (${sha}).">STALE &middot; ${behind}from ${sha}</span>`;
+    }
+
+    // Toggles the .is-stale class on `el` based on whether `data._stale`
+    // is set. Used by each panel's render block to dim its body when
+    // showing fallback /latest.json data.
+    function applyStale(el, data) {
+      if (!el) return;
+      el.classList.toggle('is-stale', !!(data && data._stale));
     }
 
     function esc(s) {
@@ -2828,6 +2930,26 @@
       return html;
     }
 
+    // Groups whose <details> default to open. The 7 benchmark groups
+    // span ~80 benches and dominate the page when all expanded; only
+    // sqisign (the high-level keygen/sign/verify operations) opens by
+    // default. Per-group choices persist in localStorage from then on.
+    const BENCH_GROUPS_OPEN_BY_DEFAULT = new Set(['sqisign']);
+
+    function benchGroupIsOpen(name) {
+      const stored = localStorage.getItem(`bench-group-open:${name}`);
+      if (stored === 'true') return true;
+      if (stored === 'false') return false;
+      return BENCH_GROUPS_OPEN_BY_DEFAULT.has(name);
+    }
+
+    // Wired from inline `ontoggle` on each <details> element below.
+    function onBenchGroupToggle(el) {
+      const name = el.dataset.group;
+      if (!name) return;
+      localStorage.setItem(`bench-group-open:${name}`, String(el.open));
+    }
+
     function renderBenchmarkData(data) {
       lastBenchData = data;
       const groups = data.groups || [];
@@ -2835,41 +2957,55 @@
 
       const sortArrow = benchSortAsc ? '\u25b2' : '\u25bc';
 
-      let html = `<table class="bench-table">
-        <thead><tr>
-          <th>Benchmark</th>
-          <th>Time <span style="cursor:pointer;user-select:none;border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:10px;margin-left:4px" onclick="cycleBenchUnit()">${esc(benchUnit)}</span> <span style="cursor:pointer;user-select:none;font-size:10px" onclick="toggleBenchSort()">${sortArrow}</span></th>
-          <th>Throughput</th>
-        </tr></thead><tbody>`;
+      const unitSwatch = `<span style="cursor:pointer;user-select:none;border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:10px;margin-left:4px" onclick="cycleBenchUnit()">${esc(benchUnit)}</span>`;
+      const sortSwatch = `<span style="cursor:pointer;user-select:none;font-size:10px;margin-left:4px" onclick="toggleBenchSort()" title="Sort within each group">${sortArrow}</span>`;
+      const benchLinkBase = lastBenchData.sha
+        ? `https://github.com/${REPO}/blob/${esc(lastBenchData.sha)}`
+        : null;
 
-      // Flatten all benchmarks for sorting, preserving group info.
-      const allBenches = groups.flatMap(g =>
-        g.benchmarks.map(b => ({ ...b, group: g.name }))
-      );
-      if (!benchSortAsc || benchSortAsc) {
-        // When sorted, show a flat list ordered by time.
-        allBenches.sort((a, b) => benchSortAsc ? a.time_ns - b.time_ns : b.time_ns - a.time_ns);
-      }
+      let html = `<div class="bench-controls">
+          <span style="font-size:12px;color:var(--fg-dim)">Unit ${unitSwatch} · Sort ${sortSwatch}</span>
+        </div>`;
 
-      let lastGroup = null;
-      for (const b of allBenches) {
-        if (b.group !== lastGroup) {
-          html += `<tr><td class="bench-group" colspan="3">${esc(b.group)}</td></tr>`;
-          lastGroup = b.group;
+      for (const g of groups) {
+        const benches = [...(g.benchmarks || [])].sort((a, b) =>
+          benchSortAsc ? a.time_ns - b.time_ns : b.time_ns - a.time_ns
+        );
+        if (benches.length === 0) continue;
+
+        const times = benches.map(b => b.time_ns);
+        const minT = Math.min(...times);
+        const maxT = Math.max(...times);
+        const open = benchGroupIsOpen(g.name) ? ' open' : '';
+        const benchFile = `benches/${esc(g.name)}.rs`;
+        const groupLink = benchLinkBase
+          ? `<a href="${benchLinkBase}/${benchFile}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;border-bottom:1px dotted var(--border)">${esc(g.name)}</a>`
+          : esc(g.name);
+
+        html += `<details class="bench-group-details" data-group="${esc(g.name)}" ontoggle="onBenchGroupToggle(this)"${open}>
+          <summary class="bench-group-summary">
+            <span class="bench-group-name">${groupLink}</span>
+            <span class="bench-group-stats">${benches.length} bench${benches.length === 1 ? '' : 'es'} · ${formatTime(minT)} – ${formatTime(maxT)}</span>
+          </summary>
+          <table class="bench-table">
+            <thead><tr>
+              <th>Benchmark</th>
+              <th>Time</th>
+              <th>Throughput</th>
+            </tr></thead><tbody>`;
+
+        for (const b of benches) {
+          const tp = b.throughput || '—';
+          html += `<tr>
+            <td class="bench-name">${esc(b.name)}</td>
+            <td>${formatTime(b.time_ns)}</td>
+            <td>${esc(tp)}</td>
+          </tr>`;
         }
-        const tp = b.throughput || '—';
-        const benchFile = `benches/${esc(b.group)}.rs`;
-        const benchLink = lastBenchData.sha
-          ? `https://github.com/${REPO}/blob/${esc(lastBenchData.sha)}/${benchFile}`
-          : '#';
-        html += `<tr>
-          <td class="bench-name"><a href="${benchLink}">${esc(b.name)}</a></td>
-          <td>${formatTime(b.time_ns)}</td>
-          <td>${esc(tp)}</td>
-        </tr>`;
+
+        html += '</tbody></table></details>';
       }
 
-      html += '</tbody></table>';
       return html;
     }
 
@@ -3400,6 +3536,7 @@
         const covDelta = delta(cov.total.percent, covPrev, { suffix: '%' });
         covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines${covDelta}` + runLink(cov) + staleTag(cov);
         covEl.innerHTML = renderCoverageData(cov);
+        applyStale(covEl, cov);
         renderedCov = covSha;
       } else if (!cov && renderedCov !== null) {
         covMeta.textContent = '';
@@ -3411,6 +3548,7 @@
       if (bench && (shaChanged || benchSha !== renderedBench)) {
         benchMeta.innerHTML = runLink(bench) + staleTag(bench);
         benchEl.innerHTML = renderBenchmarkData(bench);
+        applyStale(benchEl, bench);
         renderedBench = benchSha;
       } else if (!bench && renderedBench !== null) {
         benchMeta.textContent = '';
@@ -3427,6 +3565,7 @@
         const mutDelta = delta(s.caught || 0, mutPrevCaught, {});
         mutMeta.innerHTML = `${esc(String(tested))} tested${mutDelta}` + runLink(mut) + staleTag(mut);
         mutEl.innerHTML = renderMutantsData(mut);
+        applyStale(mutEl, mut);
         renderedMut = mutSha;
       } else if (!mut && renderedMut !== null) {
         mutMeta.textContent = '';
@@ -3447,6 +3586,12 @@
           ? `<span style="color:var(--red)">${fails} fail</span> / ${total} tested`
           : `${total} pass`) + runLink(dudect) + staleTag(dudect || tacetData);
         dudectEl.innerHTML = renderCtData(dudect, tacetData, ctgrindData);
+        // Mark stale if ANY of the three contributing data sources is
+        // stale (dudect, tacet, or ctgrind).
+        const ctAnyStale = (dudect && dudect._stale)
+          || (tacetData && tacetData._stale)
+          || (ctgrindData && ctgrindData._stale);
+        dudectEl.classList.toggle('is-stale', !!ctAnyStale);
         renderedDudect = dudectSha;
         renderedTacet = tacetSha;
       } else if (!dudect && !tacetData && !ctgrindData && (renderedDudect !== null || renderedTacet !== null)) {
@@ -3474,6 +3619,8 @@
             : `<span class="stale-pill" title="Stale sub-panels: ${staleEntries.join(', ')}">${staleEntries.length} STALE</span>`;
         }
         auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData);
+        // Audits aggregates ~10 sub-kinds — dim the body if any is stale.
+        auditsEl.classList.toggle('is-stale', staleEntries.length > 0);
       } else {
         if (auditsMeta) auditsMeta.textContent = '';
         auditsEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
@@ -3486,6 +3633,7 @@
         document.getElementById('platform-meta').innerHTML =
           `${platformData.pass || 0}/${p.length} pass` + staleTag(platformData);
         platformEl.innerHTML = renderPlatformData(platformData);
+        applyStale(platformEl, platformData);
       } else {
         platformEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
       }
@@ -3496,6 +3644,7 @@
       if (iaiData) {
         if (iaiMeta) iaiMeta.innerHTML = staleTag(iaiData);
         iaiEl.innerHTML = renderIaiData(iaiData);
+        applyStale(iaiEl, iaiData);
       } else {
         if (iaiMeta) iaiMeta.textContent = '';
         iaiEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
@@ -3512,6 +3661,7 @@
           ? `<span style="color:var(--red)">${totalFail} fail</span>`
           : `${totalVectors} vectors`) + runLink(katData) + staleTag(katData);
         katEl.innerHTML = renderKatData(katData);
+        applyStale(katEl, katData);
       } else {
         katMeta.textContent = '';
         katEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
@@ -3523,6 +3673,7 @@
       if (fuzzData) {
         if (fuzzMeta) fuzzMeta.innerHTML = staleTag(fuzzData);
         fuzzEl.innerHTML = renderFuzzData(fuzzData);
+        applyStale(fuzzEl, fuzzData);
       } else {
         if (fuzzMeta) fuzzMeta.textContent = '';
         fuzzEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
