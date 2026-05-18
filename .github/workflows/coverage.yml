@@ -11,10 +11,15 @@ on:
       - '.config/nextest.toml'
       - '.github/scripts/**'
       - '.github/workflows/coverage.yml'
+  schedule:
+    # Nightly fallback so coverage still runs when a day's pushes all
+    # miss the path filter above (e.g., workflow-only changes).
+    - cron: "0 7 * * *"
   workflow_dispatch:
 
-# Coverage only runs on main pushes and we only care about the
-# latest snapshot — cancel a superseded run if a newer commit lands.
+# Coverage runs on main pushes (and the nightly fallback) and we
+# only care about the latest snapshot — cancel a superseded run if
+# a newer commit lands.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
