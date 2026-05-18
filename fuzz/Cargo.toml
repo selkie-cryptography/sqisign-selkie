@@ -40,6 +40,16 @@ path = "fuzz_targets/verify.rs"
 test = false
 doc = false
 
+# Structure-aware companion to fuzz_verify: anchors pk and the
+# sig.curve_aux region to KAT 0, XORs the remaining sig bytes from
+# libFuzzer's input. Every iteration reaches the (2,2)-chain instead
+# of bouncing at Signature::from_bytes.
+[[bin]]
+name = "fuzz_verify_typed"
+path = "fuzz_targets/verify_typed.rs"
+test = false
+doc = false
+
 # Slow targets: keygen and sign each take seconds-to-minutes per
 # iteration, so coverage-guided fuzzing is impractical for the
 # millions-of-executions metric libFuzzer normally wants. Kept

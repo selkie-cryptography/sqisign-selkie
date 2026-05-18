@@ -37,6 +37,10 @@ jobs:
           - fuzz_verifying_key_parse
           - fuzz_signing_key_parse
           - fuzz_verify
+          # Structure-aware companion to fuzz_verify. Anchors pk +
+          # sig.curve_aux to KAT 0 so every iteration reaches the
+          # (2,2)-chain.
+          - fuzz_verify_typed
           # keygen + sign targets are slow (seconds-to-minutes per
           # iter), so each 10-min slot yields tens of execs rather
           # than thousands. Kept anyway — they target the panic-on-
