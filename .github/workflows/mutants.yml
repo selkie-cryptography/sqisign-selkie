@@ -63,14 +63,16 @@ jobs:
       # mutant survives — a normal data signal, not a CI failure.
       # The post-run verify step distinguishes real baseline failures
       # (zero outcomes) from "found surviving mutants" (data we want).
+      # `--test-tool nextest` and the
+      # `-E 'not test(/sign_kat_derand_/)'` nextest filter come from
+      # `.cargo/mutants.toml`. `--in-place` is CLI-only (no config
+      # key in cargo-mutants), so it stays here.
       - name: Run cargo-mutants on changed code
         continue-on-error: true
         run: |
           cargo mutants --no-shuffle -vV \
-            --test-tool nextest \
             --in-place \
-            --in-diff git.diff -- --lib \
-            -E 'not test(/sign_kat_derand_/)'
+            --in-diff git.diff -- --lib
 
       - name: Verify mutants produced real outcomes
         run: |
@@ -125,14 +127,12 @@ jobs:
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
           tool: cargo-mutants,cargo-nextest
+      # Shared flags (`--test-tool nextest`, `--in-place`, the
+      # nextest `-E` slow-KAT filter) come from `.cargo/mutants.toml`.
       - name: Run cargo-mutants (shard ${{ matrix.shard }}/8)
         continue-on-error: true
         run: |
-          cargo mutants --shard ${{ matrix.shard }}/8 \
-            --test-tool nextest \
-            --in-place \
-            -vV -- --lib \
-            -E 'not test(/sign_kat_derand_/)'
+          cargo mutants --shard ${{ matrix.shard }}/8 -vV -- --lib
       - name: Archive mutants.out
         if: always()
         uses: actions/upload-artifact@v7

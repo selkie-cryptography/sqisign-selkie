@@ -84,8 +84,11 @@ jobs:
       # 100 KAT-derived `pk||sig||msg` triples are present even on
       # cold caches. libFuzzer deduplicates on content hash, so this
       # is idempotent.
-      - name: Seed fuzz_verify corpus from KAT vectors
-        if: matrix.target == 'fuzz_verify'
+      # Seed every target's corpus from the KAT vectors. The seeder
+      # writes into all `fuzz/corpus/<target>/` directories; libFuzzer
+      # only reads its own target's dir, so no per-target gating is
+      # needed.
+      - name: Seed corpus from KAT vectors
         run: cargo run --release --features expose-internals --example seed-fuzz-corpus
 
       # cargo-fuzz on x86_64 Linux defaults to `--target
