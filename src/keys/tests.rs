@@ -118,6 +118,23 @@ fn signature_out_of_range_r_rsp_rejected() {
     ));
 }
 
+/// chl is allocated `CHALLENGE_BYTES * 8 = 128` bits on the wire but
+/// bounded by `e_chl = 122` bits algebraically. Setting any of the
+/// top 6 bits of the last chl byte must be rejected at parse.
+/// SIGNATURE_BYTES - 3 is the offset of the last chl byte
+/// (CHL_OFFSET + CHALLENGE_BYTES - 1 = 145 for NIST-I).
+#[test]
+fn signature_with_non_canonical_chl_top_bits_rejected() {
+    let sm_bytes = hex::decode(KAT0_SM).unwrap();
+    let mut sig_bytes = [0u8; SIGNATURE_BYTES];
+    sig_bytes.copy_from_slice(&sm_bytes[..SIGNATURE_BYTES]);
+    sig_bytes[SIGNATURE_BYTES - 3] |= 0x04; // bit 122 set
+    assert!(matches!(
+        Signature::from_bytes(&sig_bytes),
+        Err(SignatureError::NonCanonical)
+    ));
+}
+
 // ChallengeMatrix::parse rejection.
 //
 // The wire size (4 × M_CHL_COMP_BYTES) is now type-enforced via
