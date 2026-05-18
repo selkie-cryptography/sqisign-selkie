@@ -118,40 +118,37 @@ fn signature_out_of_range_r_rsp_rejected() {
     ));
 }
 
-// ChallengeMatrix::from_bytes rejection.
+// ChallengeMatrix::parse rejection.
+//
+// The wire size (4 × M_CHL_COMP_BYTES) is now type-enforced via
+// `&[u8; M_CHL_BYTES]`, so the previous `too_short` and
+// `comp_too_wide` tests would now be compile errors and have been
+// dropped. The remaining tests cover the algebraic bound the parser
+// still has to check at runtime.
 
-/// `ChallengeMatrix::from_bytes` must reject data shorter than
-/// `4 * comp_bytes`.
+/// `ChallengeMatrix::parse` succeeds on all-zero data — zero entries
+/// trivially satisfy any bound. Guards against the bounds check
+/// being accidentally inverted (e.g., `<` mutated to `>`).
 #[test]
-fn challenge_matrix_from_bytes_too_short() {
-    let comp_bytes = E_RSP.div_ceil(8) as usize;
-    let short = vec![0u8; 4 * comp_bytes - 1];
-    assert!(matches!(
-        ChallengeMatrix::from_bytes(&short, comp_bytes),
-        Err(SignatureError::NonCanonical)
-    ));
+fn challenge_matrix_parse_all_zero() {
+    let data = [0u8; M_CHL_BYTES];
+    let bound = TorsionExponent::try_from(E_RSP + 2).unwrap();
+    assert!(ChallengeMatrix::parse(&data, bound).is_ok());
 }
 
-/// `ChallengeMatrix::from_bytes` must reject `comp_bytes` larger
-/// than `TORSION_2POWER_BYTES`.
+/// Each entry must be `< 2^bound`. With `bound = 127` (caller's
+/// computation when `n_bt = 1`), bit 127 of any entry must be zero;
+/// setting it must be rejected.
 #[test]
-fn challenge_matrix_from_bytes_comp_too_wide() {
-    let too_wide = TORSION_2POWER_BYTES + 1;
-    let data = vec![0u8; 4 * too_wide];
+fn challenge_matrix_parse_rejects_entry_above_bound() {
+    let mut data = [0u8; M_CHL_BYTES];
+    // Bit 127 of entry 0 (= bit 7 of byte 15 of the first entry).
+    data[15] = 0x80;
+    let bound = TorsionExponent::try_from(127).unwrap();
     assert!(matches!(
-        ChallengeMatrix::from_bytes(&data, too_wide),
+        ChallengeMatrix::parse(&data, bound),
         Err(SignatureError::NonCanonical)
     ));
-}
-
-/// `ChallengeMatrix::from_bytes` succeeds with valid-length data.
-/// This guards against the bounds check being accidentally inverted
-/// (e.g., `<` mutated to `>`).
-#[test]
-fn challenge_matrix_from_bytes_exact_length() {
-    let comp_bytes = E_RSP.div_ceil(8) as usize;
-    let data = vec![0u8; 4 * comp_bytes];
-    assert!(ChallengeMatrix::from_bytes(&data, comp_bytes).is_ok());
 }
 
 // Negative / vulnerability test vectors live in tests/wycheproof.rs

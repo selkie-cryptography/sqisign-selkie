@@ -32,6 +32,11 @@ use crate::{
     params::{E_RSP, TORSION_2POWER_BYTES},
 };
 
+/// M_chl wire-format byte counts at the NIST-I parameter set:
+/// `M_CHL_BYTES = 4 × M_CHL_COMP_BYTES` is the full encoded matrix.
+const M_CHL_COMP_BYTES: usize = E_RSP.div_ceil(8) as usize;
+const M_CHL_BYTES: usize = 4 * M_CHL_COMP_BYTES;
+
 /// A challenge value: an integer in [0, 2^e_chl) produced by HASH.
 ///
 /// Wraps a [`Scalar`] since the challenge is used as a multiplier
@@ -155,14 +160,22 @@ impl Signature {
         let r_rsp =
             TorsionExponent::try_from(sig[65] as u32).map_err(|_| SignatureError::NonCanonical)?;
 
-        // M_chl: 2×2 matrix, each component ⌈(e_rsp+7)/8⌉ bytes.
-        let comp_bytes = E_RSP.div_ceil(8) as usize;
+        // M_chl. Spec §4.5 Alg. 4.9 step 5 bounds each entry by
+        // `2^(e_rsp − n_bt + 2)`; `checked_*` also catches
+        // `n_bt > e_rsp + 2` (step 7 `e'_rsp ≥ 0`) at parse.
+        let m_chl_bound = E_RSP
+            .checked_add(2)
+            .and_then(|v| v.checked_sub(n_bt.value()))
+            .and_then(|v| TorsionExponent::try_from(v).ok())
+            .ok_or(SignatureError::NonCanonical)?;
         let m_offset = 66;
-        let M_chl =
-            ChallengeMatrix::from_bytes(&sig[m_offset..m_offset + 4 * comp_bytes], comp_bytes)?;
+        let m_chl_buf: &[u8; M_CHL_BYTES] = sig[m_offset..m_offset + M_CHL_BYTES]
+            .try_into()
+            .expect("M_CHL_BYTES fits within SIGNATURE_BYTES");
+        let M_chl = ChallengeMatrix::parse(m_chl_buf, m_chl_bound)?;
 
-        // chl: ⌈e_chl/8⌉ bytes.
-        let chl_offset = m_offset + 4 * comp_bytes;
+        // chl: CHALLENGE_BYTES.
+        let chl_offset = m_offset + M_CHL_BYTES;
         let mut chl = [0u8; CHALLENGE_BYTES];
         chl.copy_from_slice(&sig[chl_offset..chl_offset + CHALLENGE_BYTES]);
 
@@ -197,19 +210,18 @@ impl Signature {
         bytes[64] = self.n_bt.value() as u8;
         bytes[65] = self.r_rsp.value() as u8;
 
-        // M_chl: 4 × comp_bytes, each entry as LE bytes.
-        let comp_bytes = E_RSP.div_ceil(8) as usize;
+        // M_chl: 4 × M_CHL_COMP_BYTES, each entry as LE bytes.
         let m_offset = 66;
         let e = &self.M_chl.entries;
         let scalars = [e[0][0], e[0][1], e[1][0], e[1][1]];
         for (idx, s) in scalars.iter().enumerate() {
             let s_bytes = s.to_le_bytes();
-            bytes[m_offset + idx * comp_bytes..m_offset + (idx + 1) * comp_bytes]
-                .copy_from_slice(&s_bytes[..comp_bytes]);
+            bytes[m_offset + idx * M_CHL_COMP_BYTES..m_offset + (idx + 1) * M_CHL_COMP_BYTES]
+                .copy_from_slice(&s_bytes[..M_CHL_COMP_BYTES]);
         }
 
         // chl: CHALLENGE_BYTES.
-        let chl_offset = m_offset + 4 * comp_bytes;
+        let chl_offset = m_offset + M_CHL_BYTES;
         let chl_bytes = self.chl.as_scalar().to_le_bytes();
         bytes[chl_offset..chl_offset + CHALLENGE_BYTES]
             .copy_from_slice(&chl_bytes[..CHALLENGE_BYTES]);
@@ -282,23 +294,30 @@ impl From<crate::curves::ChangeOfBasisMatrix> for ChallengeMatrix {
 }
 
 impl ChallengeMatrix {
-    /// Parse from raw signature bytes.
+    /// Parse the wire encoding of M_chl and validate the spec entry bound.
     ///
-    /// `data` contains 4 × `comp_bytes` bytes: a, b, c, d
-    /// concatenated in little-endian order. Each is zero-padded
-    /// to [`TORSION_2POWER_BYTES`].
+    /// `data` is the `4 × M_CHL_COMP_BYTES`-byte M_chl region of a
+    /// signature: entries `a, b, c, d` concatenated in little-endian
+    /// order, each padded to a full [`Scalar`]. `bound` is the
+    /// algebraic upper-bound exponent: every entry must satisfy
+    /// `entry < 2^bound` ([§4.5][§4.5] Algorithm 4.9 step 5, where
+    /// the bound is `e'_rsp + r_rsp + 2 = e_rsp − n_bt + 2`).
     ///
-    /// [`TORSION_2POWER_BYTES`]: crate::params::TORSION_2POWER_BYTES
-    pub(crate) fn from_bytes(
-        data: &[u8],
-        comp_bytes: usize,
+    /// On success, the constructed value carries `bound` in its
+    /// underlying [`e`] field so downstream uses (including
+    /// [`ChangeOfBasisMatrix::mul`]) read the algebraic bound rather
+    /// than the looser encoding bit count. Out-of-bound entries
+    /// return [`SignatureError::NonCanonical`].
+    ///
+    /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
+    /// [`e`]: crate::curves::ChangeOfBasisMatrix
+    pub(crate) fn parse(
+        data: &[u8; M_CHL_BYTES],
+        bound: TorsionExponent,
     ) -> Result<ChallengeMatrix, SignatureError> {
-        if data.len() < 4 * comp_bytes || comp_bytes > TORSION_2POWER_BYTES {
-            return Err(SignatureError::NonCanonical);
-        }
         let parse_scalar = |offset: usize| -> Scalar {
             let mut buf = [0u8; TORSION_2POWER_BYTES];
-            buf[..comp_bytes].copy_from_slice(&data[offset..offset + comp_bytes]);
+            buf[..M_CHL_COMP_BYTES].copy_from_slice(&data[offset..offset + M_CHL_COMP_BYTES]);
             let mut limbs = [0u64; 4];
             for (i, chunk) in buf.chunks_exact(8).enumerate() {
                 limbs[i] = u64::from_le_bytes([
@@ -307,15 +326,22 @@ impl ChallengeMatrix {
             }
             Scalar::from_limbs(limbs)
         };
-        let e = TorsionExponent::try_from((comp_bytes * 8) as u32)
-            .map_err(|_| SignatureError::NonCanonical)?;
-        Ok(ChallengeMatrix(crate::curves::ChangeOfBasisMatrix {
+
+        let matrix = crate::curves::ChangeOfBasisMatrix {
             entries: [
-                [parse_scalar(0), parse_scalar(comp_bytes)],
-                [parse_scalar(2 * comp_bytes), parse_scalar(3 * comp_bytes)],
+                [parse_scalar(0), parse_scalar(M_CHL_COMP_BYTES)],
+                [
+                    parse_scalar(2 * M_CHL_COMP_BYTES),
+                    parse_scalar(3 * M_CHL_COMP_BYTES),
+                ],
             ],
-            e,
-        }))
+            e: bound,
+        };
+        if !matrix.entries_below_pow2(bound.value()) {
+            return Err(SignatureError::NonCanonical);
+        }
+
+        Ok(ChallengeMatrix(matrix))
     }
 
     /// Whether both first-column entries (a, c) are even.

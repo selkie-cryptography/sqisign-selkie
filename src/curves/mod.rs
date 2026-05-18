@@ -903,6 +903,22 @@ pub struct ChangeOfBasisMatrix {
 }
 
 impl ChangeOfBasisMatrix {
+    /// `true` iff every entry is strictly less than `2^k`.
+    ///
+    /// `Signature::from_bytes` uses this to enforce the spec bound on
+    /// M_chl entries: each must be a positive integer
+    /// `< 2^(e'_rsp + r_rsp + 2)` ([§4.5][§4.5], Algorithm 4.9
+    /// step 5). Variable-time on the entries — fine since matrix
+    /// entries are public.
+    ///
+    /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
+    pub fn entries_below_pow2(&self, k: u32) -> bool {
+        self.entries
+            .iter()
+            .flatten()
+            .all(|entry| entry.bit_length() <= k)
+    }
+
     /// Compute the change-of-basis matrix expressing `reduced` (a basis
     /// of E[2^e]) in terms of `canonical` (a basis at the curve's full
     /// 2^TORSION_EVEN_POWER torsion).
