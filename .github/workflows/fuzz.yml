@@ -9,10 +9,15 @@ on:
       - 'Cargo.toml'
       - '.github/scripts/**'
       - '.github/workflows/fuzz.yml'
+  schedule:
+    # Nightly fallback so fuzzers still run when a day's pushes all
+    # miss the path filter above (e.g., workflow-only changes).
+    - cron: "30 7 * * *"
   workflow_dispatch:
 
-# Fuzz runs on main pushes only; cancel any superseded run when a
-# newer commit lands so the 4-target matrix doesn't pile up.
+# Fuzz runs on main pushes (and the nightly fallback); cancel any
+# superseded run when a newer commit lands so the 4-target matrix
+# doesn't pile up.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

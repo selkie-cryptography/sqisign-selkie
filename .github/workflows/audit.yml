@@ -12,10 +12,15 @@ on:
       - 'deny.toml'
       - '.github/scripts/**'
       - '.github/workflows/audit.yml'
+  schedule:
+    # Nightly fallback so audits still run when a day's pushes all
+    # miss the path filter above (e.g., workflow-only changes).
+    - cron: "30 6 * * *"
   workflow_dispatch:
 
-# Audit only runs on main pushes; cancel a superseded run if a newer
-# commit lands before the previous one finishes.
+# Audit runs on main pushes (and the nightly fallback); cancel a
+# superseded run if a newer commit lands before the previous one
+# finishes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
