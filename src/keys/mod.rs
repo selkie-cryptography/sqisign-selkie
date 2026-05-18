@@ -29,7 +29,7 @@ use crate::{
         scalar::Scalar,
     },
     fields::fp2::Fp2,
-    hash::CHALLENGE_BYTES,
+    hash::{CHALLENGE_BYTES, CHALLENGE_TOP_MASK},
     params::{E_RSP, TORSION_2POWER_BYTES, TORSION_EVEN_POWER},
 };
 
@@ -270,9 +270,15 @@ impl Signature {
             .expect("M_chl region fits within SIGNATURE_BYTES");
         let M_chl = ChallengeMatrix::parse(m_chl_buf, m_chl_bound)?;
 
-        // chl: CHALLENGE_BYTES.
+        // chl: CHALLENGE_BYTES, of which only e_chl bits are
+        // meaningful; reject any encoding whose top bits are set.
+        // Stricter than the C ref (which catches malformed chl
+        // only at the final hash compare).
         let mut chl = [0u8; CHALLENGE_BYTES];
         chl.copy_from_slice(&sig[CHL_OFFSET..CHL_OFFSET + CHALLENGE_BYTES]);
+        if chl[CHALLENGE_BYTES - 1] & !CHALLENGE_TOP_MASK != 0 {
+            return Err(SignatureError::NonCanonical);
+        }
 
         // hints: 1 byte each.
         let hint_aux = AuxiliaryHint::from(sig[HINT_OFFSET]);
