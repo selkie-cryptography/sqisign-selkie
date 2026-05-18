@@ -203,3 +203,47 @@ DRBG is exposed as an \texttt{rand\_core::RngCore}, so all
 generic sampling code in \texttt{quaternions::lattice} (rejection
 sampling, \texttt{rand\_interval} inside \texttt{reduce\_to\_prime\_norm},
 \texttt{sample\_from\_ball}) drives it without further glue.
+
+\subsection{Parse-time canonicality of $\mathrm{chl}$}
+\label{sec:chl-parse-canonicality}
+
+A SQIsign-NIST-I signature encodes $\mathrm{chl}$ in
+$\lceil \texttt{SECURITY\_BITS} / 8 \rceil = 16$ bytes (\algo{4.6}),
+but the spec bounds the value by
+$2^{e_{\mathrm{chl}}} = 2^{122}$.  The encoding allocates six
+high bits of byte~15 that the SQIsign specification (\algo{4.9}
+line~2) and the C reference's \texttt{signature\_from\_bytes}
+(\texttt{encode\_verification.c:191}) leave unchecked at parse.
+Honestly produced signatures have those bits zero -- the hash
+output is masked by \texttt{CHALLENGE\_TOP\_MASK} before being
+written -- but nothing in the spec or C ref forces them to be
+zero when reading.
+
+In both the spec and the C reference, malformed top bits
+propagate through the challenge ladder
+$[\mathrm{chl}]\,(P_{\mathrm{pk}} + [\mathrm{chl}]\,Q_{\mathrm{pk}})$
+at \algo{4.9} line~9, producing a different $E_{\mathrm{chl}}$
+than the honest signer intended.  The full response
+$(2,2)$-chain at line~26 runs against this perturbed input
+($\sim 3$~ms on commodity hardware); only at the final hash
+equality on line~30 does the malformed stored chl mismatch the
+freshly hashed (and masked) $\mathrm{chl}'$ and verification
+reject.
+
+Functionally this is correct.  Operationally it is a DoS
+amplification primitive: an attacker spamming near-valid
+signatures forces the verifier into the full chain before
+rejection.  \texttt{Signature::from\_bytes} therefore rejects
+any encoding whose chl byte~15 has its high six bits set,
+reusing the same \texttt{CHALLENGE\_TOP\_MASK} that
+\texttt{hash.rs} applies to challenge outputs.  Rejection is in
+microseconds; the chain never runs.  Honest signatures are
+unaffected, and the accept/reject outcome on every malformed
+signature is unchanged from the C reference.
+
+This is the only place in \texttt{Signature::from\_bytes} where
+we deliberately reject inputs the C reference accepts.  It is
+documented in \texttt{spec-review.tex} (low severity) as a
+defense-in-depth opportunity that the spec could note for
+implementations that care about DoS resistance.  The
+\textsc{Verify} accept-set is unchanged.
