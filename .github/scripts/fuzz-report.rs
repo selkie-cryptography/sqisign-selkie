@@ -141,7 +141,16 @@ fn collect_results(dir: &Path, results: &mut Vec<TargetResult>) {
         let path = entry.path();
         if path.is_dir() {
             collect_results(&path, results);
-        } else if path.file_name().map_or(false, |n| n == "fuzz-result.json") {
+        } else if path.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("fuzz_") && n.ends_with(".json"))
+        {
+            // Per-target shard JSONs are sftp'd in as `fuzz_<name>.json`
+            // (all fuzz targets are named `fuzz_*`). Match that prefix so
+            // a stray sibling file in the results dir can't accidentally
+            // feed the merge. Under the legacy artifact-download layout
+            // these lived inside per-target subdirs as `fuzz-result.json`;
+            // that path is now retired.
             if let Ok(contents) = fs::read_to_string(&path) {
                 let target = extract_str(&contents, "target");
                 let status = extract_str(&contents, "status");
