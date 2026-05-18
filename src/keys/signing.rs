@@ -44,6 +44,22 @@ use crate::{
     surfaces,
 };
 
+/// Wire-format offsets for the [`SigningKey`] encoding at the NIST-I
+/// parameter set (353 bytes):
+///
+/// ```text
+/// [ pk (65) | norm (32) | gen[0..4] (4·32) | M_sk (4·32) ]
+/// ```
+const SK_NORM_OFFSET: usize = VERIFYING_KEY_BYTES;
+const SK_GEN_OFFSET: usize = SK_NORM_OFFSET + FP_ENCODED_BYTES;
+const SK_GEN_COORDS: usize = 4;
+const SK_GEN_BYTES: usize = SK_GEN_COORDS * FP_ENCODED_BYTES;
+const SK_MSK_OFFSET: usize = SK_GEN_OFFSET + SK_GEN_BYTES;
+const SK_MSK_ENTRIES: usize = 4;
+const SK_MSK_BYTES: usize = SK_MSK_ENTRIES * TORSION_2POWER_BYTES;
+// Static checks: any layout drift surfaces here at compile time.
+const _: () = assert!(SK_MSK_OFFSET + SK_MSK_BYTES == SIGNING_KEY_BYTES);
+
 /// An SQIsign signing (secret) key.
 ///
 /// Contains the secret ideal I_sk, the change-of-basis matrix M_sk, and
@@ -331,26 +347,24 @@ impl SigningKey {
     pub fn from_bytes(bytes: &[u8; SIGNING_KEY_BYTES]) -> Result<SigningKey, SignatureError> {
         let vk_bytes: &[u8; VERIFYING_KEY_BYTES] = bytes[..VERIFYING_KEY_BYTES]
             .try_into()
-            .map_err(|_| SignatureError::NonCanonical)?;
+            .expect("layout const: bytes spans VERIFYING_KEY_BYTES");
         let verifying_key = VerifyingKey::from_bytes(vk_bytes)?;
 
-        let mut pos = VERIFYING_KEY_BYTES;
-
-        // Parse I_sk: norm (32 bytes unsigned, positive odd) + generator
-        // coords (4 × 32 bytes signed).
-        let norm_bytes: &[u8; 32] = bytes[pos..pos + FP_ENCODED_BYTES]
+        // I_sk norm (32 bytes unsigned, positive odd).
+        let norm_bytes: &[u8; FP_ENCODED_BYTES] = bytes
+            [SK_NORM_OFFSET..SK_NORM_OFFSET + FP_ENCODED_BYTES]
             .try_into()
-            .map_err(|_| SignatureError::NonCanonical)?;
+            .expect("layout const: bytes spans norm region");
         let norm = IsogenyDegree::from_bytes_le(norm_bytes).ok_or(SignatureError::NonCanonical)?;
-        pos += FP_ENCODED_BYTES;
 
+        // I_sk generator coords (4 × 32 bytes signed two's complement LE).
         let mut gen_coords = [BigInt::<4>::ZERO; 4];
-        for coord in &mut gen_coords {
-            let chunk: &[u8; FP_ENCODED_BYTES] = bytes[pos..pos + FP_ENCODED_BYTES]
+        for (i, coord) in gen_coords.iter_mut().enumerate() {
+            let start = SK_GEN_OFFSET + i * FP_ENCODED_BYTES;
+            let chunk: &[u8; FP_ENCODED_BYTES] = bytes[start..start + FP_ENCODED_BYTES]
                 .try_into()
-                .map_err(|_| SignatureError::NonCanonical)?;
+                .expect("layout const: bytes spans gen coord i");
             *coord = BigInt::<4>::from_bytes_le_signed(chunk);
-            pos += FP_ENCODED_BYTES;
         }
 
         // Reconstruct I_sk = O₀⟨gen, norm⟩.
@@ -366,7 +380,7 @@ impl SigningKey {
         let norm_bigint = norm.to_bigint();
         let ideal = LeftIdeal::new(&gen, &norm_bigint, EXTREMAL_ORDERS[0].order());
 
-        // Parse M_sk: 4 × 32 bytes unsigned, row-major [[m00, m01], [m10, m11]].
+        // M_sk: 4 × 32 bytes unsigned, row-major [[m00, m01], [m10, m11]].
         // Wire format encodes C ref's M_sk (basis_pk in NORMAL `(P, Q, P−Q)`
         // slot semantics on the eval side). Our internal `M_sk` uses the
         // SWAPPED convention from `from_propagated`/`from_hint` (matches our
@@ -374,14 +388,15 @@ impl SigningKey {
         // The two are related by `internal = T · wire` where
         // `T = [[1, 1], [0, −1]]`, `T = T⁻¹`. Apply T at the byte boundary.
         let mut wire = [[Scalar::ZERO; 2]; 2];
-        for row in &mut wire {
-            for entry in row.iter_mut() {
-                let chunk: &[u8; TORSION_2POWER_BYTES] = bytes[pos..pos + TORSION_2POWER_BYTES]
+        for (i, row) in wire.iter_mut().enumerate() {
+            for (j, entry) in row.iter_mut().enumerate() {
+                let idx = i * 2 + j;
+                let start = SK_MSK_OFFSET + idx * TORSION_2POWER_BYTES;
+                let chunk: &[u8; TORSION_2POWER_BYTES] = bytes[start..start + TORSION_2POWER_BYTES]
                     .try_into()
-                    .map_err(|_| SignatureError::NonCanonical)?;
+                    .expect("layout const: bytes spans M_sk entry");
                 let b = BigInt::<4>::from_bytes_le_unsigned(chunk);
                 *entry = Scalar::from(b);
-                pos += TORSION_2POWER_BYTES;
             }
         }
         let f = TORSION_EVEN_POWER;
@@ -396,7 +411,6 @@ impl SigningKey {
             ],
         ];
         let mat_sk = SecretKeyMatrix::new(entries);
-        debug_assert_eq!(pos, SIGNING_KEY_BYTES);
 
         Ok(Self::from_parts(verifying_key, ideal, gen, mat_sk))
     }
@@ -416,23 +430,20 @@ impl SigningKey {
     /// on the sign of secret generator coordinates. The signing key is
     /// secret-derived (Algorithm 4.1).
     pub fn to_bytes(&self) -> [u8; SIGNING_KEY_BYTES] {
-        use crate::params::{FP_ENCODED_BYTES, TORSION_2POWER_BYTES};
-
         let mut out = [0u8; SIGNING_KEY_BYTES];
-        let mut pos = 0;
 
-        // pk (65 bytes).
+        // pk.
         out[..VERIFYING_KEY_BYTES].copy_from_slice(&self.verifying_key.to_bytes());
-        pos += VERIFYING_KEY_BYTES;
 
-        // norm (32 bytes, unsigned LE).
+        // I_sk norm (FP_ENCODED_BYTES, unsigned LE).
         let norm = self.ideal.norm();
-        for limb in norm.as_limbs() {
-            out[pos..pos + 8].copy_from_slice(&limb.to_le_bytes());
-            pos += 8;
+        for (i, limb) in norm.as_limbs().iter().enumerate() {
+            let start = SK_NORM_OFFSET + i * 8;
+            out[start..start + 8].copy_from_slice(&limb.to_le_bytes());
         }
 
-        // gen[0..3] (4 × 32 bytes, signed two's complement LE).
+        // I_sk generator coords (4 × FP_ENCODED_BYTES, signed two's
+        // complement LE).
         let gen = &self.ideal_gen;
         let coords = [
             gen.a.as_bigint(),
@@ -440,21 +451,19 @@ impl SigningKey {
             gen.c.as_bigint(),
             gen.d.as_bigint(),
         ];
-        for coord in &coords {
+        for (idx, coord) in coords.iter().enumerate() {
+            let coord_start = SK_GEN_OFFSET + idx * FP_ENCODED_BYTES;
             let is_neg = bool::from(coord.is_negative()) && !bool::from(coord.is_zero());
-            // Write magnitude as LE bytes.
-            for limb in coord.as_limbs() {
-                out[pos..pos + 8].copy_from_slice(&limb.to_le_bytes());
-                pos += 8;
+            for (i, limb) in coord.as_limbs().iter().enumerate() {
+                let start = coord_start + i * 8;
+                out[start..start + 8].copy_from_slice(&limb.to_le_bytes());
             }
             if is_neg {
-                // Two's complement: negate the 32-byte block.
-                // Flip all bits, then add 1.
-                let block = &mut out[pos - FP_ENCODED_BYTES..pos];
+                // Two's complement on the 32-byte block: flip, +1.
+                let block = &mut out[coord_start..coord_start + FP_ENCODED_BYTES];
                 for b in block.iter_mut() {
                     *b = !*b;
                 }
-                // Add 1 with carry.
                 let mut carry = 1u16;
                 for b in block.iter_mut() {
                     carry += *b as u16;
@@ -464,10 +473,10 @@ impl SigningKey {
             }
         }
 
-        // M_sk (4 × 32 bytes, unsigned LE, row-major). Convert internal
-        // (swapped-slot convention, see `from_bytes`) to wire format
-        // (C ref's normal-slot convention) via `wire = T · internal`,
-        // `T = [[1, 1], [0, −1]]`.
+        // M_sk (4 × TORSION_2POWER_BYTES, unsigned LE, row-major).
+        // Convert internal (swapped-slot convention, see `from_bytes`)
+        // to wire format (C ref's normal-slot convention) via
+        // `wire = T · internal`, `T = [[1, 1], [0, −1]]`.
         let f = TORSION_EVEN_POWER;
         let m = &self.mat_sk.entries;
         let wire = [
@@ -480,14 +489,14 @@ impl SigningKey {
                 Scalar::ZERO.sub_mod2k(&m[1][1], f),
             ],
         ];
-        for row in &wire {
-            for entry in row {
-                out[pos..pos + TORSION_2POWER_BYTES].copy_from_slice(&entry.to_le_bytes());
-                pos += TORSION_2POWER_BYTES;
+        for (i, row) in wire.iter().enumerate() {
+            for (j, entry) in row.iter().enumerate() {
+                let idx = i * 2 + j;
+                let start = SK_MSK_OFFSET + idx * TORSION_2POWER_BYTES;
+                out[start..start + TORSION_2POWER_BYTES].copy_from_slice(&entry.to_le_bytes());
             }
         }
 
-        debug_assert_eq!(pos, SIGNING_KEY_BYTES);
         out
     }
 
