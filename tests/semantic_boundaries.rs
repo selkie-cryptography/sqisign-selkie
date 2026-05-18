@@ -99,20 +99,23 @@ fn sig_with_curve_aux_a_two_rejects_at_parse() {
     ));
 }
 
-/// `n_bt + r_rsp > e_rsp`: verify computes
-/// `e_rsp_prime = e_rsp − n_bt − r_rsp` via `checked_sub`, so the
-/// composite excess must surface as `VerificationFailed` rather than
-/// an integer underflow or panic.
+/// `n_bt` large enough to drive the spec M_chl entry bound
+/// `e_rsp − n_bt + 2` below the donor's actual entry width:
+/// `Signature::from_bytes` must reject at parse with
+/// [`SignatureError::NonCanonical`] rather than underflow or panic.
+///
+/// Each byte is individually within the per-byte bound (`n_bt`,
+/// `r_rsp ≤ f = 248`), so the rejection comes from the composite
+/// check enforced by [`ChallengeMatrix::parse`] against the
+/// per-entry bound `e_rsp − n_bt + 2`.
 #[test]
-fn sig_with_n_bt_plus_r_rsp_overflow_rejects_cleanly() {
-    let (pk_bytes, mut sig_bytes, msg) = donor();
-    sig_bytes[64] = 200; // n_bt
-    sig_bytes[65] = 100; // r_rsp ; 200+100 = 300 > e_rsp (=247 for NIST-I)
-    let vk = VerifyingKey::from_bytes(&pk_bytes).unwrap();
-    let sig = Signature::from_bytes(&sig_bytes).expect("each byte individually <= f=248");
+fn sig_with_n_bt_shrinks_m_chl_bound_rejects_at_parse() {
+    let (_, mut sig_bytes, _) = donor();
+    sig_bytes[64] = 200; // n_bt; donor M_chl entries exceed 2^(247+2-200) = 2^49
+    sig_bytes[65] = 100; // r_rsp
     assert!(matches!(
-        vk.verify(&msg, &sig),
-        Err(SignatureError::VerificationFailed)
+        Signature::from_bytes(&sig_bytes),
+        Err(SignatureError::NonCanonical)
     ));
 }
 
