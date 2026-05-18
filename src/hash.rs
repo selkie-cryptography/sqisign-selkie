@@ -40,7 +40,7 @@ pub(crate) const CHALLENGE_BYTES: usize = (E_CHL as usize).div_ceil(8);
 /// the output is < 2^e_chl.
 ///
 /// For NIST-I: e_chl = 122, 122 % 8 = 2, so mask = 0b11 = 0x03.
-const CHALLENGE_TOP_MASK: u8 = {
+pub(crate) const CHALLENGE_TOP_MASK: u8 = {
     let bits = E_CHL as usize % 8;
     if bits == 0 { 0xFF } else { (1u8 << bits) - 1 }
 };
