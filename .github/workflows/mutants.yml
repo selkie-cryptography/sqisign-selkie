@@ -1,10 +1,17 @@
 name: Mutation testing
 
-# Gated on CI passing — mutants only runs after the corresponding CI
-# run completes successfully. PR mutation = `incremental` (changed
-# code only). Push-to-main or scheduled-nightly CI completion =
-# `full` (8-shard sweep). Manual `workflow_dispatch` always runs
+# Triggered after a CI run completes. PR mutation = `incremental`
+# (changed code only). Push-to-main or scheduled-nightly CI completion
+# = `full` (8-shard sweep). Manual `workflow_dispatch` always runs
 # `full` regardless of CI state.
+#
+# Shard intermediates (per-shard mutants.out/outcomes.json) ride
+# through the Fly volume at /data/mutants/shards/<sha>/ between the
+# `full` matrix jobs and the `full-upload` merge job. This sidesteps
+# the GHA artifact storage quota. Migration target: a Tigris bucket
+# (Fly's S3-compatible object store) for both mutants shards and fuzz
+# corpora / crash inputs; the current volume-based transport is a
+# stopgap.
 
 on:
   workflow_run:
@@ -25,8 +32,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # PR mutation testing. Fires only when CI's pull_request run
-  # finishes green. Tests mutants in changed code only.
+  # PR mutation testing. Fires when CI's pull_request run completes
+  # (success or failure — see the job's `if:` for rationale). Tests
+  # mutants in changed code only.
   #
   # Routes to Fly on same-repo PRs (where the contributor has
   # write access to the repo and we trust their code). Fork PRs
@@ -36,9 +44,13 @@ jobs:
   incremental:
     name: Incremental
     runs-on: ${{ fromJSON(github.event.workflow_run.head_repository.full_name == github.repository && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
+    # Run after CI completes (success OR failure) so a transient
+    # red — reviewdog 502, a platform-fly job timeout, an artifact
+    # quota miss — doesn't silently kill mutation coverage on the
+    # PR. cargo-mutants reports baseline test failure on its own
+    # via the "Verify mutants produced real outcomes" step below.
     if: >-
       github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request'
     timeout-minutes: 120
     steps:
@@ -91,23 +103,23 @@ jobs:
           fi
           echo "verified: $COUNT per-mutant outcomes"
 
-      - name: Archive mutants.out
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: mutants-incremental.out
-          path: mutants.out
+      # No artifact upload — the outcome count above is the signal the
+      # PR cares about, and GHA artifact storage is quota-capped. To
+      # inspect the full mutants.out for a PR diff, re-run cargo-mutants
+      # locally against the same diff.
 
-  # Full sharded sweep. Fires on push-to-main CI success, nightly CI
-  # success, or manual dispatch. perf-8x makes each shard ~4× faster
-  # than the previous perf-2x default.
+  # Full sharded sweep. Fires on push-to-main or scheduled-nightly CI
+  # completion (success or failure), or on manual dispatch. perf-8x
+  # makes each shard ~4× faster than the previous perf-2x default.
   full:
     name: Full shard ${{ matrix.shard }}
     runs-on: [self-hosted, fly, linux, x64, perf-8x]
+    # Same rationale as `incremental`: trigger on CI completion, not
+    # success — the merge step's outcome-count check is the real
+    # baseline-failure detector.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main' &&
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
     timeout-minutes: 90
@@ -133,12 +145,26 @@ jobs:
         continue-on-error: true
         run: |
           cargo mutants --shard ${{ matrix.shard }}/8 -vV -- --lib
-      - name: Archive mutants.out
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: mutants-shard-${{ matrix.shard }}
-          path: mutants.out
+
+      # Ship the shard's outcomes.json to the Fly site rather than to
+      # GHA artifact storage. GHA artifacts are quota-capped and the
+      # only consumer (the `full-upload` merge job) lives in this same
+      # workflow, so a side channel through the dashboard volume is
+      # strictly better. The full-upload job pulls these back via
+      # flyctl sftp.
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: always() && hashFiles('mutants.out/outcomes.json') != ''
+      - name: Ship shard outcomes to Fly
+        if: always() && hashFiles('mutants.out/outcomes.json') != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          DIR="/data/mutants/shards/${SHA}"
+          flyctl ssh console -a sqisign-selkie-ci -C "mkdir -p ${DIR}"
+          echo "put mutants.out/outcomes.json ${DIR}/shard-${SHARD}.json" \
+            | flyctl ssh sftp shell -a sqisign-selkie-ci
 
   # Merge + verify + upload the full sweep. Skipped on PR.
   full-upload:
@@ -157,20 +183,36 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Download all shard artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: mutants-shard-*
-          path: shards
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Pull shard outcomes from Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          DIR="/data/mutants/shards/${SHA}"
+          mkdir -p shards
+          # List what arrived, then sftp-get each. Fly's sftp shell
+          # doesn't expand globs, so list-then-get is more robust.
+          NAMES=$(flyctl ssh console -a sqisign-selkie-ci -C "sh -c 'ls ${DIR} 2>/dev/null || true'" | tr -d '\r')
+          if [ -z "$NAMES" ]; then
+            echo "::error::No shard outcomes found at ${DIR}"
+            exit 1
+          fi
+          BATCH=$(mktemp)
+          for f in $NAMES; do
+            echo "get ${DIR}/${f} shards/${f}" >> "$BATCH"
+          done
+          flyctl ssh sftp shell -a sqisign-selkie-ci < "$BATCH"
+          ls -la shards
 
       - name: Merge outcomes
         run: |
-          FOUND=$(find shards -name outcomes.json 2>/dev/null)
+          FOUND=$(find shards -name '*.json' 2>/dev/null)
           if [ -z "$FOUND" ]; then
             echo "::error::No shard outcomes found"
             exit 1
           fi
-          find shards -name outcomes.json -print0 | xargs -0 jq -s '{outcomes: map(.outcomes) | add}' > merged-outcomes.json
+          find shards -name '*.json' -print0 | xargs -0 jq -s '{outcomes: map(.outcomes) | add}' > merged-outcomes.json
           COUNT=$(jq '[.outcomes[].summary | select(. == "CaughtMutant" or . == "MissedMutant" or . == "Timeout" or . == "Unviable")] | length' merged-outcomes.json)
           if [ "$COUNT" -eq 0 ]; then
             echo "::error::all shards produced zero per-mutant outcomes (likely baseline failure)"
@@ -194,3 +236,16 @@ jobs:
         run: |
           rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload
           /tmp/ci-upload mutants mutants.json "$SHA"
+
+      # Sweep the per-SHA shard intermediates now that the merged
+      # result is published. Only on success — if the merge or
+      # upload failed, leave the shards in place so a manual rerun
+      # can finish the job without re-running the matrix. Migration
+      # target for both the transport and this sweep is a Tigris
+      # bucket with TTL-based expiry.
+      - name: Prune shard intermediates from Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/mutants/shards/${SHA}"

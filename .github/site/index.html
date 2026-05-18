@@ -201,6 +201,23 @@
     .meta a { color: var(--fg-dim); }
     .meta a:hover { color: var(--fg-muted); }
 
+    /* Stale-data pill: shown when a panel falls back to /latest.json
+       because the selected commit has no per-SHA file uploaded. */
+    .stale-pill {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 1px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      color: var(--yellow);
+      background: rgba(210, 153, 34, 0.12);
+      border: 1px solid rgba(210, 153, 34, 0.35);
+      cursor: help;
+      vertical-align: 1px;
+    }
+
     /* Coverage table */
     .cov-table {
       width: 100%;
@@ -1645,10 +1662,16 @@
       return ` <a href="${url}" target="_blank" rel="noopener" style="font-size:11px;color:var(--fg-dim);text-decoration:none;margin-left:6px">\u2197</a>`;
     }
 
+    // Renders a "STALE" pill when this panel's data couldn't be found
+    // for the currently-selected commit and we fell back to /latest.json
+    // (which has a different SHA). Made deliberately prominent because
+    // a stale panel looks identical to a fresh one if you only glance —
+    // and "the dashboard agrees with HEAD" is one of the things people
+    // most want to read off this page.
     function staleTag(data) {
       if (!data || !data._stale) return '';
       const sha = data.sha ? data.sha.slice(0, 7) : '?';
-      return `<span style="font-size:11px;color:var(--fg-dim);font-style:italic;margin-left:8px">from ${sha}</span>`;
+      return `<span class="stale-pill" title="No data uploaded for the selected commit. Showing the most recent run (${sha}).">STALE &middot; from ${sha}</span>`;
     }
 
     function esc(s) {
@@ -3375,7 +3398,7 @@
       if (cov && (shaChanged || covSha !== renderedCov)) {
         const covPrev = covIndex.length >= 2 ? covIndex[1].percent : null;
         const covDelta = delta(cov.total.percent, covPrev, { suffix: '%' });
-        covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines${covDelta}` + runLink(cov);
+        covMeta.innerHTML = `${esc(cov.total.covered)}/${esc(cov.total.total)} lines${covDelta}` + runLink(cov) + staleTag(cov);
         covEl.innerHTML = renderCoverageData(cov);
         renderedCov = covSha;
       } else if (!cov && renderedCov !== null) {
@@ -3386,7 +3409,7 @@
 
       const benchSha = bench && bench.sha;
       if (bench && (shaChanged || benchSha !== renderedBench)) {
-        benchMeta.innerHTML = runLink(bench);
+        benchMeta.innerHTML = runLink(bench) + staleTag(bench);
         benchEl.innerHTML = renderBenchmarkData(bench);
         renderedBench = benchSha;
       } else if (!bench && renderedBench !== null) {
@@ -3402,7 +3425,7 @@
         const mutPrevEntry = mutantsIndex.length >= 2 ? mutantsIndex[1] : null;
         const mutPrevCaught = mutPrevEntry ? (mutPrevEntry.caught || 0) : null;
         const mutDelta = delta(s.caught || 0, mutPrevCaught, {});
-        mutMeta.innerHTML = `${esc(String(tested))} tested${mutDelta}` + runLink(mut);
+        mutMeta.innerHTML = `${esc(String(tested))} tested${mutDelta}` + runLink(mut) + staleTag(mut);
         mutEl.innerHTML = renderMutantsData(mut);
         renderedMut = mutSha;
       } else if (!mut && renderedMut !== null) {
@@ -3438,9 +3461,21 @@
 
       // Audits.
       const auditsEl = document.getElementById('audits-content');
-      if (deny || unsafeData || sizeData || docsData || msrvData || panicData || allocData || stackData || ctgrindData || apiData) {
+      const auditsMeta = document.getElementById('audits-meta');
+      const auditSources = { deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData };
+      const auditsAny = Object.values(auditSources).some(Boolean);
+      if (auditsAny) {
+        const staleEntries = Object.entries(auditSources)
+          .filter(([, v]) => v && v._stale)
+          .map(([k]) => k);
+        if (auditsMeta) {
+          auditsMeta.innerHTML = staleEntries.length === 0
+            ? ''
+            : `<span class="stale-pill" title="Stale sub-panels: ${staleEntries.join(', ')}">${staleEntries.length} STALE</span>`;
+        }
         auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData);
       } else {
+        if (auditsMeta) auditsMeta.textContent = '';
         auditsEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
       }
 
@@ -3449,7 +3484,7 @@
       if (platformData) {
         const p = platformData.platforms || [];
         document.getElementById('platform-meta').innerHTML =
-          `${platformData.pass || 0}/${p.length} pass`;
+          `${platformData.pass || 0}/${p.length} pass` + staleTag(platformData);
         platformEl.innerHTML = renderPlatformData(platformData);
       } else {
         platformEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
@@ -3457,9 +3492,12 @@
 
       // Instruction count.
       const iaiEl = document.getElementById('iai-content');
+      const iaiMeta = document.getElementById('iai-meta');
       if (iaiData) {
+        if (iaiMeta) iaiMeta.innerHTML = staleTag(iaiData);
         iaiEl.innerHTML = renderIaiData(iaiData);
       } else {
+        if (iaiMeta) iaiMeta.textContent = '';
         iaiEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
       }
 
@@ -3481,9 +3519,12 @@
 
       // Fuzzing.
       const fuzzEl = document.getElementById('fuzz-content');
+      const fuzzMeta = document.getElementById('fuzz-meta');
       if (fuzzData) {
+        if (fuzzMeta) fuzzMeta.innerHTML = staleTag(fuzzData);
         fuzzEl.innerHTML = renderFuzzData(fuzzData);
       } else {
+        if (fuzzMeta) fuzzMeta.textContent = '';
         fuzzEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
       }
 
