@@ -267,8 +267,6 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - name: Install Valgrind
-        run: sudo apt-get update && sudo apt-get install -y valgrind
       - name: Measure stack depth
         run: |
           rustc -O .github/scripts/stack-depth.rs -o /tmp/stack-depth
