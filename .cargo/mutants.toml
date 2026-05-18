@@ -1,26 +1,31 @@
-# cargo-mutants configuration
-# https://mutants.rs/
+# cargo-mutants configuration. https://mutants.rs/
 #
 # Run locally:
 #   cargo mutants -- --lib                     # full run
 #   cargo mutants --in-diff git.diff -- --lib  # only changed code
+#
+# Requires `cargo-nextest` on PATH (the default test tool, see below).
+# Override with `--test-tool cargo` to fall back to plain `cargo test`.
 
-# Timeout: 5x baseline with a floor of 60s.  Some quaternion tests are
+# nextest as default test tool — required for the `-E` filter syntax
+# below. CI workflows assume this.
+test_tool = "nextest"
+
+# Skip the long-running sign-KAT class during mutant verification.
+# Each `sign_kat_derand_NNN` runs a full keygen + sign + verify on
+# one KAT seed; running 100 of them per mutant dominates wall time
+# without commensurate kill signal. The mutants that would only be
+# killed by signing flows are caught faster by the lib + integration
+# tests already in the default suite. The cross-product
+# `(n_bt > 0, r_rsp > 0)` class is preserved via
+# `keys::tests::verify_kat_*` (always run) so excluding the slow
+# signers here doesn't lose meaningful coverage.
+additional_cargo_test_args = ["-E", "not test(/sign_kat_derand_/)"]
+
+# Timeout: 5x baseline with a floor of 60s. Some quaternion tests are
 # slow; 60s prevents false "timeout" kills on legitimate test runs.
 timeout_multiplier = 5
 minimum_test_timeout = 60
-
-# NOTE: `sign_kat_derand_001` and `sign_kat_derand_009` are NOT
-# `#[ignore]`d (they keep the cross-product (n_bt>0, r_rsp>0) class
-# in the regular suite — see `keys::kat_data` doc). cargo-mutants
-# re-runs the test suite per mutant scenario (~290 mutants × 30 s
-# – several minutes each), so they may inflate full mutant runs
-# significantly. If full-shard mutants times out, gate them out of
-# the mutants run via nextest filter expression in the workflow:
-#     -E 'not test(/sign_kat_derand_/)'
-# (tied to the workflow rather than mutants.toml because the local
-# `cargo mutants -- --lib` invocation uses plain cargo-test, which
-# doesn't speak nextest's `-E` filter).
 
 # --- Exclusions ---
 #
