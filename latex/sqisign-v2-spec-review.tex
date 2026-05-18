@@ -2062,4 +2062,90 @@ $\mathcal{O}_s, \mathcal{O}_t$ directly hits the same error.
 Either way, the spec sends the implementer to the C reference
 to discover the always-decompose-on-$\mathcal{O}_0$ convention.
 
+% =====================================================================
+\section{Sign error in \algo{4.9} line~11 aux-basis scaling}
+\label{sec:alg49-line11-sign}
+
+\finding{Affects \algo{4.9} (\textsc{Verify}), line~11.}{\high}
+
+\algo{4.9} line~11 reads
+\[
+  P_{\mathrm{aux}}, Q_{\mathrm{aux}}
+    \leftarrow [2^{f - e_{\mathrm{rsp}}' + 2}]\,P_{\mathrm{aux}},
+               [2^{f - e_{\mathrm{rsp}}' + 2}]\,Q_{\mathrm{aux}}
+\]
+with a \emph{positive} sign on the $+2$.  After multiplying by
+$2^{k}$ a point of order $2^{f}$ has order $2^{f - k}$, so
+$k = f - e_{\mathrm{rsp}}' + 2$ leaves the aux basis at order
+$2^{e_{\mathrm{rsp}}' - 2}$.  That is two bits too low for the
+$(2,2)$-chain at line~26, which consumes
+$e_{\mathrm{rsp}}' + 2$ bits of torsion (including the two
+\texttt{HD\_extra\_torsion} bits the chain absorbs in its final
+two steps).
+
+The analogous line~13 reads
+$[2^{f - e_{\mathrm{rsp}}' - r_{\mathrm{rsp}} - 2}]\,P_{\mathrm{chl}}$
+with a \emph{negative} sign — consistent with the same chain
+consuming $e_{\mathrm{rsp}}' + 2$ bits plus the additional
+$r_{\mathrm{rsp}}$ bits the even-response isogeny eats.  Line~11
+should match in sign and structure: $k = f - e_{\mathrm{rsp}}' - 2$,
+landing the aux basis at order $2^{e_{\mathrm{rsp}}' + 2}$.
+
+The C reference uses the negative-sign exponent (the
+\texttt{f - pow\_dim2\_deg\_resp - 2} doubling count in
+\texttt{challenge\_and\_aux\_basis\_verify}, equivalent to
+$f - e_{\mathrm{rsp}}' - 2$).  An implementer who follows the
+spec literally writes the positive-sign exponent, produces an
+aux basis two bits short of the chain's torsion budget, and
+line~26 fails with the all-zero-theta-null symptom shared by
+several other bugs in this document.
+
+\paragraph{Recommendation.}  Correct the sign in \algo{4.9}
+line~11 to $f - e_{\mathrm{rsp}}' - 2$, matching line~13's
+structure and the C reference.
+
+% =====================================================================
+\section{No parse-time canonicality on $\mathrm{chl}$'s top bits}
+\label{sec:chl-canonicality}
+
+\finding{Affects \algo{4.9} (\textsc{Verify}), line~2 (signature
+parse).}{\low}
+
+The challenge value $\mathrm{chl}$ in the signature is encoded
+in $\lceil \texttt{SECURITY\_BITS} / 8 \rceil = 16$ bytes for
+NIST-I, but the spec bounds the value by
+$2^{e_{\mathrm{chl}}} = 2^{122}$.  The encoding allocates six
+high bits (byte~15 bits 122--127) that the spec does not
+constrain at parse time.  An honestly-produced signature has
+those bits zero because the hash output is masked by
+\texttt{CHALLENGE\_TOP\_MASK} before being written, but a
+hostile signer can set them arbitrarily without violating any
+spec-stated condition.
+
+The C reference's \texttt{signature\_from\_bytes}
+(\texttt{encode\_verification.c:191}) decodes the 16 chl bytes
+verbatim without a top-bit check.  A signature whose chl bytes
+have non-zero top bits parses successfully and proceeds into
+the ladder
+$[\mathrm{chl}]\,(P_{\mathrm{pk}} + [\mathrm{chl}]\,Q_{\mathrm{pk}})$
+at line~9, where the extra bits steer the kernel to a different
+$E_{\mathrm{chl}}$ than the honest signer intended.  The final
+equality at line~30 compares the malformed stored chl against
+the freshly-hashed $\mathrm{chl}'$ (whose top bits are masked);
+the mismatch rejects the signature.
+
+So the spec is functionally correct: malformed top bits surface
+as $\mathrm{chl} \ne \mathrm{chl}'$ and verification fails.  But
+the bad input runs the entire challenge ladder and the response
+$(2,2)$-chain before being rejected.  A parse-time top-bit
+check would reject in microseconds where the chain-then-compare
+path costs milliseconds, which matters for DoS resistance under
+spam.
+
+\paragraph{Recommendation.}  Note in \algo{4.9} line~2 that
+implementations may reject $\mathrm{chl} \ge 2^{e_{\mathrm{chl}}}$
+at parse time without changing the semantics; doing so is a
+defense-in-depth choice that does not alter the accept/reject
+outcome on any signature.
+
 \end{document}
