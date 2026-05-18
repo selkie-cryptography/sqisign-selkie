@@ -32,10 +32,18 @@ use crate::{
     params::{E_RSP, TORSION_2POWER_BYTES},
 };
 
-/// M_chl wire-format byte counts at the NIST-I parameter set:
-/// `M_CHL_BYTES = 4 × M_CHL_COMP_BYTES` is the full encoded matrix.
+/// Wire-format offsets for the [`Signature`] encoding at the NIST-I
+/// parameter set (148 bytes):
+///
+/// ```text
+/// [ A_aux (64) | n_bt (1) | r_rsp (1) | M_chl (64) | chl (16) | hint_aux (1) | hint_chl (1) ]
+/// ```
 const M_CHL_COMP_BYTES: usize = E_RSP.div_ceil(8) as usize;
 const M_CHL_BYTES: usize = 4 * M_CHL_COMP_BYTES;
+const A_AUX_BYTES: usize = 64;
+const M_CHL_OFFSET: usize = A_AUX_BYTES + 2;
+const CHL_OFFSET: usize = M_CHL_OFFSET + M_CHL_BYTES;
+const HINT_OFFSET: usize = CHL_OFFSET + CHALLENGE_BYTES;
 
 /// A challenge value: an integer in [0, 2^e_chl) produced by HASH.
 ///
@@ -140,14 +148,13 @@ impl Signature {
     pub fn from_bytes(bytes: &[u8; SIGNATURE_BYTES]) -> Result<Signature, SignatureError> {
         let sig = bytes;
 
-        // E_aux: Montgomery coefficient A ∈ F_{p²} (64 bytes).
+        // E_aux: Montgomery coefficient A ∈ F_{p²}.
         // Rejects A = ±2 (singular Montgomery model) — matches the
         // C reference's `ec_curve_verify_A` (`ec.c:169`).
-        let A_aux = Fp2::from_bytes(
-            sig[..64]
-                .try_into()
-                .map_err(|_| SignatureError::NonCanonical)?,
-        );
+        let a_aux_buf: &[u8; A_AUX_BYTES] = sig[..A_AUX_BYTES]
+            .try_into()
+            .expect("A_AUX_BYTES fits within SIGNATURE_BYTES");
+        let A_aux = Fp2::from_bytes(a_aux_buf);
         let coefficient_aux = Coefficient::from(A_aux);
         if coefficient_aux.is_singular() {
             return Err(SignatureError::InvalidCurve);
@@ -155,10 +162,10 @@ impl Signature {
         let curve_aux = Curve::from(coefficient_aux);
 
         // n_bt, r_rsp: 1 byte each, bounded by f=248.
-        let n_bt =
-            TorsionExponent::try_from(sig[64] as u32).map_err(|_| SignatureError::NonCanonical)?;
-        let r_rsp =
-            TorsionExponent::try_from(sig[65] as u32).map_err(|_| SignatureError::NonCanonical)?;
+        let n_bt = TorsionExponent::try_from(sig[A_AUX_BYTES] as u32)
+            .map_err(|_| SignatureError::NonCanonical)?;
+        let r_rsp = TorsionExponent::try_from(sig[A_AUX_BYTES + 1] as u32)
+            .map_err(|_| SignatureError::NonCanonical)?;
 
         // M_chl. Spec §4.5 Alg. 4.9 step 5 bounds each entry by
         // `2^(e_rsp − n_bt + 2)`; `checked_*` also catches
@@ -168,21 +175,18 @@ impl Signature {
             .and_then(|v| v.checked_sub(n_bt.value()))
             .and_then(|v| TorsionExponent::try_from(v).ok())
             .ok_or(SignatureError::NonCanonical)?;
-        let m_offset = 66;
-        let m_chl_buf: &[u8; M_CHL_BYTES] = sig[m_offset..m_offset + M_CHL_BYTES]
+        let m_chl_buf: &[u8; M_CHL_BYTES] = sig[M_CHL_OFFSET..M_CHL_OFFSET + M_CHL_BYTES]
             .try_into()
-            .expect("M_CHL_BYTES fits within SIGNATURE_BYTES");
+            .expect("M_chl region fits within SIGNATURE_BYTES");
         let M_chl = ChallengeMatrix::parse(m_chl_buf, m_chl_bound)?;
 
         // chl: CHALLENGE_BYTES.
-        let chl_offset = m_offset + M_CHL_BYTES;
         let mut chl = [0u8; CHALLENGE_BYTES];
-        chl.copy_from_slice(&sig[chl_offset..chl_offset + CHALLENGE_BYTES]);
+        chl.copy_from_slice(&sig[CHL_OFFSET..CHL_OFFSET + CHALLENGE_BYTES]);
 
         // hints: 1 byte each.
-        let hint_offset = chl_offset + CHALLENGE_BYTES;
-        let hint_aux = AuxiliaryHint::from(sig[hint_offset]);
-        let hint_chl = ChallengeHint::from(sig[hint_offset + 1]);
+        let hint_aux = AuxiliaryHint::from(sig[HINT_OFFSET]);
+        let hint_chl = ChallengeHint::from(sig[HINT_OFFSET + 1]);
 
         Ok(Signature {
             curve_aux,
@@ -203,33 +207,30 @@ impl Signature {
     pub fn to_bytes(&self) -> [u8; SIGNATURE_BYTES] {
         let mut bytes = [0u8; SIGNATURE_BYTES];
 
-        // E_aux: 64 bytes.
-        bytes[..64].copy_from_slice(&self.curve_aux.coefficient().to_bytes());
+        // E_aux.
+        bytes[..A_AUX_BYTES].copy_from_slice(&self.curve_aux.coefficient().to_bytes());
 
         // n_bt, r_rsp: 1 byte each.
-        bytes[64] = self.n_bt.value() as u8;
-        bytes[65] = self.r_rsp.value() as u8;
+        bytes[A_AUX_BYTES] = self.n_bt.value() as u8;
+        bytes[A_AUX_BYTES + 1] = self.r_rsp.value() as u8;
 
         // M_chl: 4 × M_CHL_COMP_BYTES, each entry as LE bytes.
-        let m_offset = 66;
         let e = &self.M_chl.entries;
         let scalars = [e[0][0], e[0][1], e[1][0], e[1][1]];
         for (idx, s) in scalars.iter().enumerate() {
             let s_bytes = s.to_le_bytes();
-            bytes[m_offset + idx * M_CHL_COMP_BYTES..m_offset + (idx + 1) * M_CHL_COMP_BYTES]
-                .copy_from_slice(&s_bytes[..M_CHL_COMP_BYTES]);
+            let start = M_CHL_OFFSET + idx * M_CHL_COMP_BYTES;
+            bytes[start..start + M_CHL_COMP_BYTES].copy_from_slice(&s_bytes[..M_CHL_COMP_BYTES]);
         }
 
         // chl: CHALLENGE_BYTES.
-        let chl_offset = m_offset + M_CHL_BYTES;
         let chl_bytes = self.chl.as_scalar().to_le_bytes();
-        bytes[chl_offset..chl_offset + CHALLENGE_BYTES]
+        bytes[CHL_OFFSET..CHL_OFFSET + CHALLENGE_BYTES]
             .copy_from_slice(&chl_bytes[..CHALLENGE_BYTES]);
 
         // hints: 1 byte each.
-        let hint_offset = chl_offset + CHALLENGE_BYTES;
-        bytes[hint_offset] = u8::from(self.hint_aux);
-        bytes[hint_offset + 1] = u8::from(self.hint_chl);
+        bytes[HINT_OFFSET] = u8::from(self.hint_aux);
+        bytes[HINT_OFFSET + 1] = u8::from(self.hint_chl);
 
         bytes
     }
