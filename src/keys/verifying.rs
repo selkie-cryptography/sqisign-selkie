@@ -46,11 +46,14 @@ impl VerifyingKey {
     /// Rejects with [`SignatureError::InvalidCurve`] when the encoded
     /// coefficient yields a singular Montgomery model (`A = ±2`),
     /// matching the C reference's `ec_curve_verify_A` parse-time
-    /// check. Supersingularity beyond non-singularity is *not*
-    /// checked here — the spec ([§4.5], Algorithm 4.9 steps 3–4)
-    /// allows that check to be a byproduct of the verify chain
-    /// rather than an explicit parse-time test, and that's what we
-    /// rely on.
+    /// check.
+    ///
+    /// Rejects with [`SignatureError::NotSupersingular`] when the
+    /// hint-derived basis on the recovered curve fails the "exists a
+    /// basis of `E[2^f]`" certificate of supersingularity ([§4.5],
+    /// paragraph above Algorithm 4.9). The C reference does not run
+    /// this check at parse — it relies on the implicit chain-failure
+    /// path the spec also allows.
     ///
     /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
     pub fn from_bytes(bytes: &[u8; VERIFYING_KEY_BYTES]) -> Result<VerifyingKey, SignatureError> {
@@ -64,6 +67,9 @@ impl VerifyingKey {
         }
         let hint = VerifyingKeyHint::from(bytes[64]);
         let curve = Curve::from(coefficient);
+        if !curve.is_supersingular_via_basis(BasisHint::from_byte(u8::from(hint))) {
+            return Err(SignatureError::NotSupersingular);
+        }
 
         Ok(VerifyingKey {
             curve,
