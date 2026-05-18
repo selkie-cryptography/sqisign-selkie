@@ -84,8 +84,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
+
+      # rustfmt is the source of truth for whether Format passes or
+      # fails. Run it standalone first so a reviewdog outage (e.g. a
+      # 502 from GitHub's API during reviewdog's "checking GitHub for
+      # latest tag" probe) can never turn a green fmt into a red job.
+      - name: Run rustfmt
+        run: cargo +nightly fmt --all -- --check
+
+      # On PRs (where the inline annotations actually help reviewers),
+      # also pipe the fmt output through reviewdog for line-level
+      # comments. Marked `continue-on-error: true` so a reviewdog/API
+      # hiccup can't gate the PR — the standalone rustfmt above is
+      # what the required check should care about.
       - uses: reviewdog/action-setup@38a8d76742a75eeb6c6ffc616bde64179fd09ebf
-      - name: Run rustfmt with reviewdog
+        if: github.event_name == 'pull_request'
+      - name: Annotate fmt diffs (PR only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
         env:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -199,7 +215,12 @@ jobs:
     needs: [gate]
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, fly, linux, x64]
-    timeout-minutes: 30
+    # 60 min, matching gate-ish headroom: a cold rust-cache miss
+    # rebuild on no-default-features (the cache key differs from
+    # gate's `linux-x64-default-stable`) plus a full nextest run
+    # leaves ~20 min of slack. 30 min was over-tight and was
+    # cancelling whole CI runs mid-build.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
@@ -295,7 +316,12 @@ jobs:
     # Skipped on fork PR (untrusted code on self-hosted Machines).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, fly, linux, x64]
-    timeout-minutes: 30
+    # 60 min, matching platform-fly: cold runs do a one-time Sage
+    # conda install (~several minutes) plus the cross-check itself.
+    # Warm runs hit `actions/cache` and finish quickly. 30 min was
+    # cancelling cold-cache runs and the whole parent CI run with
+    # them.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:

@@ -120,14 +120,10 @@ jobs:
           rustc -O .github/scripts/fuzz-report.rs -o /tmp/fuzz-report
           /tmp/fuzz-report target "${{ matrix.target }}" "${{ github.sha }}" fuzz/fuzz-output.txt > fuzz-result.json
 
-      - name: Upload crash artifacts
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: fuzz-${{ matrix.target }}
-          path: |
-            fuzz/artifacts/
-            fuzz-result.json
+      # Crash inputs flow directly into a fuzz-crash/ branch + PR via
+      # the next step. No artifact upload (GHA storage is quota-capped
+      # and the upload step was the only thing making the workflow go
+      # red on no-crash nightly runs).
 
       - name: Open PR on crash
         if: always()
