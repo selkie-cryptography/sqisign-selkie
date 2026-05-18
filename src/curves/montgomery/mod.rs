@@ -397,6 +397,45 @@ impl Curve {
         self.doubling.is_normalized()
     }
 
+    /// `true` iff the `hint`-derived torsion basis on `self` spans the
+    /// full `E[2^f]` torsion (f = [`TORSION_EVEN_POWER`]), which is
+    /// the spec's characterization of supersingularity:
+    ///
+    /// > In this setting, to check that a curve E is supersingular,
+    /// > it suffices to verify that there exists a basis of E[2^f].
+    /// > — [§4.5], paragraph above Algorithm 4.9.
+    ///
+    /// Concretely: `from_hint` lands the basis at the 2^f-torsion via
+    /// `clear_cofactor`. This method then asserts that `P` and `Q`
+    /// have order *exactly* `2^f` (not a proper divisor): `[2^(f−1)]·P
+    /// ≠ O`, `[2^(f−1)]·Q ≠ O`, and the two top doublings are
+    /// independent in `E[2]`.
+    ///
+    /// Cost: one [`TorsionBasis::from_hint`] plus `2·(f − 1)`
+    /// doublings.
+    ///
+    /// Variable-time on `self`. Fine for verify-side parse since the
+    /// curve coefficient is public.
+    ///
+    /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
+    /// [`TorsionBasis::from_hint`]: crate::curves::TorsionBasis::from_hint
+    /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
+    pub fn is_supersingular_via_basis(&self, hint: crate::curves::BasisHint) -> bool {
+        let Some(basis) = crate::curves::TorsionBasis::from_hint(self, hint) else {
+            return false;
+        };
+        // `from_hint`'s output layout: `basis.P` is spec's P,
+        // `basis.PmQ` is spec's Q (the field name reflects the wire
+        // layout `(x_P, x_{P−Q}, x_Q)`, not the spec's algebra).
+        let mut p = basis.P;
+        let mut q = basis.PmQ;
+        for _ in 0..(crate::params::TORSION_EVEN_POWER - 1) {
+            p = p.double();
+            q = q.double();
+        }
+        !bool::from(p.is_identity()) && !bool::from(q.is_identity()) && p != q
+    }
+
     /// The affine Montgomery coefficient A.
     pub fn coefficient(&self) -> &Coefficient {
         &self.affine
