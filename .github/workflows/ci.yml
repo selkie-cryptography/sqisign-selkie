@@ -1,9 +1,12 @@
 name: CI
 
 on:
+  # The paths list is duplicated under push and pull_request because
+  # actionlint rejects YAML aliases in `paths:` — keep the two copies
+  # in sync when editing.
   push:
     branches: [main]
-    paths: &rust-paths
+    paths:
       - 'src/**'
       - 'tests/**'
       - 'benches/**'
@@ -14,7 +17,15 @@ on:
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
-    paths: *rust-paths
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'rustfmt.toml'
+      - '.config/nextest.toml'
+      - '.github/scripts/**'
+      - '.github/workflows/ci.yml'
   schedule:
     # Nightly run that exercises the full platform + KAT matrix
     # regardless of whether anything was pushed that day.
