@@ -7,7 +7,7 @@ on:
       - 'src/**'
       - 'fuzz/**'
       - 'Cargo.toml'
-      - '.github/scripts/**'
+      - '.github/scripts/fuzz-report.rs'
       - '.github/workflows/fuzz.yml'
   schedule:
     # Nightly fallback so fuzzers still run when a day's pushes all

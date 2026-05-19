@@ -1,0 +1,57 @@
+name: Compile scripts
+
+# Compile each .rs file in .github/scripts/ to catch syntax / type
+# errors before the workflow that uses it actually fires. Each
+# script is built with `rustc -O <file> -o /dev/null` — the scripts
+# are stdlib-only single-file programs (same pattern as ci-upload,
+# ci-scratch, fuzz-report, etc.) so this is fast and dep-free.
+#
+# Replaces the incidental coverage that the previous
+# `.github/scripts/**` entry in ci.yml / audit.yml / bench.yml /
+# coverage.yml / iai.yml provided by re-running their full pipelines
+# on script-only changes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/scripts/**'
+      - '.github/workflows/scripts-compile.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/scripts/**'
+      - '.github/workflows/scripts-compile.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compile:
+    name: rustc -O .github/scripts/*.rs
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Compile each script
+        run: |
+          fail=0
+          for f in .github/scripts/*.rs; do
+            echo "[compile] $f"
+            rustc -O "$f" -o /dev/null || {
+              echo "::error file=$f::failed to compile"
+              fail=1
+            }
+          done
+          exit $fail
