@@ -23,7 +23,6 @@ on:
       - 'Cargo.toml'
       - 'rustfmt.toml'
       - '.config/nextest.toml'
-      - '.github/scripts/**'
       - '.github/workflows/ci.yml'
   schedule:
     # Nightly run that exercises the full platform + KAT matrix
