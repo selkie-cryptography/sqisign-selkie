@@ -152,19 +152,17 @@ jobs:
       # workflow, so a side channel through the dashboard volume is
       # strictly better. The full-upload job pulls these back via
       # flyctl sftp.
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Build ci-scratch
         if: always() && hashFiles('mutants.out/outcomes.json') != ''
-      - name: Ship shard outcomes to Fly
+        run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+      - name: Ship shard outcomes to Tigris scratch
         if: always() && hashFiles('mutants.out/outcomes.json') != ''
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           SHARD: ${{ matrix.shard }}
-        run: |
-          DIR="/data/mutants/shards/${SHA}"
-          flyctl ssh console -a sqisign-selkie-ci -C "mkdir -p ${DIR}"
-          echo "put mutants.out/outcomes.json ${DIR}/shard-${SHARD}.json" \
-            | flyctl ssh sftp shell -a sqisign-selkie-ci
+        run: /tmp/ci-scratch put mutants "${SHA}" "shard-${SHARD}" mutants.out/outcomes.json
 
   # Merge + verify + upload the full sweep. Skipped on PR.
   full-upload:
@@ -183,27 +181,21 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-      - name: Pull shard outcomes from Fly
+      - name: Build ci-scratch
+        run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+      - name: Pull shard outcomes from Tigris scratch
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
-          DIR="/data/mutants/shards/${SHA}"
           mkdir -p shards
-          # List what arrived, then sftp-get each. Fly's sftp shell
-          # doesn't expand globs, so list-then-get is more robust.
-          NAMES=$(flyctl ssh console -a sqisign-selkie-ci -C "sh -c 'ls ${DIR} 2>/dev/null || true'" | tr -d '\r')
-          if [ -z "$NAMES" ]; then
-            echo "::error::No shard outcomes found at ${DIR}"
+          /tmp/ci-scratch get mutants "${SHA}" shards
+          ls -la shards
+          if [ -z "$(ls -A shards)" ]; then
+            echo "::error::No shard outcomes found in mutants/${SHA}/"
             exit 1
           fi
-          BATCH=$(mktemp)
-          for f in $NAMES; do
-            echo "get ${DIR}/${f} shards/${f}" >> "$BATCH"
-          done
-          flyctl ssh sftp shell -a sqisign-selkie-ci < "$BATCH"
-          ls -la shards
 
       - name: Merge outcomes
         run: |
@@ -237,15 +229,15 @@ jobs:
           rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload
           /tmp/ci-upload mutants mutants.json "$SHA"
 
-      # Sweep the per-SHA shard intermediates now that the merged
-      # result is published. Only on success — if the merge or
-      # upload failed, leave the shards in place so a manual rerun
-      # can finish the job without re-running the matrix. Migration
-      # target for both the transport and this sweep is a Tigris
-      # bucket with TTL-based expiry.
-      - name: Prune shard intermediates from Fly
+      # Sweep the per-SHA scratch intermediates now that the merged
+      # result is published. The bucket lifecycle rule auto-expires
+      # objects after 7 days, so a failed clean is non-fatal; this
+      # is hygiene, not durability. Only on success — keep the
+      # intermediates around for a manual rerun if the merge or
+      # upload failed.
+      - name: Prune Tigris scratch
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-        run: |
-          flyctl ssh console -a sqisign-selkie-ci -C "rm -rf /data/mutants/shards/${SHA}"
+        run: /tmp/ci-scratch clean mutants "${SHA}"
