@@ -9,7 +9,6 @@ on:
       - 'benches/**'
       - 'Cargo.toml'
       - '.config/nextest.toml'
-      - '.github/scripts/**'
       - '.github/workflows/coverage.yml'
   schedule:
     # Nightly fallback so coverage still runs when a day's pushes all

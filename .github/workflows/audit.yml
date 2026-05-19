@@ -10,7 +10,6 @@ on:
       - 'Cargo.toml'
       - '.config/nextest.toml'
       - 'deny.toml'
-      - '.github/scripts/**'
       - '.github/workflows/audit.yml'
   schedule:
     # Nightly fallback so audits still run when a day's pushes all

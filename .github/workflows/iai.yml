@@ -12,7 +12,6 @@ on:
       - 'src/**'
       - 'benches/**'
       - 'Cargo.toml'
-      - '.github/scripts/**'
       - '.github/workflows/iai.yml'
   workflow_dispatch:
 
