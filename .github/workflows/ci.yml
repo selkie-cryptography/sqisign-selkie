@@ -139,7 +139,9 @@ jobs:
 
   gate:
     name: lib + doc tests (x86_64-linux)
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
+    # `perf-8x` so the slow KAT-derived integration tests finish in
+    # a reasonable wall time. Fork PRs still route to GH-hosted.
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64","perf-8x"]' || '["ubuntu-latest"]') }}
     # 90 min: lib tests (~10 min) + integration tests
     # (sign_properties.rs ~12 min; bit_flip_sweep ~3 min;
     # malleability mutation tests ~5 min; wycheproof, alloc_budget,
