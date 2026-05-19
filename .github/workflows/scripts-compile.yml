@@ -49,6 +49,7 @@ jobs:
       - name: Compile each script
         run: |
           outdir=$(mktemp -d)
+          echo "OUTDIR=$outdir" >> "$GITHUB_ENV"
           fail=0
           for f in .github/scripts/*.rs; do
             echo "[compile] $f"
@@ -57,4 +58,68 @@ jobs:
               fail=1
             }
           done
+          exit $fail
+
+      # ci-upload's validate_payload + validate_floor are the gate that
+      # keeps zero-data payloads from rendering as green panels. The
+      # compile step doesn't exercise that logic; this step does, via
+      # `--dry-run` (validation only, no ssh/sftp/manifest writes).
+      #
+      # Each kind gets a good payload (must exit 0) and a known-bad
+      # payload that trips the kind's floor (must exit 1). One
+      # representative case covers the structural-check path (sha
+      # mismatch); the per-kind floor coverage is per-arm.
+      - name: Behavior-test ci-upload --dry-run
+        run: |
+          set -u
+          CIU="$OUTDIR/ci-upload"
+          tmp=$(mktemp -d)
+          fail=0
+
+          # kind | good payload | bad payload (trips floor)
+          cases=$(cat <<'EOF'
+          coverage | {"sha":"abc123","updated_at":"x","total":{"total":12345}}        | {"sha":"abc123","updated_at":"x","total":{"total":0}}
+          bench    | {"sha":"abc123","updated_at":"x","groups":[{"name":"a"}]}        | {"sha":"abc123","updated_at":"x","groups":[]}
+          mutants  | {"sha":"abc123","updated_at":"x","summary":{"total":100}}        | {"sha":"abc123","updated_at":"x","summary":{"total":0}}
+          fuzz     | {"sha":"abc123","updated_at":"x","pass":7,"fail":0,"targets":[{"target":"a"}]} | {"sha":"abc123","updated_at":"x","pass":0,"fail":0,"targets":[]}
+          platform | {"sha":"abc123","updated_at":"x","platforms":[{"name":"linux"}]} | {"sha":"abc123","updated_at":"x","platforms":[]}
+          iai      | {"sha":"abc123","updated_at":"x","total":11,"results":[{"name":"a"}]} | {"sha":"abc123","updated_at":"x","total":0,"results":[]}
+          kat      | {"sha":"abc123","updated_at":"x","suites":[{"name":"a"}]}        | {"sha":"abc123","updated_at":"x","suites":[]}
+          dudect   | {"sha":"abc123","updated_at":"x","total":14}                     | {"sha":"abc123","updated_at":"x","total":0}
+          tacet    | {"sha":"abc123","updated_at":"x","total":24}                     | {"sha":"abc123","updated_at":"x","total":0}
+          stack    | {"sha":"abc123","updated_at":"x","peak_stack_bytes":139856}      | {"sha":"abc123","updated_at":"x","peak_stack_bytes":0}
+          size     | {"sha":"abc123","updated_at":"x","binary":{"total_bytes":5281744}} | {"sha":"abc123","updated_at":"x","binary":{"total_bytes":0}}
+          alloc    | {"sha":"abc123","updated_at":"x","operations":[{"name":"sign"}]} | {"sha":"abc123","updated_at":"x","operations":[]}
+          ctgrind  | {"sha":"abc123","updated_at":"x","tests":5}                      | {"sha":"abc123","updated_at":"x","tests":0}
+          api      | {"sha":"abc123","updated_at":"x","total":240}                    | {"sha":"abc123","updated_at":"x","total":0}
+          EOF
+          )
+
+          while IFS='|' read -r kind good bad; do
+            kind=$(echo "$kind" | tr -d ' ')
+            [ -z "$kind" ] && continue
+
+            echo "$good" > "$tmp/good.json"
+            if ! "$CIU" --dry-run "$kind" "$tmp/good.json" abc123 >/dev/null 2>&1; then
+              echo "::error::good payload for kind=$kind was REJECTED (expected accept)"
+              fail=1
+            fi
+
+            echo "$bad" > "$tmp/bad.json"
+            if "$CIU" --dry-run "$kind" "$tmp/bad.json" abc123 >/dev/null 2>&1; then
+              echo "::error::bad payload for kind=$kind was ACCEPTED (floor should have rejected)"
+              fail=1
+            fi
+          done <<< "$cases"
+
+          # Structural-check spot test: sha in file != argv sha.
+          echo '{"sha":"def456","updated_at":"x","total":{"total":1}}' > "$tmp/mismatch.json"
+          if "$CIU" --dry-run coverage "$tmp/mismatch.json" abc123 >/dev/null 2>&1; then
+            echo "::error::sha-mismatch payload was ACCEPTED (structural check should have rejected)"
+            fail=1
+          fi
+
+          if [ $fail -eq 0 ]; then
+            echo "[ci-upload dry-run] all kinds passed accept/reject expectations"
+          fi
           exit $fail
