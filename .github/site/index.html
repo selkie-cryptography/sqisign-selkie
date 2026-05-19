@@ -201,8 +201,6 @@
     .meta a { color: var(--fg-dim); }
     .meta a:hover { color: var(--fg-muted); }
 
-    /* Stale-data pill: shown when a panel falls back to /latest.json
-       because the selected commit has no per-SHA file uploaded. */
     .stale-pill {
       display: inline-block;
       margin-left: 8px;
@@ -214,14 +212,26 @@
       color: var(--yellow);
       background: rgba(210, 153, 34, 0.12);
       border: 1px solid rgba(210, 153, 34, 0.35);
-      cursor: help;
       vertical-align: 1px;
     }
 
-    /* Dim and desaturate the body of a stale panel so the staleness
-       is communicated visually, not just by the pill. The pill itself
-       sits in the section header outside this scope and stays at
-       full opacity / saturation. */
+    /* The SHA inside the pill is the only clickable target — keeps the
+       click affordance narrow (open commit on GitHub) rather than
+       triggering a whole-page commit-context switch. */
+    .stale-pill a {
+      color: inherit;
+      text-decoration: underline;
+      text-decoration-color: currentColor;
+      text-decoration-style: dotted;
+      text-underline-offset: 2px;
+    }
+    .stale-pill a:hover {
+      text-decoration-style: solid;
+    }
+
+    /* Pairs with the .stale-pill: pill stays prominent in the section
+       header, body dims so the staleness reads at a glance. Hover
+       restores the body in case you need to actually use the data. */
     .is-stale {
       opacity: 0.55;
       filter: saturate(0.55);
@@ -1731,15 +1741,9 @@
       return ` <a href="${url}" target="_blank" rel="noopener" style="font-size:11px;color:var(--fg-dim);text-decoration:none;margin-left:6px">\u2197</a>`;
     }
 
-    // How many entries between the panel's data SHA and the currently-
-    // selected SHA, walking the unified commit list (buildCommitList).
-    // Returns a positive integer if the panel's data is older than the
-    // selected commit, negative if newer, or null when either SHA isn't
-    // in the list or the SHAs match. The list is built from the
-    // coverage/bench/mutants indices + head.json — so this is "data
-    // uploads behind" rather than literal git distance, which is the
-    // right granularity for the dashboard (and avoids needing GitHub
-    // API auth in the browser).
+    // Counts data-upload entries between two SHAs, not git rev-list
+    // distance — that's the right granularity for the dashboard and
+    // sidesteps needing GitHub API auth in the browser.
     function commitsBehind(panelSha, refSha) {
       if (!panelSha || !refSha || panelSha === refSha) return null;
       const list = buildCommitList();
@@ -1749,15 +1753,14 @@
       return panelIdx - refIdx;
     }
 
-    // Renders a "STALE" pill when this panel's data couldn't be found
-    // for the currently-selected commit and we fell back to /latest.json
-    // (which has a different SHA). Made deliberately prominent because
-    // a stale panel looks identical to a fresh one if you only glance —
-    // and "the dashboard agrees with HEAD" is one of the things people
-    // most want to read off this page.
+    // Pill is deliberately prominent: a stale panel looks identical to
+    // a fresh one at a glance, and "the dashboard agrees with HEAD" is
+    // a thing people read off this page. The SHA links out to the
+    // commit on GitHub for diagnosis; viewing this panel *as of* that
+    // SHA is one click away in the commit picker.
     function staleTag(data) {
-      if (!data || !data._stale) return '';
-      const sha = data.sha ? data.sha.slice(0, 7) : '?';
+      if (!data || !data._stale || !data.sha) return '';
+      const sha = data.sha.slice(0, 7);
       const n = commitsBehind(data.sha, selectedSha);
       let behind = '';
       if (n != null && n > 0) {
@@ -1765,12 +1768,10 @@
       } else if (n != null && n < 0) {
         behind = `${-n} run${n === -1 ? '' : 's'} ahead &middot; `;
       }
-      return `<span class="stale-pill" title="No data uploaded for the selected commit. Showing the most recent run (${sha}).">STALE &middot; ${behind}from ${sha}</span>`;
+      const commitUrl = `https://github.com/${REPO}/commit/${esc(data.sha)}`;
+      return `<span class="stale-pill">STALE &middot; ${behind}from <a href="${commitUrl}" target="_blank" rel="noopener" title="Open ${sha} on GitHub">${sha}</a></span>`;
     }
 
-    // Toggles the .is-stale class on `el` based on whether `data._stale`
-    // is set. Used by each panel's render block to dim its body when
-    // showing fallback /latest.json data.
     function applyStale(el, data) {
       if (!el) return;
       el.classList.toggle('is-stale', !!(data && data._stale));
@@ -2930,10 +2931,9 @@
       return html;
     }
 
-    // Groups whose <details> default to open. The 7 benchmark groups
-    // span ~80 benches and dominate the page when all expanded; only
-    // sqisign (the high-level keygen/sign/verify operations) opens by
-    // default. Per-group choices persist in localStorage from then on.
+    // ~80 benches across 7 groups overwhelms the page when all open;
+    // only `sqisign` (the high-level operation benches) starts expanded.
+    // Per-group choices persist in localStorage from then on.
     const BENCH_GROUPS_OPEN_BY_DEFAULT = new Set(['sqisign']);
 
     function benchGroupIsOpen(name) {
@@ -2943,7 +2943,6 @@
       return BENCH_GROUPS_OPEN_BY_DEFAULT.has(name);
     }
 
-    // Wired from inline `ontoggle` on each <details> element below.
     function onBenchGroupToggle(el) {
       const name = el.dataset.group;
       if (!name) return;
@@ -3586,8 +3585,6 @@
           ? `<span style="color:var(--red)">${fails} fail</span> / ${total} tested`
           : `${total} pass`) + runLink(dudect) + staleTag(dudect || tacetData);
         dudectEl.innerHTML = renderCtData(dudect, tacetData, ctgrindData);
-        // Mark stale if ANY of the three contributing data sources is
-        // stale (dudect, tacet, or ctgrind).
         const ctAnyStale = (dudect && dudect._stale)
           || (tacetData && tacetData._stale)
           || (ctgrindData && ctgrindData._stale);
@@ -3619,7 +3616,6 @@
             : `<span class="stale-pill" title="Stale sub-panels: ${staleEntries.join(', ')}">${staleEntries.length} STALE</span>`;
         }
         auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData);
-        // Audits aggregates ~10 sub-kinds — dim the body if any is stale.
         auditsEl.classList.toggle('is-stale', staleEntries.length > 0);
       } else {
         if (auditsMeta) auditsMeta.textContent = '';

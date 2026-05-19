@@ -293,11 +293,18 @@ fn write_tmp(name: &str, contents: &str) {
 }
 
 /// Reject obviously-broken payloads before we touch the dashboard.
-/// Catches: empty file, non-JSON file, missing required keys, sha mismatch
-/// (e.g. workflow uploads stale data from a different commit).
 ///
-/// This is intentionally minimal — per-kind checks ("did the bench actually
-/// run", "did at least one mutant get caught") belong in the workflows.
+/// Two layers:
+/// - **Structural** — file is JSON-shaped, has required common keys, sha
+///   matches the argv sha (catches workflow uploads of stale or wrong-
+///   commit data).
+/// - **Per-kind floor** — a kind-specific "did the measurement actually
+///   produce data?" sanity check. Catches the class of bugs where the
+///   workflow runs to completion, the publish script accepts the file,
+///   and the dashboard renders a green "0 platforms / 0 runs / 0 tests"
+///   panel — which lies about the underlying property. Workflows often
+///   have a `jq -e` belt that does the same check inline; this is the
+///   suspenders, so a missed inline check can't ship a misleading panel.
 fn validate_payload(kind: &str, path: &str, json: &str, expected_sha: &str) {
     let trimmed = json.trim();
     if trimmed.is_empty() {
@@ -324,6 +331,92 @@ fn validate_payload(kind: &str, path: &str, json: &str, expected_sha: &str) {
             "sha in file ({}) does not match argv sha ({}) — likely stale or wrong-commit data",
             in_file_sha, expected_sha,
         ));
+    }
+
+    validate_floor(kind, path, trimmed);
+}
+
+/// Per-kind data-shape sanity. Each arm asserts "the measurement
+/// produced at least *some* data" — not "the data is good", which is the
+/// dashboard's job. The floors are deliberately permissive (e.g. zero
+/// failed mutants is fine; zero *total* mutants means cargo-mutants
+/// produced no outcomes at all).
+fn validate_floor(kind: &str, path: &str, json: &str) {
+    // Good enough for our shapes: no nested top-level arrays at the
+    // levels we check and no string values containing `[` or `]`.
+    let array_len = |key: &str| -> usize {
+        let needle = format!("\"{}\"", key);
+        let Some(idx) = json.find(&needle) else { return 0 };
+        let rest = &json[idx + needle.len()..];
+        let Some(colon) = rest.find(':') else { return 0 };
+        let after = rest[colon + 1..].trim_start();
+        if !after.starts_with('[') { return 0 };
+        let mut depth = 0i32;
+        let mut end = 0;
+        for (i, b) in after.bytes().enumerate() {
+            match b {
+                b'[' => depth += 1,
+                b']' => { depth -= 1; if depth == 0 { end = i; break } }
+                _ => {}
+            }
+        }
+        if end == 0 { return 0 }
+        let inside = after[1..end].trim();
+        if inside.is_empty() { return 0 }
+        let mut count = 1usize;
+        let mut depth = 0i32;
+        for b in inside.bytes() {
+            match b {
+                b'[' | b'{' => depth += 1,
+                b']' | b'}' => depth -= 1,
+                b',' if depth == 0 => count += 1,
+                _ => {}
+            }
+        }
+        count
+    };
+
+    let require = |cond: bool, reason: &str| {
+        if !cond { die(kind, path, &format!("per-kind floor failed: {reason}")) }
+    };
+
+    match kind {
+        "coverage"  => require(extract_num_in_section(json, "total", "total") > 0,
+                               "coverage.total.total == 0 (no lines measured)"),
+        "bench"     => require(array_len("groups") > 0,
+                               "bench.groups is empty (no benchmarks produced output)"),
+        "mutants"   => require(extract_num_in_section(json, "summary", "total") > 0,
+                               "mutants.summary.total == 0 (cargo-mutants produced no outcomes)"),
+        "dudect"    => require(extract_num_u64(json, "total") > 0,
+                               "dudect.total == 0 (no t-tests recorded)"),
+        "tacet"     => require(extract_num_u64(json, "total") > 0,
+                               "tacet.total == 0 (no leak-model results)"),
+        "ctgrind"   => require(extract_num_u64(json, "tests") > 0,
+                               "ctgrind.tests == 0 (Valgrind taint produced no test results)"),
+        "fuzz"      => require(extract_num_u64(json, "pass") + extract_num_u64(json, "fail") > 0
+                               || array_len("targets") > 0,
+                               "fuzz has no per-target results (pass+fail == 0 and targets is empty)"),
+        "iai"       => require(extract_num_u64(json, "total") > 0 || array_len("results") > 0,
+                               "iai has no instruction-count results"),
+        "api"       => require(extract_num_u64(json, "total") > 0,
+                               "api.total == 0 (no public items measured)"),
+        "size"      => require(extract_num_in_section(json, "binary", "total_bytes") > 0,
+                               "size.binary.total_bytes == 0 (cargo-bloat measured nothing)"),
+        "alloc"     => require(array_len("operations") > 0,
+                               "alloc.operations is empty (allocation budget measured nothing)"),
+        "stack"     => require(extract_num_u64(json, "peak_stack_bytes") > 0,
+                               "stack.peak_stack_bytes == 0 (Valgrind massif measured no frames)"),
+        "platform"  => require(array_len("platforms") > 0,
+                               "platform.platforms is empty (no platform matrix jobs matched)"),
+        "kat"       => require(array_len("suites") > 0,
+                               "kat.suites is empty (no test-vector suites ran)"),
+        // Pure-status payloads — `validate_payload`'s structural check is
+        // already enough. A missing `status` would have failed `sha` /
+        // `updated_at` already in practice.
+        "docs" | "msrv" | "deny" | "unsafe" | "panic" | "zeroize" => {}
+        // Unknown kind: don't crash, but log that we didn't get to apply
+        // a floor so the gap is visible in CI output.
+        other => eprintln!("[ci-upload] note: no per-kind floor for `{other}`; skipping"),
     }
 }
 
