@@ -2,7 +2,13 @@
 //!
 //! Usage: platform-report <run-id> <sha>
 //!
-//! Uses `gh` CLI to fetch job results from the CI workflow run.
+//! Queries the GitHub REST API (via curl + jq, both present on every
+//! runner we use) for the workflow run's job list, filters to the
+//! platform-matrix jobs, and emits a summary JSON for the dashboard.
+//!
+//! Previously shelled out to `gh`, but `gh` isn't on the Fly self-
+//! hosted runner image and pulling it in just for one API call is
+//! overkill — curl + jq are universally available.
 //!
 //! Compile: `rustc -O platform-report.rs -o platform-report`
 
@@ -26,37 +32,56 @@ fn main() -> io::Result<()> {
     let run_id = &args[1];
     let sha = &args[2];
 
-    // Query GitHub API via gh CLI for job results.
-    // gh needs -R to identify the repo when persist-credentials: false
-    // is used in the checkout step (no .git/config remote).
     let repo = env::var("GITHUB_REPOSITORY").unwrap_or_default();
-    // The platform matrix in ci.yml emits jobs named
-    // `lib + doc + KAT tests (<target>, <bits>[, <variant>])`. Match that
-    // prefix; the older `Test (...)` filter no longer matches anything.
-    let mut args = vec![
-        "run", "view", run_id,
-        "--json", "jobs",
-        "-q", ".jobs[] | select(.name | startswith(\"lib + doc + KAT tests\")) | .name + \"|\" + .conclusion",
-    ];
-    if !repo.is_empty() {
-        args.push("-R");
-        args.push(&repo);
+    if repo.is_empty() {
+        eprintln!("GITHUB_REPOSITORY is not set");
+        std::process::exit(1);
+    }
+    // Accept either GH_TOKEN (what `gh` reads) or GITHUB_TOKEN (default
+    // in GHA jobs) so this works in either env shape.
+    let token = env::var("GH_TOKEN")
+        .or_else(|_| env::var("GITHUB_TOKEN"))
+        .unwrap_or_default();
+    if token.is_empty() {
+        eprintln!("no GH_TOKEN / GITHUB_TOKEN in env");
+        std::process::exit(1);
     }
 
-    let output = Command::new("gh")
-        .args(&args)
+    // The platform matrix in ci.yml emits jobs named
+    // `lib + doc tests (<target>, <bits>-bit[, <variant>])`. Match that
+    // prefix.
+    //
+    // The Actions REST jobs endpoint paginates at 30 per page by default;
+    // bump per_page to 100 since CI never approaches that. If it ever
+    // does, switch to following the `next` Link header.
+    let url = format!(
+        "https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100"
+    );
+    let auth = format!("Authorization: Bearer {token}");
+    let jq_filter = r#".jobs[] | select(.name | startswith("lib + doc tests")) | "\(.name)|\(.conclusion)""#;
+
+    // curl -> jq via shell so the pipe stays inside one process tree.
+    let pipeline = format!(
+        "curl -fsSL -H 'Accept: application/vnd.github+json' -H \"$AUTH\" {url} | jq -r {filter}",
+        url = shell_escape(&url),
+        filter = shell_escape(jq_filter),
+    );
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(&pipeline)
+        .env("AUTH", &auth)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("failed to run gh");
+        .expect("failed to spawn bash for curl|jq pipeline");
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("gh run view failed (status {}): {}", output.status, stderr);
+        eprintln!("curl|jq pipeline failed (status {}): {}", output.status, stderr);
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    eprintln!("gh returned {} lines", text.lines().count());
+    eprintln!("REST API returned {} matching job line(s)", text.lines().count());
     let mut platforms = Vec::new();
 
     for line in text.lines() {
@@ -118,6 +143,15 @@ fn main() -> io::Result<()> {
     writeln!(w, "  ]")?;
     writeln!(w, "}}")?;
     Ok(())
+}
+
+// Single-quote-wrap for safe interpolation into a bash command. The
+// inputs we splice (REST URL, jq filter) never contain `'`, but we
+// still quote rigorously: any `'` becomes `'\''`, the canonical way to
+// embed a literal single quote inside a single-quoted shell string.
+fn shell_escape(s: &str) -> String {
+    let escaped = s.replace('\'', "'\\''");
+    format!("'{}'", escaped)
 }
 
 fn json_str(s: &str) -> String {
