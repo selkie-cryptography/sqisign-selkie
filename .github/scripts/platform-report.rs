@@ -2,13 +2,8 @@
 //!
 //! Usage: platform-report <run-id> <sha>
 //!
-//! Queries the GitHub REST API (via curl + jq, both present on every
-//! runner we use) for the workflow run's job list, filters to the
-//! platform-matrix jobs, and emits a summary JSON for the dashboard.
-//!
-//! Previously shelled out to `gh`, but `gh` isn't on the Fly self-
-//! hosted runner image and pulling it in just for one API call is
-//! overkill — curl + jq are universally available.
+//! curl + jq (rather than the `gh` CLI) so this works on any runner
+//! whose image isn't expected to carry `gh`.
 //!
 //! Compile: `rustc -O platform-report.rs -o platform-report`
 
@@ -47,20 +42,14 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     }
 
-    // The platform matrix in ci.yml emits jobs named
-    // `lib + doc tests (<target>, <bits>-bit[, <variant>])`. Match that
-    // prefix.
-    //
-    // The Actions REST jobs endpoint paginates at 30 per page by default;
-    // bump per_page to 100 since CI never approaches that. If it ever
-    // does, switch to following the `next` Link header.
+    // per_page=100 to avoid paginating; if matrix ever grows past
+    // that, follow the Link header.
     let url = format!(
         "https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100"
     );
     let auth = format!("Authorization: Bearer {token}");
     let jq_filter = r#".jobs[] | select(.name | startswith("lib + doc tests")) | "\(.name)|\(.conclusion)""#;
 
-    // curl -> jq via shell so the pipe stays inside one process tree.
     let pipeline = format!(
         "curl -fsSL -H 'Accept: application/vnd.github+json' -H \"$AUTH\" {url} | jq -r {filter}",
         url = shell_escape(&url),
@@ -145,10 +134,9 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-// Single-quote-wrap for safe interpolation into a bash command. The
-// inputs we splice (REST URL, jq filter) never contain `'`, but we
-// still quote rigorously: any `'` becomes `'\''`, the canonical way to
-// embed a literal single quote inside a single-quoted shell string.
+// Single-quote-wrap with `'\''` escaping. Our inputs (REST URL,
+// jq filter) never contain `'` today; we quote rigorously anyway so
+// future inputs can't surprise us.
 fn shell_escape(s: &str) -> String {
     let escaped = s.replace('\'', "'\\''");
     format!("'{}'", escaped)
