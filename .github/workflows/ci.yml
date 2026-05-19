@@ -139,33 +139,28 @@ jobs:
 
   gate:
     name: lib + doc tests (x86_64-linux)
-    # `perf-8x` so the slow KAT-derived integration tests finish in
-    # a reasonable wall time. Fork PRs still route to GH-hosted.
+    # Run the full test suite under the `kat` cargo profile —
+    # release-mode optimization (so the 100 sign KATs run in 1–6s
+    # each instead of 14–60s in debug) but with `debug-assertions`
+    # and `overflow-checks` kept on (so invariant `debug_assert!`s
+    # and unintended integer overflow still surface). Cargo.toml
+    # defines the profile.
+    #
+    # Fork PRs still route to GH-hosted.
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64","perf-8x"]' || '["ubuntu-latest"]') }}
-    # 90 min: lib tests (~10 min) + integration tests
-    # (sign_properties.rs ~12 min; bit_flip_sweep ~3 min;
-    # malleability mutation tests ~5 min; wycheproof, alloc_budget,
-    # ctgrind ~few min) leave headroom for a slow KAT trajectory.
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
-      # Shared cache key across the stable-toolchain x86_64-linux
-      # default-features jobs (gate, proptest, doc). Without it, each
-      # job uses ${{ github.job }} as the implicit key and pays the
-      # dep-build cost independently. With it, all three read/write
-      # the same cache and the dep build amortizes across jobs.
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
-          shared-key: linux-x64-default-stable
+          shared-key: linux-x64-kat
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
           tool: cargo-nextest
-      # Run lib + integration tests (no --run-ignored, so KAT
-      # sign/keygen tests are skipped). Fast gate: ~2 min.
-      - run: cargo nextest run
+      - run: cargo nextest run --cargo-profile kat
       - run: cargo test --doc
 
   # Property tests are covered by `gate`'s unfiltered
