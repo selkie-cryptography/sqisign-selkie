@@ -1,12 +1,17 @@
 //! Upload CI data (coverage, bench, mutants, dudect) to the Fly.io CI site.
 //!
-//! Usage: ci-upload <coverage|bench|mutants|dudect> <json-file> <sha>
+//! Usage: ci-upload [--dry-run] <kind> <json-file> <sha>
 //!
 //! - Stores per-commit data at /data/<kind>/<sha>.json
 //! - Updates /data/<kind>/latest.json
 //! - Maintains /data/<kind>/index.json (last 50 summaries)
 //! - Prunes per-commit files beyond 30 entries
 //! - Writes status.json before/after for the site's indicator
+//!
+//! `--dry-run` runs the structural + per-kind floor validation and exits
+//! with the result. No ssh, sftp, manifest update, prune, or signal
+//! write happens — used by scripts-compile.yml to gate `validate_floor`
+//! regressions at PR time rather than at next-cron time.
 //!
 //! Compile: `rustc -O ci-upload.rs -o ci-upload`
 
@@ -21,25 +26,32 @@ const MAX_INDEX: usize = 50;
 const MAX_FILES: usize = 30;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 4 {
-        eprintln!("usage: ci-upload <coverage|bench|mutants|dudect> <json-file> <sha>");
+    let mut dry_run = false;
+    let positional: Vec<String> = env::args()
+        .skip(1)
+        .filter(|a| {
+            if a == "--dry-run" { dry_run = true; false } else { true }
+        })
+        .collect();
+    if positional.len() != 3 {
+        eprintln!("usage: ci-upload [--dry-run] <kind> <json-file> <sha>");
         std::process::exit(1);
     }
 
-    let kind = &args[1];
-    let json_path = &args[2];
-    let sha = &args[3];
+    let kind = &positional[0];
+    let json_path = &positional[1];
+    let sha = &positional[2];
     let dir = format!("/data/{kind}");
 
-    // Read the JSON to extract fields for the index.
     let mut json_contents = fs::read_to_string(json_path)
         .unwrap_or_else(|e| { eprintln!("cannot read {json_path}: {e}"); std::process::exit(1); });
 
-    // Refuse to upload obviously-broken payloads. This is the bare-minimum
-    // structural sanity (file is JSON-shaped, has the fields the dashboard
-    // and index require). Per-kind data checks live in the workflows.
     validate_payload(kind, json_path, &json_contents, sha);
+
+    if dry_run {
+        eprintln!("[ci-upload] dry-run ok: {kind} {json_path} {sha}");
+        return;
+    }
 
     // Inject run_id from GITHUB_RUN_ID so the dashboard can link
     // directly to the Actions run. Inserted after the opening `{`.
