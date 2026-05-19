@@ -2,9 +2,11 @@ name: Compile scripts
 
 # Compile each .rs file in .github/scripts/ to catch syntax / type
 # errors before the workflow that uses it actually fires. Each
-# script is built with `rustc -O <file> -o /dev/null` — the scripts
+# script is built into a throwaway file under /tmp — the scripts
 # are stdlib-only single-file programs (same pattern as ci-upload,
 # ci-scratch, fuzz-report, etc.) so this is fast and dep-free.
+# (`-o /dev/null` doesn't work: rustc places per-output temp files
+# in the *parent dir* of the output path, and /dev isn't writable.)
 #
 # Replaces the incidental coverage that the previous
 # `.github/scripts/**` entry in ci.yml / audit.yml / bench.yml /
@@ -46,10 +48,11 @@ jobs:
 
       - name: Compile each script
         run: |
+          outdir=$(mktemp -d)
           fail=0
           for f in .github/scripts/*.rs; do
             echo "[compile] $f"
-            rustc -O "$f" -o /dev/null || {
+            rustc -O "$f" -o "$outdir/$(basename "${f%.rs}")" || {
               echo "::error file=$f::failed to compile"
               fail=1
             }
