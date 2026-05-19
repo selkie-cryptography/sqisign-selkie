@@ -81,6 +81,7 @@ RUN useradd -m -s /bin/bash runner \
 # Docker-action path which required a Docker daemon we don't run).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+      awscli \
       biber \
       build-essential \
       cmake \
