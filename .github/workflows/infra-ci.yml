@@ -1,13 +1,15 @@
 name: Infra CI
 
 # CI for the self-hosted runner stack itself: the orchestrator
-# Rust service and the runner Docker image. Stays on GitHub-hosted
-# runners (the orchestrator can't deploy itself; bootstrap layer).
+# Rust service and the runner Docker image.
 #
-# All jobs are gated on `github.event.repository.visibility == 'public'`
-# so the workflow no-ops while the repo is private (GH-hosted minutes
-# are billed on private repos; we deploy from a laptop via `ops`
-# in the meantime). Auto-enables when the repo flips public.
+# Temporary recursion: these jobs now run on Fly self-hosted (the
+# previously-built image) so they're not billed against GH-hosted
+# minutes while the repo is private. The bootstrap concern is that
+# `deploy-runners-image` rebuilds the very image its runner is
+# running — fine in steady state, but if a runner-image change ever
+# ships a broken image we have to deploy from a laptop via `ops`
+# until the next successful rebuild lands.
 #
 # Repo secrets required for deploys:
 #   - FLY_API_TOKEN_ORCHESTRATOR  scoped to `sqisign-infra-orchestrator`
@@ -48,8 +50,7 @@ jobs:
   # issues in `run:` blocks, unused YAML anchors, etc.
   actionlint:
     name: actionlint
-    if: github.event.repository.visibility == 'public'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
@@ -65,8 +66,7 @@ jobs:
   # and the deploy jobs gate on event_name as well.
   changes:
     name: Detect changed paths
-    if: github.event.repository.visibility == 'public'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 2
     outputs:
       orchestrator: ${{ steps.filter.outputs.orchestrator }}
@@ -91,8 +91,7 @@ jobs:
   # to the Dockerfile so this job stays fast (~2-3 min warm cache).
   build:
     name: Check + lint orchestrator
-    if: github.event.repository.visibility == 'public'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -117,10 +116,9 @@ jobs:
     name: Deploy orchestrator
     needs: [build, changes]
     if: |
-      github.event.repository.visibility == 'public' &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.orchestrator == 'true') ||
-       github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-24.04
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.orchestrator == 'true') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -145,11 +143,10 @@ jobs:
     name: Build + push runner image
     needs: [build, changes]
     if: |
-      github.event.repository.visibility == 'public' &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.runners == 'true') ||
-       github.event_name == 'schedule' ||
-       github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-24.04
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.runners == 'true') ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
