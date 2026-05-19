@@ -18,15 +18,21 @@ name: Infra CI
 # Mint via: `fly tokens create deploy --app <name> --expiry 8760h`
 
 on:
+  # The paths list is duplicated under push and pull_request because
+  # actionlint rejects YAML aliases in `paths:` — keep the two copies
+  # in sync when editing.
   push:
     branches: [main]
-    paths: &infra-paths
+    paths:
       - 'infra/**'
       - '.github/workflows/**'
       - '.github/actionlint.yaml'
   pull_request:
     branches: [main]
-    paths: *infra-paths
+    paths:
+      - 'infra/**'
+      - '.github/workflows/**'
+      - '.github/actionlint.yaml'
   schedule:
     # Weekly rebuild of the runner image so OS patches + rustup +
     # cargo subcommand updates flow through without a code change.
