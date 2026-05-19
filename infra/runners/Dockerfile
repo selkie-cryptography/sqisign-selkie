@@ -107,6 +107,15 @@ RUN apt-get update \
       valgrind \
   && rm -rf /var/lib/apt/lists/*
 
+# Passwordless sudo for the `runner` user. Lets workflows apt-install
+# tools on demand instead of rolling this image every time something
+# new is needed. The Machine is ephemeral and per-job, and workflows
+# already run with repo-secret access, so this isn't a meaningful
+# threat-model change. Bake heavy/slow tools (TeX, Sage, Rust) in
+# above; install lightweight per-workflow needs at job time.
+RUN echo 'runner ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/runner \
+  && chmod 0440 /etc/sudoers.d/runner
+
 # ---------- Stage: runtime ----------
 
 FROM registry.fly.io/sqisign-infra-runners:base AS runtime
