@@ -181,16 +181,20 @@ jobs:
         #     deployment-scoped tag and the named tag never moves,
         #     even though flyctl logs an optimistic
         #     `image: ...:base` line. -> always pass `--push`.
-        #   - `--buildkit` opts into Fly's own remote BuildKit
-        #     builder (over Flycast IPv6) instead of Depot. Matches
-        #     the `ops` CLI path that's been reliably moving tags
-        #     for months.
+        #
+        # NOT passing `--buildkit` here even though the `ops` CLI
+        # does. `--buildkit` switches off Depot in favor of Fly's
+        # own remote builder, which provisions a `fly-builder-*`
+        # app on the user's account. CI's `FLY_API_TOKEN_RUNNERS`
+        # is app-scoped to `sqisign-infra-runners` only, so the
+        # builder-app provisioning fails `unauthorized`. The
+        # laptop `ops` path works because a personal Fly token has
+        # broader scope; CI sticks with Depot.
         run: |
           flyctl deploy --build-only --app sqisign-infra-runners \
             --config fly.base.toml \
             --image-label base \
-            --push \
-            --buildkit
+            --push
       - name: Resolve pushed :base digest
         id: digest
         env:
@@ -264,8 +268,7 @@ jobs:
             --config fly.toml \
             --image-label latest \
             --build-arg "BASE_IMAGE=${base_image}" \
-            --push \
-            --buildkit
+            --push
 
   # Deploy the orchestrator last, after any freshly-pushed
   # `:latest` it'll spawn Machines from.
