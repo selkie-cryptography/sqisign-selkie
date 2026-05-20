@@ -17,7 +17,9 @@ app = "sqisign-infra-runners"
 primary_region = "iad"
 
 [build]
-  dockerfile = "Dockerfile"
+  # Common deploy is the runtime layer (`:latest`). Base builds
+  # pass `--dockerfile Dockerfile.base --image-label base` explicitly.
+  dockerfile = "Dockerfile.runtime"
   # Stable `latest` tag so the orchestrator's FLY_RUNNER_IMAGE
   # (defaults to `registry.fly.io/<app>:latest`) resolves on every
   # spawn. Each deploy overwrites it.

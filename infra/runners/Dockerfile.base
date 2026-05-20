@@ -1,26 +1,13 @@
-# Multi-stage runner image.
+# `:base` runner image — heavy substrate (rustup + texlive +
+# system tools). Slow (~10–15 min cold); rebuilt only on edits
+# here, the weekly schedule, or `workflow_dispatch`.
+# `Dockerfile.runtime` (`:latest`) `FROM`s this.
 #
-# Stage `base` — substrate: rustup + system tools (no Sage, no
-# texlive — see comment below the bootstrap layer for why).
-# Built rarely (~10–15 min cold). Pushed to
-# `registry.fly.io/sqisign-infra-runners:base` (overwritten on each
-# roll — git history is the audit trail).
-#
-# Stage `runtime` — thin layer: actions-runner binary + entrypoint.
-# Built fast (~30s) because its `FROM` is the `:base` image already
-# in the registry; BuildKit fetches it instead of rebuilding.
-#
-# Build modes:
-#   deploy-runner-base  -> fly deploy --build-target base --image-label base
-#   deploy-runners      -> fly deploy --build-target runtime --image-label latest
-#
-# `--build-target base` only builds the `base` stage; BuildKit
-# ignores the `runtime` stage's `FROM` (not reachable in the DAG),
-# so the first base build doesn't depend on its own previous output.
+# CI builds this on a runner spawned from `:latest`. If a broken
+# `:base` ships, every subsequent Machine is broken — recover via
+# the laptop `ops` CLI: `deploy-runner-base` then `deploy-runners`.
 
-# ---------- Stage: base ----------
-
-FROM ubuntu:24.04 AS base
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     RUSTUP_HOME=/opt/rustup \
@@ -115,30 +102,3 @@ RUN apt-get update \
 # above; install lightweight per-workflow needs at job time.
 RUN echo 'runner ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/runner \
   && chmod 0440 /etc/sudoers.d/runner
-
-# ---------- Stage: runtime ----------
-
-FROM registry.fly.io/sqisign-infra-runners:base AS runtime
-
-ARG RUNNER_VERSION=2.334.0
-
-RUN mkdir -p /home/runner/actions-runner \
-  && chown runner:runner /home/runner/actions-runner
-
-WORKDIR /home/runner/actions-runner
-
-USER runner
-RUN curl -L -o runner.tar.gz \
-      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
-  && tar xzf runner.tar.gz \
-  && rm runner.tar.gz
-USER root
-RUN ./bin/installdependencies.sh
-
-# Entrypoint reads JITCONFIG and execs one runner registration.
-# Machine is spawned with auto_destroy=true → exit destroys the VM.
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-USER runner
-ENTRYPOINT ["/entrypoint.sh"]

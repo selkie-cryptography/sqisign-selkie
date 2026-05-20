@@ -1,0 +1,29 @@
+# `:latest` runner image — thin layer over `:base` adding the
+# actions-runner binary + entrypoint. Fast (~30s) since `FROM`
+# pulls the pre-pushed `:base`. Build `:base` (Dockerfile.base)
+# first if it doesn't exist yet.
+
+FROM registry.fly.io/sqisign-infra-runners:base
+
+ARG RUNNER_VERSION=2.334.0
+
+RUN mkdir -p /home/runner/actions-runner \
+  && chown runner:runner /home/runner/actions-runner
+
+WORKDIR /home/runner/actions-runner
+
+USER runner
+RUN curl -L -o runner.tar.gz \
+      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+  && tar xzf runner.tar.gz \
+  && rm runner.tar.gz
+USER root
+RUN ./bin/installdependencies.sh
+
+# Entrypoint reads JITCONFIG and execs one runner registration.
+# Machine is spawned with auto_destroy=true → exit destroys the VM.
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+USER runner
+ENTRYPOINT ["/entrypoint.sh"]
