@@ -67,14 +67,22 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
-      # Install + run actionlint as a bare binary. The previous
-      # `reviewdog/action-actionlint` is a Docker container action,
-      # and the Fly self-hosted runner image doesn't run a dockerd.
+      # Bare-binary install. `reviewdog/action-actionlint` is a
+      # Docker container action and the Fly self-hosted image
+      # doesn't run a dockerd; `taiki-e/install-action` doesn't
+      # ship actionlint (Go binary, not a Rust crate, so its
+      # cargo-binstall fallback 404s). So we pin VER and verify
+      # the tarball SHA-256 against the upstream checksums file.
+      # Bump VER and SHA256 in lockstep; SHA is from
+      # `actionlint_${VER}_checksums.txt` on the release page.
       - name: Install + run actionlint
         run: |
           VER=1.7.7
-          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${VER}/actionlint_${VER}_linux_amd64.tar.gz" \
-            | tar -xzf - actionlint
+          SHA256=023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${VER}/actionlint_${VER}_linux_amd64.tar.gz" -o actionlint.tar.gz
+          echo "${SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+          rm actionlint.tar.gz
           ./actionlint -color
 
   # Detect which subtree changed so we only redeploy what's affected.
