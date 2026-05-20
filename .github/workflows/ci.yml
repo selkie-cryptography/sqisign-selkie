@@ -139,15 +139,15 @@ jobs:
 
   gate:
     name: lib + doc tests (x86_64-linux)
-    # Run the full test suite under the `kat` cargo profile —
-    # release-mode optimization (so the 100 sign KATs run in 1–6s
-    # each instead of 14–60s in debug) but with `debug-assertions`
-    # and `overflow-checks` kept on (so invariant `debug_assert!`s
-    # and unintended integer overflow still surface). Cargo.toml
-    # defines the profile.
+    # Run the full test suite under the `release-checked` cargo
+    # profile — release-mode optimization (so the 100 sign KATs run
+    # in 1–6s each instead of 14–60s in debug) but with
+    # `debug-assertions` and `overflow-checks` kept on (so invariant
+    # `debug_assert!`s and unintended integer overflow still surface).
+    # Cargo.toml defines the profile.
     #
     # Fork PRs still route to GH-hosted.
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64","perf-8x"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -156,11 +156,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
-          shared-key: linux-x64-kat
+          shared-key: linux-x64-release-checked
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
           tool: cargo-nextest
-      - run: cargo nextest run --cargo-profile kat
+      - run: cargo nextest run --cargo-profile release-checked
       - run: cargo test --doc
 
   # Property tests are covered by `gate`'s unfiltered

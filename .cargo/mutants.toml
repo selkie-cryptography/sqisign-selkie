@@ -20,7 +20,13 @@ test_tool = "nextest"
 # `(n_bt > 0, r_rsp > 0)` class is preserved via
 # `keys::tests::verify_kat_*` (always run) so excluding the slow
 # signers here doesn't lose meaningful coverage.
-additional_cargo_test_args = ["-E", "not test(/sign_kat_derand_/)"]
+# `--cargo-profile release-checked` builds and runs each mutant under
+# the release-optimization profile with `debug-assertions` and
+# `overflow-checks` retained (Cargo.toml). cargo-mutants compiles a
+# fresh tree per mutant, so cumulative compile time is significant —
+# the release build is slower per-mutant but the resulting tests run
+# fast enough that the net wall time drops substantially.
+additional_cargo_test_args = ["--cargo-profile", "release-checked", "-E", "not test(/sign_kat_derand_/)"]
 
 # Timeout: 5x baseline with a floor of 60s. Some quaternion tests are
 # slow; 60s prevents false "timeout" kills on legitimate test runs.

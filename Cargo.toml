@@ -117,9 +117,8 @@ required-features = ["expose-internals"]
 name = "seed-fuzz-corpus"
 required-features = ["expose-internals"]
 
-# Build profile for the CI gate (`ci.yml`'s `gate` job) and the
-# manual `kat.yml` workflow. Optimized like `release`, with two
-# concessions for CI usefulness:
+# Build profile for CI test runs. Optimized like `release`, with
+# three concessions for CI usefulness:
 #
 # - `debug-assertions` + `overflow-checks` stay on so invariant
 #   violations in `BigInt` / curve / lattice code still trip
@@ -130,8 +129,11 @@ required-features = ["expose-internals"]
 # - `incremental = true` lets the user crate rebuild partially when
 #   `Swatinem/rust-cache` restores dep artifacts. Modest CI win.
 #
-# Selected via `cargo nextest run --cargo-profile kat`.
-[profile.kat]
+# Selected via `cargo nextest run --cargo-profile release-checked`.
+# The nextest `--profile <name>` flag is separately controlled —
+# typically the default nextest profile for fast PR feedback, or
+# `--profile kat` for long-running KAT-debug runs.
+[profile.release-checked]
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
