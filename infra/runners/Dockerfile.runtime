@@ -2,8 +2,17 @@
 # actions-runner binary + entrypoint. Fast (~30s) since `FROM`
 # pulls the pre-pushed `:base`. Build `:base` (Dockerfile.base)
 # first if it doesn't exist yet.
+#
+# `BASE_IMAGE` is overridable via `--build-arg` so CI can pin to
+# the immutable digest the `:base` job just pushed (e.g.,
+# `registry.fly.io/sqisign-infra-runners@sha256:...`). This avoids
+# a race where the runtime build resolves `:base` to a stale
+# digest from Depot's BuildKit cache instead of the freshly-
+# pushed manifest. The default uses the named tag so `ops` and
+# manual `flyctl deploy` still work.
 
-FROM registry.fly.io/sqisign-infra-runners:base
+ARG BASE_IMAGE=registry.fly.io/sqisign-infra-runners:base
+FROM ${BASE_IMAGE}
 
 ARG RUNNER_VERSION=2.334.0
 

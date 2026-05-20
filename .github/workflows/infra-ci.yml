@@ -153,6 +153,12 @@ jobs:
       github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 60
+    outputs:
+      # `sha256:...` digest of the manifest the build pushed, so
+      # the runtime job below can `FROM` that exact image instead
+      # of re-resolving the `:base` tag (which can race or hit a
+      # stale BuildKit cache).
+      base_digest: ${{ steps.digest.outputs.value }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
@@ -171,10 +177,34 @@ jobs:
         #     tag on the CLI.
         # Both must be set or the build either targets the wrong
         # Dockerfile or pushes to an orphan deployment tag.
+        #
         run: |
           flyctl deploy --build-only --app sqisign-infra-runners \
             --config fly.base.toml \
             --image-label base
+      - name: Resolve pushed :base digest
+        id: digest
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
+        # `docker manifest inspect -v` returns the registry's
+        # current manifest for the named tag and emits the
+        # content-addressable digest under `.Descriptor.digest`.
+        # `flyctl auth docker` writes the same FLY_API_TOKEN into
+        # docker's credential store so the registry call is
+        # authenticated. Querying the registry directly (not log-
+        # parsing) means the digest we hand the runtime job is the
+        # one the registry will actually serve to its FROM.
+        run: |
+          flyctl auth docker
+          digest=$(docker manifest inspect -v \
+                     registry.fly.io/sqisign-infra-runners:base \
+                   | jq -r '.Descriptor.digest')
+          if [ -z "$digest" ] || [ "$digest" = "null" ]; then
+            echo "::error::could not resolve :base manifest digest"
+            exit 1
+          fi
+          echo "value=$digest" >> "$GITHUB_OUTPUT"
+          echo ":base digest: $digest"
 
   # Build + push the thin `:latest` runtime runner image, FROM the
   # `:base` that `deploy-runners-base` (skipped or just-pushed) left
@@ -200,15 +230,31 @@ jobs:
       - name: Build + push :latest image
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
+          BASE_DIGEST: ${{ needs.deploy-runners-base.outputs.base_digest }}
         working-directory: infra/runners
         # `--config fly.toml` selects Dockerfile.runtime; CLI
         # `--image-label latest` is what actually tags the registry
         # image (`[build].image_label` in fly.toml is ignored under
         # `--build-only`). See the comment on `deploy-runners-base`.
+        #
+        # `--build-arg BASE_IMAGE=...@<digest>` pins the runtime
+        # build to the exact `:base` manifest the base job just
+        # pushed, bypassing Depot's BuildKit cache of the `:base`
+        # tag resolution. When the base job is skipped (no
+        # Dockerfile.base change), `BASE_DIGEST` is empty and we
+        # fall back to the `:base` tag.
         run: |
+          base_image="registry.fly.io/sqisign-infra-runners:base"
+          if [ -n "$BASE_DIGEST" ]; then
+            base_image="registry.fly.io/sqisign-infra-runners@${BASE_DIGEST}"
+            echo "FROM pinned by digest: $base_image"
+          else
+            echo "deploy-runners-base skipped; FROM via :base tag"
+          fi
           flyctl deploy --build-only --app sqisign-infra-runners \
             --config fly.toml \
-            --image-label latest
+            --image-label latest \
+            --build-arg "BASE_IMAGE=${base_image}"
 
   # Deploy the orchestrator last, after any freshly-pushed
   # `:latest` it'll spawn Machines from.
