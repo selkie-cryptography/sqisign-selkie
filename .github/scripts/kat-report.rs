@@ -1,174 +1,52 @@
-//! Run KAT and Wycheproof test vectors, output structured JSON for
-//! the CI dashboard.
+//! Build the dashboard's `kat.json` from the gate's nextest run.
 //!
-//! Usage: kat-report <sha>
+//! Usage: kat-report <sha> <junit.xml>
 //!
-//! This is a standalone script compiled with `rustc -O` in CI.
-//! It shells out to `cargo test` and parses the output to extract
-//! per-test pass/fail results.
+//! Reads a JUnit XML file produced by nextest (enabled via the
+//! `[profile.default.junit]` section in `.config/nextest.toml`),
+//! filters per-test results into two suites — `kat` (lib unit tests
+//! whose name contains `kat_`) and `wycheproof` (integration tests
+//! in the `wycheproof` binary) — and emits the structured JSON the
+//! CI dashboard consumes.
+//!
+//! Replaces the earlier implementation that re-ran `cargo test
+//! --lib -- kat_` and `cargo test --test wycheproof` independently
+//! of the gate. The gate now runs the full nextest suite under
+//! `--cargo-profile release-checked`; this script just shapes its
+//! output.
 //!
 //! Compile: `rustc -O kat-report.rs -o kat-report`
 
 use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
+#[derive(Clone)]
 struct TestResult {
     name: String,
     status: String, // "pass", "fail", "ignored"
     detail: String,
 }
 
-fn run_tests(args: &[&str]) -> Vec<TestResult> {
-    let output = Command::new("cargo")
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("failed to run cargo test");
-
-    let combined = stdout_and_stderr(&output);
-    let stdout = String::from_utf8_lossy(&combined);
-    let mut results = Vec::new();
-
-    for line in stdout.lines() {
-        // Match: test <name> ... ok
-        // Match: test <name> ... FAILED
-        // Match: test <name> ... ignored
-        if line.starts_with("test ") && (line.contains(" ... ") || line.contains("...")) {
-            let parts: Vec<&str> = line.splitn(2, " ... ").collect();
-            if parts.len() != 2 {
-                continue;
-            }
-            let name = parts[0].trim_start_matches("test ").trim().to_string();
-            let outcome = parts[1].trim();
-            let status = if outcome == "ok" {
-                "pass"
-            } else if outcome == "FAILED" {
-                "fail"
-            } else if outcome == "ignored" {
-                "ignored"
-            } else {
-                continue;
-            };
-            results.push(TestResult {
-                name,
-                status: status.to_string(),
-                detail: String::new(),
-            });
-        }
-        // Capture panic messages for failures.
-        if line.contains("panicked at") {
-            if let Some(last) = results.last_mut() {
-                if last.status == "fail" && last.detail.is_empty() {
-                    last.detail = line.trim().to_string();
-                }
-            }
-        }
-    }
-
-    results
-}
-
-fn stdout_and_stderr(output: &std::process::Output) -> Vec<u8> {
-    let mut combined = output.stdout.clone();
-    combined.extend_from_slice(&output.stderr);
-    combined
-}
-
-fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            _ => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
-fn iso8601_now() -> String {
-    let dur = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap();
-    let secs = dur.as_secs();
-    let (h, m, s) = ((secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
-    let mut y = 1970i64;
-    let mut rem = (secs / 86400) as i64;
-    loop {
-        let yd = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-            366
-        } else {
-            365
-        };
-        if rem < yd {
-            break;
-        }
-        rem -= yd;
-        y += 1;
-    }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let md = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut mo = 0;
-    for &d in &md {
-        if rem < d {
-            break;
-        }
-        rem -= d;
-        mo += 1;
-    }
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y,
-        mo + 1,
-        rem + 1,
-        h,
-        m,
-        s
-    )
-}
-
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("usage: kat-report <sha>");
+    if args.len() != 3 {
+        eprintln!("usage: kat-report <sha> <junit.xml>");
         std::process::exit(1);
     }
     let sha = &args[1];
+    let junit_path = &args[2];
 
-    eprintln!("[kat-report] Running KAT tests...");
-    let kat_results = run_tests(&["test", "--lib", "--", "kat_"]);
+    let junit_xml = fs::read_to_string(junit_path).unwrap_or_else(|e| {
+        eprintln!("[kat-report] cannot read {junit_path}: {e}");
+        std::process::exit(1);
+    });
 
-    eprintln!("[kat-report] Running Wycheproof tests...");
-    let wyche_results = run_tests(&["test", "--test", "wycheproof"]);
+    let (kat_results, wyche_results) = parse_junit(&junit_xml);
 
-    // Count individual test vectors from the JSON/source files.
     let kat_vectors = count_kat_vectors();
     let wycheproof_vectors = count_wycheproof_vectors();
-
-    // Parse wycheproof vector details for the dashboard.
     let wycheproof_files = parse_wycheproof_files();
 
     let all_results: Vec<(&str, &[TestResult], u64)> = vec![
@@ -195,12 +73,12 @@ fn main() -> io::Result<()> {
 
         writeln!(w, "    {{")?;
         writeln!(w, "      \"name\": {},", json_str(suite_name))?;
-        writeln!(w, "      \"pass\": {},", pass)?;
-        writeln!(w, "      \"fail\": {},", fail)?;
-        writeln!(w, "      \"ignored\": {},", ignored)?;
-        writeln!(w, "      \"skip\": {},", ignored)?;
+        writeln!(w, "      \"pass\": {pass},")?;
+        writeln!(w, "      \"fail\": {fail},")?;
+        writeln!(w, "      \"ignored\": {ignored},")?;
+        writeln!(w, "      \"skip\": {ignored},")?;
         writeln!(w, "      \"total\": {},", results.len())?;
-        writeln!(w, "      \"vectors\": {},", vectors)?;
+        writeln!(w, "      \"vectors\": {vectors},")?;
         writeln!(w, "      \"tests\": [")?;
 
         for (i, r) in results.iter().enumerate() {
@@ -221,12 +99,12 @@ fn main() -> io::Result<()> {
             }
         }
 
-        // Add vector_files for wycheproof suite.
+        // wycheproof suite gets a vector_files breakdown.
         if suite_name == "wycheproof" && !wycheproof_files.is_empty() {
             writeln!(w, "      ],")?;
             writeln!(w, "      \"vector_files\": [")?;
             for (fi, vf) in wycheproof_files.iter().enumerate() {
-                write!(w, "        {}", vf)?;
+                write!(w, "        {vf}")?;
                 if fi + 1 < wycheproof_files.len() {
                     writeln!(w, ",")?;
                 } else {
@@ -247,6 +125,152 @@ fn main() -> io::Result<()> {
     writeln!(w, "}}")?;
 
     Ok(())
+}
+
+/// Parse nextest's JUnit XML into (kat-suite results, wycheproof-suite results).
+///
+/// nextest emits one `<testcase classname="…" name="…" time="…"/>`
+/// per test, optionally wrapping a `<failure>` or `<skipped/>` child
+/// for non-passing outcomes. This walks the file line by line; we
+/// don't need a full XML parser because the format is regular and
+/// each `<testcase>` opens on its own line.
+fn parse_junit(xml: &str) -> (Vec<TestResult>, Vec<TestResult>) {
+    let mut kat = Vec::new();
+    let mut wyche = Vec::new();
+
+    let mut current: Option<(String, String, TestResult)> = None;
+
+    for line in xml.lines() {
+        let l = line.trim();
+
+        if l.starts_with("<testcase ") {
+            let classname = extract_xml_attr(l, "classname");
+            let name = extract_xml_attr(l, "name");
+            let r = TestResult {
+                name: name.clone(),
+                status: "pass".to_string(),
+                detail: String::new(),
+            };
+            if l.ends_with("/>") {
+                push_into_suite(classname, name, r, &mut kat, &mut wyche);
+            } else {
+                current = Some((classname, name, r));
+            }
+        } else if l.starts_with("<failure") {
+            if let Some((_, _, r)) = current.as_mut() {
+                r.status = "fail".to_string();
+                if r.detail.is_empty() {
+                    let msg = extract_xml_attr(l, "message");
+                    if !msg.is_empty() {
+                        r.detail = msg;
+                    }
+                }
+            }
+        } else if l.starts_with("<skipped") {
+            if let Some((_, _, r)) = current.as_mut() {
+                r.status = "ignored".to_string();
+            }
+        } else if l.starts_with("</testcase>") {
+            if let Some((classname, name, r)) = current.take() {
+                push_into_suite(classname, name, r, &mut kat, &mut wyche);
+            }
+        }
+    }
+
+    (kat, wyche)
+}
+
+/// Routes a test result into the kat or wycheproof bucket based on
+/// classname/name. Tests that match neither (most of the lib + the
+/// other integration tests) are dropped — the gate is the source of
+/// truth for whether they passed; kat.json is just a per-suite view
+/// for the dashboard.
+fn push_into_suite(
+    classname: String,
+    name: String,
+    r: TestResult,
+    kat: &mut Vec<TestResult>,
+    wyche: &mut Vec<TestResult>,
+) {
+    // nextest's classname for integration tests typically encodes
+    // the binary name (e.g. ends with `::wycheproof`). For lib unit
+    // tests, classname is `<crate>::<module path>`.
+    if classname.ends_with("::wycheproof") || classname == "wycheproof" {
+        wyche.push(r);
+    } else if name.contains("kat_") {
+        kat.push(r);
+    }
+}
+
+/// Pulls an XML attribute value out of a single `<tag …>` line.
+/// Doesn't handle escaped quotes inside attribute values — fine for
+/// nextest's output, which doesn't emit those for our test names.
+fn extract_xml_attr(line: &str, key: &str) -> String {
+    let needle = format!(" {key}=\"");
+    let Some(start) = line.find(&needle) else {
+        return String::new();
+    };
+    let rest = &line[start + needle.len()..];
+    let end = rest.find('"').unwrap_or(rest.len());
+    rest[..end].to_string()
+}
+
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn iso8601_now() -> String {
+    let secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Quick ISO 8601 formatter without chrono.
+    let (y, mo, d, h, mi, s) = epoch_to_ymdhms(secs);
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+}
+
+fn epoch_to_ymdhms(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
+    let s = secs % 60;
+    let m = (secs / 60) % 60;
+    let h = (secs / 3600) % 24;
+    let mut days = secs / 86400;
+
+    let mut year = 1970u64;
+    loop {
+        let dy = if is_leap(year) { 366 } else { 365 };
+        if days < dy {
+            break;
+        }
+        days -= dy;
+        year += 1;
+    }
+    let mdays: [u64; 12] = [31, if is_leap(year) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month = 0u64;
+    while month < 12 && days >= mdays[month as usize] {
+        days -= mdays[month as usize];
+        month += 1;
+    }
+    (year, month + 1, days + 1, h, m, s)
+}
+
+fn is_leap(y: u64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 /// Counts individual KAT vectors from `src/keys/kat_data.rs`.
@@ -279,7 +303,6 @@ fn count_wycheproof_vectors() -> u64 {
             Ok(c) => c,
             Err(_) => continue,
         };
-        // Extract "numberOfTests": N from the JSON.
         total += extract_num_u64(&content, "numberOfTests");
     }
     total
@@ -329,27 +352,18 @@ fn parse_wycheproof_files() -> Vec<String> {
         }
 
         // Count by result type.
-        let valid = vectors
-            .iter()
-            .filter(|v| v.contains("\"valid\""))
-            .count();
-        let invalid = vectors
-            .iter()
-            .filter(|v| v.contains("\"invalid\""))
-            .count();
+        let valid = vectors.iter().filter(|v| v.contains("\"valid\"")).count();
+        let invalid = vectors.iter().filter(|v| v.contains("\"invalid\"")).count();
 
         let mut out = String::from("{\n");
-        out.push_str(&format!(
-            "          \"file\": {},\n",
-            json_str(&filename)
-        ));
+        out.push_str(&format!("          \"file\": {},\n", json_str(&filename)));
         out.push_str(&format!(
             "          \"algorithm\": {},\n",
             json_str(&algorithm)
         ));
-        out.push_str(&format!("          \"total\": {},\n", num_tests));
-        out.push_str(&format!("          \"valid\": {},\n", valid));
-        out.push_str(&format!("          \"invalid\": {},\n", invalid));
+        out.push_str(&format!("          \"total\": {num_tests},\n"));
+        out.push_str(&format!("          \"valid\": {valid},\n"));
+        out.push_str(&format!("          \"invalid\": {invalid},\n"));
         out.push_str("          \"vectors\": [\n");
         for (i, v) in vectors.iter().enumerate() {
             out.push_str("            ");
@@ -367,7 +381,7 @@ fn parse_wycheproof_files() -> Vec<String> {
 
 /// Extracts a JSON string value for a key (simple, non-nested).
 fn extract_string_val(json: &str, key: &str) -> String {
-    let needle = format!("\"{}\"", key);
+    let needle = format!("\"{key}\"");
     let Some(idx) = json.find(&needle) else {
         return String::new();
     };
@@ -391,7 +405,7 @@ fn extract_string_val(json: &str, key: &str) -> String {
 }
 
 fn extract_num_u64(json: &str, key: &str) -> u64 {
-    let needle = format!("\"{}\"", key);
+    let needle = format!("\"{key}\"");
     let Some(idx) = json.find(&needle) else {
         return 0;
     };
@@ -404,4 +418,80 @@ fn extract_num_u64(json: &str, key: &str) -> u64 {
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(after.len());
     after[..end].parse().unwrap_or(0)
+}
+
+// Self-test against a baked-in JUnit fixture. Build and run with
+// `rustc --test -O kat-report.rs && ./kat-report`. Fixture matches
+// nextest 0.9.133's actual emitted format (the version pinned in
+// ci.yml's gate). If a future nextest changes the JUnit shape
+// enough that the parser misroutes tests, this test fails before
+// the parser's misbehavior reaches the dashboard.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fixture: two passing kat lib tests, one failing kat lib test,
+    /// one ignored kat lib test, two wycheproof integration tests
+    /// (one pass, one failing), and a non-kat lib test that should
+    /// route into neither suite.
+    const FIXTURE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="6" failures="2" errors="0" uuid="aaa" timestamp="2026-05-19T23:08:50.565-04:00" time="0.083">
+    <testsuite name="sqisign-selkie" tests="4" disabled="0" errors="0" failures="1">
+        <testcase name="keys::tests::verify_kat_001" classname="sqisign-selkie" timestamp="2026-05-19T23:08:50.565-04:00" time="0.080">
+        </testcase>
+        <testcase name="keys::tests::keygen_kat_005" classname="sqisign-selkie" timestamp="2026-05-19T23:08:50.565-04:00" time="0.080">
+        </testcase>
+        <testcase name="keys::signing::tests::sign_kat_derand_042" classname="sqisign-selkie" timestamp="2026-05-19T23:08:50.565-04:00" time="0.080">
+            <failure type="test failure" message="assertion failed: foo">trace text</failure>
+        </testcase>
+        <testcase name="keys::tests::keygen_kat_007" classname="sqisign-selkie" timestamp="2026-05-19T23:08:50.565-04:00" time="0">
+            <skipped/>
+        </testcase>
+        <testcase name="curves::tests::ladder_smoke" classname="sqisign-selkie" timestamp="2026-05-19T23:08:50.565-04:00" time="0.001">
+        </testcase>
+    </testsuite>
+    <testsuite name="sqisign-selkie::wycheproof" tests="2" disabled="0" errors="0" failures="1">
+        <testcase name="sqisign_sign_vectors" classname="sqisign-selkie::wycheproof" timestamp="2026-05-19T23:08:50.565-04:00" time="0.072">
+        </testcase>
+        <testcase name="sqisign_verify_vectors" classname="sqisign-selkie::wycheproof" timestamp="2026-05-19T23:08:50.565-04:00" time="0.072">
+            <failure type="test failure" message="bad vector">trace</failure>
+        </testcase>
+    </testsuite>
+</testsuites>
+"#;
+
+    #[test]
+    fn parse_junit_routes_and_statuses() {
+        let (kat, wyche) = parse_junit(FIXTURE);
+
+        // Routing: kat suite gets the four `kat_`-named lib tests
+        // (classname="sqisign-selkie"); wycheproof suite gets the
+        // integration binary's tests (classname ends with
+        // "::wycheproof"); the non-kat lib test (`ladder_smoke`)
+        // appears in neither.
+        let kat_names: Vec<&str> = kat.iter().map(|t| t.name.as_str()).collect();
+        let wyche_names: Vec<&str> = wyche.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(kat_names.len(), 4, "kat suite test count");
+        assert_eq!(
+            wyche_names,
+            vec!["sqisign_sign_vectors", "sqisign_verify_vectors"],
+            "wycheproof suite tests + order"
+        );
+        assert!(!kat_names.iter().any(|n| *n == "curves::tests::ladder_smoke"));
+        assert!(!wyche_names.iter().any(|n| *n == "curves::tests::ladder_smoke"));
+
+        // Status detection from `<failure …>` / `<skipped/>` children.
+        assert_eq!(kat.iter().filter(|t| t.status == "pass").count(), 2);
+        assert_eq!(kat.iter().filter(|t| t.status == "fail").count(), 1);
+        assert_eq!(kat.iter().filter(|t| t.status == "ignored").count(), 1);
+        assert_eq!(wyche.iter().filter(|t| t.status == "fail").count(), 1);
+
+        // Failure message captured from the `message=` attribute.
+        let failing = kat.iter().find(|t| t.status == "fail").unwrap();
+        assert!(
+            failing.detail.contains("assertion failed: foo"),
+            "expected failure message captured, got {:?}",
+            failing.detail
+        );
+    }
 }

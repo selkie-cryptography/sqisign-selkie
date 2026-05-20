@@ -159,9 +159,33 @@ jobs:
           shared-key: linux-x64-release-checked
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
-          tool: cargo-nextest
+          # Pinned so kat-report.rs's JUnit parser doesn't break on
+          # a future nextest format change. Bump in lockstep with
+          # the parser's self-test fixture (see kat-report.rs's
+          # `#[cfg(test)] mod tests`).
+          tool: cargo-nextest@0.9.133
       - run: cargo nextest run --cargo-profile release-checked
       - run: cargo test --doc
+
+      # Build the dashboard's kat.json directly from the gate's
+      # JUnit output (enabled in `.config/nextest.toml`'s default
+      # profile) instead of re-running the same tests in a separate
+      # job. Only fires on push-to-main, like the upload itself.
+      - name: Generate KAT report from JUnit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          rustc -O .github/scripts/kat-report.rs -o /tmp/kat-report
+          /tmp/kat-report "${{ github.sha }}" target/nextest/default/junit.xml > kat.json
+      - name: Verify kat payload has data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: jq -e '(.suites | length > 0) and ([.suites[].total] | add > 0)' kat.json > /dev/null || { echo "::error::kat.json has no test suites or zero tests across all suites"; cat kat.json >&2; exit 1; }
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload KAT to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload kat kat.json "${{ github.sha }}"
 
   # Property tests are covered by `gate`'s unfiltered
   # `cargo nextest run` — every `proptest! { #[test] fn foo(...) }`
@@ -376,41 +400,6 @@ jobs:
 
       - name: Run C ref KAT verification cross-check
         run: cargo test c_ref_kat_cross_check -- --ignored
-
-  kat-report:
-    name: KAT report
-    needs: [gate]
-    # Self-contained: runs `cargo test --lib -- kat_` and
-    # `cargo test --test wycheproof` itself (see
-    # `.github/scripts/kat-report.rs`) and uploads structured
-    # JSON to the CI dashboard. Only fires on main (never PR),
-    # so safe on self-hosted Fly.
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, fly, linux, x64]
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-
-      - name: Generate KAT report
-        run: |
-          rustc -O .github/scripts/kat-report.rs -o /tmp/kat-report
-          /tmp/kat-report "${{ github.sha }}" > kat.json
-        continue-on-error: true
-
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: hashFiles('kat.json') != ''
-      - name: Verify kat payload has data
-        if: hashFiles('kat.json') != ''
-        run: jq -e '(.suites | length > 0) and ([.suites[].total] | add > 0)' kat.json > /dev/null || { echo "::error::kat.json has no test suites or zero tests across all suites"; cat kat.json >&2; exit 1; }
-      - name: Upload to CI site
-        if: hashFiles('kat.json') != ''
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload kat kat.json "${{ github.sha }}"
 
   platform-report:
     name: Platform coverage
