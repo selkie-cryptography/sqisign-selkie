@@ -130,14 +130,17 @@ fn deploy_runners(extra: &[String]) -> Result<()> {
     // connects over Flycast IPv6 (avoiding the public IPv4 + h2c
     // auth chain that was the source of those errors) and uses a
     // registry mirror for fast push.
+    //
+    // `--dockerfile Dockerfile.runtime` matches `fly.toml`'s
+    // default; passed explicitly for symmetry with the base build.
     cmd.args([
         "deploy",
         "--app",
         RUNNERS_APP,
         "--image-label",
         "latest",
-        "--build-target",
-        "runtime",
+        "--dockerfile",
+        "Dockerfile.runtime",
         "--build-only",
         "--push",
         "--buildkit",
@@ -158,8 +161,8 @@ fn deploy_runner_base(extra: &[String]) -> Result<()> {
         RUNNERS_APP,
         "--image-label",
         "base",
-        "--build-target",
-        "base",
+        "--dockerfile",
+        "Dockerfile.base",
         "--build-only",
         "--push",
         "--buildkit",

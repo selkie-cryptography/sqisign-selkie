@@ -1,20 +1,23 @@
 name: Infra CI
 
-# CI for the self-hosted runner stack itself: the orchestrator
-# Rust service and the runner Docker image.
+# CI for the self-hosted runner stack: the orchestrator Rust
+# service and the runner Docker image. The runner image is split —
+# `Dockerfile.base` → `:base` (heavy, rare) and `Dockerfile.runtime`
+# → `:latest` (thin, FROM :base).
 #
-# Temporary recursion: these jobs now run on Fly self-hosted (the
-# previously-built image) so they're not billed against GH-hosted
-# minutes while the repo is private. The bootstrap concern is that
-# `deploy-runners-image` rebuilds the very image its runner is
-# running — fine in steady state, but if a runner-image change ever
-# ships a broken image we have to deploy from a laptop via `ops`
-# until the next successful rebuild lands.
+# Deploy chain: `:base` → `:latest` → orchestrator. The orchestrator
+# spawns Machines from `:latest`, so a coordinated change lands the
+# runner image first; new orchestrator code goes live against the
+# image it expects. Each downstream job uses `!failure() &&
+# !cancelled()` so skipped upstreams don't block it.
+#
+# These jobs run on the very `:latest` they rebuild. If a `:base`
+# change ships broken, recover via the laptop `ops` CLI:
+# `deploy-runner-base` then `deploy-runners`.
 #
 # Repo secrets required for deploys:
 #   - FLY_API_TOKEN_ORCHESTRATOR  scoped to `sqisign-infra-orchestrator`
 #   - FLY_API_TOKEN_RUNNERS       scoped to `sqisign-infra-runners`
-#
 # Mint via: `fly tokens create deploy --app <name> --expiry 8760h`
 
 on:
@@ -75,8 +78,9 @@ jobs:
           ./actionlint -color
 
   # Detect which subtree changed so we only redeploy what's affected.
-  # On schedule and workflow_dispatch this returns false for both,
-  # and the deploy jobs gate on event_name as well.
+  # `runners_base` is a sub-filter of `runners` — a `Dockerfile.base`
+  # edit sets both, so `:latest` always rebuilds on top of a fresh
+  # `:base`.
   changes:
     name: Detect changed paths
     runs-on: [self-hosted, fly, linux, x64]
@@ -84,6 +88,7 @@ jobs:
     outputs:
       orchestrator: ${{ steps.filter.outputs.orchestrator }}
       runners: ${{ steps.filter.outputs.runners }}
+      runners_base: ${{ steps.filter.outputs.runners_base }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
@@ -103,6 +108,8 @@ jobs:
               - 'infra/Cargo.lock'
             runners:
               - 'infra/runners/**'
+            runners_base:
+              - 'infra/runners/Dockerfile.base'
 
   # Build + lint the orchestrator crate. Release build is delegated
   # to the Dockerfile so this job stays fast (~2-3 min warm cache).
@@ -126,15 +133,72 @@ jobs:
       - run: cargo +nightly clippy --manifest-path infra/Cargo.toml --all-targets -- -D warnings
       - run: cargo +nightly fmt --manifest-path infra/Cargo.toml --all -- --check
 
-  # Deploy the orchestrator Rust service. Push-to-main only, and
-  # only when the orchestrator subtree (or shared workspace files)
-  # actually changed. `workflow_dispatch` forces a deploy regardless.
-  deploy-orchestrator:
-    name: Deploy orchestrator
+  # Build + push the heavy `:base` runner image. Slow (~10–15 min
+  # cold) — fires only on Dockerfile.base edits, weekly schedule
+  # (OS patches), or manual dispatch.
+  deploy-runners-base:
+    name: Build + push runner :base image
     needs: [build, changes]
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.orchestrator == 'true') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.runners_base == 'true') ||
+      github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Build + push :base image
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
+        working-directory: infra/runners
+        run: |
+          flyctl deploy --build-only --app sqisign-infra-runners \
+            --dockerfile Dockerfile.base \
+            --image-label base
+
+  # Build + push the thin `:latest` runtime runner image, FROM the
+  # `:base` that `deploy-runners-base` (skipped or just-pushed) left
+  # in the registry. `!failure()` lets us run when base was skipped
+  # but blocks on base failure — never push `:latest` over a
+  # known-bad `:base`.
+  deploy-runners-image:
+    name: Build + push runner :latest image
+    needs: [build, changes, deploy-runners-base]
+    if: |
+      !failure() && !cancelled() && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.runners == 'true') ||
+        github.event_name == 'schedule' ||
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Build + push :latest image
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
+        working-directory: infra/runners
+        run: |
+          flyctl deploy --build-only --app sqisign-infra-runners \
+            --dockerfile Dockerfile.runtime \
+            --image-label latest
+
+  # Deploy the orchestrator last, after any freshly-pushed
+  # `:latest` it'll spawn Machines from.
+  deploy-orchestrator:
+    name: Deploy orchestrator
+    needs: [build, changes, deploy-runners-image]
+    if: |
+      !failure() && !cancelled() && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.orchestrator == 'true') ||
+        github.event_name == 'workflow_dispatch'
+      )
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -150,28 +214,3 @@ jobs:
           flyctl deploy --app sqisign-infra-orchestrator \
             --config orchestrator/fly.toml \
             --dockerfile orchestrator/Dockerfile
-
-  # Build + push the runner Docker image. Triggers:
-  #   - push to main that touched infra/runners/**
-  #   - weekly schedule (pulls fresh OS patches + tool versions)
-  #   - manual dispatch
-  # The app holds the image only; no Machines start from this deploy.
-  deploy-runners-image:
-    name: Build + push runner image
-    needs: [build, changes]
-    if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.runners == 'true') ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, fly, linux, x64]
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
-        with:
-          persist-credentials: false
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-      - name: Build + push image
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
-        working-directory: infra/runners
-        run: flyctl deploy --build-only --app sqisign-infra-runners
