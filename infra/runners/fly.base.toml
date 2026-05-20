@@ -1,0 +1,17 @@
+# Variant of fly.toml that targets `Dockerfile.base` for the heavy
+# `:base` runner image. Pair with `flyctl deploy --config fly.base.toml`.
+#
+# Why a separate config and not just `--dockerfile`: flyctl/Depot
+# silently ignores the `--dockerfile` CLI flag when fly.toml's
+# `[build].dockerfile` is set, so per-config files are the only
+# reliable way to switch the build between `:base` and `:latest`.
+
+app = "sqisign-infra-runners"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.base"
+  image_label = "base"
+
+[deploy]
+  strategy = "immediate"

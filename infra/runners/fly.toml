@@ -17,8 +17,11 @@ app = "sqisign-infra-runners"
 primary_region = "iad"
 
 [build]
-  # Common deploy is the runtime layer (`:latest`). Base builds
-  # pass `--dockerfile Dockerfile.base --image-label base` explicitly.
+  # Runtime layer (`:latest`, FROM `:base`). Base builds use the
+  # paired `fly.base.toml` via `--config fly.base.toml`; flyctl's
+  # `--dockerfile` CLI flag is silently ignored when fly.toml has
+  # `[build].dockerfile` set, so per-config files are the only
+  # reliable target switch.
   dockerfile = "Dockerfile.runtime"
   # Stable `latest` tag so the orchestrator's FLY_RUNNER_IMAGE
   # (defaults to `registry.fly.io/<app>:latest`) resolves on every

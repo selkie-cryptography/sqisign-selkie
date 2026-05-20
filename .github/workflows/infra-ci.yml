@@ -154,10 +154,13 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
         working-directory: infra/runners
+        # `--config fly.base.toml` is what selects `Dockerfile.base`
+        # — flyctl/Depot ignores `--dockerfile` when fly.toml has
+        # `[build].dockerfile`, so per-config files are the only
+        # reliable target switch.
         run: |
           flyctl deploy --build-only --app sqisign-infra-runners \
-            --dockerfile Dockerfile.base \
-            --image-label base
+            --config fly.base.toml
 
   # Build + push the thin `:latest` runtime runner image, FROM the
   # `:base` that `deploy-runners-base` (skipped or just-pushed) left
@@ -184,10 +187,13 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
         working-directory: infra/runners
+        # `--config fly.toml` is explicit for symmetry with the
+        # base job; fly.toml is also flyctl's default but the
+        # implicit-default path is what got us into the wrong-image
+        # bug, so we name it.
         run: |
           flyctl deploy --build-only --app sqisign-infra-runners \
-            --dockerfile Dockerfile.runtime \
-            --image-label latest
+            --config fly.toml
 
   # Deploy the orchestrator last, after any freshly-pushed
   # `:latest` it'll spawn Machines from.
