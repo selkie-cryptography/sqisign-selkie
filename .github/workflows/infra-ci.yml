@@ -168,20 +168,29 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
         working-directory: infra/runners
-        # flyctl/Depot's two-flag asymmetry, learned the hard way:
+        # flyctl knobs we learned the hard way:
         #   - `[build].dockerfile` in fly.toml is honored;
         #     `--dockerfile` CLI is ignored. -> use `--config`.
         #   - `--image-label` CLI is honored; `[build].image_label`
         #     in fly.toml is ignored under `--build-only` (image
         #     ships under `:deployment-<id>` instead). -> name the
         #     tag on the CLI.
-        # Both must be set or the build either targets the wrong
-        # Dockerfile or pushes to an orphan deployment tag.
-        #
+        #   - `--push` is required for `--build-only` to actually
+        #     update the named tag in the destination registry.
+        #     Without it, Depot stages the image under a
+        #     deployment-scoped tag and the named tag never moves,
+        #     even though flyctl logs an optimistic
+        #     `image: ...:base` line. -> always pass `--push`.
+        #   - `--buildkit` opts into Fly's own remote BuildKit
+        #     builder (over Flycast IPv6) instead of Depot. Matches
+        #     the `ops` CLI path that's been reliably moving tags
+        #     for months.
         run: |
           flyctl deploy --build-only --app sqisign-infra-runners \
             --config fly.base.toml \
-            --image-label base
+            --image-label base \
+            --push \
+            --buildkit
       - name: Resolve pushed :base digest
         id: digest
         env:
@@ -254,7 +263,9 @@ jobs:
           flyctl deploy --build-only --app sqisign-infra-runners \
             --config fly.toml \
             --image-label latest \
-            --build-arg "BASE_IMAGE=${base_image}"
+            --build-arg "BASE_IMAGE=${base_image}" \
+            --push \
+            --buildkit
 
   # Deploy the orchestrator last, after any freshly-pushed
   # `:latest` it'll spawn Machines from.
