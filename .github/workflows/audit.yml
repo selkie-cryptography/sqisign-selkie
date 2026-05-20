@@ -129,7 +129,7 @@ jobs:
 
       - name: Run zeroize test
         run: |
-          cargo test --test zeroize --features expose-internals
+          cargo test --profile release-checked --test zeroize --features expose-internals
           rustc -O .github/scripts/zeroize-report.rs -o /tmp/zeroize-report
           /tmp/zeroize-report "${{ github.sha }}" > zeroize.json
 
@@ -188,7 +188,7 @@ jobs:
 
       - name: Run allocation tests
         run: |
-          if cargo test --test alloc_budget --features expose-internals 2>&1; then
+          if cargo test --profile release-checked --test alloc_budget --features expose-internals 2>&1; then
             STATUS=pass
           else
             STATUS=fail

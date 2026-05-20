@@ -76,7 +76,13 @@ jobs:
           fi
           ARGS=(nextest run --profile kat --run-ignored=all --status-level=fail --hide-progress-bar -E "$FILTER")
           if [ "${{ inputs.release }}" = "true" ]; then
-            ARGS+=(--release)
+            # `release-checked` is `release` + debug_asserts +
+            # overflow-checks (Cargo.toml). Cargo.toml's own
+            # comment originally documented this profile as
+            # "selected via `cargo nextest run --cargo-profile
+            # release-checked`" but the workflow was only passing
+            # `--release` — quietly building without the asserts.
+            ARGS+=(--cargo-profile release-checked)
           fi
           {
             echo "## KAT run"
