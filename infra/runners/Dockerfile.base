@@ -66,9 +66,12 @@ RUN useradd -m -s /bin/bash runner \
 # `texlive-*` + `latexmk` + `biber` power `latex.yml` on Fly
 # self-hosted (replacing the previous `xu-cheng/latex-action`
 # Docker-action path which required a Docker daemon we don't run).
+#
+# `unzip` is needed for the AWS CLI v2 install below; the bundled
+# installer ships as a zip and the apt `awscli` package no longer
+# exists on noble (see comment on that RUN step).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-      awscli \
       biber \
       build-essential \
       cmake \
@@ -91,8 +94,23 @@ RUN apt-get update \
       texlive-latex-extra \
       texlive-plain-generic \
       texlive-science \
+      unzip \
       valgrind \
   && rm -rf /var/lib/apt/lists/*
+
+# AWS CLI v2 (bundled binary distribution).
+#
+# Ubuntu 24.04 noble removed the `awscli` apt package — v1 (Python-
+# based) is upstream-EOL and AWS distributes v2 via this installer
+# instead. Used by `.github/scripts/ci-scratch.rs` for the Tigris
+# S3-compatible scratch path; the v1→v2 surface diff doesn't affect
+# the `aws s3 cp` / `aws s3 ls` calls that script makes.
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+      "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+      -o /tmp/awscliv2.zip \
+  && unzip -q /tmp/awscliv2.zip -d /tmp \
+  && /tmp/aws/install \
+  && rm -rf /tmp/awscliv2.zip /tmp/aws
 
 # Passwordless sudo for the `runner` user. Lets workflows apt-install
 # tools on demand instead of rolling this image every time something
