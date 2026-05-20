@@ -50,8 +50,13 @@ fn main() -> io::Result<()> {
     let auth = format!("Authorization: Bearer {token}");
     let jq_filter = r#".jobs[] | select(.name | startswith("lib + doc tests")) | "\(.name)|\(.conclusion)""#;
 
+    // `set -o pipefail` so a curl failure (e.g. 403 because the
+    // workflow's GITHUB_TOKEN lacks `actions: read`) surfaces as a
+    // pipeline failure. Without it, curl's non-zero exit on HTTP
+    // error is masked by jq's clean exit on empty input, and the
+    // script silently emits an empty `platforms` array.
     let pipeline = format!(
-        "curl -fsSL -H 'Accept: application/vnd.github+json' -H \"$AUTH\" {url} | jq -r {filter}",
+        "set -o pipefail; curl -fsSL -H 'Accept: application/vnd.github+json' -H \"$AUTH\" {url} | jq -r {filter}",
         url = shell_escape(&url),
         filter = shell_escape(jq_filter),
     );
@@ -66,11 +71,20 @@ fn main() -> io::Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("curl|jq pipeline failed (status {}): {}", output.status, stderr);
+        eprintln!("::error::curl|jq pipeline failed (status {}): {}", output.status, stderr);
+        std::process::exit(1);
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    eprintln!("REST API returned {} matching job line(s)", text.lines().count());
+    let line_count = text.lines().filter(|l| !l.trim().is_empty()).count();
+    eprintln!("REST API returned {line_count} matching job line(s)");
+    if line_count == 0 {
+        eprintln!(
+            "::error::platform-report: zero jobs matched `startswith(\"lib + doc tests\")` in run {run_id}. \
+             Check that the platform-fly / platform-billed jobs actually ran (and that this job has `actions: read`)."
+        );
+        std::process::exit(1);
+    }
     let mut platforms = Vec::new();
 
     for line in text.lines() {

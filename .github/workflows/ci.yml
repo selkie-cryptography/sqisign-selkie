@@ -167,6 +167,15 @@ jobs:
       - run: cargo nextest run --cargo-profile release-checked
       - run: cargo test --doc
 
+      # Compile-check the `--no-default-features` variant on the same
+      # platform. Catches code paths gated on optional features (e.g.
+      # `expose-internals`) that the default-features build wouldn't
+      # see. Cheap (~couple minutes warm cache) and runs on every
+      # PR + push, unlike the previous `platform-fly` job which only
+      # fired on push — a no-default-features compile break used to
+      # land in main and surface a day later.
+      - run: cargo check --no-default-features --all-targets
+
       # Build the dashboard's kat.json directly from the gate's
       # JUnit output (enabled in `.config/nextest.toml`'s default
       # profile) instead of re-running the same tests in a separate
@@ -225,47 +234,19 @@ jobs:
           echo "put /tmp/rustdoc.tar.gz /data/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
           flyctl ssh console -a sqisign-selkie-ci -C "sh -c 'set -e; rm -rf /data/rustdoc && mkdir -p /data/rustdoc && tar -xzf /data/rustdoc.tar.gz -C /data/rustdoc && rm /data/rustdoc.tar.gz'"
 
-  # Tier 2 — Platform sanity (lib + doc only)
+  # Tier 2 — Cross-platform sanity (lib + doc only)
   #
-  # Cross-platform check that lib + doc compile and pass on every
-  # Rust Tier 1 target plus the no-default-features variant. Skipped
-  # on PR — `gate` already covers x86_64-linux default features
-  # there, and the full matrix per PR push is expensive (Windows
-  # bills 2×, macOS 10×). Runs on push to main, the nightly
-  # schedule, and manual dispatch.
+  # Cross-platform check that lib + doc compile and pass on macOS
+  # and Windows (Fly is x86_64-linux only, so non-Linux targets
+  # have to run GH-hosted). Skipped on PR and on private repos —
+  # the matrix per PR push is expensive (Windows bills 2×, macOS
+  # 10×). Runs on push to main + nightly cron + manual dispatch
+  # once the repo flips public.
   #
-  # Split into two jobs so the public-repo gate can be applied to
-  # the GH-hosted (billed) targets without affecting the Linux
-  # no-defaults row that runs on Fly self-hosted. (The job-level
-  # `if:` can't reference `matrix.*`, so a single matrix can't
-  # express "this row gated on visibility, that row not".)
-
-  platform-fly:
-    name: "lib + doc tests (x86_64-unknown-linux-gnu, 64-bit, no-default-features)"
-    needs: [gate]
-    if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, fly, linux, x64]
-    # 60 min, matching gate-ish headroom: a cold rust-cache miss
-    # rebuild on no-default-features (the cache key differs from
-    # gate's `linux-x64-default-stable`) plus a full nextest run
-    # leaves ~20 min of slack. 30 min was over-tight and was
-    # cancelling whole CI runs mid-build.
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          key: x86_64-unknown-linux-gnu-no-default-features
-      - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
-        with:
-          tool: cargo-nextest
-      - run: cargo nextest run --target x86_64-unknown-linux-gnu --no-default-features
-      - run: cargo test --doc --target x86_64-unknown-linux-gnu --no-default-features
+  # The x86_64-linux row is intentionally absent: the `gate` job
+  # already covers it (default features) and includes a
+  # `cargo check --no-default-features --all-targets` step that
+  # exercises the no-default-features compile path on every PR.
 
   # macOS + Windows targets run on GH-hosted (Fly is x86_64-linux
   # only). Gated on `repository.visibility == 'public'` so the
@@ -346,11 +327,10 @@ jobs:
     # Skipped on fork PR (untrusted code on self-hosted Machines).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, fly, linux, x64]
-    # 60 min, matching platform-fly: cold runs do a one-time Sage
-    # conda install (~several minutes) plus the cross-check itself.
-    # Warm runs hit `actions/cache` and finish quickly. 30 min was
-    # cancelling cold-cache runs and the whole parent CI run with
-    # them.
+    # 60 min: cold runs do a one-time Sage conda install (~several
+    # minutes) plus the cross-check itself. Warm runs hit
+    # `actions/cache` and finish quickly. 30 min was cancelling
+    # cold-cache runs and the whole parent CI run with them.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -403,11 +383,18 @@ jobs:
 
   platform-report:
     name: Platform coverage
-    needs: [platform-fly, platform-billed]
+    needs: [gate, platform-billed]
     # Only fires on main (never PR), so safe on self-hosted Fly.
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # `platform-report.rs` calls `/repos/{owner}/{repo}/actions/runs/
+      # {id}/jobs` to discover the matrix's per-target job results.
+      # Inheriting the workflow-level `contents: read` returns 403 on
+      # that endpoint; `actions: read` is the GH-documented scope.
+      actions: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
