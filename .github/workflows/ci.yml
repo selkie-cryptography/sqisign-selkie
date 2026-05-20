@@ -304,7 +304,11 @@ jobs:
           key: ${{ matrix.target }}
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
-          tool: cargo-nextest
+          # Pinned in lockstep with `gate`'s nextest version so a
+          # future format change can't desync the two jobs (and so
+          # the JUnit output, if we ever consume it here, matches
+          # what `kat-report.rs` parses).
+          tool: cargo-nextest@0.9.133
       - run: cargo nextest run --target ${{ matrix.target }}
       - run: cargo test --doc --target ${{ matrix.target }}
 
@@ -385,7 +389,11 @@ jobs:
     name: Platform coverage
     needs: [gate, platform-billed]
     # Only fires on main (never PR), so safe on self-hosted Fly.
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # `!cancelled()` (not `always()`) so a user-cancelled run skips
+    # the upload; coverage still reports on gate/platform-billed
+    # failures since the dashboard wants to show which platforms
+    # ran regardless of overall pass/fail.
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
     permissions:
