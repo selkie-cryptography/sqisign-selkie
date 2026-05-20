@@ -126,13 +126,16 @@ jobs:
       # transport — see .github/scripts/ci-scratch.rs. Same shape as
       # the mutants shard transport below.
       #
-      # Only on main pushes — the report job itself is push-on-main only,
-      # so there's nothing to consume the shard JSON otherwise.
+      # Fires on push-to-main (so the `report` consolidator can collect)
+      # AND on workflow_dispatch (manual probe of the awscli / Tigris
+      # path; the report job itself stays push-only, so dispatched
+      # fragments just sit in the bucket until the 7-day lifecycle rule
+      # expires — harmless).
       - name: Build ci-scratch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
       - name: Ship fuzz result to Tigris scratch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
