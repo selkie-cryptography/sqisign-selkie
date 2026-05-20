@@ -131,16 +131,22 @@ fn deploy_runners(extra: &[String]) -> Result<()> {
     // auth chain that was the source of those errors) and uses a
     // registry mirror for fast push.
     //
-    // `--config fly.toml` is explicit for symmetry with the base
-    // command; fly.toml is also flyctl's default, but the
-    // implicit-default path is what bit us when `--dockerfile`
-    // was silently ignored — we name the config now.
+    // flyctl/Depot's two-flag asymmetry:
+    //   - `[build].dockerfile` from fly.toml is honored; `--dockerfile` CLI is
+    //     ignored. -> use `--config`.
+    //   - `--image-label` CLI is honored; `[build].image_label` in fly.toml is
+    //     ignored under `--build-only` (image ships under `:deployment-<id>`
+    //     instead). -> name the tag on the CLI.
+    // Both must be set or the build either targets the wrong
+    // Dockerfile or pushes to an orphan deployment tag.
     cmd.args([
         "deploy",
         "--app",
         RUNNERS_APP,
         "--config",
         "fly.toml",
+        "--image-label",
+        "latest",
         "--build-only",
         "--push",
         "--buildkit",
@@ -154,18 +160,16 @@ fn deploy_runner_base(extra: &[String]) -> Result<()> {
 
     let mut cmd = Command::new("fly");
     cmd.current_dir(infra_dir().join("runners"));
-    // See `deploy_runners` for `--build-only --push --buildkit`.
-    //
-    // `--config fly.base.toml` is what selects `Dockerfile.base`
-    // — flyctl/Depot ignores `--dockerfile` when fly.toml has
-    // `[build].dockerfile`, so per-config files are the only
-    // reliable target switch.
+    // See `deploy_runners` for `--build-only --push --buildkit`
+    // and for the `--config` + `--image-label` rationale.
     cmd.args([
         "deploy",
         "--app",
         RUNNERS_APP,
         "--config",
         "fly.base.toml",
+        "--image-label",
+        "base",
         "--build-only",
         "--push",
         "--buildkit",

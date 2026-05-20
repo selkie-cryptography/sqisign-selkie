@@ -154,13 +154,19 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
         working-directory: infra/runners
-        # `--config fly.base.toml` is what selects `Dockerfile.base`
-        # — flyctl/Depot ignores `--dockerfile` when fly.toml has
-        # `[build].dockerfile`, so per-config files are the only
-        # reliable target switch.
+        # flyctl/Depot's two-flag asymmetry, learned the hard way:
+        #   - `[build].dockerfile` in fly.toml is honored;
+        #     `--dockerfile` CLI is ignored. -> use `--config`.
+        #   - `--image-label` CLI is honored; `[build].image_label`
+        #     in fly.toml is ignored under `--build-only` (image
+        #     ships under `:deployment-<id>` instead). -> name the
+        #     tag on the CLI.
+        # Both must be set or the build either targets the wrong
+        # Dockerfile or pushes to an orphan deployment tag.
         run: |
           flyctl deploy --build-only --app sqisign-infra-runners \
-            --config fly.base.toml
+            --config fly.base.toml \
+            --image-label base
 
   # Build + push the thin `:latest` runtime runner image, FROM the
   # `:base` that `deploy-runners-base` (skipped or just-pushed) left
@@ -187,13 +193,14 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
         working-directory: infra/runners
-        # `--config fly.toml` is explicit for symmetry with the
-        # base job; fly.toml is also flyctl's default but the
-        # implicit-default path is what got us into the wrong-image
-        # bug, so we name it.
+        # `--config fly.toml` selects Dockerfile.runtime; CLI
+        # `--image-label latest` is what actually tags the registry
+        # image (`[build].image_label` in fly.toml is ignored under
+        # `--build-only`). See the comment on `deploy-runners-base`.
         run: |
           flyctl deploy --build-only --app sqisign-infra-runners \
-            --config fly.toml
+            --config fly.toml \
+            --image-label latest
 
   # Deploy the orchestrator last, after any freshly-pushed
   # `:latest` it'll spawn Machines from.
