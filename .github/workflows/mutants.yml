@@ -153,10 +153,10 @@ jobs:
       # strictly better. The full-upload job pulls these back via
       # flyctl sftp.
       - name: Build ci-scratch
-        if: always() && hashFiles('mutants.out/outcomes.json') != ''
+        if: ${{ !cancelled() && hashFiles('mutants.out/outcomes.json') != '' }}
         run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
       - name: Ship shard outcomes to Tigris scratch
-        if: always() && hashFiles('mutants.out/outcomes.json') != ''
+        if: ${{ !cancelled() && hashFiles('mutants.out/outcomes.json') != '' }}
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
