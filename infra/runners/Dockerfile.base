@@ -112,6 +112,26 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL \
   && /tmp/aws/install \
   && rm -rf /tmp/awscliv2.zip /tmp/aws
 
+# GitHub CLI (`gh`) — used by `.github/scripts/ci-signal.rs`
+# (commits.json refresh via `gh api`) and `fuzz.yml`'s "Open PR on
+# crash" step (`gh pr create` + `gh auth setup-git`). Install via
+# GitHub's official apt repository (recommended path):
+# https://github.com/cli/cli/blob/trunk/docs/install_linux.md#recommended-official
+#
+# `wget`-with-sanity-check from the upstream instructions is
+# replaced with `curl` (already in the image) since apt's own
+# signature verification against the keyring is what actually
+# guards integrity for ongoing package fetches.
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+      https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends gh \
+  && rm -rf /var/lib/apt/lists/*
+
 # Passwordless sudo for the `runner` user. Lets workflows apt-install
 # tools on demand instead of rolling this image every time something
 # new is needed. The Machine is ephemeral and per-job, and workflows
