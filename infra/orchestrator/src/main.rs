@@ -8,11 +8,7 @@
 //! that leaked past their job (e.g. runner crash without clean exit,
 //! or stale image after a runner-image rollover).
 
-mod fly;
-mod github;
-mod reaper;
-
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -23,26 +19,17 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use tracing::{error, info, warn};
-
-use crate::{
-    fly::{FlyClient, MachineSize},
+use orchestrator::{
+    fly::{Config, FlyClient},
     github::{GitHubAppClient, WorkflowJobEvent, verify_webhook_signature},
     reaper::Reaper,
 };
-
-/// Default reaper sweep interval (10 min). Overridable via
-/// `REAPER_SWEEP_INTERVAL_SECS`.
-const DEFAULT_REAPER_INTERVAL_SECS: u64 = 600;
-
-/// Default max age before a stale-digest Machine is reaped (45 min).
-/// Overridable via `REAPER_MAX_AGE_SECS`. Should comfortably exceed
-/// the longest single job that may run on a runner Machine.
-const DEFAULT_REAPER_MAX_AGE_SECS: u64 = 45 * 60;
+use tracing::{error, info, warn};
 
 struct AppState {
     fly: FlyClient,
     github: GitHubAppClient,
+    config: Config,
     webhook_secret: Vec<u8>,
 }
 
@@ -57,8 +44,13 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(AppState::from_env().context("loading env")?);
 
-    let reaper_interval = env_secs("REAPER_SWEEP_INTERVAL_SECS", DEFAULT_REAPER_INTERVAL_SECS);
-    let reaper_max_age = env_secs("REAPER_MAX_AGE_SECS", DEFAULT_REAPER_MAX_AGE_SECS);
+    // Reaper tunables come from the config file; env vars still
+    // override at runtime for emergency tuning without a redeploy.
+    let reaper_interval = env_secs(
+        "REAPER_SWEEP_INTERVAL_SECS",
+        state.config.reaper.sweep_interval_secs,
+    );
+    let reaper_max_age = env_secs("REAPER_MAX_AGE_SECS", state.config.reaper.max_age_secs);
     tokio::spawn(Reaper::new(state.fly.clone(), reaper_interval, reaper_max_age).run());
 
     let app = Router::new()
@@ -95,9 +87,27 @@ impl AppState {
             .unwrap_or_else(|_| format!("registry.fly.io/{fly_app}:latest"));
         let org = std::env::var("GITHUB_ORG").unwrap_or_else(|_| "selkie-cryptography".into());
 
+        // Path inside the runtime image. Dockerfile.runtime COPYs
+        // `runners.toml` to this location; overridable for local
+        // smoke testing without a rebuild.
+        let config_path: PathBuf = std::env::var_os("ORCHESTRATOR_CONFIG")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/etc/orchestrator/runners.toml"));
+        let config = Config::load(&config_path).with_context(|| {
+            format!("loading orchestrator config from {}", config_path.display())
+        })?;
+        info!(
+            path = %config_path.display(),
+            default = config.sizes.default_label(),
+            reaper_sweep_secs = config.reaper.sweep_interval_secs,
+            reaper_max_age_secs = config.reaper.max_age_secs,
+            "loaded orchestrator config",
+        );
+
         Ok(Self {
             fly: FlyClient::new(fly_token, fly_app, fly_region, image_ref),
             github: GitHubAppClient::new(app_id, installation_id, private_key, org),
+            config,
             webhook_secret,
         })
     }
@@ -193,14 +203,22 @@ async fn handle_queued(state: &Arc<AppState>, event: WorkflowJobEvent) -> axum::
             .into_response();
     }
 
-    let size =
-        MachineSize::from_labels(&event.workflow_job.labels).unwrap_or(MachineSize::SharedCpu4x);
+    // `from_labels` returns `None` only when the label list has no
+    // explicit tier *and* no `x64`. The earlier "fly" check gates us
+    // to Fly jobs, so this should be unreachable in practice, but
+    // fall back to the configured default instead of panicking.
+    let size = state
+        .config
+        .sizes
+        .from_labels(&event.workflow_job.labels)
+        .unwrap_or_else(|| state.config.sizes.default_size());
 
     info!(
         job = %event.workflow_job.name,
         job_id = event.workflow_job.id,
         labels = ?event.workflow_job.labels,
-        size = ?size,
+        cpu_kind = %size.cpu_kind,
+        cpus = size.cpus,
         "spawning runner"
     );
 

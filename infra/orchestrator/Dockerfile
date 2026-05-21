@@ -36,5 +36,12 @@ RUN apt-get update \
 
 COPY --from=builder /work/target/release/orchestrator /usr/local/bin/orchestrator
 
+# Orchestrator runtime config. Loaded at startup from
+# `ORCHESTRATOR_CONFIG` (default below); editing this file in tree
+# and redeploying is the supported way to add a tier, tune the
+# reaper, or change the default. See
+# `infra/orchestrator/runners.toml` for the schema.
+COPY orchestrator/runners.toml /etc/orchestrator/runners.toml
+
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/orchestrator"]

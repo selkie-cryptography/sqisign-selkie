@@ -7,6 +7,10 @@ publish = false
 # Long-lived HTTP service deployed to Fly. Receives `workflow_job`
 # webhooks from GitHub, mints JIT runner configs, spawns ephemeral
 # Fly Machines.
+#
+# Exposes a small library (RunnerSizes, MachineSize, …) so the
+# `render-actionlint` admin binary in `ops/` can reuse the loader
+# without duplicating the TOML schema.
 
 [dependencies]
 anyhow = "1"
@@ -19,6 +23,7 @@ serde_json = "1"
 sha2 = "0.10"
 time = { version = "0.3", default-features = false, features = ["parsing"] }
 tokio = { version = "1", features = ["full"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
 tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
