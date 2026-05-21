@@ -140,6 +140,17 @@ jobs:
       - run: cargo check --manifest-path infra/Cargo.toml --all-targets --locked
       - run: cargo +nightly clippy --manifest-path infra/Cargo.toml --all-targets -- -D warnings
       - run: cargo +nightly fmt --manifest-path infra/Cargo.toml --all -- --check
+      - run: cargo test --manifest-path infra/Cargo.toml --all-targets --locked
+
+      # `.github/actionlint.yaml`'s self-hosted-runner label list is
+      # rendered from `infra/orchestrator/runners.toml`. Fail the job
+      # on drift; the error message tells the contributor how to
+      # regenerate locally.
+      - name: Verify .github/actionlint.yaml matches runners.toml
+        run: |
+          cargo run --manifest-path infra/Cargo.toml \
+            -p ops --bin render-actionlint -- \
+            --check .github/actionlint.yaml
 
   # Build + push the heavy `:base` runner image. Slow (~10–15 min
   # cold) — fires only on Dockerfile.base edits, weekly schedule

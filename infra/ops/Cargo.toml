@@ -6,8 +6,15 @@ publish = false
 
 # Ops CLI for the Fly runner stack. Wraps `flyctl` so deploys can run
 # reproducibly from a laptop without GH-hosted CI.
+#
+# Ships two binaries: the default `ops` flyctl wrapper (`src/main.rs`)
+# and `render-actionlint`, which reads `infra/orchestrator/runners.toml`
+# and emits `.github/actionlint.yaml`. The renderer depends on the
+# `orchestrator` crate so it reuses the runtime `RunnerSizes` loader
+# rather than duplicating the TOML schema.
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+orchestrator = { path = "../orchestrator" }
 serde_json = "1"
