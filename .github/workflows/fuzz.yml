@@ -40,9 +40,51 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Build + run the KAT-corpus seeder once and ship the result to
+  # Tigris scratch. The matrix shards below pull this in instead of
+  # rebuilding the lib + example 7 times. The seeder writes into all
+  # `fuzz/corpus/<target>/` directories from a single invocation, so
+  # this is pure duplication elimination — same bytes per shard, just
+  # built once. Bucket lifecycle expires the upload after 7 days; the
+  # `report` job runs `ci-scratch clean fuzz-seed` for hygiene.
+  seed:
+    name: Seed corpus from KAT vectors
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: fuzz-seed
+      - name: Build and run seeder
+        run: cargo run --release --features expose-internals --example seed-fuzz-corpus
+      - name: Tar seed corpora
+        run: tar -czf seed-corpus.tar.gz -C fuzz corpus
+      - name: Build ci-scratch
+        run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+      - name: Ship seed corpus to Tigris scratch
+        env:
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+          SHA: ${{ github.sha }}
+        # `ci-scratch put` appends `.json` to the bucket key. That's a
+        # misnomer for a tarball but functionally fine — Tigris is
+        # blob storage and the consumer reads bytes back verbatim.
+        run: /tmp/ci-scratch put fuzz-seed "${SHA}" all seed-corpus.tar.gz
+
   fuzz:
     name: ${{ matrix.target }}
-    runs-on: [self-hosted, fly, linux, x64]
+    needs: seed
+    # `perf-2x` gives 2 dedicated cores for the 10-min libFuzzer
+    # budget. libFuzzer is single-threaded; shared-CPU throttling
+    # after the burst-credit window costs measurable execs/sec.
+    # 2 cores (one for the fuzz worker, one for OS / supervisor)
+    # is the right floor here — perf-4x doesn't speed a single-
+    # threaded fuzzer.
+    runs-on: [self-hosted, fly, linux, x64, perf-2x]
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -93,13 +135,22 @@ jobs:
           restore-keys: |
             fuzz-corpus-${{ matrix.target }}-
 
-      # Seed every target's corpus from the KAT vectors. The seeder
-      # writes into all `fuzz/corpus/<target>/` directories; libFuzzer
-      # dedupes on content hash, so this is idempotent against the
-      # restored cache. Ensures the 100 KAT-derived `pk||sig||msg`
-      # triples are present even on cold caches.
-      - name: Seed corpus from KAT vectors
-        run: cargo run --release --features expose-internals --example seed-fuzz-corpus
+      # Overlay the KAT-derived seed corpus produced once by the
+      # `seed` job. libFuzzer dedupes on content hash, so merging
+      # this on top of the restored cache is idempotent. Pulling the
+      # full tarball is small (kilobytes) and simpler than per-target
+      # filtering; libFuzzer reads only this target's directory.
+      - name: Build ci-scratch
+        run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+      - name: Pull seed corpus from Tigris scratch
+        env:
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+          SHA: ${{ github.sha }}
+        run: |
+          mkdir -p /tmp/fuzz-seed
+          /tmp/ci-scratch get fuzz-seed "${SHA}" /tmp/fuzz-seed
+          tar -xzf /tmp/fuzz-seed/all.json -C fuzz
 
       # `cargo fuzz run` builds + runs in one step. `--target
       # x86_64-unknown-linux-gnu` overrides the cargo-fuzz default
@@ -280,4 +331,6 @@ jobs:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
           SHA: ${{ github.sha }}
-        run: /tmp/ci-scratch clean fuzz "${SHA}"
+        run: |
+          /tmp/ci-scratch clean fuzz "${SHA}"
+          /tmp/ci-scratch clean fuzz-seed "${SHA}"

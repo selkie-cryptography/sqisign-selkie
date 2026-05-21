@@ -1,6 +1,6 @@
 name: Constant-Time
 
-# Runs on self-hosted Fly runners (shared-cpu-2x). CT measurements
+# Runs on self-hosted Fly runners (shared-cpu-4x). CT measurements
 # are timing-sensitive; shared CPU adds noise vs dedicated hardware.
 # Acceptable for CI regression detection (DudeCT statistical + Tacet
 # taint-tracking both tolerate noise). For publication-grade

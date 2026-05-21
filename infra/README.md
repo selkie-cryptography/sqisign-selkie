@@ -101,7 +101,9 @@ and skip rebuilding the heavy layers.
 5. Pick Machine size from labels via `MachineSize::from_labels`:
    - `perf-2x` / `4x` / `8x` / `16x` — Fly performance CPUs.
    - `shared-2x` / `4x` — Fly shared CPUs.
-   - Plain `x64` (no sizing label) defaults to `shared-2x`.
+   - Plain `x64` (no sizing label) defaults to `shared-4x`. Jobs that
+     genuinely need dedicated cores opt up with `perf-2x` / `perf-4x` /
+     `perf-8x`; everything else rides shared CPU.
 6. `POST /v1/apps/sqisign-infra-runners/machines` with
    `auto_destroy: true` and `JITCONFIG` in the env.
 7. Machine boots → `entrypoint.sh` execs `./run.sh --jitconfig "$JITCONFIG"`.
