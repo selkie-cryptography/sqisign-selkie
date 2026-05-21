@@ -203,6 +203,11 @@ jobs:
           done
           git add -f "fuzz/corpus/${TARGET}/"
           git commit -m "fuzz: add crash inputs for ${TARGET} (${SHORT_SHA})"
+          # `actions/checkout` ran with `persist-credentials: false`,
+          # so the clone has no git auth header. Configure git to use
+          # the same `GH_TOKEN` `gh pr create` (below) consumes — one
+          # call covers both push and PR creation.
+          gh auth setup-git
           git push origin "$BRANCH"
 
           # Build crash list for the PR body.
