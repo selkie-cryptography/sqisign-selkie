@@ -1,0 +1,72 @@
+# Orchestrator runtime config for the Fly self-hosted CI stack.
+#
+# Loaded by the orchestrator at startup (path overridable via
+# `ORCHESTRATOR_CONFIG` env; default `/etc/orchestrator/runners.toml`
+# inside the image) and consumed by the `render-actionlint` binary
+# in the `ops` crate to generate `.github/actionlint.yaml`'s
+# `self-hosted-runner.labels` list.
+#
+# Schema:
+#   default          Name of the size that plain `x64` (a Fly job
+#                    with no explicit tier label) resolves to.
+#
+#   [sizes.<L>]      Each L is a label workflows may put in
+#                    `runs-on:`. cpu_kind + cpus are passed verbatim
+#                    to Fly's Machine API as `guest.cpu_kind` /
+#                    `guest.cpus`. Optional fields:
+#                    - memory_mb: total memory in MB. Defaults to
+#                      `cpus * 2048`.
+#                    - rootfs_gb: overlayfs size in GB. Defaults
+#                      to 30 (sized for the sage conda env on the
+#                      default tier; lint-only sizes opt down).
+#
+#   [reaper]         Background reaper task tuning. Optional;
+#                    omitted values fall back to the Rust-side
+#                    defaults (10 min sweep, 45 min max age). The
+#                    `REAPER_SWEEP_INTERVAL_SECS` /
+#                    `REAPER_MAX_AGE_SECS` env vars still override
+#                    at runtime as an emergency escape hatch.
+#
+# Editing this file:
+#   - Tweak the `default` to change the implicit tier for plain
+#     `x64` jobs (next orchestrator deploy picks it up).
+#   - Add a new tier: append a `[sizes."<label>"]` entry and run
+#     `cargo run -p ops --bin render-actionlint -- --output \
+#      .github/actionlint.yaml` from `infra/` so the lint config
+#     learns the new label. `infra-ci.yml` checks for drift.
+
+default = "shared-4x"
+
+[sizes."perf-16x"]
+cpu_kind = "performance"
+cpus = 16
+
+[sizes."perf-8x"]
+cpu_kind = "performance"
+cpus = 8
+
+[sizes."perf-4x"]
+cpu_kind = "performance"
+cpus = 4
+
+[sizes."perf-2x"]
+cpu_kind = "performance"
+cpus = 2
+
+[sizes."shared-4x"]
+cpu_kind = "shared"
+cpus = 4
+# rootfs_gb inherits the 30 GB default — sized for the
+# `sage-precompute-check` conda env which routes here. Other
+# shared-4x jobs use only a small fraction but pay for the room.
+
+[sizes."shared-2x"]
+cpu_kind = "shared"
+cpus = 2
+# Lint-only / tiny jobs; no exotic deps. 5 GB is plenty and saves
+# ~25 GB of overlay storage per spawn vs the default.
+rootfs_gb = 5
+
+[reaper]
+sweep_interval_secs = 600
+max_age_secs = 2700

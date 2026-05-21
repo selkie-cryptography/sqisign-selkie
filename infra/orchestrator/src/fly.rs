@@ -2,69 +2,238 @@
 //!
 //! API reference: <https://fly.io/docs/machines/api/>
 
-use std::time::{Duration, SystemTime};
+#[cfg(test)]
+mod tests;
 
-use anyhow::{Context, Result};
+use std::{
+    collections::BTreeMap,
+    fmt::Write,
+    path::Path,
+    time::{Duration, SystemTime},
+};
+
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const FLY_API_BASE: &str = "https://api.machines.dev/v1";
 
-/// Machine sizes we route runner workloads to.
-///
-/// Maps onto Fly's named guest sizes. Add variants when routing
-/// new job classes to bigger/smaller hardware.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum MachineSize {
-    SharedCpu2x,
-    SharedCpu4x,
-    PerformanceCpu2x,
-    PerformanceCpu4x,
-    PerformanceCpu8x,
-    PerformanceCpu16x,
+/// Per-vCPU memory allowance applied when a size omits `memory_mb`.
+/// 2 GB is Fly's recommendation for general-purpose Rust builds and
+/// matches the prior hardcoded ratio.
+const DEFAULT_MEMORY_MB_PER_CPU: u32 = 2048;
+
+/// Overlayfs size applied when a size omits `rootfs_gb`. Held at
+/// 30 GB because `sage-precompute-check` conda-installs Sage ~4 GB
+/// into the overlay on the default tier; cutting the default would
+/// silently break it. Sizes that genuinely run small (lint-only)
+/// opt down via the per-size `rootfs_gb` field.
+const DEFAULT_ROOTFS_GB: u32 = 30;
+
+/// A single Fly Machine guest size: kind ("shared"/"performance") +
+/// CPU count, plus optional per-tier memory and rootfs overrides.
+/// Loaded from `runners.toml`, not enumerated in code, so adding a
+/// new tier is a config-file edit rather than a Rust patch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MachineSize {
+    /// Fly `guest.cpu_kind`: `"shared"` or `"performance"`.
+    pub cpu_kind: String,
+
+    /// Fly `guest.cpus`.
+    pub cpus: u32,
+
+    /// Optional explicit memory allowance. Reads back through
+    /// [`Self::memory_mb`], which applies the per-vCPU default when
+    /// unset.
+    #[serde(default)]
+    memory_mb: Option<u32>,
+
+    /// Optional overlayfs size. Reads back through
+    /// [`Self::rootfs_gb`], which applies [`DEFAULT_ROOTFS_GB`] when
+    /// unset.
+    #[serde(default)]
+    rootfs_gb: Option<u32>,
 }
 
 impl MachineSize {
-    /// Fly's `guest.cpu_kind` + `guest.cpus` representation.
-    pub fn as_fly(&self) -> (&'static str, u32) {
-        match self {
-            Self::SharedCpu2x => ("shared", 2),
-            Self::SharedCpu4x => ("shared", 4),
-            Self::PerformanceCpu2x => ("performance", 2),
-            Self::PerformanceCpu4x => ("performance", 4),
-            Self::PerformanceCpu8x => ("performance", 8),
-            Self::PerformanceCpu16x => ("performance", 16),
-        }
+    /// Effective memory allowance in MB. Falls back to
+    /// `cpus * DEFAULT_MEMORY_MB_PER_CPU` when the size declares no
+    /// explicit value.
+    #[must_use]
+    pub fn memory_mb(&self) -> u32 {
+        self.memory_mb
+            .unwrap_or(self.cpus * DEFAULT_MEMORY_MB_PER_CPU)
     }
 
+    /// Effective overlayfs size in GB. Falls back to a module-level
+    /// default (30 GB) when the size declares no explicit value.
+    #[must_use]
+    pub fn rootfs_gb(&self) -> u32 {
+        self.rootfs_gb.unwrap_or(DEFAULT_ROOTFS_GB)
+    }
+}
+
+/// Top-level deserialization target for `runners.toml`. Owned by
+/// the orchestrator's `AppState` (loaded once at startup) and shared
+/// by the `render-actionlint` admin binary so config edits stay the
+/// single source of truth for both runtime sizing and lint config.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Config {
+    /// Label → size table plus the `x64` default. Flattened into
+    /// the top-level TOML so `default = ...` and `[sizes.*]` are
+    /// siblings of `[reaper]` rather than nested under a `[sizes]`
+    /// wrapper.
+    #[serde(flatten)]
+    pub sizes: RunnerSizes,
+
+    /// Reaper task tuning. Section is optional in the TOML; omitted
+    /// values fall back to the per-field defaults.
+    #[serde(default)]
+    pub reaper: ReaperConfig,
+}
+
+impl Config {
+    /// Read + parse `runners.toml`. Validates cross-field invariants
+    /// (e.g., `default` names a declared size) so a typo can't
+    /// silently route every job to the fallback path.
+    pub fn load(path: &Path) -> Result<Self> {
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("read orchestrator config: {}", path.display()))?;
+        let parsed: Self = toml::from_str(&raw)
+            .with_context(|| format!("parse orchestrator config: {}", path.display()))?;
+
+        if !parsed.sizes.sizes.contains_key(&parsed.sizes.default) {
+            return Err(anyhow!(
+                "orchestrator config {}: `default = \"{}\"` is not a declared size",
+                path.display(),
+                parsed.sizes.default,
+            ));
+        }
+
+        Ok(parsed)
+    }
+}
+
+/// Default reaper sweep interval in seconds (10 min).
+const DEFAULT_REAPER_SWEEP_SECS: u64 = 600;
+
+/// Default reaper max-age in seconds (45 min). Should comfortably
+/// exceed the longest single job that may run on a runner Machine.
+const DEFAULT_REAPER_MAX_AGE_SECS: u64 = 45 * 60;
+
+/// Tunables for the background reaper task. Each field reverts to
+/// its module-level default when omitted from the TOML; the
+/// orchestrator's `REAPER_*` env vars still override at runtime as
+/// an escape hatch for emergency tuning without a redeploy.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReaperConfig {
+    /// Seconds between reaper sweeps.
+    #[serde(default = "default_reaper_sweep_secs")]
+    pub sweep_interval_secs: u64,
+
+    /// Seconds a stale-digest Machine may live before the reaper
+    /// force-destroys it.
+    #[serde(default = "default_reaper_max_age_secs")]
+    pub max_age_secs: u64,
+}
+
+impl Default for ReaperConfig {
+    fn default() -> Self {
+        Self {
+            sweep_interval_secs: DEFAULT_REAPER_SWEEP_SECS,
+            max_age_secs: DEFAULT_REAPER_MAX_AGE_SECS,
+        }
+    }
+}
+
+/// Function-form default for serde's `#[serde(default = "...")]`,
+/// which requires a function path rather than a literal.
+fn default_reaper_sweep_secs() -> u64 {
+    DEFAULT_REAPER_SWEEP_SECS
+}
+
+/// Function-form default for serde's `#[serde(default = "...")]`,
+/// which requires a function path rather than a literal.
+fn default_reaper_max_age_secs() -> u64 {
+    DEFAULT_REAPER_MAX_AGE_SECS
+}
+
+/// The label→size table plus the implicit default for plain `x64`.
+/// Held inside [`Config`]; lives as its own type so the renderer
+/// and `from_labels` lookup can be written against just the sizing
+/// half of the config.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RunnerSizes {
+    /// Name of the entry plain `x64` resolves to when no explicit
+    /// tier label is present.
+    default: String,
+
+    /// Label → size table. BTreeMap keeps `labels()` output stable
+    /// across runs so the generated actionlint.yaml doesn't churn.
+    sizes: BTreeMap<String, MachineSize>,
+}
+
+impl RunnerSizes {
     /// Match a `runs-on:` label list (e.g. `[self-hosted, fly, perf-8x]`)
-    /// to a machine size. Returns `None` if no sizing label is set.
-    ///
-    /// The default for `x64` (no explicit size hint) is
-    /// `PerformanceCpu4x`. Cargo parallelizes well to 4 cores; past
-    /// that, returns diminish (linker is a tail-singleton). Jobs
-    /// that want cheap shared CPU can opt-in via `shared-2x` /
-    /// `shared-4x` labels; bigger workloads scale up via `perf-8x`
-    /// / `perf-16x`.
-    pub fn from_labels(labels: &[String]) -> Option<Self> {
-        if labels.iter().any(|l| l == "perf-16x") {
-            Some(Self::PerformanceCpu16x)
-        } else if labels.iter().any(|l| l == "perf-8x") {
-            Some(Self::PerformanceCpu8x)
-        } else if labels.iter().any(|l| l == "perf-4x") {
-            Some(Self::PerformanceCpu4x)
-        } else if labels.iter().any(|l| l == "perf-2x") {
-            Some(Self::PerformanceCpu2x)
-        } else if labels.iter().any(|l| l == "shared-4x") {
-            Some(Self::SharedCpu4x)
-        } else if labels.iter().any(|l| l == "shared-2x") {
-            Some(Self::SharedCpu2x)
-        } else if labels.iter().any(|l| l == "x64") {
-            Some(Self::PerformanceCpu4x)
+    /// to a machine size. Explicit tier labels (anything in `sizes`)
+    /// take precedence; plain `x64` with no explicit tier resolves to
+    /// the configured `default`. Returns `None` if the label list
+    /// names neither — caller treats that as "not a Fly job".
+    pub fn from_labels(&self, labels: &[String]) -> Option<&MachineSize> {
+        for label in labels {
+            if let Some(size) = self.sizes.get(label.as_str()) {
+                return Some(size);
+            }
+        }
+
+        if labels.iter().any(|l| l == "x64") {
+            self.sizes.get(&self.default)
         } else {
             None
         }
+    }
+
+    /// All declared size labels, in stable order. Used by
+    /// `render-actionlint` to emit the lint config's allowed-label
+    /// list.
+    pub fn labels(&self) -> impl Iterator<Item = &str> {
+        self.sizes.keys().map(String::as_str)
+    }
+
+    /// Resolve the configured default, e.g. for logging at startup.
+    pub fn default_label(&self) -> &str {
+        &self.default
+    }
+
+    /// The size plain `x64` resolves to. Guaranteed non-None by
+    /// the validation in [`Config::load`].
+    pub fn default_size(&self) -> &MachineSize {
+        &self.sizes[&self.default]
+    }
+
+    /// Renders the `self-hosted-runner.labels` block actionlint
+    /// expects, with the `fly` marker label followed by every
+    /// configured size label in stable order.
+    ///
+    /// Output is committed verbatim to `.github/actionlint.yaml`;
+    /// `infra-ci.yml` re-runs the renderer with `--check` to fail
+    /// loudly on drift.
+    #[must_use]
+    pub fn actionlint_yaml(&self) -> String {
+        let mut out = String::new();
+
+        out.push_str("# Generated by `cargo run -p ops --bin render-actionlint`.\n");
+        out.push_str("# Source of truth: `infra/orchestrator/runners.toml`.\n");
+        out.push_str("# `infra-ci.yml` runs `--check` to fail loudly on drift.\n");
+
+        out.push_str("self-hosted-runner:\n");
+        out.push_str("  labels:\n");
+        out.push_str("    - fly\n");
+        for label in self.labels() {
+            let _ = writeln!(out, "    - {label}");
+        }
+
+        out
     }
 }
 
@@ -97,9 +266,7 @@ impl FlyClient {
     /// via the `JITCONFIG` env var. The Machine is created with
     /// `auto_destroy: true` so it self-destroys when the runner
     /// finishes its single job and exits.
-    pub async fn spawn_runner(&self, size: MachineSize, jit_config: &str) -> Result<MachineId> {
-        let (cpu_kind, cpus) = size.as_fly();
-
+    pub async fn spawn_runner(&self, size: &MachineSize, jit_config: &str) -> Result<MachineId> {
         let body = SpawnMachineRequest {
             region: &self.region,
             config: SpawnMachineConfig {
@@ -109,17 +276,20 @@ impl FlyClient {
                     exec: vec!["/entrypoint.sh"],
                 },
                 guest: SpawnGuest {
-                    cpu_kind,
-                    cpus,
-                    memory_mb: cpus * 2048, // 2 GB per vCPU
+                    cpu_kind: &size.cpu_kind,
+                    cpus: size.cpus,
+                    memory_mb: size.memory_mb(),
                 },
-                // Extend the runtime overlayfs so jobs that install
-                // heavy deps at job time (e.g. `sage-precompute-check`
-                // conda-installing Sage ~4 GB into ~/sage-env) have
-                // room to write. The image-unpack ceiling (~8 GB,
-                // separate hard limit) isn't affected — the slim
-                // image still has to fit that on its own.
-                rootfs: SpawnRootfs { size_gb: 30 },
+                // Per-tier overlayfs sizing. Jobs that install heavy
+                // deps at job time (e.g. `sage-precompute-check`
+                // conda-installing Sage ~4 GB into ~/sage-env) set a
+                // larger `rootfs_gb` on the size they route to. The
+                // image-unpack ceiling (~8 GB, separate hard limit)
+                // isn't affected — the slim image still has to fit
+                // that on its own.
+                rootfs: SpawnRootfs {
+                    size_gb: size.rootfs_gb(),
+                },
                 auto_destroy: true,
                 restart: SpawnRestart { policy: "no" },
             },
@@ -339,7 +509,7 @@ struct SpawnMachineConfig<'a> {
     image: &'a str,
     env: std::collections::HashMap<&'a str, &'a str>,
     init: SpawnInit,
-    guest: SpawnGuest,
+    guest: SpawnGuest<'a>,
     rootfs: SpawnRootfs,
     auto_destroy: bool,
     restart: SpawnRestart,
@@ -351,8 +521,8 @@ struct SpawnInit {
 }
 
 #[derive(Serialize)]
-struct SpawnGuest {
-    cpu_kind: &'static str,
+struct SpawnGuest<'a> {
+    cpu_kind: &'a str,
     cpus: u32,
     memory_mb: u32,
 }
