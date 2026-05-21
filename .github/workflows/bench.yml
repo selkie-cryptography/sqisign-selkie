@@ -1,7 +1,7 @@
 name: Benchmarks
 
 # Runs on self-hosted Fly runners. Bench numbers reflect Fly's
-# shared-cpu-2x hardware and have non-trivial variance from
+# shared-cpu-4x hardware and have non-trivial variance from
 # neighbor jobs. Useful for catching gross regressions; don't quote
 # absolute numbers without controlling the environment.
 

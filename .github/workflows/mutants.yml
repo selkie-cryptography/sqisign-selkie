@@ -43,7 +43,12 @@ jobs:
   # a public repo.
   incremental:
     name: Incremental
-    runs-on: ${{ fromJSON(github.event.workflow_run.head_repository.full_name == github.repository && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
+    # `perf-2x` gives 2 dedicated cores at half the cost of perf-4x.
+    # PR diffs touch few mutants, so the wall-clock is dominated by
+    # the baseline build + a small mutant test loop rather than a
+    # parallel mutant fan-out; dedicated cores avoid shared-CPU
+    # throttling during the build step.
+    runs-on: ${{ fromJSON(github.event.workflow_run.head_repository.full_name == github.repository && '["self-hosted","fly","linux","x64","perf-2x"]' || '["ubuntu-latest"]') }}
     # Run after CI completes (success OR failure) so a transient
     # red — reviewdog 502, a platform-fly job timeout, an artifact
     # quota miss — doesn't silently kill mutation coverage on the
@@ -109,11 +114,15 @@ jobs:
       # locally against the same diff.
 
   # Full sharded sweep. Fires on push-to-main or scheduled-nightly CI
-  # completion (success or failure), or on manual dispatch. perf-8x
-  # makes each shard ~4× faster than the previous perf-2x default.
+  # completion (success or failure), or on manual dispatch. Each
+  # shard runs sequential mutant tests via nextest, so the per-shard
+  # parallelism that perf-8x bought is largely wasted; `perf-2x` gives
+  # dedicated CPU for the baseline build + serial mutant loop at a
+  # fraction of the cost. Re-tier upward (perf-4x) if the shard
+  # wall-clock regresses materially vs the historical perf-8x runs.
   full:
     name: Full shard ${{ matrix.shard }}
-    runs-on: [self-hosted, fly, linux, x64, perf-8x]
+    runs-on: [self-hosted, fly, linux, x64, perf-2x]
     # Same rationale as `incremental`: trigger on CI completion, not
     # success — the merge step's outcome-count check is the real
     # baseline-failure detector.
@@ -133,9 +142,13 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      # All 8 shards share one cache. cargo-mutants builds an identical
+      # baseline (lib + tests) before mutating, so per-shard keys were
+      # forcing 8 cold builds of the same artifacts. Swatinem tolerates
+      # concurrent writes (last writer wins); idempotent at restore.
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
-          key: mutants-${{ matrix.shard }}
+          key: mutants
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
           tool: cargo-mutants,cargo-nextest
