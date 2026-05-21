@@ -1,7 +1,18 @@
 name: Fuzzing
 
 on:
+  # The paths list is duplicated under push and pull_request because
+  # actionlint rejects YAML aliases in `paths:` — keep the two copies
+  # in sync when editing.
   push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'fuzz/**'
+      - 'Cargo.toml'
+      - '.github/scripts/fuzz-report.rs'
+      - '.github/workflows/fuzz.yml'
+  pull_request:
     branches: [main]
     paths:
       - 'src/**'
@@ -15,9 +26,8 @@ on:
     - cron: "30 7 * * *"
   workflow_dispatch:
 
-# Fuzz runs on main pushes (and the nightly fallback); cancel any
-# superseded run when a newer commit lands so the 4-target matrix
-# doesn't pile up.
+# Cancel a superseded run when a newer commit (or dispatch) lands
+# on the same ref so the 7-target matrix doesn't pile up.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -83,72 +93,92 @@ jobs:
           restore-keys: |
             fuzz-corpus-${{ matrix.target }}-
 
-      # Seed the verify corpus with parseable KAT-derived inputs
-      # before each run. The cache restore (above) brings forward the
-      # most recent fuzz-grown corpus; the seeder then ensures the
-      # 100 KAT-derived `pk||sig||msg` triples are present even on
-      # cold caches. libFuzzer deduplicates on content hash, so this
-      # is idempotent.
       # Seed every target's corpus from the KAT vectors. The seeder
       # writes into all `fuzz/corpus/<target>/` directories; libFuzzer
-      # only reads its own target's dir, so no per-target gating is
-      # needed.
+      # dedupes on content hash, so this is idempotent against the
+      # restored cache. Ensures the 100 KAT-derived `pk||sig||msg`
+      # triples are present even on cold caches.
       - name: Seed corpus from KAT vectors
         run: cargo run --release --features expose-internals --example seed-fuzz-corpus
 
-      # cargo-fuzz on x86_64 Linux defaults to `--target
-      # x86_64-unknown-linux-musl` (static-link convenience), but the
-      # ubuntu-24.04 runner ships no musl C++ toolchain
-      # (`x86_64-linux-musl-g++`), which `libfuzzer-sys`'s build script
-      # needs to compile libFuzzer's C++ sources via cc-rs. ASan also
-      # refuses static libc. The host gnu target has g++ and dynamic
-      # libc out of the box — pin all `cargo fuzz` invocations to it.
-      - name: Build fuzzer
-        run: |
-          cd fuzz
-          cargo +nightly fuzz build --target x86_64-unknown-linux-gnu ${{ matrix.target }}
-
+      # `cargo fuzz run` builds + runs in one step. `--target
+      # x86_64-unknown-linux-gnu` overrides the cargo-fuzz default
+      # of `-musl`, which would need a musl C++ toolchain the
+      # ubuntu-24.04 base lacks for `libfuzzer-sys`'s cc-rs build.
+      #
+      # Two failure modes to distinguish from a healthy run:
+      #   - exit 77: libFuzzer found a crash. Normal — the next step
+      #     files a PR with the crash inputs. Treat as success.
+      #   - exit 124: outer `timeout` SIGTERM at budget end. Normal.
+      # Any other non-zero exit is a real failure (arg-parse, build,
+      # missing binary) and must surface — a bare `|| true` here
+      # masked exactly that and let zero-execs garbage flow downstream.
+      #
+      # Independently, sanity-check that libFuzzer actually iterated
+      # by looking for at least one `#NNN ... cov: M` progress line.
+      # A clean exit with no progress lines = the binary loaded but
+      # never ran iterations (a regression hidden by `tee`).
       - name: Run fuzzer (10 min)
         run: |
           cd fuzz
           set -o pipefail
-          timeout 600 cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} --no-build -- \
-            -max_total_time=600 2>&1 | tee fuzz-output.txt || true
+          rc=0
+          timeout 600 cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- \
+            -max_total_time=600 2>&1 | tee fuzz-output.txt || rc=$?
+          case "$rc" in
+            0|77|124) ;;
+            *)
+              echo "::error::cargo fuzz exited $rc (unexpected); tail of fuzz-output.txt below"
+              tail -80 fuzz-output.txt >&2
+              exit "$rc"
+              ;;
+          esac
+          if ! grep -qE '^#[0-9]+.* cov: ' fuzz-output.txt; then
+            echo "::error::no libFuzzer progress lines in fuzz-output.txt — fuzzer didn't actually run"
+            head -80 fuzz-output.txt >&2
+            exit 1
+          fi
 
       - name: Collect results
         run: |
           rustc -O .github/scripts/fuzz-report.rs -o /tmp/fuzz-report
           /tmp/fuzz-report target "${{ matrix.target }}" "${{ github.sha }}" fuzz/fuzz-output.txt > fuzz-result.json
 
-      # Ship per-target results to the Tigris scratch bucket for the
-      # `report` consolidator job to collect. Tigris (Fly's S3-compatible
-      # object store) replaces GHA artifact storage as the cross-job
-      # transport — see .github/scripts/ci-scratch.rs. Same shape as
-      # the mutants shard transport below.
-      #
-      # Fires on push-to-main (so the `report` consolidator can collect)
-      # AND on workflow_dispatch (manual probe of the awscli / Tigris
-      # path; the report job itself stays push-only, so dispatched
-      # fragments just sit in the bucket until the 7-day lifecycle rule
-      # expires — harmless).
-      - name: Build ci-scratch
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
-        run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+      # Compact per-target verdict in the run's Summary panel. Runs
+      # on every event so PR / branch-dispatch / schedule see results
+      # at a glance; the full libFuzzer log stays in `Run fuzzer`.
+      - name: Render per-target summary
+        if: ${{ !cancelled() && hashFiles('fuzz-result.json') != '' }}
+        run: |
+          {
+            echo "### Fuzz \`${{ matrix.target }}\`"
+            echo
+            echo '| Status | Runs | Crashes | Corpus size |'
+            echo '|---|---:|---:|---:|'
+            jq -r '"| \(.status) | \(.runs) | \(.crashes) | \(.corpus_size) |"' fuzz-result.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Main-only: ship to Tigris (Fly's S3-compatible scratch bucket)
+      # so the `report` job can pull all 7 targets back and publish
+      # one merged fuzz.json. See `.github/scripts/ci-scratch.rs`;
+      # mutants uses the same transport.
       - name: Ship fuzz result to Tigris scratch
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+        if: github.ref == 'refs/heads/main'
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
           SHA: ${{ github.sha }}
           TARGET: ${{ matrix.target }}
-        run: /tmp/ci-scratch put fuzz "${SHA}" "${TARGET}" fuzz-result.json
+        run: |
+          rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+          /tmp/ci-scratch put fuzz "${SHA}" "${TARGET}" fuzz-result.json
 
       # Crash inputs flow directly into a fuzz-crash/ branch + PR via
       # the next step. Corpora are kept locally in fuzz/artifacts/ and
       # never leave the runner.
 
       - name: Open PR on crash
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -200,7 +230,7 @@ jobs:
   report:
     name: Upload fuzz report
     needs: fuzz
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
     steps:
@@ -208,14 +238,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build ci-scratch
-        run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
       - name: Pull per-target results from Tigris scratch
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
           SHA: ${{ github.sha }}
         run: |
+          rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
           mkdir -p results
           /tmp/ci-scratch get fuzz "${SHA}" results
           ls -la results
