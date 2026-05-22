@@ -136,6 +136,60 @@ fn challenge_matrix_parse_all_zero() {
     assert!(ChallengeMatrix::parse(&data, bound).is_ok());
 }
 
+/// `verify` must return `Err`, never panic, when the signature
+/// pins `e_rsp_prime = E_RSP - n_bt - r_rsp = 1` — a chain too
+/// short for the (2,2)-isogeny to run. Regression for an
+/// `assert!(e >= 2)` in the surfaces chain that was reachable from
+/// adversarial signatures whose kernel passed the 2^3-isotropy
+/// check. The structurally invalid signature must surface as
+/// `VerificationFailed`, the same as any other malformed input.
+#[test]
+fn verify_rejects_e_rsp_prime_one_without_panicking() {
+    let pk_bytes = hex::decode(KAT0_PK).unwrap();
+    let pk_array: &[u8; VERIFYING_KEY_BYTES] = pk_bytes.as_slice().try_into().unwrap();
+    let vk = VerifyingKey::from_bytes(pk_array).unwrap();
+
+    let sm_bytes = hex::decode(KAT0_SM).unwrap();
+    let mut sig_bytes = [0u8; SIGNATURE_BYTES];
+    sig_bytes.copy_from_slice(&sm_bytes[..SIGNATURE_BYTES]);
+
+    // n_bt + r_rsp = E_RSP - 1 = 125 with r_rsp = 0 skips the inner
+    // small-isogeny branch and lands directly in the (2,2)-chain
+    // with e = 1.
+    sig_bytes[A_AUX_BYTES] = 125;
+    sig_bytes[A_AUX_BYTES + 1] = 0;
+
+    let msg = &sm_bytes[SIGNATURE_BYTES..];
+
+    // m_chl_bound = E_RSP + 2 - n_bt = 3, so each M_chl entry is
+    // bounded by 8 — but it must still be non-zero, or the matrix
+    // multiplication collapses the basis to identity and the kernel
+    // construction fails before reaching the chain. Sweep odd entries
+    // 1..8 in slot a, plus hint bytes, so the recovered kernel passes
+    // the 2^3-isotropy guard often enough to drive the chain entry.
+    for a in 1u8..8 {
+        for hint_aux in 0u8..8 {
+            for hint_chl in 0u8..8 {
+                for b in &mut sig_bytes[M_CHL_OFFSET..M_CHL_OFFSET + M_CHL_BYTES] {
+                    *b = 0;
+                }
+                sig_bytes[M_CHL_OFFSET] = a;
+                sig_bytes[M_CHL_OFFSET + M_CHL_BYTES / 4] = 1;
+                sig_bytes[M_CHL_OFFSET + 2 * (M_CHL_BYTES / 4)] = 1;
+                sig_bytes[M_CHL_OFFSET + 3 * (M_CHL_BYTES / 4)] = a;
+                sig_bytes[HINT_OFFSET] = hint_aux;
+                sig_bytes[HINT_OFFSET + 1] = hint_chl;
+                let sig = Signature::from_bytes(&sig_bytes).expect("crafted bytes parse");
+                assert!(
+                    vk.verify(msg, &sig).is_err(),
+                    "verify must reject e_rsp_prime = 1 \
+                     (a={a}, hint_aux={hint_aux}, hint_chl={hint_chl})"
+                );
+            }
+        }
+    }
+}
+
 /// Each entry must be `< 2^bound`. With `bound = 127` (caller's
 /// computation when `n_bt = 1`), bit 127 of any entry must be zero;
 /// setting it must be rejected.
