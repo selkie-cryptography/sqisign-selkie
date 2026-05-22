@@ -16,8 +16,10 @@ fn kat0_vk() -> VerifyingKey {
 }
 
 fn kat0_sig_bytes() -> [u8; SIGNATURE_BYTES] {
-    let sm = hex::decode(KAT_VECTORS[0].4).expect("KAT 0 sm hex");
-    sm[..SIGNATURE_BYTES].try_into().expect("sm has sig prefix")
+    let sig = hex::decode(KAT_VECTORS[0].4).expect("KAT 0 sig hex");
+    sig[..SIGNATURE_BYTES]
+        .try_into()
+        .expect("sig prefix present")
 }
 
 fn arb_msg() -> impl Strategy<Value = Vec<u8>> {

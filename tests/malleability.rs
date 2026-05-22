@@ -27,11 +27,9 @@
 //! All offsets above are inherent to the wire format defined in
 //! `Signature::from_bytes` (`src/keys/mod.rs`).
 
-use sqisign_selkie::{SIGNATURE_BYTES, Signature, VERIFYING_KEY_BYTES, VerifyingKey};
-
-const PK_HEX: &str = "07CCD21425136F6E865E497D2D4D208F0054AD81372066E817480787AAF7B2029550C89E892D618CE3230F23510BFBE68FCCDDAEA51DB1436B462ADFAF008A010B";
-const SIG_HEX: &str = "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC010001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010202";
-const MSG_HEX: &str = "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8";
+use sqisign_selkie::{
+    SIGNATURE_BYTES, Signature, VERIFYING_KEY_BYTES, VerifyingKey, keys::kat_data::KAT_VECTORS,
+};
 
 const CHL_OFFSET: usize = 130;
 const CHL_LEN: usize = 16;
@@ -39,11 +37,12 @@ const HINT_AUX_OFFSET: usize = 146;
 const HINT_CHL_OFFSET: usize = 147;
 
 fn donor() -> (VerifyingKey, [u8; SIGNATURE_BYTES], Vec<u8>) {
-    let pk = hex::decode(PK_HEX).unwrap();
-    let sig = hex::decode(SIG_HEX).unwrap();
-    let msg = hex::decode(MSG_HEX).unwrap();
+    let (_seed, pk_hex, _sk, msg_hex, sig_hex) = KAT_VECTORS[0];
+    let pk = hex::decode(pk_hex).unwrap();
+    let sig = hex::decode(sig_hex).unwrap();
+    let msg = hex::decode(msg_hex).unwrap();
     let pk_arr: [u8; VERIFYING_KEY_BYTES] = pk.as_slice().try_into().unwrap();
-    let sig_arr: [u8; SIGNATURE_BYTES] = sig.as_slice().try_into().unwrap();
+    let sig_arr: [u8; SIGNATURE_BYTES] = sig[..SIGNATURE_BYTES].try_into().unwrap();
     let vk = VerifyingKey::from_bytes(&pk_arr).expect("baseline pk parses");
     (vk, sig_arr, msg)
 }

@@ -108,6 +108,18 @@ required-features = ["expose-internals"]
 name = "api_properties"
 required-features = ["expose-internals"]
 
+[[test]]
+name = "bit_flip_sweep"
+required-features = ["expose-internals"]
+
+[[test]]
+name = "malleability"
+required-features = ["expose-internals"]
+
+[[test]]
+name = "semantic_boundaries"
+required-features = ["expose-internals"]
+
 [[bench]]
 name = "iai"
 harness = false
