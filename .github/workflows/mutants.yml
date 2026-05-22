@@ -66,7 +66,14 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Generate diff vs main
+        # `actions/checkout` ran with `persist-credentials: false`,
+        # so the clone has no auth header for the subsequent `git
+        # fetch`. Set one up via gh just for this step so the
+        # default-low credential lifetime stays elsewhere.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          gh auth setup-git
           git fetch origin main
           git diff origin/main..HEAD > git.diff
 
