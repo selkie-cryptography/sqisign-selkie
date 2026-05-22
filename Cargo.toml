@@ -104,6 +104,10 @@ required-features = ["expose-internals"]
 name = "zeroize"
 required-features = ["expose-internals"]
 
+[[test]]
+name = "api_properties"
+required-features = ["expose-internals"]
+
 [[bench]]
 name = "iai"
 harness = false
