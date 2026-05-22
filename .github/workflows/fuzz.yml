@@ -112,7 +112,7 @@ jobs:
     # 2 cores (one for the fuzz worker, one for OS / supervisor)
     # is the right floor here — perf-4x doesn't speed a single-
     # threaded fuzzer.
-    runs-on: [self-hosted, fly, linux, x64, perf-2x]
+    runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 30
     strategy:
       fail-fast: false
