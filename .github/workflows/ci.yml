@@ -176,7 +176,7 @@ jobs:
       # don't pay the full lib-test suite again on a different feature
       # flag. `alloc_budget`, `zeroize`, and `ctgrind` are also gated
       # but have dedicated jobs in `audit.yml`.
-      - run: cargo nextest run --features expose-internals --cargo-profile release-checked --test api_properties --test bit_flip_sweep --test malleability --test semantic_boundaries
+      - run: cargo nextest run --features expose-internals --cargo-profile release-checked --test api_properties --test bit_flip_sweep --test cross_kat_verify --test malleability --test semantic_boundaries
       - run: cargo test --doc
 
       # Compile-check the `--no-default-features` variant on the same
