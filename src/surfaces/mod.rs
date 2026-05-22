@@ -511,6 +511,10 @@ impl Kernel {
     /// The kernel has order 2^(e+2). The last two isogeny steps
     /// use special hadamard_bool settings (penultimate/ultimate)
     /// to produce dual-form output for the splitting step.
+    ///
+    /// Returns `None` if the chain cannot run: `e < 2` (no main
+    /// step after gluing), the kernel fails to split, or any
+    /// internal numerical breakdown.
     pub fn isogeny(
         &self,
         e: TorsionExponent,
@@ -598,7 +602,12 @@ impl Kernel {
         // Algorithm 8.47 (Isogeny22ChainWithTorsion):
         // https://sqisign.org/spec/sqisign-20250707.pdf#section.8.5
         let e = e.value();
-        assert!(e >= 2, "chain requires e >= 2");
+        // Phase 1 indexes `orders[1]`; chain needs gluing + 1 main
+        // step. Reachable from verify on adversarial signatures —
+        // surface as `None` rather than panic.
+        if e < 2 {
+            return None;
+        }
 
         // Phase 1: balanced strategy (lines 1–15).
         //
