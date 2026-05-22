@@ -33,11 +33,19 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
-  pull-requests: write
+  # Crash candidates are surfaced inline (Step Summary + workflow log)
+  # rather than via uploaded artifacts or auto-opened PRs. The
+  # workflow never pushes branches and never creates PRs, so the
+  # default minimum contents-read permission is sufficient.
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  # Surface Rust-side panic backtraces in fuzz crash output. Without
+  # this, panics in fuzz targets print only the panic message + a
+  # "set RUST_BACKTRACE=1" hint; the triager would have to reproduce
+  # locally to see where in our code the panic originated.
+  RUST_BACKTRACE: "1"
 
 jobs:
   # Build + run the KAT-corpus seeder once and ship the result to
@@ -224,64 +232,129 @@ jobs:
           rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
           /tmp/ci-scratch put fuzz "${SHA}" "${TARGET}" fuzz-result.json
 
-      # Crash inputs flow directly into a fuzz-crash/ branch + PR via
-      # the next step. Corpora are kept locally in fuzz/artifacts/ and
-      # never leave the runner.
+      # Crash candidates flow: surface anything libFuzzer flagged as a
+      # real bug (`crash-*` / `oom-*` / `leak-*` / `timeout-*`,
+      # excluding `slow-unit-*`) inline — via the run's Summary panel
+      # AND the workflow log — with each crash seed base64-encoded so
+      # a triager can paste it into a `base64 -d` heredoc and reproduce
+      # locally. No artifact upload, no auto-PR, no auth surface.
 
-      - name: Open PR on crash
+      - name: Summarize crash candidates
         if: ${{ !cancelled() }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CRASHES=$(find fuzz/artifacts -type f 2>/dev/null | head -5)
-          if [ -z "$CRASHES" ]; then
-            echo "No crashes found."
+          # libFuzzer writes several artifact classes into
+          # `fuzz/artifacts/<target>/`:
+          #   - `crash-*` / `oom-*` / `leak-*` / `timeout-*` — real
+          #     bugs worth surfacing.
+          #   - `slow-unit-*` — single iteration exceeded ~1 s. Sign /
+          #     keygen targets are intrinsically slow and spam these
+          #     on every run; we partition them as noise so the
+          #     summary stays signal-heavy.
+          shopt -s nullglob
+          REAL=( fuzz/artifacts/*/crash-*    \
+                 fuzz/artifacts/*/oom-*      \
+                 fuzz/artifacts/*/leak-*     \
+                 fuzz/artifacts/*/timeout-*  )
+          SLOW=( fuzz/artifacts/*/slow-unit-* )
+          shopt -u nullglob
+
+          if [ ${#REAL[@]} -eq 0 ] && [ ${#SLOW[@]} -eq 0 ]; then
+            echo "No fuzz artifacts produced this run."
             exit 0
           fi
+
           TARGET="${{ matrix.target }}"
           SHA="${{ github.sha }}"
-          SHORT_SHA="${SHA:0:7}"
-          BRANCH="fuzz-crash/${TARGET}-${SHORT_SHA}"
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
+          # Pull just the Rust panic + backtrace out of the libFuzzer
+          # output. The panic block ends at the libFuzzer `==N== ERROR`
+          # marker; everything after that is libFuzzer / ASan internal
+          # frames that the full tail (further down) already shows.
+          # If the crash isn't a Rust panic (e.g., pure ASan, OOM,
+          # timeout), this is empty and the section is skipped.
+          RUST_PANIC=$(awk '
+            /^==[0-9]+== ERROR/ && in_panic { exit }
+            /thread .*panicked at/ { in_panic = 1 }
+            in_panic { print }
+          ' fuzz/fuzz-output.txt 2>/dev/null)
 
-          mkdir -p "fuzz/corpus/${TARGET}"
-          for f in $CRASHES; do
-            cp "$f" "fuzz/corpus/${TARGET}/"
-          done
-          git add -f "fuzz/corpus/${TARGET}/"
-          git commit -m "fuzz: add crash inputs for ${TARGET} (${SHORT_SHA})"
-          # `actions/checkout` ran with `persist-credentials: false`,
-          # so the clone has no git auth header. Configure git to use
-          # the same `GH_TOKEN` `gh pr create` (below) consumes — one
-          # call covers both push and PR creation.
-          gh auth setup-git
-          git push origin "$BRANCH"
+          # Render the rich, human-readable summary into the run's
+          # Summary panel.
+          {
+            echo "## Fuzz crash candidates — \`${TARGET}\`"
+            echo
+            echo "**Commit:** ${SHA}"
+            echo "**Run:** ${RUN_URL}"
+            echo
+            if [ -n "$RUST_PANIC" ]; then
+              echo "### Rust panic"
+              echo
+              echo '~~~'
+              echo "$RUST_PANIC"
+              echo '~~~'
+              echo
+            fi
+            if [ ${#REAL[@]} -gt 0 ]; then
+              echo "### Real bug candidates (${#REAL[@]})"
+              echo
+              for f in "${REAL[@]}"; do
+                fname=$(basename "$f")
+                size=$(wc -c < "$f" | tr -d ' ')
+                echo "<details>"
+                echo "<summary><code>${fname}</code> (${size} bytes)</summary>"
+                echo
+                echo "Reproduce locally:"
+                echo
+                echo '~~~bash'
+                echo "base64 -d <<'EOF' > /tmp/${fname}"
+                base64 < "$f"
+                echo "EOF"
+                echo "cargo +nightly fuzz run ${TARGET} /tmp/${fname}"
+                echo '~~~'
+                echo
+                echo "Keep as a regression seed (if confirmed bug):"
+                echo
+                echo '~~~bash'
+                echo "mv /tmp/${fname} fuzz/corpus/${TARGET}/"
+                echo "git add -f fuzz/corpus/${TARGET}/${fname}"
+                echo "git commit -m \"fuzz: add crash input for ${TARGET} (${SHA:0:7})\""
+                echo '~~~'
+                echo
+                echo "</details>"
+              done
+              echo
+            fi
+            if [ ${#SLOW[@]} -gt 0 ]; then
+              echo "### Slow-unit noise (${#SLOW[@]}) — ignored"
+              echo
+              echo "Sign / keygen targets generate these on every run; not crashes."
+              echo
+            fi
+            echo "### libFuzzer output (tail, 80 lines)"
+            echo
+            echo '~~~'
+            tail -80 fuzz/fuzz-output.txt 2>/dev/null \
+              || echo "(fuzz/fuzz-output.txt missing)"
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          # Build crash list for the PR body.
-          CRASH_LIST=""
-          for f in $CRASHES; do
-            FNAME=$(basename "$f")
-            HEX=$(xxd -p "$f" | tr -d '\n')
-            CRASH_LIST+='```'$'\n'"${FNAME}: ${HEX}"$'\n''```'$'\n\n'
-          done
+          # Also dump the same base64 blobs to the workflow log so the
+          # bytes are grep-able from `gh run view --log` and survive in
+          # the raw log record alongside the Summary. `::group::` keeps
+          # the UI tidy; the bytes are still there to copy.
+          if [ ${#REAL[@]} -gt 0 ]; then
+            echo "::group::Crash inputs (base64) — ${TARGET}"
+            for f in "${REAL[@]}"; do
+              fname=$(basename "$f")
+              size=$(wc -c < "$f" | tr -d ' ')
+              echo "----- ${fname} (${size} bytes) -----"
+              base64 < "$f"
+            done
+            echo "::endgroup::"
 
-          # Fill in the PR template.
-          BODY=$(sed \
-            -e "s|__TARGET__|${TARGET}|g" \
-            -e "s|__SHA__|${SHA}|g" \
-            -e "s|__RUN_URL__|${RUN_URL}|g" \
-            .github/fuzz-crash-pr.md)
-          BODY="${BODY/__CRASH_LIST__/$CRASH_LIST}"
-
-          gh pr create \
-            --title "fuzz: crash in ${TARGET} (${SHORT_SHA})" \
-            --body "$BODY" \
-            --base main \
-            --head "$BRANCH"
+            echo "::warning::Found ${#REAL[@]} crash candidate(s) for ${TARGET}; see the run Summary for reproducers."
+          fi
 
   report:
     name: Upload fuzz report
