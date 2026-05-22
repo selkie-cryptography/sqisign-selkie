@@ -112,6 +112,20 @@ jobs:
           # input bug class that exec/s doesn't reflect.
           - fuzz_keygen_panic
           - fuzz_sign_panic
+        # Per-target overrides for libFuzzer's `-report_slow_units`
+        # (in seconds). libFuzzer's default is 10 s, which is right
+        # for parse / verify targets that iterate in milliseconds.
+        # For sign / keygen — where every iter takes multiple seconds
+        # by design — the default flags ordinary iterations as slow
+        # and spams `slow-unit-*` artifacts. Raise the threshold so
+        # only genuinely-stuck inputs are flagged.
+        include:
+          - target: fuzz_verify_typed
+            report_slow_units: 30
+          - target: fuzz_keygen_panic
+            report_slow_units: 120
+          - target: fuzz_sign_panic
+            report_slow_units: 300
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
@@ -183,7 +197,9 @@ jobs:
           set -o pipefail
           rc=0
           timeout 600 cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- \
-            -max_total_time=600 2>&1 | tee fuzz-output.txt || rc=$?
+            -max_total_time=600 \
+            -report_slow_units=${{ matrix.report_slow_units || 10 }} \
+            2>&1 | tee fuzz-output.txt || rc=$?
           case "$rc" in
             0|77|124) ;;
             *)
