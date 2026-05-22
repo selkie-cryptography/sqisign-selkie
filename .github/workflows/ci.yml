@@ -146,8 +146,12 @@ jobs:
     # `debug_assert!`s and unintended integer overflow still surface).
     # Cargo.toml defines the profile.
     #
-    # Fork PRs still route to GH-hosted.
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
+    # Fork PRs still route to GH-hosted. `perf-4x` is required: the
+    # release-checked build + 100 sign KATs is CPU-bound and Fly's
+    # shared CPUs throttle after the burst window, ~3× wall-clock vs
+    # dedicated cores. Empirically: ~10 min on perf-4x, >30 min on
+    # shared-cpu-4x.
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64","perf-4x"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -329,8 +333,11 @@ jobs:
     # `actions/cache` brings warm runs down to ~1–2 min.
     #
     # Skipped on fork PR (untrusted code on self-hosted Machines).
+    # `perf-4x`: the cross-check is mostly Sage subprocess work, which
+    # is single-threaded but CPU-bound for ~30 min on perf-4x. On
+    # shared-cpu-4x the throttling extends that well past the timeout.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: [self-hosted, fly, linux, x64, perf-4x]
     # 60 min: cold runs do a one-time Sage conda install (~several
     # minutes) plus the cross-check itself. Warm runs hit
     # `actions/cache` and finish quickly. 30 min was cancelling
