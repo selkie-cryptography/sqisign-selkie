@@ -153,14 +153,30 @@ jobs:
     # shared-cpu-4x.
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","perf-4x"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
+    # sccache against a Tigris S3 bucket replaces `Swatinem/rust-cache`
+    # for this job. The previous pre/post rust-cache steps spent ~5 min
+    # restoring + ~2.5 min saving GHA-artifact-stored target/ tarballs
+    # (~7.5 min of overhead on a ~5 min test phase). sccache caches at
+    # the rustc-invocation level into S3, with parallel reads at low
+    # latency — no monolithic restore/save phases, only cache writes
+    # for the .rmeta / .rlib files that actually changed.
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_BUCKET: selkie-ci-sccache
+      SCCACHE_ENDPOINT: https://fly.storage.tigris.dev
+      SCCACHE_REGION: auto
+      # Bucket-scoped Tigris creds. Separate from the
+      # `TIGRIS_*` pair used by the `selkie-ci-scratch` bucket
+      # (mutants intermediates, fuzz seed corpora) so a leak of
+      # either doesn't compromise both.
+      AWS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SCCACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          shared-key: linux-x64-release-checked
+      - uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e  # v0.0.10
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
           # Pinned so kat-report.rs's JUnit parser doesn't break on
@@ -178,6 +194,14 @@ jobs:
       # but have dedicated jobs in `audit.yml`.
       - run: cargo nextest run --features expose-internals --cargo-profile release-checked --test api_properties --test bit_flip_sweep --test cross_kat_verify --test malleability --test semantic_boundaries
       - run: cargo test --doc
+
+      # Print the cache hit rate. First run on a fresh bucket: all
+      # misses, expected. Subsequent runs: most-to-all hits if the
+      # source didn't change. Useful for diagnosing whether sccache
+      # is doing what we think it's doing.
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats
 
       # Compile-check the `--no-default-features` variant on the same
       # platform. Catches code paths gated on optional features (e.g.
