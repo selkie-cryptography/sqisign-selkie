@@ -120,6 +120,10 @@ required-features = ["expose-internals"]
 name = "semantic_boundaries"
 required-features = ["expose-internals"]
 
+[[test]]
+name = "cross_kat_verify"
+required-features = ["expose-internals"]
+
 [[bench]]
 name = "iai"
 harness = false
