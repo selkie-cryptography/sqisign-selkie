@@ -169,6 +169,14 @@ jobs:
           # `#[cfg(test)] mod tests`).
           tool: cargo-nextest@0.9.133
       - run: cargo nextest run --cargo-profile release-checked
+      # Tests in `tests/` that consume `keys::kat_data::KAT_VECTORS`
+      # (api_properties, bit_flip_sweep, malleability,
+      # semantic_boundaries) are gated on `expose-internals` and
+      # silently skipped above. Re-run scoped to just those four so we
+      # don't pay the full lib-test suite again on a different feature
+      # flag. `alloc_budget`, `zeroize`, and `ctgrind` are also gated
+      # but have dedicated jobs in `audit.yml`.
+      - run: cargo nextest run --features expose-internals --cargo-profile release-checked --test api_properties --test bit_flip_sweep --test malleability --test semantic_boundaries
       - run: cargo test --doc
 
       # Compile-check the `--no-default-features` variant on the same
