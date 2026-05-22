@@ -1,35 +1,45 @@
 name: Fuzzing
 
+# Two ways in:
+#
+# 1. Indirect — after a CI run on Rust source completes successfully.
+#    Most fuzz runs come through this gate. Fuzzing red code that
+#    doesn't build / test is wasted Machine time, and any panic
+#    libFuzzer caught would be drowned out by the unrelated CI
+#    failure. Same pattern as `mutants.yml`.
+#
+# 2. Direct — fuzz-infrastructure changes (the fuzz crate itself,
+#    the seeder, this workflow) don't go through CI because CI's
+#    path filter is scoped to src/ + tests/ + benches/. Fire fuzz
+#    directly for those so they're still validated.
+#
+# `workflow_dispatch` bypasses both gates (the operator knows what
+# they're doing).
+
 on:
-  # The paths list is duplicated under push and pull_request because
-  # actionlint rejects YAML aliases in `paths:` — keep the two copies
-  # in sync when editing.
   push:
     branches: [main]
     paths:
-      - 'src/**'
       - 'fuzz/**'
-      - 'Cargo.toml'
-      - '.github/scripts/fuzz-report.rs'
+      - 'examples/seed-fuzz-corpus.rs'
       - '.github/workflows/fuzz.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'src/**'
       - 'fuzz/**'
-      - 'Cargo.toml'
-      - '.github/scripts/fuzz-report.rs'
+      - 'examples/seed-fuzz-corpus.rs'
       - '.github/workflows/fuzz.yml'
-  schedule:
-    # Nightly fallback so fuzzers still run when a day's pushes all
-    # miss the path filter above (e.g., workflow-only changes).
-    - cron: "30 7 * * *"
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
   workflow_dispatch:
 
-# Cancel a superseded run when a newer commit (or dispatch) lands
-# on the same ref so the 7-target matrix doesn't pile up.
+# Cancel a superseded run when a newer trigger lands on the same
+# head — keeps the 7-target matrix from piling up. For workflow_run,
+# github.ref is forced to the default branch; key by the triggering
+# run's head_branch so PRs don't share groups with main.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: fuzz-${{ github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -57,12 +67,22 @@ jobs:
   # `report` job runs `ci-scratch clean fuzz-seed` for hygiene.
   seed:
     name: Seed corpus from KAT vectors
+    # Skip when this workflow was triggered by a failed CI run.
+    # All other triggers (push, PR, workflow_dispatch, successful
+    # workflow_run) proceed.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
+          # On workflow_run, github.sha is the merge-base; we want
+          # the actual commit CI ran against. Direct triggers fall
+          # back to the natural github.sha.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
@@ -77,7 +97,7 @@ jobs:
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         # `ci-scratch put` appends `.json` to the bucket key. That's a
         # misnomer for a tarball but functionally fine — Tigris is
         # blob storage and the consumer reads bytes back verbatim.
@@ -130,6 +150,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2  # nightly
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
@@ -168,7 +189,7 @@ jobs:
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           mkdir -p /tmp/fuzz-seed
           /tmp/ci-scratch get fuzz-seed "${SHA}" /tmp/fuzz-seed
@@ -217,7 +238,7 @@ jobs:
       - name: Collect results
         run: |
           rustc -O .github/scripts/fuzz-report.rs -o /tmp/fuzz-report
-          /tmp/fuzz-report target "${{ matrix.target }}" "${{ github.sha }}" fuzz/fuzz-output.txt > fuzz-result.json
+          /tmp/fuzz-report target "${{ matrix.target }}" "${{ github.event.workflow_run.head_sha || github.sha }}" fuzz/fuzz-output.txt > fuzz-result.json
 
       # Compact per-target verdict in the run's Summary panel. Runs
       # on every event so PR / branch-dispatch / schedule see results
@@ -238,11 +259,20 @@ jobs:
       # one merged fuzz.json. See `.github/scripts/ci-scratch.rs`;
       # mutants uses the same transport.
       - name: Ship fuzz result to Tigris scratch
-        if: github.ref == 'refs/heads/main'
+        # Only ship results to the dashboard for runs against `main`.
+        # Under workflow_run, github.ref is forced to the default
+        # branch — gate on the triggering run's head_branch instead;
+        # for direct push/dispatch, github.ref already reflects the
+        # right branch.
+        if: >-
+          (github.event_name == 'workflow_run' &&
+           github.event.workflow_run.head_branch == 'main') ||
+          (github.event_name != 'workflow_run' &&
+           github.ref == 'refs/heads/main')
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           TARGET: ${{ matrix.target }}
         run: |
           rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
@@ -280,7 +310,7 @@ jobs:
           fi
 
           TARGET="${{ matrix.target }}"
-          SHA="${{ github.sha }}"
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           # Pull just the Rust panic + backtrace out of the libFuzzer
@@ -375,19 +405,31 @@ jobs:
   report:
     name: Upload fuzz report
     needs: fuzz
-    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    # Publish to the dashboard only for runs against `main`. Under
+    # workflow_run, github.ref is forced to the default branch
+    # regardless of what triggered upstream CI — gate on the
+    # triggering run's head_branch instead. For direct push/dispatch,
+    # github.ref already reflects the right branch.
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.head_branch == 'main') ||
+        (github.event_name != 'workflow_run' &&
+         github.ref == 'refs/heads/main')
+      )
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Pull per-target results from Tigris scratch
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
           mkdir -p results
@@ -401,7 +443,7 @@ jobs:
       - name: Merge results
         run: |
           rustc -O .github/scripts/fuzz-report.rs -o /tmp/fuzz-report
-          /tmp/fuzz-report merge "${{ github.sha }}" results > fuzz.json
+          /tmp/fuzz-report merge "${{ github.event.workflow_run.head_sha || github.sha }}" results > fuzz.json
 
       - name: Verify fuzz payload has data
         run: jq -e '.targets | length > 0' fuzz.json > /dev/null || { echo "::error::fuzz.json has no targets"; cat fuzz.json >&2; exit 1; }
@@ -409,7 +451,7 @@ jobs:
       - name: Upload to CI site
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload fuzz fuzz.json "${{ github.sha }}"
+        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload fuzz fuzz.json "${{ github.event.workflow_run.head_sha || github.sha }}"
 
       # Sweep the per-SHA scratch intermediates now that the merged
       # fuzz.json is published. The bucket lifecycle rule auto-
@@ -419,7 +461,7 @@ jobs:
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           /tmp/ci-scratch clean fuzz "${SHA}"
           /tmp/ci-scratch clean fuzz-seed "${SHA}"
