@@ -48,7 +48,7 @@ jobs:
     # the baseline build + a small mutant test loop rather than a
     # parallel mutant fan-out; dedicated cores avoid shared-CPU
     # throttling during the build step.
-    runs-on: ${{ fromJSON(github.event.workflow_run.head_repository.full_name == github.repository && '["self-hosted","fly","linux","x64","perf-2x"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON(github.event.workflow_run.head_repository.full_name == github.repository && '["self-hosted","fly","linux","perf-2x"]' || '["ubuntu-latest"]') }}
     # Run after CI completes (success OR failure) so a transient
     # red — reviewdog 502, a platform-fly job timeout, an artifact
     # quota miss — doesn't silently kill mutation coverage on the
@@ -122,7 +122,7 @@ jobs:
   # wall-clock regresses materially vs the historical perf-8x runs.
   full:
     name: Full shard ${{ matrix.shard }}
-    runs-on: [self-hosted, fly, linux, x64, perf-2x]
+    runs-on: [self-hosted, fly, linux, perf-2x]
     # Same rationale as `incremental`: trigger on CI completion, not
     # success — the merge step's outcome-count check is the real
     # baseline-failure detector.
