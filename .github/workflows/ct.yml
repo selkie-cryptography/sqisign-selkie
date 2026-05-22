@@ -94,7 +94,14 @@ jobs:
   ctgrind:
     name: ctgrind (Valgrind taint tracking)
     runs-on: [self-hosted, fly, linux, x64]
-    timeout-minutes: 60
+    timeout-minutes: 120
+    env:
+      # Enables the slow keygen/sign/verify CT tests in
+      # `tests/ctgrind.rs` (see `skip_unless_slow`). They each add a
+      # multi-minute Valgrind run; the weekly cadence + 120 min
+      # ceiling absorbs the cost. Unset → only the fast Fp / Fp2
+      # tests run, same as a local `cargo test --test ctgrind`.
+      CTGRIND_SLOW: "1"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
