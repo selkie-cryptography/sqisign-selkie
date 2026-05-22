@@ -38,6 +38,15 @@ mutants = "0.0.4"  # #[mutants::skip] attribute for cargo-mutants
 serde = { version = "1", features = ["derive"] }
 hex = "0.4"
 serde_json = "1"
+# Pure-Rust arbitrary-precision integers used as the differential
+# oracle for `BigInt<N>` and field-arithmetic proptests in the
+# `bigint_oracle` and `field_oracle` integration tests. A second
+# independent implementation of the same math catches off-by-ones
+# and sign-handling bugs that algebraic-identity proptests miss.
+# Kept under `tests/` so it doesn't appear in the `src/` dep graph.
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"
 
 # crabgrind (Valgrind client requests), reqwest (HTTP for C-ref
 # cross-checks), and regex are unix-only: crabgrind needs Valgrind
@@ -94,6 +103,14 @@ required-features = ["expose-internals"]
 
 [[test]]
 name = "ctgrind"
+required-features = ["expose-internals"]
+
+[[test]]
+name = "bigint_oracle"
+required-features = ["expose-internals"]
+
+[[test]]
+name = "field_oracle"
 required-features = ["expose-internals"]
 
 [[test]]
