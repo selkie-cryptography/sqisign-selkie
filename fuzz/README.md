@@ -48,38 +48,73 @@ cargo +nightly fuzz run fuzz_verify -- -max_total_time=600
 cargo +nightly fuzz run fuzz_verify -- -runs=0 corpus/fuzz_verify
 ```
 
-## Seeding the corpus from KAT vectors
+## Seeding the corpus
 
 libFuzzer is much more effective starting from inputs that already reach
 the deep code paths. The bundled `examples/seed-fuzz-corpus` writes
-KAT-derived seeds into the relevant `fuzz/corpus/<target>/` directories:
+seeds from two sources into the relevant `fuzz/corpus/<target>/`
+directories:
+
+| Source | Count | Where it lives |
+| --- | --- | --- |
+| NIST PQC KAT tuples | 100 | `keys::kat_data::KAT_VECTORS` (in-crate) |
+| Wycheproof verify vectors | 52 | `tests/vectors/sqisign_verify.json` |
+| Wycheproof extended-verify vectors | 24 | `tests/vectors/sqisign_verify_extended.json` |
+| Wycheproof keygen vectors | 14 | `tests/vectors/sqisign_keygen.json` |
+| Wycheproof sign vector | 1 | `tests/vectors/sqisign_sign.json` |
 
 ```sh
 cargo run --release --features expose-internals --example seed-fuzz-corpus
 ```
 
-It seeds the parse targets, the two verify targets, and the
-keygen/sign panic targets. Each KAT vector contributes one corpus file
-per applicable target. The corpus is `.gitignore`'d, so seeding is
-re-run per checkout.
+The Wycheproof verify vectors include perturbed-invalid cases crafted
+to land at parse / verify rejection boundaries — high-value seeds for
+libFuzzer's mutation-around-known-good model. Each vector is routed
+into the targets it makes sense for (e.g. sign vectors don't seed
+`fuzz_sign_panic` because they don't carry the DRBG seed it needs).
+
+Files are content-keyed by source + index (`kat-NNN`, `verify-NNN`,
+`verify-ext-NNN`, `keygen-NNN`, `sign-NNN`). The corpus is
+`.gitignore`'d so the seeder is re-run per checkout. Re-run it
+manually after any change to `tests/vectors/sqisign_*.json`.
 
 ## Corpus policy
 
-`fuzz/corpus/` is `.gitignore`'d by default; libFuzzer's coverage-grown
-corpus is *not* tracked. The exception is **crash inputs from CI**:
-when a fuzz run finds a panic, the `Open PR on crash` step in
-`fuzz.yml` force-adds the crashing input under `fuzz/corpus/<target>/`
-in a separate branch and opens a PR. Once triaged into a regression
-test, the file usually stays in-tree as a corpus seed.
+`fuzz/corpus/` is `.gitignore`'d; libFuzzer's coverage-grown corpus is
+*not* tracked. Crash inputs from CI follow the same rule — they're not
+auto-committed. Triage is manual:
+
+1. CI's `Summarize crash candidates` step surfaces each crash as a
+   base64-encoded heredoc in the run's Step Summary panel, with a
+   Rust panic excerpt + reproducer command. The same blobs are also
+   echoed into the workflow log under a `::group::Crash inputs`
+   block, grep-able via `gh run view --log`.
+2. A maintainer pastes the heredoc locally:
+   ```sh
+   base64 -d <<'EOF' > /tmp/crash-input
+   QkFTRTY0X0VOQ09ERURfQllURVMK...
+   EOF
+   cargo +nightly fuzz run <target> /tmp/crash-input
+   ```
+3. If it's a real bug worth keeping as a regression seed, they copy
+   it into `fuzz/corpus/<target>/` and force-add (the directory is
+   gitignored):
+   ```sh
+   mv /tmp/crash-input fuzz/corpus/<target>/crash-<sha>
+   git add -f fuzz/corpus/<target>/crash-<sha>
+   git commit -m "fuzz: add crash input for <target> (<short-sha>)"
+   ```
 
 So in this repo:
 
-- Untracked corpus files: working / CI-cached set, regrown by libFuzzer.
+- Untracked corpus files: KAT- / Wycheproof-derived seeds + libFuzzer's
+  coverage-grown set, regrown locally / cached per CI run.
 - Tracked corpus files (mostly `crash-*` prefixed): triaged regressions
   from past CI runs that we want to keep replaying.
 
-When you find a crash locally, copy the offending input into the matching
-`corpus/<target>/` directory and commit it along with the fix.
+When you find a crash locally, the same pattern applies: copy the
+offending input into the matching `corpus/<target>/` directory and
+force-add it along with the fix.
 
 ## Adding a new fuzz target
 
@@ -87,5 +122,7 @@ When you find a crash locally, copy the offending input into the matching
 2. Add `[[bin]] name = "<name>"` to `Cargo.toml`.
 3. Add `<name>` to the `matrix.target` list in `fuzz.yml`.
 4. Add a row to the table above with what it covers and its class.
-5. If KAT-derived seeds are meaningful, extend
-   `examples/seed-fuzz-corpus.rs` to seed `corpus/<name>/`.
+5. If seeds from KAT or Wycheproof vectors are meaningful, extend
+   `examples/seed-fuzz-corpus.rs` to seed `corpus/<name>/` from
+   whichever source applies (look at `Seeder::seed_from_*_file` for
+   the existing per-source helpers).
