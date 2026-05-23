@@ -1,7 +1,7 @@
 {
   "algorithm": "SQIsign_248",
   "schema": "sqisign_verify_schema.json",
-  "numberOfTests": 52,
+  "numberOfTests": 53,
   "header": [
     "SQIsign_248: f=248, p = 5*2^248 - 1 (NIST security level I).",
     "Negative and vulnerability test vectors for SQIsign_248 verification.",
@@ -11,7 +11,7 @@
     "Round 2: exponent overflow, non-canonical Fp, special j-invariants, degenerate matrix/challenge, field splicing.",
     "Round 3: singular curves, starting curve E_0, scalar/challenge overflow.",
     "Round 4: malformed public keys (all-zero, all-FF, singular, non-canonical).",
-    "Round 5: panic regression vectors for hint overflow, exponent underflow, and fuzz crash inputs."
+    "Round 5: panic regression vectors for hint overflow, exponent underflow, short-chain (e_rsp_prime < 2), and fuzz crash inputs."
   ],
   "notes": {
     "Normal": "Unmodified KAT vector, expected to verify.",
@@ -32,6 +32,10 @@
     "ExponentOverflow": {
       "bugType": "BASIC",
       "description": "n_bt + r_rsp > e_rsp, causing e_rsp_prime underflow. Must be rejected, not wrapped."
+    },
+    "ShortChain": {
+      "bugType": "BASIC",
+      "description": "n_bt + r_rsp = e_rsp - 1, so e_rsp_prime = 1 — too short for the (2,2)-isogeny chain, which needs gluing + at least one main step. Prior to fix, an assert in surfaces::Kernel::isogeny panicked on adversarial signatures whose recovered kernel passed the 2^3-isotropy guard. Must be rejected gracefully."
     },
     "NonCanonicalFp": {
       "bugType": "BASIC",
@@ -515,6 +519,16 @@
           "result": "invalid",
           "flags": [
             "BitFlip"
+          ]
+        },
+        {
+          "tcId": 53,
+          "comment": "n_bt=125, r_rsp=0 \u2192 e_rsp_prime=1; recovered kernel passes 2^3-isotropy and reaches surfaces::Kernel::isogeny with e=1. Before the fix at 462f1f7, this combination panicked on `assert!(e >= 2)` in the (2,2)-chain. Must return Err gracefully.",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "84228651F271B0F39F2F19F2E8718F31ED3365AC9E5CB303AFE663D0CFC11F0455D891B0CA6C7E653F9BA2667730BB77BEFE1B1A31828404284AF8FD7BAACC017D00010000000000000000000000000000000100000000000000000000000000000001000000000000000000000000000000010000000000000000000000000000006EFF3447018ADB0A6551EE8322AB30010000",
+          "result": "invalid",
+          "flags": [
+            "ShortChain"
           ]
         },
         {
