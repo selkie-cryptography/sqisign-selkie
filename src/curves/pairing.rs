@@ -1043,7 +1043,8 @@ mod tests {
         // E_0: A = 0 by NIST-I convention.
         let curve = Curve::from(Coefficient::ZERO);
 
-        let (basis_via_to, hint) = TorsionBasis::to_hint(&curve);
+        let (basis_via_to, hint) =
+            TorsionBasis::to_hint(&curve).expect("test: to_hint failed on honest curve");
         let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()))
             .expect("test: from_hint failed on honest curve");
 
@@ -1077,7 +1078,8 @@ mod tests {
         assert_ne!(a, Fp2::ZERO, "alternate curve must have non-zero A");
         let curve = Curve::from(Coefficient::from(a));
 
-        let (basis_via_to, hint) = TorsionBasis::to_hint(&curve);
+        let (basis_via_to, hint) =
+            TorsionBasis::to_hint(&curve).expect("test: to_hint failed on honest curve");
         let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()))
             .expect("test: from_hint failed on honest curve");
 
@@ -1126,7 +1128,8 @@ mod tests {
             assert_ne!(a, Fp2::ZERO, "alternate curve {ec:?} must have non-zero A");
             let curve = Curve::from(Coefficient::from(a));
 
-            let (basis_via_to, hint) = TorsionBasis::to_hint(&curve);
+            let (basis_via_to, hint) =
+                TorsionBasis::to_hint(&curve).expect("test: to_hint failed on honest curve");
             let basis_via_from =
                 TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()))
                     .expect("test: from_hint failed on honest curve");
