@@ -1,0 +1,58 @@
+name: C reference cross-check
+
+# Runs three C-reference differential tests: basis cross-check,
+# all-bases cross-check, and KAT verification cross-check. The KAT
+# cross-check verifies signatures end-to-end through
+# `VerifyingKey::verify`, so its filter has to be broad (any `src/`
+# path). Split out of ci.yml so this is its own status check rather
+# than a gated Tier-3 job on the main CI run.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/c-ref-cross-check.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/c-ref-cross-check.yml'
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  c-ref-cross-check:
+    name: C reference cross-check
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Run C ref basis cross-check
+        run: cargo test c_ref_basis_cross_check -- --ignored
+
+      - name: Run C ref all-bases cross-check
+        run: cargo test c_ref_all_bases_cross_check -- --ignored
+
+      - name: Run C ref KAT verification cross-check
+        run: cargo test c_ref_kat_cross_check -- --ignored
