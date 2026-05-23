@@ -353,10 +353,59 @@ jobs:
   # Deeper analysis that provides useful signal but does not block merge.
   # Only starts after the gate passes. Failures show on the PR but are
   # not required status checks.
+  #
+  # The `changes` job below detects which Tier-3 jobs need to run for
+  # this commit's diff. `sage-precompute-check` and `c-ref-cross-check`
+  # gate on its outputs so PRs that don't touch their inputs skip
+  # entirely (Sage in particular is ~30-40 min and triggers on most
+  # CI runs today).
+
+  changes:
+    name: Detect changed paths for Tier-3 jobs
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 2
+    outputs:
+      sage_cross_check: ${{ steps.filter.outputs.sage_cross_check }}
+      c_ref_cross_check: ${{ steps.filter.outputs.c_ref_cross_check }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+          # dorny/paths-filter needs full history to compare HEAD vs
+          # the merge-base / before-sha. Depth 2 is enough for most
+          # cases but rebase-and-merge to main can land N>1 commits;
+          # 0 is the safe choice and the job is tiny.
+          fetch-depth: 0
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36
+        id: filter
+        with:
+          filters: |
+            # sage_cross_check runs `sage verify_precomputed.py`
+            # against EXTREMAL_ORDERS in src/quaternions/precomputed.rs.
+            # Anything touching the Rust table, the Sage script, or its
+            # imports can change the result. If a new Sage helper
+            # script gets added under scripts/precomp/, add it here.
+            sage_cross_check:
+              - 'scripts/precomp/verify_precomputed.py'
+              - 'scripts/precomp/parameters.py'
+              - 'src/quaternions/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+
+            # c_ref_cross_check runs three tests in one job. The KAT
+            # cross-check verifies signatures end-to-end through
+            # `VerifyingKey::verify` — that path touches essentially
+            # the whole crate, so the filter has to be broad.
+            c_ref_cross_check:
+              - 'src/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
 
   sage-precompute-check:
     name: Sage precompute cross-check
-    needs: [gate]
+    needs: [gate, changes]
     # Runs on Fly self-hosted with Sage installed at job time. Sage
     # is NOT pre-baked into the runner image because the conda env
     # would push the image over Fly's 8 GB unpack ceiling. The job
@@ -365,10 +414,17 @@ jobs:
     # `actions/cache` brings warm runs down to ~1–2 min.
     #
     # Skipped on fork PR (untrusted code on self-hosted Machines).
+    # Skipped also if the diff doesn't touch any path that affects the
+    # cross-check result — see the `changes` job's filter. Manual
+    # dispatch always runs (paths-filter has no diff to evaluate).
     # `perf-4x`: the cross-check is mostly Sage subprocess work, which
     # is single-threaded but CPU-bound for ~30 min on perf-4x. On
     # shared-cpu-4x the throttling extends that well past the timeout.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (needs.changes.outputs.sage_cross_check == 'true' ||
+       github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, fly, linux, perf-4x]
     # 60 min: cold runs do a one-time Sage conda install (~several
     # minutes) plus the cross-check itself. Warm runs hit
@@ -405,7 +461,14 @@ jobs:
 
   c-ref-cross-check:
     name: C reference cross-check
-    needs: [gate]
+    needs: [gate, changes]
+    # Skipped if the diff doesn't touch any src/, Cargo manifest, or
+    # ci.yml — see the `changes` job's filter. The KAT cross-check
+    # inside this job verifies signatures end-to-end so the filter is
+    # broad (any src/ path). Manual dispatch always runs.
+    if: >-
+      needs.changes.outputs.c_ref_cross_check == 'true' ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     steps:
