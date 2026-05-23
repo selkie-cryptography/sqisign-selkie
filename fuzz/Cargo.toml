@@ -68,3 +68,13 @@ name = "fuzz_sign_panic"
 path = "fuzz_targets/sign_panic.rs"
 test = false
 doc = false
+
+# Sister to fuzz_sign_panic: instead of running keygen with an arbitrary
+# seed (honest pipeline), parses arbitrary bytes as a SigningKey and
+# tries to sign with it. Covers the parse-malformed-SK-then-sign panic
+# class that the existing tests only check at parse time.
+[[bin]]
+name = "fuzz_sign_malformed_sk"
+path = "fuzz_targets/sign_malformed_sk.rs"
+test = false
+doc = false

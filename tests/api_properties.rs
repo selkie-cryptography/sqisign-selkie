@@ -59,6 +59,19 @@ proptest! {
     ) {
         let _ = SigningKey::from_bytes(&bytes);
     }
+
+    /// Any 353 bytes that parse as a `SigningKey` must round-trip
+    /// idempotently: a second `from_bytes(to_bytes(x))` must yield
+    /// the same serialization. Catches encoders that lose info the
+    /// parser was willing to accept.
+    #[test]
+    fn prop_signing_key_roundtrip(bytes in any::<[u8; SIGNING_KEY_BYTES]>()) {
+        if let Ok(sk) = SigningKey::from_bytes(&bytes) {
+            let rt = sk.to_bytes();
+            let sk2 = SigningKey::from_bytes(&rt).expect("roundtrip must parse");
+            prop_assert_eq!(rt, sk2.to_bytes());
+        }
+    }
 }
 
 proptest! {

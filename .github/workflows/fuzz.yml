@@ -132,6 +132,10 @@ jobs:
           # input bug class that exec/s doesn't reflect.
           - fuzz_keygen_panic
           - fuzz_sign_panic
+          # Sister to fuzz_sign_panic: parses arbitrary bytes as a
+          # SigningKey and signs with it. Covers the malformed-SK-
+          # on-disk path.
+          - fuzz_sign_malformed_sk
         # Per-target overrides for libFuzzer's `-report_slow_units`
         # (in seconds). libFuzzer's default is 10 s, which is right
         # for parse / verify targets that iterate in milliseconds.
@@ -145,6 +149,8 @@ jobs:
           - target: fuzz_keygen_panic
             report_slow_units: 120
           - target: fuzz_sign_panic
+            report_slow_units: 300
+          - target: fuzz_sign_malformed_sk
             report_slow_units: 300
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
