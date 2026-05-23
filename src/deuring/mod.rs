@@ -72,6 +72,23 @@ pub struct KernelDecomposition {
 ///
 /// Implements [ComputeEvenNonBacktrackingResponse][Alg. 4.6].
 ///
+/// # Side-channel considerations
+///
+/// WARNING: Not constant-time. Called on the secret response
+/// quaternion `α` during signing ([Algorithm 4.2][Alg. 4.2] line 27).
+/// Variable-time operations on `α`-derived values include:
+/// - [`LeftIdeal::new`] on `conj(α) + 2^r`
+/// - [`LeftIdeal::generator`] (`ideal.generator()`)
+/// - [`BigInt::gcd`] on the M_α column-0 entries (`s0, t0`)
+/// - the parity-branch `if g0_is_even { ... } else { ... }` that selects column
+///   0 or column 1 of M_α as the kernel scalars. Leaks one bit of `α` per
+///   signature, plus the timing of `gcd` itself.
+///
+/// TODO(ct): Make constant-time before production use. Convert the
+/// column selection to a `ConditionallySelectable` branch and use
+/// a constant-time `gcd` once one is available.
+///
+/// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
 /// [Alg. 4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.6
 pub fn compute_even_response(
     _curve: &Curve,
