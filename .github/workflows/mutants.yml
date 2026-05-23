@@ -65,7 +65,17 @@ jobs:
     # the baseline build + a small mutant test loop rather than a
     # parallel mutant fan-out; dedicated cores avoid shared-CPU
     # throttling during the build step.
-    runs-on: ${{ fromJSON(github.event.workflow_run.head_repository.full_name == github.repository && '["self-hosted","fly","linux","perf-2x"]' || '["ubuntu-latest"]') }}
+    # Same-repo runs go to Fly; fork PRs fall back to GH-hosted. Two
+    # event paths reach this job (see `if:` below), so the same-repo
+    # check has to cover both: workflow_run after a CI run, and the
+    # direct pull_request trigger when the PR touches mutants infra.
+    runs-on: ${{ fromJSON(
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.head_repository.full_name == github.repository) ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+      && '["self-hosted","fly","linux","perf-2x"]'
+      || '["ubuntu-latest"]') }}
     # Run after CI completes (success OR failure) so a transient
     # red — reviewdog 502, a platform-fly job timeout, an artifact
     # quota miss — doesn't silently kill mutation coverage on the
