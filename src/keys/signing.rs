@@ -306,7 +306,10 @@ impl SigningKey {
             };
 
             // Line 8: (P_pk, Q_pk), hint_pk ← TorsionBasisToHint(E_pk).
-            let (basis_pk, basis_hint) = TorsionBasis::to_hint(&e_pk);
+            let (basis_pk, basis_hint) = match TorsionBasis::to_hint(&e_pk) {
+                Some(r) => r,
+                None => continue,
+            };
 
             // Line 9: M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk, Q_pk)).
             let eval_basis = TorsionBasis::from_propagated(phi_p, phi_pmq, phi_q);
@@ -1240,8 +1243,14 @@ impl SigningKey {
             // TODO: refactor into ChallengeMatrix::from_response_endpoints()
             // that takes (E_aux, E_chl, P_aux, Q_aux, P_chl, Q_chl, e)
             // and returns (ChallengeMatrix, AuxiliaryHint, ChallengeHint).
-            let (det_aux, hint_aux_raw) = TorsionBasis::to_hint(&curve_aux);
-            let (det_chl, hint_chl_raw) = TorsionBasis::to_hint(&e_chl_final);
+            let (det_aux, hint_aux_raw) = match TorsionBasis::to_hint(&curve_aux) {
+                Some(r) => r,
+                None => continue,
+            };
+            let (det_chl, hint_chl_raw) = match TorsionBasis::to_hint(&e_chl_final) {
+                Some(r) => r,
+                None => continue,
+            };
 
             // Matrix exponent: e_rsp' + r_rsp + 2 (HD extra torsion).
             // The dlog and matrix entries are at this exponent.

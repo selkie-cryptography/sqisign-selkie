@@ -802,14 +802,21 @@ impl TorsionBasis {
         Some(TorsionBasis { P, PmQ, Q })
     }
 
-    /// Generate a torsion basis for E_A\[2^e\] and its associated hint,
+    /// Generates a torsion basis for E_A\[2^e\] and its associated hint,
     /// where e = [`TORSION_EVEN_POWER`].
     ///
     /// Implements `TorsionBasisToHint` ([§2.2.3], Algorithm 2.1).
     ///
+    /// Returns `None` when the bounded x-coordinate search exhausts
+    /// without finding a valid representative — mirroring
+    /// [`Self::from_hint`]'s `None` on adversarial curves. Honest sign
+    /// and keygen flows hit a valid `n` within the first 7 bits;
+    /// callers funnel the `None` into their retry loop alongside the
+    /// other isogeny-failure cases.
+    ///
     /// [§2.2.3]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.2.3
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
-    pub fn to_hint(curve: &Curve) -> (TorsionBasis, BasisHint) {
+    pub fn to_hint(curve: &Curve) -> Option<(TorsionBasis, BasisHint)> {
         let _e = TORSION_EVEN_POWER;
         // Normalize the curve's A24/C24 constants so the Montgomery
         // ladder produces the same projective representative as
@@ -835,24 +842,17 @@ impl TorsionBasis {
             let Q = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_Q_X, curve);
             let PmQ = P.projective_difference(&Q);
             let basis = TorsionBasis { P, PmQ, Q };
-            return (basis, BasisHint::from_byte(0));
+            return Some((basis, BasisHint::from_byte(0)));
         }
 
         let h_A = bool::from(A.is_square());
 
         let (x_P, h) = if !h_A {
-            // A is NQR: find n such that n*A is on the curve. Search
-            // is bounded; honest signing always satisfies the
-            // predicate inside the bound (in practice the first
-            // 7-bit `n` works).
-            find_na_x_coord_with_hint(&A, curve).expect(
-                "to_hint: bounded find_na_x_coord_with_hint search exhausted on honest curve",
-            )
+            // A is NQR: find n such that n*A is on the curve.
+            find_na_x_coord_with_hint(&A, curve)?
         } else {
             // A is QR: find b such that -A/(1+i*b) is on the curve.
-            find_nqr_factor_with_hint(&A, curve).expect(
-                "to_hint: bounded find_nqr_factor_with_hint search exhausted on honest curve",
-            )
+            find_nqr_factor_with_hint(&A, curve)?
         };
 
         let x_Q = -&(&A + &x_P);
@@ -868,7 +868,7 @@ impl TorsionBasis {
         let basis = TorsionBasis { P, PmQ, Q };
 
         let hint_byte = BasisHint::new(h_A as u8, h);
-        (basis, hint_byte)
+        Some((basis, hint_byte))
     }
 }
 
