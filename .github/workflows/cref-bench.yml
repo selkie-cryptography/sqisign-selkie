@@ -50,7 +50,7 @@ env:
 jobs:
   baseline:
     name: C ref vs Rust (NIST-I)
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
