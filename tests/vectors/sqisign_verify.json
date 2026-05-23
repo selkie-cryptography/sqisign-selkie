@@ -1,7 +1,7 @@
 {
   "algorithm": "SQIsign_248",
   "schema": "sqisign_verify_schema.json",
-  "numberOfTests": 53,
+  "numberOfTests": 54,
   "header": [
     "SQIsign_248: f=248, p = 5*2^248 - 1 (NIST security level I).",
     "Negative and vulnerability test vectors for SQIsign_248 verification.",
@@ -11,7 +11,8 @@
     "Round 2: exponent overflow, non-canonical Fp, special j-invariants, degenerate matrix/challenge, field splicing.",
     "Round 3: singular curves, starting curve E_0, scalar/challenge overflow.",
     "Round 4: malformed public keys (all-zero, all-FF, singular, non-canonical).",
-    "Round 5: panic regression vectors for hint overflow, exponent underflow, short-chain (e_rsp_prime < 2), and fuzz crash inputs."
+    "Round 5: panic regression vectors for hint overflow, exponent underflow, short-chain (e_rsp_prime < 2), and fuzz crash inputs.",
+    "Round 6: search-exhaustion vectors — curve_aux with A in the Fp subfield whose bounded x-coord search is structurally unsatisfiable."
   ],
   "notes": {
     "Normal": "Unmodified KAT vector, expected to verify.",
@@ -36,6 +37,10 @@
     "ShortChain": {
       "bugType": "BASIC",
       "description": "n_bt + r_rsp = e_rsp - 1, so e_rsp_prime = 1 — too short for the (2,2)-isogeny chain, which needs gluing + at least one main step. Prior to fix, an assert in surfaces::Kernel::isogeny panicked on adversarial signatures whose recovered kernel passed the 2^3-isotropy guard. Must be rejected gracefully."
+    },
+    "AdversarialFpSubfield": {
+      "bugType": "BASIC",
+      "description": "curve_aux has A in the Fp subfield (b = 0) where A² satisfies A⁴ - 4A² + 2 = 0 (e.g. A = sqrt(2) mod p). For such A, the predicate inside TorsionBasis::from_hint's fallback x-coord search is structurally unsatisfiable: V_n := (1+n²)² + n²·A²·(A²-4) reduces to (n²-1)² — always a perfect square — while x.is_square() tracks (1+n²).is_square(), and the predicate needs opposite parity on the two. Without a bounded search cap, verify can spend an unbounded number of iterations per call. Verifier must reject in bounded time."
     },
     "NonCanonicalFp": {
       "bugType": "BASIC",
@@ -529,6 +534,16 @@
           "result": "invalid",
           "flags": [
             "ShortChain"
+          ]
+        },
+        {
+          "tcId": 54,
+          "comment": "curve_aux = sqrt(2) + 0\u00b7i in Fp \u2282 Fp\u00b2 with hint_aux byte = 0 (low 7 bits = 0 forces from_hint's fallback search). For A=sqrt(2), the search predicate `is_on_curve(x, A) && !x.is_square()` is structurally unsatisfiable (V_n = (n\u00b2-1)\u00b2 is always a perfect square in Fp), so the search exhausts. Must reject in bounded time \u2014 without a FIND_X_COORD_MAX_TRIES cap, the loop runs unbounded.",
+          "msg": "D81C4D8D734FCBFBEADE3D3F8A039FAA2A2C9957E835AD55B22E75BF57BB556AC8",
+          "sig": "12E9520D2A5D80FF1036476921DC25ED6989963FF03D97E2C5727C1D3E0F3A0100000000000000000000000000000000000000000000000000000000000000000001D974B5CA671FF65708D8B462A5A84A1443EE9B5FED7218767C9D85CEED04DB0A69A2F6EC3BE835B3B2624B9A0DF68837AD00BCACC27D1EC806A44840267471D86EFF3447018ADB0A6551EE8322AB30010002",
+          "result": "invalid",
+          "flags": [
+            "AdversarialFpSubfield"
           ]
         },
         {

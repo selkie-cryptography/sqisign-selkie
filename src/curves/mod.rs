@@ -1116,13 +1116,18 @@ fn is_on_curve(x: &Fp2, A: &Fp2) -> bool {
 }
 
 /// Maximum number of `n` values to try in the fallback x-coordinate
-/// searches. For a valid `(A, hint)` pair the search terminates well
-/// before this bound; an attacker-supplied curve that never satisfies
-/// the predicate would otherwise drive an unbounded loop in verify.
-/// Capping at `2^16` keeps verify O(1) on adversarial input while
-/// preserving the worst-case behavior on every well-formed signature
-/// we've ever produced (where `n` fits in 7 bits).
-const FIND_X_COORD_MAX_TRIES: u32 = 1 << 16;
+/// searches.
+///
+/// Honest signing satisfies the predicate inside the first ~50
+/// tries (max 37 across a 100k-sample sweep over random Fp²-valued
+/// A; extremal-order curves are similar). The bound caps the
+/// verify-side slow path: an attacker-supplied curve with `A ∈ Fp*`
+/// and `A⁴ - 4A² + 2 = 0` (e.g. `A = √2 mod p`) makes the predicate
+/// structurally unsatisfiable — `V_n = (1+n²)² + n²·A²·(A²-4)`
+/// becomes a perfect square in Fp for every n, while `1+n²` toggles
+/// squareness independently, and the search exhausts no matter how
+/// many tries it gets.
+const FIND_X_COORD_MAX_TRIES: u32 = 1 << 10;
 
 /// Find `n` such that `n*A` is a valid x-coordinate on E_A. Returns
 /// `Some(x(P))` on success or `None` if no `n` in
