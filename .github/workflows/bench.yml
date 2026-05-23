@@ -24,7 +24,7 @@ env:
 jobs:
   benchmark:
     name: Performance benchmarks
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 90
     permissions:
       contents: read
