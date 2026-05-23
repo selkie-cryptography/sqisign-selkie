@@ -858,10 +858,14 @@ impl Kernel {
         randomize: Option<&mut dyn rand_core::RngCore>,
     ) -> Option<(EllipticProduct, Vec<ProductPoint>)> {
         let e = e.value();
-        assert!(
-            e >= 4,
-            "extra_torsion=false chain requires e >= 4 (gluing + 1 main + 4-iso + 2-iso)"
-        );
+        // Chain layout requires `gluing + ≥1 main step + 4-iso + 2-iso`,
+        // i.e. `e ≥ 4`. Honest signing always picks `sui.e ≈ f - 2`
+        // (~246), but a malformed signing key could in principle drive
+        // `find_uv` into a tiny `sui.e`. Surface that as `None` (the
+        // sign retry loop handles it) rather than panicking.
+        if e < 4 {
+            return None;
+        }
 
         type JacPair = JacobianProductPoint;
 
