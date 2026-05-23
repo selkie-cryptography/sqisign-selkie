@@ -14,6 +14,23 @@ name: Mutation testing
 # stopgap.
 
 on:
+  # Direct triggers for mutants-infra changes. CI's path filter is
+  # scoped to src/ + tests/ + benches/, so changes to this workflow
+  # or to `.cargo/mutants.toml` don't fire CI and would otherwise be
+  # silently un-validated. Same pattern fuzz.yml uses for its own
+  # infra paths.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mutants.yml'
+      - '.cargo/mutants.toml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/mutants.yml'
+      - '.cargo/mutants.toml'
+  # Indirect: after a CI run on Rust source completes. Most mutant
+  # runs come through this gate.
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -54,9 +71,15 @@ jobs:
     # quota miss — doesn't silently kill mutation coverage on the
     # PR. cargo-mutants reports baseline test failure on its own
     # via the "Verify mutants produced real outcomes" step below.
+    # Fires on:
+    # - workflow_run after CI completes on a PR (the normal path)
+    # - direct pull_request when the PR touches mutants infra (this
+    #   workflow file or .cargo/mutants.toml), to validate the
+    #   workflow itself end-to-end on PR diffs
     if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'pull_request'
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request') ||
+      github.event_name == 'pull_request'
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -132,9 +155,12 @@ jobs:
     runs-on: [self-hosted, fly, linux, perf-2x]
     # Same rationale as `incremental`: trigger on CI completion, not
     # success — the merge step's outcome-count check is the real
-    # baseline-failure detector.
+    # baseline-failure detector. Also fires on direct push to main
+    # of mutants infra (this workflow, .cargo/mutants.toml) so the
+    # workflow self-validates on its own changes.
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.head_branch == 'main' &&
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
@@ -191,6 +217,7 @@ jobs:
     if: >-
       always() && needs.full.result != 'skipped' &&
       (github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'push' ||
        (github.event_name == 'workflow_run' &&
         github.event.workflow_run.head_branch == 'main'))
     runs-on: [self-hosted, fly, linux, x64]
