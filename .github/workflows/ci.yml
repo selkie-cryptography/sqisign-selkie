@@ -364,6 +364,12 @@ jobs:
     name: Detect changed paths for Tier-3 jobs
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 2
+    # dorny/paths-filter calls the GitHub API on pull_request events to
+    # list changed files; the workflow-level default permissions are
+    # contents:read only, so the call needs pull-requests:read here.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       sage_cross_check: ${{ steps.filter.outputs.sage_cross_check }}
       c_ref_cross_check: ${{ steps.filter.outputs.c_ref_cross_check }}
