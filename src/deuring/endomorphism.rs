@@ -24,11 +24,24 @@ use crate::{
 };
 
 /// A 2×2 matrix over Z/2^f Z representing the action of an
-/// endomorphism on a torsion basis (P, Q) of E[2^f].
+/// endomorphism on a torsion basis of E[2^f].
 ///
-/// Given an endomorphism α and basis (P, Q), the matrix `M_α`
-/// satisfies: `α(P) = [M[0][0]]P + [M[1][0]]Q` and
-/// `α(Q) = [M[0][1]]P + [M[1][1]]Q`.
+/// Following the spec-permuted convention used throughout this
+/// crate (see [`TorsionBasis::biscalar_mul`] and the imported
+/// [`ENDOMORPHISM_MATRICES`] tables), the matrix `M_α` acts
+/// column-wise on the pair `(P, P − Q)`:
+///
+/// ```text
+///     α(P)     = [M[0][0]]·P + [M[1][0]]·(P − Q)
+///     α(P − Q) = [M[0][1]]·P + [M[1][1]]·(P − Q)
+/// ```
+///
+/// `α(Q)` is recovered as `α(P) − α(P − Q)`; downstream uses
+/// (`apply_scaled_basis`) re-derive it via a third biladder call
+/// rather than subtracting.
+///
+/// [`TorsionBasis::biscalar_mul`]: crate::curves::TorsionBasis::biscalar_mul
+/// [`ENDOMORPHISM_MATRICES`]: crate::deuring::precomputed::ENDOMORPHISM_MATRICES
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EndomorphismMatrix {
     /// Entries stored row-major: [[a, b], [c, d]].
