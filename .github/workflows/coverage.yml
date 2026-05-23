@@ -32,7 +32,7 @@ env:
 jobs:
   coverage:
     name: Code coverage
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: [self-hosted, fly, linux, perf-2x]
     # Two un-`#[ignore]`d sign() KATs (`sign_kat_derand_001/009`) added
     # to cover `keys/signing.rs`; each is several minutes under llvm-cov
     # instrumentation. Bumped from 30 to 60 to absorb without flake.
