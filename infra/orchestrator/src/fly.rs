@@ -267,10 +267,26 @@ impl FlyClient {
     /// `auto_destroy: true` so it self-destroys when the runner
     /// finishes its single job and exits.
     pub async fn spawn_runner(&self, size: &MachineSize, jit_config: &str) -> Result<MachineId> {
+        // Resolve `:latest` to a content-addressable digest here so the
+        // Machine's recorded image digest matches what the reaper's
+        // `resolve_latest_digest` returns. Without this, Fly's
+        // Machine-create API resolves `:latest` on its side using a
+        // (sometimes stale) cached tag→digest mapping; the reaper then
+        // sees a mismatch with the registry's current canonical and
+        // force-destroys the Machine before its runner picks up a job.
+        let digest = self
+            .resolve_latest_digest()
+            .await
+            .context("resolve :latest digest before spawn")?;
+        let (repo, _tag) = self
+            .image_ref
+            .rsplit_once(':')
+            .context("image_ref missing ':tag' suffix")?;
+        let pinned = format!("{repo}@{digest}");
         let body = SpawnMachineRequest {
             region: &self.region,
             config: SpawnMachineConfig {
-                image: &self.image_ref,
+                image: &pinned,
                 env: [("JITCONFIG", jit_config)].into(),
                 init: SpawnInit {
                     exec: vec!["/entrypoint.sh"],
