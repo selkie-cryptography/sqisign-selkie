@@ -6,7 +6,7 @@ use precomputed::{ENDOMORPHISM_MATRICES, torsion_basis};
 use super::*;
 use crate::{
     curves::montgomery::JacobianPoint,
-    quaternions::algebra::{Coordinate, Denominator},
+    quaternions::algebra::{Coordinate, Denominator, Element},
 };
 
 /// Pinned commit of the SQIsign C reference implementation.
