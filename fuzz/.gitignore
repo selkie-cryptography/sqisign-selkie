@@ -1,3 +1,5 @@
 target
 corpus
 artifacts
+# libFuzzer stdout dumps from local runs (e.g. `cargo fuzz run … 2>&1 > fuzz-output-<target>.txt`).
+fuzz-output-*.txt

@@ -9,9 +9,11 @@ versus GH-hosted minutes; macOS and Windows jobs stay on GH-hosted.
 infra/
 ├── github-app/      one-time GitHub App creation runbook + manifest
 ├── orchestrator/    long-lived Axum service on Fly: webhook -> JIT -> spawn Machine
-├── runners/         multi-stage runner image:
-│                      stage `base` (rustup + system tools)
-│                      stage `runtime` (thin: FROM pinned base + actions-runner)
+├── runners/         runner image, split across two Dockerfiles:
+│                      Dockerfile.base    -> :base    (rustup + system tools, ~3 GB, rare rebuilds)
+│                      Dockerfile.runtime -> :latest  (thin: FROM :base + actions-runner)
+│                      fly.base.toml      drives the :base build
+│                      fly.toml           drives the :latest build
 └── ops/             laptop-driven deploy CLI
 ```
 
@@ -37,18 +39,27 @@ Fly apps:
      FLY_API_TOKEN="$(fly tokens create deploy -a sqisign-infra-runners)" \
      RUNNER_IMAGE=registry.fly.io/sqisign-infra-runners:latest
    ```
-6. First deploy: `cd infra && cargo run -p ops -- deploy-all`.
+6. First deploy:
+   ```
+   cd infra
+   cargo run -p ops -- deploy-runner-base   # publishes :base; needed before :latest can FROM it
+   cargo run -p ops -- deploy-all           # orchestrator + :latest runner image + cleanup
+   ```
+   `deploy-all` deliberately doesn't touch `:base` — that's an
+   explicit bump via `deploy-runner-base`.
 
 ## Regular deploys
 
-All deploys go through `infra/ops/` (Rust CLI calling `flyctl`). Run
-from anywhere — the binary locates the workspace via `CARGO_MANIFEST_DIR`.
+All deploys go through `infra/ops/` (Rust CLI calling `flyctl`).
+`cargo run -p ops` only resolves from a directory whose workspace
+contains the `ops` crate — that's `infra/`, not the repo root.
+Run from `infra/` or pass `--manifest-path infra/Cargo.toml`:
 
 ```
 cd infra
 cargo run -p ops -- deploy-orchestrator   # build + deploy orchestrator
-cargo run -p ops -- deploy-runners        # build + push runtime image as `latest` (fast, FROM the pinned base)
-cargo run -p ops -- deploy-all            # orchestrator + runners + cleanup, prints verify hints
+cargo run -p ops -- deploy-runners        # build + push runtime image as :latest (fast, FROM the pinned :base)
+cargo run -p ops -- deploy-all            # orchestrator + :latest + cleanup, prints verify hints
 cargo run -p ops -- smoke-test            # workflow_dispatch runner-smoke-test.yml + tail logs
 cargo run -p ops -- cleanup-orphans       # destroy leaked `fly-<jobid>-<hex>` Machines
 ```
@@ -58,15 +69,25 @@ Trailing args after `--` are forwarded to `fly deploy`:
 cargo run -p ops -- deploy-orchestrator -- --strategy immediate
 ```
 
+The compiled `ops` binary uses `CARGO_MANIFEST_DIR` (baked in at
+build time) to find `infra/` regardless of where it's run from, so
+once built you can invoke `./target/debug/ops <cmd>` from anywhere.
+The `cargo run` constraint above is purely about workspace
+resolution.
+
 ### Rolling the base image
 
-The runner image has two stages in a single `Dockerfile`. The
-**base** stage (rustup + system tools, ~3 GB uncompressed) is
-rebuilt rarely. The thin **runtime** stage (actions-runner binary
-+ entrypoint, ~600 MB on top of base) is rebuilt whenever the
-runner version bumps or the entrypoint changes — fast because its
-`FROM` is `registry.fly.io/sqisign-infra-runners:base`, already in
-the registry.
+The runner image is split across two Dockerfiles:
+
+- **`runners/Dockerfile.base`** — rustup, system tools, TeX Live,
+  AWS CLI, `gh`. ~3 GB uncompressed. Rebuilt rarely (Dockerfile
+  edits, the weekly cron in `infra-ci.yml`, or manual roll). Built
+  by `deploy-runner-base` via `fly.base.toml`, pushed as
+  `registry.fly.io/sqisign-infra-runners:base`.
+- **`runners/Dockerfile.runtime`** — `FROM registry.fly.io/sqisign-infra-runners:base`
+  + the actions-runner binary + `entrypoint.sh`. ~600 MB on top of
+  `:base`. Built by `deploy-runners` via `fly.toml`, pushed as
+  `:latest`. Fast because the heavy layers come from the registry.
 
 The image deliberately stays under Fly's **8 GB uncompressed
 image-unpack ceiling**. Tools that don't fit (Sage, texlive-full)
@@ -79,14 +100,15 @@ cargo run -p ops -- deploy-runners        # ~30s; runtime FROM :base, pushes :la
 ```
 
 No pinning state to track. The `:base` tag is overwritten on each
-roll; git history of `runners/Dockerfile` is the audit trail. If
-you want to roll back, `git revert` and re-run `deploy-runner-base`.
+roll; git history of `runners/Dockerfile.base` is the audit trail.
+To roll back: `git revert` the offending change and re-run
+`deploy-runner-base`, then `deploy-runners` so `:latest` picks up
+the rolled-back `:base`.
 
-`--build-target base` makes BuildKit ignore the `runtime` stage's
-`FROM registry.fly.io/.../runners:base`, so the first base build
-doesn't depend on its own previous output. After the first base is
-published, subsequent runtime builds pull `:base` from the registry
-and skip rebuilding the heavy layers.
+CI automates this: `infra-ci.yml` watches both Dockerfiles on push
+to `main`, rebuilds `:base` then `:latest` in order on a
+`Dockerfile.base` edit, and rebuilds `:latest` only on a
+`Dockerfile.runtime` edit.
 
 ## Runtime flow (per job)
 

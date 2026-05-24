@@ -34,10 +34,13 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
     },
-    /// Build + push the heavy base runner image (texlive + Sage +
-    /// rustup + system tools), tagged `:base`. Slow (~2h on a cold
-    /// builder); run rarely. Overwrites the previous `:base` —
-    /// audit trail lives in git history of `runners/Dockerfile`.
+    /// Build + push the heavy base runner image (texlive-latex-extra
+    /// family + rustup stable/nightly/MSRV + system tools), tagged
+    /// `:base`. ~10-15 min cold; run rarely. Overwrites the previous
+    /// `:base` — audit trail lives in git history of
+    /// `runners/Dockerfile.base`. Sage is NOT baked here (would push
+    /// past Fly's 8 GB image-unpack ceiling); `sage-cross-check.yml`
+    /// installs it at job time via conda.
     DeployRunnerBase {
         /// Extra args forwarded to `fly deploy`.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]

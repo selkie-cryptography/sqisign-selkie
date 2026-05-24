@@ -21,7 +21,7 @@ jobs:
     name: Build LaTeX documents
     # Runs on Fly self-hosted using the `texlive-latex-extra`
     # family pre-installed in the runner image (see
-    # `infra/runners/Dockerfile`). Direct `latexmk` invocations
+    # `infra/runners/Dockerfile.base`). Direct `latexmk` invocations
     # replace the prior `xu-cheng/latex-action` (Docker action
     # path, requires a Docker daemon we don't run on Fly).
     #
