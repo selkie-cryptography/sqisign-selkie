@@ -2198,24 +2198,47 @@ that translates the spec's pseudocode directly into a
 language.
 
 \paragraph{Fix.}  Bound the search by a constant well above
-anything observed on honest signatures (the largest~$n$ in
-practice is below~$128$, so a cap of $2^{16}$ leaves
-five orders of magnitude of headroom) and make
-\textsc{TorsionBasisFromHint} fallible.  In \texttt{verify},
-treat \texttt{None} as a verification failure;
-on the signing side the same call is on the signer's own
-curve, where the search always succeeds, so a non-recoverable
-assertion is appropriate.  The fix is independent of language
-or counter width --- a fixed-width counter that wraps silently
-(\texttt{u8} in our case, but the same risk exists in any C
-implementation using \texttt{uint8\_t} or \texttt{int}) only
-amplifies the same algorithmic gap: a search whose termination
-proof relies on \textit{``honest input always works''} is not
-a search at all when applied to attacker-controlled data.
+anything observed on honest signatures and make
+\textsc{TorsionBasisFromHint} fallible.  A Sage probe over
+$10^5$ random Fp$^2$-valued $A$ found the empirical worst-case
+search depth to be~$37$ tries; a cap of $2^{10}$ leaves
+about an order of magnitude of headroom.  In \texttt{verify},
+treat \texttt{None} as a verification failure; on the
+signing side the same call is on the signer's own curve,
+where the search always succeeds, so propagating the
+\texttt{None} into the sign retry loop is appropriate.
+The fix is independent of language or counter width --- a
+fixed-width counter that wraps silently (\texttt{u8} in our
+case, but the same risk exists in any C implementation using
+\texttt{uint8\_t} or \texttt{int}) only amplifies the same
+algorithmic gap: a search whose termination proof relies on
+\textit{``honest input always works''} is not a search at all
+when applied to attacker-controlled data.
+
+\paragraph{Structurally adversarial $A$.}  An algebraic
+investigation refines the worst case for an attacker.  For
+$A$ in the prime subfield $\mathbb{F}_p \subset \mathbb{F}_{p^2}$
+with $A^4 - 4A^2 + 2 = 0$ (concretely, $A = \sqrt{2} \bmod p$
+on NIST-I), the search predicate is \emph{structurally
+unsatisfiable}: an explicit calculation reduces
+$V_n := (1+n^2)^2 + n^2 A^2 (A^2 - 4)$ to the perfect square
+$(n^2 - 1)^2$, while $(1+n^2)$ toggles squareness
+independently in~$\mathbb{F}_p$.  The two parities can never
+agree the way the predicate
+\texttt{is\_on\_curve}$(x, A) \land \lnot x\texttt{.is\_square}()$
+needs, so the search exhausts at every~$n$.  With the
+unbounded loop, that input deterministically hangs verify; at
+$2^{16}$ tries it took $\sim 268$~ms per call (a
+$60\times$ amplification over honest verify).  At $2^{10}$
+the worst case is~$\sim 4.7$~ms, comfortably above honest
+($\sim 3$~ms median) and below any reasonable DoS threshold.
+The Wycheproof verify suite includes a regression vector for
+this case (\texttt{tcId = 54}, flag
+\texttt{AdversarialFpSubfield}).
 
 After bounding the search and propagating the failure, the
-Wycheproof verify suite passes in $\sim 0.5$~seconds (49 of
-49 vectors).
+Wycheproof verify suite passes in well under one second (54
+of 54 vectors).
 
 \noindent
 \textbf{Advice for implementers:} Every loop in
@@ -2231,4 +2254,134 @@ of the spec review).  The Wycheproof project's signature suite
 catches exactly this pattern with \texttt{HintOverflow}-flagged
 test vectors --- run those before shipping any signature
 library.
+
+\subsection{Verify panic on $e'_{\mathrm{rsp}} = 1$ chain entry}
+\label{sec:bug-e-rsp-prime-one-assert}
+
+\algo{4.9}'s line~24 takes the recovered $(2,2)$-chain kernel
+and runs an isogeny of length $e'_{\mathrm{rsp}}$.  The spec
+states this length implicitly as $e_{\mathrm{rsp}} -
+n_{\mathrm{bt}} - r_{\mathrm{rsp}}$ but does not call out a
+lower bound; the natural reading is that it must be
+non-negative.  In our implementation the chain machine
+\textsc{Isogeny22ChainWithTorsion} (\algo{8.47}) needs at
+least one main step after the gluing prep step, i.e.\
+$e \geq 2$.  We coded that as a plain
+\texttt{assert!(e >= 2)} inside
+\texttt{Kernel::isogeny\_inner}.
+
+\paragraph{The attack.}  A signature with
+$(n_{\mathrm{bt}}, r_{\mathrm{rsp}}) = (125, 0)$ on NIST-I
+yields $e'_{\mathrm{rsp}} = 126 - 125 - 0 = 1$, which passes
+the parse-time \texttt{checked\_sub} gate
+(\algo{4.9} line~7 only requires
+$e'_{\mathrm{rsp}} \geq 0$) and survives the
+$2^3$-isotropy guard for some choices of $M_{\mathrm{chl}}$
+and the hint bytes.  Verify then calls the chain machine
+with $e = 1$ and the \texttt{assert!} fires.  An adversary
+who has access to the verifier's process needs only zero
+out a single byte of an honest signature
+(\texttt{sig[A\_AUX\_BYTES + 1]}, the $r_{\mathrm{rsp}}$
+field) and set $n_{\mathrm{bt}} = 125$ plus four small
+$M_{\mathrm{chl}}$ entries to crash any release build.
+
+\paragraph{Fix.}  Convert the \texttt{assert!} into a
+fallible early return:
+\begin{lstlisting}[language=Rust]
+if e < 2 {
+    return None;
+}
+\end{lstlisting}
+Sign-side callers of \texttt{Kernel::isogeny} treat
+\texttt{None} as a chain failure (the retry loop continues);
+verify treats it as \texttt{VerificationFailed} via the
+existing \texttt{?} chain.  Wycheproof vector
+\texttt{tcId = 53} in the verify suite pins this regression.
+
+\noindent
+\textbf{Advice for implementers:}  Spec algorithms that
+operate at the edge of a parameter (\textit{``chain of length
+$e$''}) leave the boundary cases to the implementer.
+$e = 0$ is usually obvious (identity isogeny); $e = 1, 2, 3$
+are easy to miss if the algorithm assumes ``two or three main
+steps and then the tail.''  Audit every \texttt{assert!} that
+encodes such a lower bound and demote it to a fallible return
+if the input is attacker-controlled.
+
+\subsection{Sign panic on $\mathrm{sui}.e < 4$ chain entry}
+\label{sec:bug-isogeny-no-extra-torsion-e-lt-4}
+
+The signing flow's outer $(2,2)$-chain uses
+\texttt{Kernel::isogeny\_no\_extra\_torsion} (the
+\texttt{extra\_torsion = false} mode of
+\algo{8.47}) with chain length $\mathrm{sui}.e$ coming out of
+\textsc{SuitableIdeals}.  That mode needs gluing $+\geq 1$
+main step $+$ a 4-iso tail $+$ a 2-iso tail, i.e.\
+$\mathrm{sui}.e \geq 4$.  Honest signing always picks
+$\mathrm{sui}.e \approx f - 2$ ($\approx 246$ on NIST-I), so a
+plain \texttt{assert!(e >= 4)} survives every KAT.
+
+\paragraph{The attack.}  A 15-minute fuzz run of our
+parse-arbitrary-SK-then-sign target found a malformed
+\texttt{SigningKey} that the parser accepts and that drives
+\textsc{FindUV} (the inner loop of \textsc{SuitableIdeals})
+into a tiny $\mathrm{sui}.e$.  The chain machine asserts
+out.  The threat model here is corrupted on-disk signing
+keys --- a defender's process loading a tampered key file
+crashes mid-sign rather than returning an error the
+caller can handle.
+
+\paragraph{Fix.}  Same shape as
+\S\ref{sec:bug-e-rsp-prime-one-assert}: convert
+\texttt{assert!} to \texttt{if e < 4 \{ return None \}}.  The
+sign retry loop already handles chain failures by sampling a
+fresh commitment ideal; the \texttt{None} threads through
+the existing \texttt{?} chain and the loop either succeeds on
+a later iteration or terminates with
+\texttt{SigningFailed}.
+
+\noindent
+\textbf{Advice for implementers:}  The
+``every \texttt{assert!} on chain-length is a panic
+primitive'' principle applies equally to sign-side asserts.
+A signer's process must not die on a corrupted-on-disk
+secret key; surface the corruption as a \texttt{Result::Err},
+not a panic.  Our fuzz harness (\texttt{fuzz\_sign\_malformed\_sk})
+runs in 30-minute slots and continues to surface
+non-panicking-but-slow inputs; bounded retry caps on the
+signing loop and constant-time gates on
+\texttt{SuitableIdeals} are the structural fixes.
+
+\subsection{\texttt{to\_hint} asymmetry with \texttt{from\_hint}}
+\label{sec:bug-to-hint-asymmetry}
+
+\textsc{TorsionBasisFromHint} (the recovery direction, called
+from verify on every signature) returns an \texttt{Option}
+and propagates \texttt{None} on bounded-search exhaustion.
+Its sibling \textsc{TorsionBasisToHint} (the generation
+direction, called from sign and keygen) used to return a
+plain tuple and \texttt{.expect("\ldots")} on the same
+bounded search.  In honest sign/keygen the search always
+succeeds, so this never fired in practice; but the API
+asymmetry is the kind of latent panic an audit pass tends to
+flag.
+
+\paragraph{Fix.}  Make \texttt{to\_hint} return
+\texttt{Option<(TorsionBasis, BasisHint)>} mirroring
+\texttt{from\_hint}.  Callers in keygen and sign funnel
+\texttt{None} into the existing retry-loop \texttt{continue},
+matching the same pattern used for
+\texttt{compute\_even\_response} and
+\texttt{compute\_challenge\_isogeny} failures elsewhere in
+the sign body.
+
+\noindent
+\textbf{Advice for implementers:}  Symmetric pairs of
+functions (encode/decode, sign/verify, generate/recover)
+should have symmetric fallibility.  When one direction
+returns \texttt{Option} and the other returns a bare value,
+the bare-value side is almost always carrying an
+\texttt{.expect()} that contradicts the
+``infallible-by-construction'' claim in its docstring
+the moment the input drifts off the honest path.
 

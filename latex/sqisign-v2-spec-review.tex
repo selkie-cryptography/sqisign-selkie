@@ -331,14 +331,36 @@ SQIsign suite, which contains a regression vector
 spec-to-code translation hangs on that vector regardless of the
 implementation language.
 
+\paragraph{Structurally adversarial $A$.}
+An algebraic refinement sharpens the threat.  For $A$ in the
+prime subfield $\Fp \subset \Fpii$ with $A^4 - 4 A^2 + 2 = 0$
+(concretely $A = \sqrt{2} \bmod p$ on NIST-I), the predicate is
+\emph{structurally unsatisfiable}: an explicit calculation reduces
+$V_n := (1+n^2)^2 + n^2 A^2 (A^2 - 4)$ to the perfect square
+$(n^2 - 1)^2$, while $(1+n^2)$ toggles squareness independently
+in~$\Fp$.  The two parities can never agree the way the predicate
+needs, so the search exhausts at every~$n$.  Without a cap, an
+adversary computes $\sqrt{2} \bmod p$ once (a closed-form constant
+per parameter set) and crafts signatures whose
+\texttt{curve\_aux} is exactly that subfield element; every call
+to \textsc{Verify} on those signatures hangs forever.  The
+existence of such structurally unsatisfiable $A$ means the
+$K$-iteration cap is not merely an engineering convenience for
+the implementer~--- it is the only termination guarantee.
+
 \paragraph{Recommendation.}
 \algo{2.2} should state explicitly that the fallback search is
 bounded: ``stop after at most $K$ iterations and signal failure to
 the caller; on signal, \textsc{Verify} rejects the signature.''
-A constant of $K = 2^{16}$ provides several orders of magnitude
-of headroom above anything observed on honest signatures (where
-the admissible~$n$ uniformly fits in $7$~bits) and is small enough
-that the verifier remains $O(1)$ on adversarial input.
+Any $K$ comfortably above the empirical worst-case suffices: a
+Sage probe over $10^5$ random Fp$^2$-valued~$A$ found a
+maximum of $37$ tries, so $K = 2^{10}$ leaves about an order of
+magnitude of headroom while keeping the adversarial slowpath
+below ${\sim}5$~ms (compared to $\sim 268$~ms at $K = 2^{16}$).
+The spec text need not fix a specific~$K$, but should make the
+cap mandatory and explicit, and should mention the structurally
+unsatisfiable case so an implementer does not assume the cap is
+``infallible by construction.''
 
 \algo{4.9} (\textsc{Verify}) should be amended to consume the new
 failure signal from \textsc{TorsionBasisFromHint} as a rejection.
@@ -2147,5 +2169,107 @@ implementations may reject $\mathrm{chl} \ge 2^{e_{\mathrm{chl}}}$
 at parse time without changing the semantics; doing so is a
 defense-in-depth choice that does not alter the accept/reject
 outcome on any signature.
+
+% =====================================================================
+\section{\algo{4.9} line 24: lower bound on $e'_{\mathrm{rsp}}$ for
+  the $(2,2)$-chain entry}
+\label{sec:spec-e-rsp-prime-lower-bound}
+
+\finding{Affects \algo{4.9} (\textsc{Verify}, line 24) and the
+$(2,2)$-chain machine \algo{8.47}
+(\textsc{Isogeny22ChainWithTorsion}).}{\medium}
+
+\algo{4.9} reads off $e'_{\mathrm{rsp}} = e_{\mathrm{rsp}} -
+n_{\mathrm{bt}} - r_{\mathrm{rsp}}$ from the signature
+(line 7) and uses it as the length of the verification
+$(2,2)$-chain at line 24.  Line 7's check requires only
+$e'_{\mathrm{rsp}} \geq 0$.
+
+\paragraph{What goes wrong.}
+\algo{8.47}'s extra-torsion mode runs a balanced strategy whose
+indexing assumes \emph{at least one main step after the gluing
+prep}.  Concretely, the chain needs the kernel to support
+gluing $+\geq 1$ main step, i.e.\ $e'_{\mathrm{rsp}} \geq 2$ at
+verification.  The spec text does not state this, and the only
+guard at parse time
+($e'_{\mathrm{rsp}} \geq 0$) admits $e'_{\mathrm{rsp}}
+\in \{0, 1\}$.
+
+For $e'_{\mathrm{rsp}} = 0$ the algorithm has an explicit
+short-circuit branch (\algo{4.9} lines 21--23, ``skip the
+$(2,2)$-isogeny''), so that case is handled.  The
+$e'_{\mathrm{rsp}} = 1$ case has no such carve-out:
+verification proceeds into the chain machine with chain length
+$1$, and a straightforward implementation of \algo{8.47} either
+indexes off the end of the strategy array, asserts that the
+kernel ``has order $2^{e+2}$'' against an actual order of $2^3$,
+or otherwise crashes.  An adversary need only flip
+$n_{\mathrm{bt}}$ or $r_{\mathrm{rsp}}$ so that
+$n_{\mathrm{bt}} + r_{\mathrm{rsp}} = e_{\mathrm{rsp}} - 1$ and
+pick a $M_{\mathrm{chl}}$ that survives the $2^3$-isotropy guard;
+verification crashes on every release build with a
+non-conditional \texttt{assert!}.
+
+\paragraph{Recommendation.}
+\algo{4.9} line 7 (or an adjacent check) should require
+$e'_{\mathrm{rsp}} \geq 2$ \emph{or} $e'_{\mathrm{rsp}} = 0$,
+matching the two branches \algo{4.9} actually supports.
+Equivalently: define $e'_{\mathrm{rsp}} = 1$ as an explicit
+rejection.  The Wycheproof SQIsign suite includes a regression
+vector for this case (\texttt{ShortChain} flag).
+
+% =====================================================================
+\section{\algo{8.47} extra-torsion=false mode: lower bound on
+  $\mathrm{sui}.e$}
+\label{sec:spec-isogeny-no-extra-torsion-bound}
+
+\finding{Affects \algo{8.47}
+(\textsc{Isogeny22ChainWithTorsion}, the
+\texttt{extra\_torsion} = \texttt{false} variant), invoked from
+the signing-side \textsc{IdealToIsogeny} outer chain
+(\algo{3.13}).}{\medium}
+
+\algo{8.47}'s \texttt{extra\_torsion} = \texttt{false} branch has
+a different chain layout: gluing prep, then $e - 2$ main
+$(2,2)$-steps, then a 4-isogeny tail, then a 2-isogeny tail
+(producing the dual form for the splitter without padding the
+kernel up to $2^{e+2}$).  This decomposition requires
+$e \geq 4$~--- gluing plus one main step plus the two tails
+exhausts the kernel only when there are four steps' worth of
+torsion to consume.
+
+The spec presents \algo{8.47} as a single algorithm parametrized
+by \texttt{extra\_torsion}; the lower-bound asymmetry between
+the two modes is not stated.
+
+\paragraph{What goes wrong.}
+\textsc{SuitableIdeals} (\algo{3.16}) selects an exponent
+$\mathrm{sui}.e$ via the \textsc{FindUV} inner loop.  Honest
+signing on NIST-I picks $\mathrm{sui}.e \approx f - 2 = 246$,
+nowhere near the boundary.  A malformed signing key
+(corrupted-on-disk, parser-accepted) can drive \textsc{FindUV}
+into a tiny $\mathrm{sui}.e$~--- our fuzz harness for
+parse-arbitrary-SK-then-sign surfaced such inputs in a
+$15$-minute run.  The chain machine's
+$\mathrm{sui}.e < 4$ then trips an
+\texttt{assert!} or out-of-range index that the
+release-mode build does not catch.  This is a DoS against a
+defender's signer process whenever the secret key file is
+tampered with.
+
+\paragraph{Recommendation.}
+State the lower bound explicitly in \algo{8.47}:
+\texttt{extra\_torsion} = \texttt{true} requires
+$e \geq 2$; \texttt{extra\_torsion} = \texttt{false} requires
+$e \geq 4$.  Implementers should treat the bound as a guard
+that returns a structured ``cannot run this chain'' error;
+sign-side callers should consume that error as a chain failure
+in their retry loop, not as a panic.
+
+The same advice applies more generally to chain-machine
+algorithms in the spec: every chain length~$e$ has a minimum
+that depends on the machine's tail layout, and those minima
+should be stated alongside the algorithm rather than implied by
+the index ranges in the pseudocode.
 
 \end{document}

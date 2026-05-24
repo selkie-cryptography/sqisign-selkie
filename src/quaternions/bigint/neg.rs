@@ -7,16 +7,22 @@ use core::ops::Neg;
 use super::BigInt;
 
 impl<const N: usize> BigInt<N> {
-    /// Negation. Flips the sign bit.
+    /// Negation. Flips the sign bit and re-canonicalizes zero.
     ///
     /// Table 1 (§3.1) from [Kouider et al.][ct-bigint]: `c_sign = 1 XOR
-    /// a_sign`.
+    /// a_sign`. The bare XOR would turn zero into the invalid form
+    /// `{sign: 1, limbs: [0; N]}`, violating the canonical-zero
+    /// invariant ([`BigInt`]: "Zero is always represented with
+    /// `sign == 0`"). The post-XOR mask `& (1 - is_zero)` clamps the
+    /// sign back to 0 when the magnitude is zero, preserving the
+    /// invariant in constant time.
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
     #[inline]
     pub fn wrapping_neg(&self) -> Self {
+        let is_zero = Self::mag_is_zero(&self.limbs);
         Self {
-            sign: self.sign ^ 1,
+            sign: (self.sign ^ 1) & (1 - is_zero),
             limbs: self.limbs,
         }
     }

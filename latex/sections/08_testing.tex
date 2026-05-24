@@ -62,12 +62,27 @@ ChallengeOverflow & 1 & High bits set beyond $e_{\mathrm{chl}} = 122$. \\
 SplicedField & 3 & Signature field replaced with the corresponding
   field from a different valid signature. \\
 MalformedPk & 2 & All-zero or all-\texttt{0xFF} public key. \\
+HintOverflow & 3 & Hint byte causes the x-coord search to take its
+  fallback path on an attacker-supplied curve.  Pre-fix
+  (\S\ref{sec:bug-find-na-x-coord-unbounded}) the loop ran
+  unbounded. \\
+ShortChain & 1 & $e'_{\mathrm{rsp}} = 1$ in the recovered chain.
+  Pre-fix the chain machine's \texttt{assert!(e \(\geq\) 2)}
+  panicked
+  (\S\ref{sec:bug-e-rsp-prime-one-assert}). \\
+AdversarialFpSubfield & 1 & \texttt{curve\_aux} $A = \sqrt{2}$ in the
+  $\mathbb{F}_p$ subfield; the search predicate is structurally
+  unsatisfiable, so the bounded cap matters
+  (\S\ref{sec:bug-find-na-x-coord-unbounded}). \\
 \midrule
-\textbf{Total} & \textbf{39} & \\
+\textbf{Total} & \textbf{54} & \\
 \bottomrule
 \end{tabular}
 \caption{Verification test vector categories for
-  \texttt{SQIsign\_248} (C2SP/wycheproof JSON format).}
+  \texttt{SQIsign\_248} (C2SP/wycheproof JSON format).
+  \texttt{HintOverflow}, \texttt{ShortChain}, and
+  \texttt{AdversarialFpSubfield} were added during the audit
+  session that produced \S\ref{sec:bugs}'s findings.}
 \label{tab:verify-vectors}
 \end{table}
 
@@ -115,6 +130,79 @@ round-trip) and a roadmap for categories to add as signing stabilizes:
     > 0$ or $n_{\mathrm{bt}} > 0$, exercising the even-response
     isogeny and backtracking paths that are rare in KAT vectors.
 \end{itemize}
+
+\subsection{Bit-flip malleability sweep across all KATs}
+\label{sec:bit-flip-sweep}
+
+The exhaustive single-bit-flip sweep originally ran only on KAT~0
+($8 \cdot \texttt{SIGNATURE\_BYTES} = 1184$ verify calls per KAT).
+Six bits were documented as inherently malleable on that
+parameter combo
+($n_{\mathrm{bt}}, r_{\mathrm{rsp}}) = (0, 1)$: the top one or two
+bits of each of the four $M_{\mathrm{chl}}$ scalars, which the
+$(2,2)$-chain's terminal $2$-isogeny absorbs as $2$-torsion in the
+recovered kernel.
+
+Extending the sweep to all $100$~KAT signatures surfaced
+\textbf{class-internal variation}: signatures within the same
+$(n_{\mathrm{bt}}, r_{\mathrm{rsp}})$ class can have different
+residual sizes depending on per-signature structural alignment with
+the chain's $2$-isogeny kernels.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}rrr@{}}
+\toprule
+\textbf{Class $(n_{\mathrm{bt}}, r_{\mathrm{rsp}})$} & \textbf{KATs}
+& \textbf{Residual size range} \\
+\midrule
+$(0, 0)$  & 36 & 6 -- 7 \\
+$(0, 1)$  & 19 & 6 -- 9 \\
+$(0, 2)$  & 13 & 6 -- 11 \\
+$(0, 3)$  &  3 & 8 -- 13 \\
+$(0, 4)$  &  3 & 6 -- 10 \\
+$(0, 6)$  &  2 & 6 -- 8 \\
+$(0, 7)$  &  1 & 6 -- 6 \\
+$(1, 0)$  & 10 & 6 -- 7 \\
+$(1, 1)$  &  4 & 6 -- 8 \\
+$(1, 2)$  &  5 & 6 -- 8 \\
+$(1, 3)$  &  1 & 12 -- 12 \\
+$(2, 1)$  &  1 & 6 -- 6 \\
+$(3, 0)$  &  2 & 7 -- 7 \\
+\bottomrule
+\end{tabular}
+\caption{Per-class single-bit-flip malleability residuals across
+all 100 NIST-I KAT signatures.  The largest observed residual is
+13~bits in a $1184$-bit signature ($\approx 1.1\%$).  All residual
+bits live in the $M_{\mathrm{chl}}$ region (sig bytes
+$66\ldots 130$); none in \texttt{curve\_aux}, exponents,
+\texttt{chl}, or hints.}
+\label{tab:bit-flip-residuals}
+\end{table}
+
+The residual size grows roughly with $r_{\mathrm{rsp}}$ (more chain
+steps absorb more bits), and the bit positions are always near
+the top of one of the four $M_{\mathrm{chl}}$ entries.  Three
+structural properties hold for every KAT:
+\begin{itemize}[nosep]
+\item All residual bits live in the $M_{\mathrm{chl}}$ region.
+\item Each residual bit is one of the top few bits of one of the
+  four scalars.
+\item Asymmetry across columns is normal: entries $a$ and $b$
+  (first row) typically absorb more top bits than~$c$ and~$d$.
+\end{itemize}
+
+These are not spec violations: the spec's $M_{\mathrm{chl}}$ entry
+bound ($\algo{4.9}$ step~5) is $2^{e_{\mathrm{rsp}} -
+n_{\mathrm{bt}} + 2}$, which is the full encoding range.  SQIsign
+as specified satisfies EUF-CMA but not SUF-CMA.
+
+The empirical residuals are pinned in a static
+\texttt{KAT\_INHERENT\_MALLEABLE\_BITS[100]} table; the regression
+test asserts every KAT's residual matches its entry.  Any future
+change to the chain math that grows or shrinks the residual set
+will fail loudly~--- in either direction.
 
 \subsection{Mutation testing}
 

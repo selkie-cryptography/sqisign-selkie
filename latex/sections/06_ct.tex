@@ -46,3 +46,49 @@ verification are constant-time or operate on purely public data.
 
 We plan a six-phase CT hardening immediately after achieving
 end-to-end interoperability.
+
+\subsection{Specific findings during audit}
+
+A focused audit of the deuring layer and the underlying bigint
+arithmetic surfaced two undocumented CT leaks on the sign-side
+secret path.
+
+\paragraph{\texttt{BigInt::two\_adic\_val} variable-time leak.}
+The function is documented as constant-time and is called on
+secret-derived inputs in \textsc{SuitableIdeals} (the dyadic
+valuation of $\gcd(u, v)$).  The body dispatched
+\texttt{if limb == 0 \{ 64 \} else \{ limb.trailing\_zeros() \}}
+per limb~--- the \texttt{else} branch invokes the variable-time
+\texttt{u64::trailing\_zeros} intrinsic, and the
+\texttt{if limb == 0} test itself is a data-dependent branch.
+Both leak the limb's value.  A CT helper
+(\texttt{super::trailing\_zeros}) was already present in the same
+module and returns \texttt{64} for zero by construction; swapping
+the dispatch for an unconditional call closes both the branch and
+the variable-time intrinsic in a one-line fix.
+
+\paragraph{\texttt{compute\_even\_response} parity branch.}
+The body of \texttt{deuring::compute\_even\_response}~--- called
+in signing on the secret response quaternion~$\alpha$~--- branches
+on the parity of $\gcd(s_0, t_0)$, where $(s_0, t_0)$ are
+$\alpha$-derived matrix entries.  Both the \texttt{gcd} call and
+the parity branch leak bits about $\alpha$.  The
+\texttt{gcd} is variable-time by design (Stein's binary GCD,
+explicitly marked); the parity branch was undocumented.  We
+tagged the function with a \texttt{TODO(ct)} marker matching
+the other ${\sim}18$ such markers in the crate and noted
+the eventual fix shape (always evaluate both columns, select
+via \texttt{ConditionallySelectable}, with a CT GCD once one
+is available).
+
+\paragraph{\texttt{BigInt::wrapping\_neg} invariant violation.}
+A correctness-class finding adjacent to the CT audit:
+\texttt{wrapping\_neg} produced the invalid form
+\texttt{\{sign: 1, limbs: [0; N]\}} on zero input, violating the
+documented canonical-zero invariant.  The malformed zero was
+masked by downstream guards (\texttt{is\_negative} and
+equality both \texttt{\&}-gate by \texttt{mag\_is\_zero}), but
+the four direct \texttt{self.sign == 1} checks in
+\texttt{gcd.rs} would have treated it as negative.  Fixed by
+masking the post-XOR sign bit by \texttt{(1 - is\_zero)} in
+constant time.
