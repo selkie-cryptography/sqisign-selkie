@@ -502,12 +502,11 @@ impl TorsionBasis {
         x1
     }
 
-    /// Evaluate a [`KernelDecomposition`][crate::deuring::KernelDecomposition]
-    /// against this basis: computes `[a]·P + [b]·PmQ` via the biscalar
-    /// Montgomery ladder.
+    /// Evaluate a kernel-generator decomposition against this basis:
+    /// computes `[a]·P + [b]·PmQ` via the biscalar Montgomery ladder.
     ///
-    /// The scalars come from the kernel decomposition produced by the
-    /// Deuring correspondence. The result is `[a]·P + [b]·(P − Q)`
+    /// The scalars `(a, b)` come from the kernel decomposition produced
+    /// by the Deuring correspondence. The result is `[a]·P + [b]·(P − Q)`
     /// under our spec-permuted layout — see [`scalar_mul_add`] for
     /// why this is `(P − Q)` rather than `Q`.
     ///

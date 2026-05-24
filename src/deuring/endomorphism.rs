@@ -224,8 +224,8 @@ impl EndomorphismAction {
     ///
     /// Implements the matrix-assembly half of
     /// [IdealToKernel][Alg. 3.14]; the surrounding column-pick step
-    /// (used inside [`super::compute_even_response`]) is inlined at
-    /// the call site.
+    /// (used inside the sign-side even-response kernel constructor)
+    /// is inlined at the call site.
     ///
     /// [Alg. 3.14]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.14
     pub(crate) fn apply(

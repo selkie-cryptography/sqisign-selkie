@@ -24,12 +24,13 @@ pub use crate::params::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES}
 use crate::{
     curves::{
         AuxiliaryHint, ChallengeHint, TorsionBasis, TorsionExponent,
+        isogeny::Kernel,
         montgomery::{Coefficient, Curve},
         scalar::Scalar,
     },
     fields::fp2::Fp2,
     hash::CHALLENGE_BYTES,
-    params::{E_RSP, TORSION_2POWER_BYTES},
+    params::{E_RSP, TORSION_2POWER_BYTES, TORSION_EVEN_POWER},
 };
 
 /// Wire-format offsets for the [`Signature`] encoding at the NIST-I
@@ -64,6 +65,77 @@ impl Challenge {
     pub(crate) fn derive(pk: &VerifyingKey, e_com: &Curve, msg: &[u8]) -> Self {
         let j_com = e_com.j_invariant();
         crate::hash::hash(pk, &j_com, msg).into()
+    }
+
+    /// Computes the challenge isogeny on `basis_pk`, then maps
+    /// `pre_iso` onto the codomain via the canonical isomorphism.
+    ///
+    /// `basis_pk` is the verifying-key torsion basis on `E_pk`.
+    /// `pre_iso` is the post-response basis on a curve `E'` with
+    /// `j(E') = j(E_chl)`. Returns the challenge codomain `E_chl`
+    /// and the propagated image of `pre_iso` on `E_chl`.
+    ///
+    /// # Returns
+    ///
+    /// `None` if `j(pre_iso.curve()) ≠ j(E_chl)`, or if the
+    /// isomorphism `E' → E_chl` is degenerate (λ_x = 0 or
+    /// λ_z = 0).
+    ///
+    /// # Divergences
+    ///
+    /// The j-invariant check before [`Curve::isomorphism`] mirrors
+    /// the C reference's debug assertion in
+    /// `compute_challenge_codomain_signature`. Without it,
+    /// [`Curve::isomorphism`] silently computes a degenerate
+    /// λ_x / λ_z and produces a bogus iso evaluation —
+    /// downstream basis points pushed through it are
+    /// mathematically meaningless, the signature serializes, and
+    /// verify rejects at the `(2,2)`-chain step.
+    ///
+    /// The [`Isomorphism::eval`] is applied to `pre_iso.PmQ`
+    /// alongside `P` and `Q`. Never recompute the codomain `PmQ`
+    /// via [`ProjectiveXOnlyPoint::projective_difference`]:
+    /// downstream consumers ([`ChangeOfBasisMatrix::from_bases`])
+    /// call [`TorsionBasis::lift`], and the sqrt branch chosen by
+    /// `projective_difference` is fragile.
+    ///
+    /// Implements [ComputeChallengeIsogeny][Alg. 4.7] (Algorithm 4.7).
+    ///
+    /// [Alg. 4.7]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.7
+    /// [`Curve::isomorphism`]: crate::curves::montgomery::Curve::isomorphism
+    /// [`Isomorphism::eval`]: crate::curves::montgomery::Isomorphism::eval
+    /// [`ProjectiveXOnlyPoint::projective_difference`]: crate::curves::montgomery::ProjectiveXOnlyPoint::projective_difference
+    /// [`TorsionBasis::lift`]: crate::curves::TorsionBasis::lift
+    /// [`ChangeOfBasisMatrix::from_bases`]: crate::curves::ChangeOfBasisMatrix::from_bases
+    pub(crate) fn to_isogeny(
+        self,
+        basis_pk: &TorsionBasis,
+        pre_iso: &TorsionBasis,
+        n_bt: TorsionExponent,
+    ) -> Option<(Curve, TorsionBasis)> {
+        // Line 1: E_chl ← TwoIsogenyChain([2^n_bt]·(P + [chl]·Q), E_pk, f − n_bt)
+        let mut kernel_point = basis_pk.scalar_mul_add(self.as_ref());
+        for _ in 0..n_bt.value() {
+            kernel_point = kernel_point.double();
+        }
+        let e_chain = TorsionExponent::try_from(TORSION_EVEN_POWER - n_bt.value()).ok()?;
+        let (curve_chl, _) = Kernel::new(kernel_point).isogeny(e_chain, &[]);
+
+        // Line 2: (P_chl, Q_chl, P_chl − Q_chl) ← IsomorphismMontgomeryCurves(E', P, Q,
+        // P−Q, E_chl)
+        let e_prime = pre_iso.P.curve();
+        if e_prime.j_invariant() != curve_chl.j_invariant() {
+            return None;
+        }
+        let iso = e_prime.isomorphism(&curve_chl)?;
+        let basis_chl = TorsionBasis::from_propagated(
+            iso.eval(&pre_iso.P),
+            iso.eval(&pre_iso.PmQ),
+            iso.eval(&pre_iso.Q),
+        );
+
+        // Line 3
+        Some((curve_chl, basis_chl))
     }
 
     /// The underlying scalar.

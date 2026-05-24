@@ -711,7 +711,7 @@ fn sign_kat_derand_000() {
 }
 
 // Re-enable (drop `#[ignore]`) after sign-eq lands. Currently blocked on:
-// (a) `split_auxiliary_isogeny` produces a non-isotropic (P, Q) kernel,
+// (a) `SplitAuxiliaryKernel::isogeny` produces a non-isotropic (P, Q) kernel,
 //     tripping the `is_isotropic` debug_assert at `surfaces/mod.rs:548`
 //     (`kernel must be isotropic for the 2^(e+2)-Weil pairing`).
 // (b) Companion KAT[9] hangs in the response phase under coverage
