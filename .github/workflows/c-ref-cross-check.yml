@@ -23,7 +23,7 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/c-ref-cross-check.yml'
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 6 * * 0"   # weekly Sunday 06:00 UTC; conditionally skipped — see `cron-gate`.
   workflow_dispatch:
 
 concurrency:
@@ -37,8 +37,50 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Cron fallback: skip the scheduled firing if any non-cron run on
+  # main has fired in the last 7d. With `src/**` triggering most
+  # pushes, the weekly cron is a fallback for quiet weeks only.
+  cron-gate:
+    name: Cron gate (skip if recent run on main)
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Look for non-cron runs on main in last 7d
+        id: check
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        with:
+          script: |
+            const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'c-ref-cross-check.yml',
+              per_page: 50,
+            });
+            const recent = data.workflow_runs.filter(r =>
+              r.id !== context.runId &&
+              r.event !== 'schedule' &&
+              r.head_branch === 'main' &&
+              r.created_at >= cutoff
+            ).length;
+            core.setOutput('skip', recent > 0 ? 'true' : 'false');
+            core.info(recent > 0
+              ? `Found ${recent} non-cron c-ref-cross-check run(s) on main since ${cutoff}; skipping this cron firing.`
+              : `No non-cron c-ref-cross-check runs on main since ${cutoff}; proceeding with cron firing.`);
+
   c-ref-cross-check:
     name: C reference cross-check
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     steps:

@@ -31,8 +31,52 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Cron fallback: skip the scheduled firing if any non-cron run on
+  # main has fired in the last 24h. The nightly cron is a fallback
+  # for days where pushes miss the path filter (workflow-only
+  # changes, etc.); when main has already triggered audit recently,
+  # the cron's value is redundant.
+  cron-gate:
+    name: Cron gate (skip if recent run on main)
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Look for non-cron runs on main in last 24h
+        id: check
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        with:
+          script: |
+            const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'audit.yml',
+              per_page: 50,
+            });
+            const recent = data.workflow_runs.filter(r =>
+              r.id !== context.runId &&
+              r.event !== 'schedule' &&
+              r.head_branch === 'main' &&
+              r.created_at >= cutoff
+            ).length;
+            core.setOutput('skip', recent > 0 ? 'true' : 'false');
+            core.info(recent > 0
+              ? `Found ${recent} non-cron audit run(s) on main since ${cutoff}; skipping this cron firing.`
+              : `No non-cron audit runs on main since ${cutoff}; proceeding with cron firing.`);
+
   deny:
     name: cargo deny
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -61,6 +105,11 @@ jobs:
 
   unsafe-audit:
     name: Unsafe audit
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -86,6 +135,11 @@ jobs:
 
   panic-freedom:
     name: Panic-freedom
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -118,6 +172,11 @@ jobs:
 
   zeroize:
     name: Zeroize verification
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -146,6 +205,11 @@ jobs:
 
   binary-size:
     name: Binary & stack size
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -177,6 +241,11 @@ jobs:
 
   alloc-budget:
     name: Allocation budget
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -209,6 +278,11 @@ jobs:
 
   doc-coverage:
     name: Doc coverage
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -236,6 +310,11 @@ jobs:
 
   msrv:
     name: MSRV compliance
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -263,6 +342,11 @@ jobs:
 
   stack-depth:
     name: Stack depth
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
@@ -288,6 +372,11 @@ jobs:
 
   api-surface:
     name: API surface
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     steps:
