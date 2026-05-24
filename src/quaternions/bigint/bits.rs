@@ -73,22 +73,24 @@ impl<const N: usize> BigInt<N> {
         k + (1 - found) * (64 * N as u32)
     }
 
-    /// Returns the 2-adic valuation: the number of trailing zero bits
-    /// in the magnitude. Returns 0 for zero.
+    /// Returns the 2-adic valuation of the magnitude: the position of
+    /// the lowest set bit. Returns `N * 64` for zero (the
+    /// "infinite-divisibility" sentinel — see [`Self::trailing_zeros`]
+    /// for the same convention).
+    ///
+    /// Constant-time over the limb values. Called on secret-derived
+    /// values in `SuitableIdeals`, so the per-limb CT primitive
+    /// [`trailing_zeros`](super::trailing_zeros) is used instead of
+    /// the variable-time `u64::trailing_zeros` intrinsic.
     pub fn two_adic_val(&self) -> u32 {
-        // Count trailing zeros in constant time by iterating all limbs.
         let mut count: u32 = 0;
-        let mut still_zero = 1u64; // 1 while all limbs so far are zero
+        let mut still_zero = 1u64;
         let mut i = 0;
         while i < N {
             let limb = self.limbs[i];
-            // CT trailing zeros for this limb: if limb == 0, contribute 64;
-            // otherwise contribute trailing_zeros(limb).
             let limb_nonzero = ((limb | limb.wrapping_neg()) >> 63) as u32;
-            let tz = if limb == 0 { 64 } else { limb.trailing_zeros() };
-            // Only count if all previous limbs were zero.
+            let tz = trailing_zeros(limb);
             count += (still_zero as u32) * tz;
-            // Once we hit a nonzero limb, stop counting.
             still_zero &= 1 - (limb_nonzero as u64);
             i += 1;
         }
