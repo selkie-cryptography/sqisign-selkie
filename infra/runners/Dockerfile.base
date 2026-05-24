@@ -39,17 +39,31 @@ RUN apt-get update \
 #     for the ~4 GB conda env, and `actions/cache` keeps warm runs
 #     to ~1-2 min.
 
-# Rustup stable + nightly + clippy/rustfmt. Cross-compile targets
-# stay on GitHub-hosted (Fly is x86_64-linux only).
+# Rustup stable + nightly + MSRV (1.81.0), with the components each
+# CI job needs: rustfmt/clippy on nightly (Format + Clippy gate),
+# llvm-tools-preview on stable (audit.yml's binary-size job uses
+# `llvm-objdump` for per-function disassembly).
+#
+# Baking these means `dtolnay/rust-toolchain` is only needed in
+# workflow steps for the fork-PR fallback path (GH-hosted
+# `ubuntu-latest`) or for cross-compile targets — on Fly the
+# toolchain is already on PATH, no rustup roundtrip required.
+#
+# Bump the 1.81.0 line in lockstep with the `rust-version` field in
+# the crate's Cargo.toml (the MSRV audit job uses this exact pin).
+# Cross-compile targets stay on GitHub-hosted (Fly is x86_64-linux
+# only).
 #
 # Pre-create the `runner` user so RUSTUP_HOME / CARGO_HOME can be
-# chowned. Job-time `dtolnay/rust-toolchain` invocations refresh
-# rustup and need write access to RUSTUP_HOME.
+# chowned. Job-time `dtolnay/rust-toolchain` invocations (where
+# still needed) refresh rustup and need write access to RUSTUP_HOME.
 RUN useradd -m -s /bin/bash runner \
   && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --default-toolchain stable --no-modify-path \
   && rustup toolchain install nightly --profile minimal \
   && rustup component add rustfmt clippy --toolchain nightly \
+  && rustup component add llvm-tools-preview --toolchain stable \
+  && rustup toolchain install 1.81.0 --profile minimal \
   && chown -R runner:runner "$RUSTUP_HOME" "$CARGO_HOME"
 
 # System tools + TeX Live (latex-extra family, ~1-1.5 GB).
