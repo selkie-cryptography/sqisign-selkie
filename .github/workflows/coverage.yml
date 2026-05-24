@@ -30,8 +30,58 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Cron fallback: skip a scheduled firing if any non-cron run on
+  # main has already fired in the last 24h (= the cron interval).
+  # The cron is the fallback for genuinely-quiet days; if a push
+  # triggered coverage yesterday afternoon, there's no value in
+  # re-running today's nightly.
+  cron-gate:
+    name: Cron gate (skip if recent run on main)
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 2
+    # `actions: read` is needed to list workflow runs (the
+    # github-script step calls actions API); contents:read alone
+    # returns 403 on that endpoint.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Look for non-cron runs on main in last 24h
+        id: check
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        with:
+          script: |
+            const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'coverage.yml',
+              per_page: 50,
+            });
+            const recent = data.workflow_runs.filter(r =>
+              r.id !== context.runId &&
+              r.event !== 'schedule' &&
+              r.head_branch === 'main' &&
+              r.created_at >= cutoff
+            ).length;
+            core.setOutput('skip', recent > 0 ? 'true' : 'false');
+            core.info(recent > 0
+              ? `Found ${recent} non-cron coverage run(s) on main since ${cutoff}; skipping this cron firing.`
+              : `No non-cron coverage runs on main since ${cutoff}; proceeding with cron firing.`);
+
   coverage:
     name: Code coverage
+    needs: [cron-gate]
+    # On non-schedule triggers cron-gate is skipped → `!cancelled()`
+    # lets this job's `if:` still evaluate. On schedule, gate on the
+    # cron-gate output.
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, perf-2x]
     # Two un-`#[ignore]`d sign() KATs (`sign_kat_derand_001/009`) added
     # to cover `keys/signing.rs`; each is several minutes under llvm-cov

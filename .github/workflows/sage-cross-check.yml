@@ -26,9 +26,11 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/sage-cross-check.yml'
   schedule:
-    # Nightly drift check — conda / Sage upgrades can break the
-    # cross-check even when no Rust code changed.
-    - cron: "0 6 * * *"
+    # Weekly drift check — conda / Sage upgrades can break the
+    # cross-check even when no Rust code changed. Conditionally
+    # skipped if a non-cron run already fired on main in the past
+    # 7d (see `cron-gate` below).
+    - cron: "0 6 * * 0"   # weekly Sunday 06:00 UTC.
   workflow_dispatch:
 
 concurrency:
@@ -42,8 +44,48 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Cron fallback: skip the scheduled firing if any non-cron run on
+  # main has fired in the last 7d. With sage's narrow path filter,
+  # PR-triggered runs are rare; the weekly cron is the main drift-
+  # detection mechanism. When it has fired (PR-triggered) within the
+  # week, today's cron is redundant.
+  cron-gate:
+    name: Cron gate (skip if recent run on main)
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Look for non-cron runs on main in last 7d
+        id: check
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        with:
+          script: |
+            const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'sage-cross-check.yml',
+              per_page: 50,
+            });
+            const recent = data.workflow_runs.filter(r =>
+              r.id !== context.runId &&
+              r.event !== 'schedule' &&
+              r.head_branch === 'main' &&
+              r.created_at >= cutoff
+            ).length;
+            core.setOutput('skip', recent > 0 ? 'true' : 'false');
+            core.info(recent > 0
+              ? `Found ${recent} non-cron sage-cross-check run(s) on main since ${cutoff}; skipping this cron firing.`
+              : `No non-cron sage-cross-check runs on main since ${cutoff}; proceeding with cron firing.`);
+
   sage-precompute-check:
     name: Sage precompute cross-check
+    needs: [cron-gate]
     # Runs on Fly self-hosted with Sage installed at job time. Sage
     # is NOT pre-baked into the runner image because the conda env
     # would push the image over Fly's 8 GB unpack ceiling. The job
@@ -52,12 +94,16 @@ jobs:
     # `actions/cache` brings warm runs down to ~1–2 min.
     #
     # Skipped on fork PR (untrusted code on self-hosted Machines).
+    # On schedule, gated by cron-gate (skip if recent run on main).
     # `perf-4x`: the cross-check is mostly Sage subprocess work, which
     # is single-threaded but CPU-bound for ~30 min on perf-4x. On
     # shared-cpu-4x the throttling extends that well past the timeout.
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, perf-4x]
     # 60 min: cold runs do a one-time Sage conda install (~several
     # minutes) plus the cross-check itself. Warm runs hit

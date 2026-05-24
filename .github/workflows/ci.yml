@@ -70,8 +70,54 @@ env:
 # All run in parallel, no dependencies. Target: <5 min wall time.
 
 jobs:
+  # Cron fallback: skip the scheduled firing if any non-cron run on
+  # main has fired in the last 24h. The nightly cron exists to
+  # exercise the full platform + KAT matrix on days where no push
+  # to main happened; if a push already triggered today's run,
+  # there's no value in re-running the nightly. Push-to-main and
+  # same-repo PRs both bypass this gate (the `if:` only fires on
+  # schedule events).
+  cron-gate:
+    name: Cron gate (skip if recent run on main)
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Look for non-cron runs on main in last 24h
+        id: check
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        with:
+          script: |
+            const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              per_page: 50,
+            });
+            const recent = data.workflow_runs.filter(r =>
+              r.id !== context.runId &&
+              r.event !== 'schedule' &&
+              r.head_branch === 'main' &&
+              r.created_at >= cutoff
+            ).length;
+            core.setOutput('skip', recent > 0 ? 'true' : 'false');
+            core.info(recent > 0
+              ? `Found ${recent} non-cron CI run(s) on main since ${cutoff}; skipping this cron firing.`
+              : `No non-cron CI runs on main since ${cutoff}; proceeding with cron firing.`);
+
   fmt:
     name: Format
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     permissions:
@@ -119,6 +165,11 @@ jobs:
 
   clippy:
     name: Clippy
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     steps:
@@ -139,6 +190,11 @@ jobs:
 
   gate:
     name: lib + doc tests (x86_64-linux)
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     # Run the full test suite under the `release-checked` cargo
     # profile — release-mode optimization (so the 100 sign KATs run
     # in 1–6s each instead of 14–60s in debug) but with
@@ -249,6 +305,11 @@ jobs:
 
   doc:
     name: Documentation
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     steps:

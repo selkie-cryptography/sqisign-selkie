@@ -7,11 +7,24 @@ name: Constant-Time
 # measurements, run on dedicated hardware off-CI.
 
 on:
-  # CT runs on a weekly schedule and on demand only — DudeCT/Tacet
-  # are slow and not needed on every push. Push trigger removed in
-  # favor of the weekly cron + manual dispatch.
+  # CT runs on push-to-main (paths-filtered), workflow_dispatch, and
+  # a weekly cron that acts as a fallback: the `cron-gate` job below
+  # skips a scheduled firing if any non-cron run has fired in the
+  # last 7 days, so the cron only kicks in for genuinely-quiet weeks.
+  # PR triggers are deliberately not wired up — CT runs (especially
+  # ctgrind at up to 2h) gate post-merge on main rather than per-PR.
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/ctgrind.rs'
+      - 'benches/dudect.rs'
+      - 'benches/tacet.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ct.yml'
   schedule:
-    - cron: "0 7 * * 1"   # weekly, Monday 07:00 UTC (after mutants)
+    - cron: "0 7 * * *"   # daily 07:00 UTC; conditionally skipped — see `cron-gate`.
   workflow_dispatch:
 
 # Cancel a superseded run if a newer commit lands before the prior
@@ -27,8 +40,63 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Skip the weekly cron firing if anything else (push, dispatch, or
+  # a prior cron) has already run CT in the last 7 days. The cron is
+  # a fallback that only matters when main has been quiet on CT-
+  # sensitive paths; if a push triggered CT three days ago, there's
+  # no value in re-running today.
+  cron-gate:
+    name: Cron gate (skip if recent run)
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 2
+    # `actions: read` is needed to list workflow runs (the
+    # github-script step calls actions API); contents:read alone
+    # returns 403 on that endpoint.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Look for non-cron runs on main in last 24h
+        id: check
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        with:
+          # Filter: non-schedule runs (prior cron firings shouldn't
+          # satisfy "we ran"; the cron is the fallback) on main, in
+          # the last cron interval, excluding self.
+          script: |
+            const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ct.yml',
+              per_page: 50,
+            });
+            const recent = data.workflow_runs.filter(r =>
+              r.id !== context.runId &&
+              r.event !== 'schedule' &&
+              r.head_branch === 'main' &&
+              r.created_at >= cutoff
+            ).length;
+            core.setOutput('skip', recent > 0 ? 'true' : 'false');
+            core.info(recent > 0
+              ? `Found ${recent} non-cron CT run(s) on main since ${cutoff}; skipping this cron firing.`
+              : `No non-cron CT runs on main since ${cutoff}; proceeding with cron firing.`);
+
+
   ct:
     name: DudeCT + Tacet
+    needs: [cron-gate]
+    # On non-schedule triggers cron-gate is skipped → `!cancelled()`
+    # lets this job's `if:` still evaluate (whereas the default
+    # behavior would propagate the skip). On schedule, gate on the
+    # cron-gate output.
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 30
     steps:
@@ -93,6 +161,11 @@ jobs:
 
   ctgrind:
     name: ctgrind (Valgrind taint tracking)
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 120
     env:
