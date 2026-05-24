@@ -49,6 +49,52 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Detect whether the PR diff touches any Rust source files. cargo-
+  # mutants has nothing to do on a no-Rust diff (docs / workflow YAML
+  # / etc), and skipping the heavy `incremental` job entirely is much
+  # cheaper than letting it spin up Fly, install toolchain + tools,
+  # build the baseline, and then exit zero. Output is consumed by the
+  # `incremental` job's `if:` below.
+  incremental-detect:
+    name: Detect Rust changes
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request') ||
+      github.event_name == 'pull_request'
+    runs-on: ${{ fromJSON(
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.head_repository.full_name == github.repository) ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+      && '["self-hosted","fly","linux","x64"]'
+      || '["ubuntu-latest"]') }}
+    timeout-minutes: 5
+    outputs:
+      has_rust: ${{ steps.check.outputs.has_rust }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Diff PR vs main, check for Rust files
+        id: check
+        # `actions/checkout` ran with `persist-credentials: false`,
+        # so the clone has no auth header for the `git fetch`. Set
+        # one up via gh just for this step.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth setup-git
+          git fetch origin main
+          if git diff --name-only origin/main..HEAD | grep -qE '\.rs$'; then
+            echo "has_rust=true" >> "$GITHUB_OUTPUT"
+            echo "diff touches Rust sources; will run incremental mutants"
+          else
+            echo "has_rust=false" >> "$GITHUB_OUTPUT"
+            echo "diff touches no Rust sources; skipping incremental mutants"
+          fi
+
   # PR mutation testing. Fires when CI's pull_request run completes
   # (success or failure — see the job's `if:` for rationale). Tests
   # mutants in changed code only.
@@ -59,6 +105,7 @@ jobs:
   # out the PR head_sha and that's untrusted contributor code on
   # a public repo.
   incremental:
+    needs: [incremental-detect]
     name: Incremental
     # `perf-2x` gives 2 dedicated cores at half the cost of perf-4x.
     # PR diffs touch few mutants, so the wall-clock is dominated by
@@ -87,9 +134,10 @@ jobs:
     #   workflow file or .cargo/mutants.toml), to validate the
     #   workflow itself end-to-end on PR diffs
     if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.event == 'pull_request') ||
-      github.event_name == 'pull_request'
+      needs.incremental-detect.outputs.has_rust == 'true' &&
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'pull_request') ||
+       github.event_name == 'pull_request')
     timeout-minutes: 120
     # sccache against the same Tigris bucket `gate` uses. cargo-mutants
     # rebuilds the crate many times (baseline + one rebuild per mutant);
@@ -150,10 +198,6 @@ jobs:
 
       - name: Verify mutants produced real outcomes
         run: |
-          if ! grep -qE '^(\+\+\+ b/|--- a/).*\.rs$' git.diff; then
-            echo "diff touches no Rust sources; nothing to do"
-            exit 0
-          fi
           if [ ! -f mutants.out/outcomes.json ]; then
             echo "::error::mutants.out/outcomes.json missing; cargo-mutants did not run"
             exit 1
