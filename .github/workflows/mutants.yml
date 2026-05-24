@@ -70,30 +70,32 @@ jobs:
       || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     outputs:
-      has_rust: ${{ steps.check.outputs.has_rust }}
+      has_rust: ${{ steps.filter.outputs.rust }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
-      - name: Diff PR vs main, check for Rust files
-        id: check
-        # `actions/checkout` ran with `persist-credentials: false`,
-        # so the clone has no auth header for the `git fetch`. Set
-        # one up via gh just for this step.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh auth setup-git
-          git fetch origin main
-          if git diff --name-only origin/main..HEAD | grep -qE '\.rs$'; then
-            echo "has_rust=true" >> "$GITHUB_OUTPUT"
-            echo "diff touches Rust sources; will run incremental mutants"
-          else
-            echo "has_rust=false" >> "$GITHUB_OUTPUT"
-            echo "diff touches no Rust sources; skipping incremental mutants"
-          fi
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36
+        id: filter
+        with:
+          # Explicit base + ref so paths-filter works on workflow_run
+          # (where it can't infer them from the event payload). Same
+          # pattern fuzz.yml's detect job uses.
+          base: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # cargo-mutants runs the default cargo nextest target set
+          # (lib unit tests + integration tests under `tests/`), so
+          # changes in either directory can produce new mutants or
+          # change which mutants survive. Cargo manifest/lockfile
+          # changes can shift dep behavior and likewise are relevant.
+          filters: |
+            rust:
+              - 'src/**'
+              - 'tests/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
 
   # PR mutation testing. Fires when CI's pull_request run completes
   # (success or failure — see the job's `if:` for rationale). Tests
@@ -181,16 +183,15 @@ jobs:
       # mutant survives — a normal data signal, not a CI failure.
       # The post-run verify step distinguishes real baseline failures
       # (zero outcomes) from "found surviving mutants" (data we want).
-      # `--test-tool nextest` and the
-      # `-E 'not test(/sign_kat_derand_/)'` nextest filter come from
-      # `.cargo/mutants.toml`. `--in-place` is CLI-only (no config
-      # key in cargo-mutants), so it stays here.
+      # `--test-tool nextest` and the `--cargo-profile release-checked`
+      # build come from `.cargo/mutants.toml`. `--in-place` is CLI-only
+      # (no config key in cargo-mutants), so it stays here.
       - name: Run cargo-mutants on changed code
         continue-on-error: true
         run: |
           cargo mutants --no-shuffle -vV \
             --in-place \
-            --in-diff git.diff -- --lib
+            --in-diff git.diff
 
       - name: sccache stats
         if: always()
@@ -235,7 +236,13 @@ jobs:
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.head_branch == 'main' &&
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
-    timeout-minutes: 90
+    # Bumped from 90 → 180 after dropping the sign-KAT exclusion in
+    # `.cargo/mutants.toml`. Each mutant verification now runs the
+    # full 100-vector sign-KAT suite (~5 min/mutant in release on
+    # perf-2x) on top of the lib + wycheproof tests; shard wall-time
+    # roughly doubles. Tighten back down once we have a steady-state
+    # baseline for the new test scope.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -262,12 +269,12 @@ jobs:
       - uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96
         with:
           tool: cargo-mutants,cargo-nextest
-      # Shared flags (`--test-tool nextest`, `--in-place`, the
-      # nextest `-E` slow-KAT filter) come from `.cargo/mutants.toml`.
+      # `--test-tool nextest` and `--cargo-profile release-checked`
+      # come from `.cargo/mutants.toml`.
       - name: Run cargo-mutants (shard ${{ matrix.shard }}/8)
         continue-on-error: true
         run: |
-          cargo mutants --shard ${{ matrix.shard }}/8 -vV -- --lib
+          cargo mutants --shard ${{ matrix.shard }}/8 -vV
 
       - name: sccache stats
         if: always()
