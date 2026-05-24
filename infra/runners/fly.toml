@@ -5,7 +5,8 @@
 app = "sqisign-infra-runners"
 # `iad` (Ashburn, VA) is co-located with Azure East US 2, where
 # GitHub Actions and its blob-storage backend live. Cuts cache-heavy
-# CI restore time (`actions/cache`, `Swatinem/rust-cache`) by
+# CI restore time (`actions/cache`, `Swatinem/rust-cache`, plus
+# sccache hits to the Tigris bucket which is also iad-resident) by
 # ~5–15s vs. `ord`. Fallback if capacity-constrained at peak: `ord`.
 #
 # This `primary_region` only affects always-on Machines created by

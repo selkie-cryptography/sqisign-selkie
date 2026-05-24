@@ -12,6 +12,10 @@ publish = false
 # and emits `.github/actionlint.yaml`. The renderer depends on the
 # `orchestrator` crate so it reuses the runtime `RunnerSizes` loader
 # rather than duplicating the TOML schema.
+#
+# `default-run` so bare `cargo run -p ops -- <subcommand>` works (the
+# renderer is opt-in via `cargo run -p ops --bin render-actionlint`).
+default-run = "ops"
 
 [dependencies]
 anyhow = "1"
