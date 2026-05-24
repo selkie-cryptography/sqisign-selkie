@@ -69,6 +69,12 @@ jobs:
       && '["self-hosted","fly","linux","x64"]'
       || '["ubuntu-latest"]') }}
     timeout-minutes: 5
+    # On direct pull_request events dorny ignores base/ref and uses
+    # the GitHub API to list changed files; that needs pull-requests:
+    # read on top of the workflow-level contents:read.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       has_rust: ${{ steps.filter.outputs.rust }}
     steps:
