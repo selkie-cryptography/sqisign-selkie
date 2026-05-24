@@ -58,6 +58,37 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
+  # Detect whether the PR diff touches anything fuzz-relevant. The
+  # `workflow_run` trigger fires on every CI completion regardless
+  # of which paths changed (workflow-level `paths:` filters don't
+  # apply to that event), so without this gate the 7-target fuzz
+  # matrix burns ~70 min of perf-2x per PR even when the diff only
+  # touches docs / infra / workflows.
+  detect:
+    name: Detect fuzz-relevant changes
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36
+        id: filter
+        with:
+          # Explicit base + ref so paths-filter works on workflow_run
+          # (where it can't infer them from the event payload).
+          base: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          filters: |
+            relevant:
+              - 'src/**'
+              - 'fuzz/**'
+              - 'examples/seed-fuzz-corpus.rs'
+
   # Build + run the KAT-corpus seeder once and ship the result to
   # Tigris scratch. The matrix shards below pull this in instead of
   # rebuilding the lib + example 7 times. The seeder writes into all
@@ -67,12 +98,18 @@ jobs:
   # `report` job runs `ci-scratch clean fuzz-seed` for hygiene.
   seed:
     name: Seed corpus from KAT vectors
-    # Skip when this workflow was triggered by a failed CI run.
-    # All other triggers (push, PR, workflow_dispatch, successful
-    # workflow_run) proceed.
+    needs: [detect]
+    # Skip when:
+    #  - triggered by a failed CI run (workflow_run.conclusion !=
+    #    'success'), or
+    #  - the diff touches no fuzz-relevant paths (detect.outputs.
+    #    relevant != 'true').
+    # workflow_dispatch bypasses the path filter (manual override).
     if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.conclusion == 'success') &&
+      (needs.detect.outputs.relevant == 'true' ||
+       github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 15
     steps:
