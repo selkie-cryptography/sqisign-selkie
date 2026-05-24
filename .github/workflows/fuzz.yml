@@ -453,19 +453,23 @@ jobs:
 
   report:
     name: Upload fuzz report
-    needs: fuzz
-    # Publish to the dashboard only for runs against `main`. Under
-    # workflow_run, github.ref is forced to the default branch
-    # regardless of what triggered upstream CI — gate on the
-    # triggering run's head_branch instead. For direct push/dispatch,
-    # github.ref already reflects the right branch.
+    needs: [detect, fuzz]
+    # Publish to the dashboard only for runs against `main` where
+    # `fuzz` actually produced shard results. Under workflow_run,
+    # github.ref is forced to the default branch regardless of what
+    # triggered upstream CI — gate on the triggering run's head_branch
+    # instead. For direct push/dispatch, github.ref already reflects
+    # the right branch. The `detect.outputs.relevant` check matches
+    # `seed`'s gate so we don't try to pull non-existent fuzz results
+    # from Tigris when the diff touched nothing fuzz-relevant.
     if: >-
-      !cancelled() && (
-        (github.event_name == 'workflow_run' &&
-         github.event.workflow_run.head_branch == 'main') ||
-        (github.event_name != 'workflow_run' &&
-         github.ref == 'refs/heads/main')
-      )
+      !cancelled() &&
+      (needs.detect.outputs.relevant == 'true' ||
+       github.event_name == 'workflow_dispatch') &&
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.head_branch == 'main') ||
+       (github.event_name != 'workflow_run' &&
+        github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
     steps:
