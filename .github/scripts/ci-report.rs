@@ -122,32 +122,32 @@ fn render_bench(base: Option<&Json>, cur: &Json) -> String {
         ));
     }
 
-    // Headline Δ% for the public benches as a colored bar (🟥 slower /
-    // 🟩 faster, length ∝ magnitude). Renders identically everywhere,
-    // unlike Mermaid's xychart-beta. Shown above the fold.
-    let mut headline = String::new();
+    // Headline Δ% for the public benches as a ```diff block: GitHub
+    // colors `-` rows red (slower) and `+` rows green (faster), with a
+    // █ bar proportional to the magnitude. Renders everywhere; no Mermaid.
+    let mut diff_rows = String::new();
     for b in ["keygen", "sign", "verify"] {
         let key = format!("sqisign::{b}");
         if let (Some((cur, ..)), Some((base, ..))) = (cur_map.get(&key), base_map.get(&key)) {
             if *base > 0.0 {
                 let pct = (*cur / *base - 1.0) * 100.0;
-                let bar = |sq: &str| sq.repeat(((pct.abs() / 3.0).ceil() as usize).clamp(1, 8));
-                let mark = if pct > 0.5 {
-                    bar("🟥")
+                let bar = "█".repeat(((pct.abs() / 3.0).ceil() as usize).clamp(1, 8));
+                let prefix = if pct > 0.5 {
+                    "-"
                 } else if pct < -0.5 {
-                    bar("🟩")
+                    "+"
                 } else {
-                    "⬜".to_string()
+                    " "
                 };
-                headline.push_str(&format!("| `{b}` | {pct:+.1}% | {mark} |\n"));
+                let pct_str = format!("{pct:+.1}%");
+                diff_rows.push_str(&format!("{prefix} {b:<7} {pct_str:>6}  {bar}\n"));
             }
         }
     }
-    if !headline.is_empty() {
-        out.push_str("**Median vs `main`** (🟥 slower · 🟩 faster):\n\n");
-        out.push_str("| bench | Δ | |\n|---|--:|:--|\n");
-        out.push_str(&headline);
-        out.push('\n');
+    if !diff_rows.is_empty() {
+        out.push_str("```diff\n@@ sqisign median vs main  (- slower / + faster) @@\n");
+        out.push_str(&diff_rows);
+        out.push_str("```\n\n");
     }
 
     // Fold the ~80-row table so it doesn't dominate the PR conversation.
