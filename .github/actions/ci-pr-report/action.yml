@@ -32,8 +32,16 @@ runs:
           > /tmp/ci-report.md
         cat /tmp/ci-report.md >> "$GITHUB_STEP_SUMMARY"
 
+    # Same-repo PRs, whether triggered directly (pull_request) or
+    # indirectly (workflow_run after another workflow finishes — e.g.
+    # the mutants run, which fires on CI completion, not on the PR).
     - name: Comment ${{ inputs.kind }} report
-      if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+      if: >-
+        (github.event_name == 'pull_request' &&
+         github.event.pull_request.head.repo.full_name == github.repository) ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.event == 'pull_request' &&
+         github.event.workflow_run.head_repository.full_name == github.repository)
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
       with:
         github-token: ${{ inputs.github-token }}
@@ -43,7 +51,25 @@ runs:
           // First line is the hidden per-kind marker, e.g. `<!-- ci-report:iai -->`.
           const marker = body.split('\n', 1)[0];
           const { owner, repo } = context.repo;
-          const issue_number = context.issue.number;
+
+          // PR number is direct on pull_request events; on workflow_run it
+          // must be resolved from the triggering run (its payload carries
+          // the head sha/branch but no issue number).
+          let issue_number = context.payload.pull_request?.number;
+          if (!issue_number && context.payload.workflow_run) {
+            const wr = context.payload.workflow_run;
+            issue_number = wr.pull_requests?.[0]?.number;
+            if (!issue_number) {
+              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner, repo, commit_sha: wr.head_sha,
+              });
+              issue_number = prs.find(p => p.state === 'open')?.number;
+            }
+          }
+          if (!issue_number) {
+            core.info('No associated PR; skipping comment (job summary already written).');
+            return;
+          }
 
           const comments = await github.paginate(github.rest.issues.listComments, {
             owner, repo, issue_number,

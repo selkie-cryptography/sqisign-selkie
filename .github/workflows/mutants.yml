@@ -115,11 +115,9 @@ jobs:
   incremental:
     needs: [incremental-detect]
     name: Incremental
-    # `perf-2x` gives 2 dedicated cores at half the cost of perf-4x.
-    # PR diffs touch few mutants, so the wall-clock is dominated by
-    # the baseline build + a small mutant test loop rather than a
-    # parallel mutant fan-out; dedicated cores avoid shared-CPU
-    # throttling during the build step.
+    # `perf-8x` gives 8 dedicated cores so cargo-mutants can fan the
+    # changed-code mutants out in parallel (`-j 6` below). Dedicated
+    # cores also avoid shared-CPU throttling during the baseline build.
     # Same-repo runs go to Fly; fork PRs fall back to GH-hosted. Two
     # event paths reach this job (see `if:` below), so the same-repo
     # check has to cover both: workflow_run after a CI run, and the
@@ -129,8 +127,12 @@ jobs:
         github.event.workflow_run.head_repository.full_name == github.repository) ||
        (github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository))
-      && '["self-hosted","fly","linux","perf-2x"]'
+      && '["self-hosted","fly","linux","perf-8x"]'
       || '["ubuntu-latest"]') }}
+    permissions:
+      contents: read
+      # Sticky changed-code mutation-coverage comment on same-repo PRs.
+      pull-requests: write
     # Run after CI completes (success OR failure) so a transient
     # red — reviewdog 502, a platform-fly job timeout, an artifact
     # quota miss — doesn't silently kill mutation coverage on the
@@ -192,11 +194,21 @@ jobs:
       # `--test-tool nextest` and the `--cargo-profile release-checked`
       # build come from `.cargo/mutants.toml`. `--in-place` is CLI-only
       # (no config key in cargo-mutants), so it stays here.
+      #
+      # `-j 6` runs six mutants concurrently on the 8-core perf-8x box,
+      # leaving two cores for each mutant's nextest harness so the test
+      # runner isn't starved. `--minimum-test-timeout 180` widens the
+      # 60s floor from `.cargo/mutants.toml`: six concurrent nextest
+      # suites contend for CPU, so a legitimately-passing test can run
+      # several times slower than its solo baseline; the wider floor
+      # prevents that contention from being misread as a timeout kill.
       - name: Run cargo-mutants on changed code
         continue-on-error: true
         run: |
           cargo mutants --no-shuffle -vV \
             --in-place \
+            -j 6 \
+            --minimum-test-timeout 180 \
             --in-diff git.diff
 
       - name: sccache stats
@@ -216,21 +228,39 @@ jobs:
           fi
           echo "verified: $COUNT per-mutant outcomes"
 
-      # No artifact upload — the outcome count above is the signal the
-      # PR cares about, and GHA artifact storage is quota-capped. To
-      # inspect the full mutants.out for a PR diff, re-run cargo-mutants
-      # locally against the same diff.
+      # Shape the `--in-diff` outcomes into the dashboard payload. The
+      # outcomes.json schema is identical to the full run's (cargo-
+      # mutants only varies *which* mutants it generates, not the file
+      # layout), so the same `mutants-to-json.rs` parser applies.
+      - name: Generate changed-code mutants.json
+        run: |
+          # Unset RUSTC_WRAPPER: skip sccache for this tiny standalone
+          # compile (the job sets a wrapper for the crate build).
+          env -u RUSTC_WRAPPER rustc -O .github/scripts/mutants-to-json.rs -o /tmp/mutants-to-json
+          /tmp/mutants-to-json mutants.out/outcomes.json "${{ github.event.workflow_run.head_sha || github.sha }}" > mutants.json
+
+      # Job summary always; sticky changed-code kill-rate comment on
+      # same-repo PRs. No Fly upload — uploads stay push/full-run only,
+      # so the dashboard baseline reflects whole-tree runs, not diffs.
+      - name: Report changed-code mutation coverage
+        uses: ./.github/actions/ci-pr-report
+        with:
+          kind: mutants
+          payload: mutants.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
   # Full sharded sweep. Fires on push-to-main or scheduled-nightly CI
-  # completion (success or failure), or on manual dispatch. Each
-  # shard runs sequential mutant tests via nextest, so the per-shard
-  # parallelism that perf-8x bought is largely wasted; `perf-2x` gives
-  # dedicated CPU for the baseline build + serial mutant loop at a
-  # fraction of the cost. Re-tier upward (perf-4x) if the shard
-  # wall-clock regresses materially vs the historical perf-8x runs.
+  # completion (success or failure), or on manual dispatch. Each shard
+  # runs on a `perf-8x` box and fans its mutant slice out across cores
+  # with `-j 6` (see the run step), leaving headroom for each mutant's
+  # nextest harness. The ×8 shard count is kept as-is: perf-8x makes
+  # each shard faster but the slice-per-shard granularity still bounds
+  # tail latency on the slow sign-KAT mutants, so collapsing shards
+  # isn't a trivial win — revisit once we have steady-state per-shard
+  # wall-times under the parallel runner.
   full:
     name: Full shard ${{ matrix.shard }}
-    runs-on: [self-hosted, fly, linux, perf-2x]
+    runs-on: [self-hosted, fly, linux, perf-8x]
     # Same rationale as `incremental`: trigger on CI completion, not
     # success — the merge step's outcome-count check is the real
     # baseline-failure detector. Also fires on direct push to main
@@ -244,10 +274,11 @@ jobs:
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
     # Bumped from 90 → 180 after dropping the sign-KAT exclusion in
     # `.cargo/mutants.toml`. Each mutant verification now runs the
-    # full 100-vector sign-KAT suite (~5 min/mutant in release on
-    # perf-2x) on top of the lib + wycheproof tests; shard wall-time
-    # roughly doubles. Tighten back down once we have a steady-state
-    # baseline for the new test scope.
+    # full 100-vector sign-KAT suite on top of the lib + wycheproof
+    # tests, which dominates per-mutant wall time. The perf-8x + `-j 6`
+    # fan-out below cuts the per-shard wall-time well under this
+    # ceiling; the 180 cap is kept as headroom and tightened once we
+    # have a steady-state baseline under the parallel runner.
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -276,11 +307,17 @@ jobs:
         with:
           tool: cargo-mutants,cargo-nextest
       # `--test-tool nextest` and `--cargo-profile release-checked`
-      # come from `.cargo/mutants.toml`.
+      # come from `.cargo/mutants.toml`. `-j 6` fans this shard's
+      # mutant slice across six of the eight cores, reserving two for
+      # each mutant's nextest harness; `--minimum-test-timeout 180`
+      # widens the 60s floor so contention between the six concurrent
+      # suites isn't misread as a timeout kill.
       - name: Run cargo-mutants (shard ${{ matrix.shard }}/8)
         continue-on-error: true
         run: |
-          cargo mutants --shard ${{ matrix.shard }}/8 -vV
+          cargo mutants --shard ${{ matrix.shard }}/8 -vV \
+            -j 6 \
+            --minimum-test-timeout 180
 
       - name: sccache stats
         if: always()
