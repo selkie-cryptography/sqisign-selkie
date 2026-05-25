@@ -50,6 +50,12 @@ pub use left_ideal::LeftIdeal;
 mod nrd_basis;
 pub use nrd_basis::NrdBasis;
 
+// reason: MLLL engine is a complete sketch but not yet called from
+// `Lattice::product` / intersection (the integration step); exercised only by
+// its own tests until then. Drop this allow when the callers are wired.
+#[allow(dead_code)]
+mod mlll;
+
 #[cfg(test)]
 mod tests;
 
