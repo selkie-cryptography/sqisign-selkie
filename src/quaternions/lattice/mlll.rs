@@ -3,9 +3,9 @@
 //! Reduces `G ≥ 4` generators of a rank-4 quaternion lattice to an
 //! LLL-reduced basis, dropping the `G − 4` linearly dependent generators as
 //! they collapse to zero. This is the [ML2 algorithm][ml2] (Nguyen–Stehlé
-//! floating-point LLL, [Alg. 1][cqa]) over the [`DoublePlusExponent`] GSO,
-//! with the [Pohst MLLL][pohst] rank-deficiency handling ([Alg. 1][cqa] lines
-//! 12–13) and the lazy size-reduction subroutine ([Alg. 8][cqa]).
+//! floating-point LLL, [Alg. 1]) over the [`DoublePlusExponent`] GSO, with the
+//! [Pohst MLLL][pohst] rank-deficiency handling ([Alg. 1] lines 12–13) and the
+//! lazy size-reduction subroutine ([Alg. 8]).
 //!
 //! It generalizes [`super::nrd_basis::NrdBasis::l2_reduce`] — the `G = 4`
 //! special case — so it can replace the HNF step in quaternion ideal
@@ -13,12 +13,12 @@
 //! SQIsign][cqa]: feeding the 16 pairwise products of two ideal bases (or the
 //! 8 columns of a dual-sum) directly into MLLL produces a basis of the *same*
 //! lattice while keeping intermediate integers bounded by the largest input
-//! norm² ([Lemma 8][cqa]), versus the `nrd⁴` blow-up HNF incurs.
+//! norm² ([Lemma 8]), versus the `nrd⁴` blow-up HNF incurs.
 //!
 //! # Precision
 //!
 //! Uses a 53-bit-mantissa DPE GSO, like `l2_reduce`. The wide-input precision
-//! probes in [`super::tests`] (`l2_precision_disguise_*`, `largenorm_512`)
+//! probes in `super::tests` (`l2_precision_disguise_*`, `largenorm_512`)
 //! confirm the DPE size-reduction converges and reduces correctly with Gram
 //! entries up to ~2^2056 — far above the ~2^1027 scale of NIST-I ideal-product
 //! inputs — so 53-bit precision is sufficient here.
@@ -26,25 +26,30 @@
 //! # Validation
 //!
 //! Validated by differential tests against the canonical HNF (the
-//! `mlll_preserves_lattice_*` tests in [`tests`]): for redundant generating
+//! `mlll_preserves_lattice_*` tests in `tests`): for redundant generating
 //! sets — including the `G = 16` ideal-product count and a randomized sweep —
 //! `HNF(mlll_reduce(gens)) == HNF(gens)`, confirming the reduced basis spans
 //! the same lattice. DPE precision at the ~2^1027 NIST-I ideal-product scale is
-//! covered by the wide-input probes in [`super::tests`]. Not yet wired into
+//! covered by the wide-input probes in `super::tests`. Not yet wired into
 //! `Lattice::product` / intersection; that integration is gated on
 //! byte-identical sign and keygen KATs.
 //!
 //! # Integration plan
 //!
-//! - `CompactIdealMultiplication` ([Alg. 2][cqa]): LLL-reduce each input ideal
+//! - `CompactIdealMultiplication` ([Alg. 2]): LLL-reduce each input ideal
 //!   basis, form the 16 products `αᵢβⱼ`, `Generators::<N, 16>::new`,
 //!   `mlll_reduce`, rescale by `r₁r₂`. Replaces `Lattice::product`'s HNF.
-//! - `CompactLatticeIntersection` ([Alg. 3][cqa]): the dual-sum-dual path with
+//! - `CompactLatticeIntersection` ([Alg. 3]): the dual-sum-dual path with
 //!   `MLLL` in place of HNF on the 8-column dual sum. Replaces
 //!   `intersection_via_dual_sum_dual` — the 32000-bit working width that the
 //!   profiling measured at ~45% of signing time.
 //!
 //! [cqa]: https://eprint.iacr.org/2026/1031.pdf
+//! [Alg. 1]: https://eprint.iacr.org/2026/1031.pdf#algorithm.1
+//! [Alg. 2]: https://eprint.iacr.org/2026/1031.pdf#algorithm.2
+//! [Alg. 3]: https://eprint.iacr.org/2026/1031.pdf#algorithm.3
+//! [Alg. 8]: https://eprint.iacr.org/2026/1031.pdf#algorithm.8
+//! [Lemma 8]: https://eprint.iacr.org/2026/1031.pdf#lemma.1.8
 //! [ml2]: https://doi.org/10.1137/070705702
 //! [pohst]: https://doi.org/10.1016/S0747-7171(87)80061-5
 
@@ -122,10 +127,10 @@ impl<const N: usize, const G: usize> Generators<N, G> {
     /// (the four trailing columns once the dependent generators have collapsed
     /// to the front).
     ///
-    /// Implements ML2 ([Alg. 1][cqa]). The lattice spanned is unchanged; only
-    /// the basis representation differs (all column ops are unimodular).
+    /// Implements ML2 ([Alg. 1]). The lattice spanned is unchanged; only the
+    /// basis representation differs (all column ops are unimodular).
     ///
-    /// [cqa]: https://eprint.iacr.org/2026/1031.pdf
+    /// [Alg. 1]: https://eprint.iacr.org/2026/1031.pdf#algorithm.1
     #[must_use]
     pub fn mlll_reduce(mut self) -> [Vector<N>; 4] {
         debug_assert!(
@@ -219,14 +224,14 @@ impl<const N: usize, const G: usize> Generators<N, G> {
         (0..4).all(|row| bool::from(v[row].is_zero()))
     }
 
-    /// Lazy size-reduction of `b_κ` against `b_{ζ..κ}` ([Alg. 8][cqa]).
+    /// Lazy size-reduction of `b_κ` against `b_{ζ..κ}` ([Alg. 8]).
     ///
     /// Recomputes the Cholesky GSO (`r`, `μ`) for `b_κ` from the Gram each
     /// pass, then size-reduces `b_κ` by the rounded `μ` coefficients, repeating
     /// until `max|μ_{κ,j}| ≤ η̄`. All generator and Gram updates are exact
     /// integer arithmetic; on return `r[κ][·]` and `μ[κ][·]` are final.
     ///
-    /// [cqa]: https://eprint.iacr.org/2026/1031.pdf
+    /// [Alg. 8]: https://eprint.iacr.org/2026/1031.pdf#algorithm.8
     // reason: the explicit (r, μ) in/out parameters mirror Alg. 8's signature;
     // bundling them into a struct would re-couple the GSO scratch to the
     // generating set and obscure the mapping to the paper.
