@@ -12,6 +12,42 @@ fn fp_mul(bencher: divan::Bencher) {
 }
 
 #[divan::bench]
+fn fp_sum_of_products(bencher: divan::Bencher) {
+    let (a, b, c, d) = (
+        Fp::from_small(17),
+        Fp::from_small(42),
+        Fp::from_small(99),
+        Fp::from_small(7),
+    );
+    bencher.bench(|| {
+        Fp::sum_of_products(
+            divan::black_box(&a),
+            divan::black_box(&b),
+            divan::black_box(&c),
+            divan::black_box(&d),
+        )
+    });
+}
+
+#[divan::bench]
+fn fp_difference_of_products(bencher: divan::Bencher) {
+    let (a, b, c, d) = (
+        Fp::from_small(17),
+        Fp::from_small(42),
+        Fp::from_small(99),
+        Fp::from_small(7),
+    );
+    bencher.bench(|| {
+        Fp::difference_of_products(
+            divan::black_box(&a),
+            divan::black_box(&b),
+            divan::black_box(&c),
+            divan::black_box(&d),
+        )
+    });
+}
+
+#[divan::bench]
 fn fp_square(bencher: divan::Bencher) {
     let a = Fp::from_small(17);
     bencher.bench(|| divan::black_box(&a).square());
