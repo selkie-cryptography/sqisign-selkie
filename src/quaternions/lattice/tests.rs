@@ -1054,3 +1054,52 @@ fn l2_precision_largenorm_512() {
         "shortest output vector longer than shortest input"
     );
 }
+
+/// Asserts [`Lattice::compact_product`] (MLLL) spans the same lattice as the
+/// exact product — the classical HNF of all 16 pairwise basis products.
+fn assert_compact_product_exact(a: &Lattice<8>, b: &Lattice<8>) {
+    let mut all = Vec::new();
+    for idx in 0..4 {
+        let alpha = a.basis_elem(idx);
+        for j in 0..4 {
+            let prod = alpha.mul_direct(&b.basis_elem(j));
+            all.push(V8::new(
+                *prod.a.as_bigint(),
+                *prod.b.as_bigint(),
+                *prod.c.as_bigint(),
+                *prod.d.as_bigint(),
+            ));
+        }
+    }
+
+    let denom = a.denom().ct_mul(b.denom());
+    let expected = HnfLattice::from(Lattice::<8>::new(Matrix::from_hnf_columns(&all), denom));
+    let got = HnfLattice::from(a.compact_product(b));
+
+    assert_eq!(
+        got, expected,
+        "compact_product spans a different lattice than the exact HNF product"
+    );
+}
+
+/// MLLL-based ideal multiplication agrees with the exact HNF product lattice on
+/// a few structured operand pairs (`CompactIdealMultiplication`, Alg. 2).
+#[test]
+fn compact_product_matches_hnf_product() {
+    let a = Lattice::<8>::from_matrix(Matrix::from_columns(&[
+        V8::new(i8(1), i8(0), i8(0), i8(0)),
+        V8::new(i8(1), i8(2), i8(0), i8(0)),
+        V8::new(i8(0), i8(0), i8(3), i8(0)),
+        V8::new(i8(0), i8(0), i8(1), i8(2)),
+    ]));
+    let b = Lattice::<8>::from_matrix(Matrix::from_columns(&[
+        V8::new(i8(2), i8(0), i8(0), i8(0)),
+        V8::new(i8(0), i8(1), i8(0), i8(0)),
+        V8::new(i8(0), i8(1), i8(1), i8(0)),
+        V8::new(i8(0), i8(0), i8(0), i8(1)),
+    ]));
+
+    assert_compact_product_exact(&a, &b);
+    assert_compact_product_exact(&b, &a);
+    assert_compact_product_exact(&a, &a);
+}
