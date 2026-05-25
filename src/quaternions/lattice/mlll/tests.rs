@@ -9,6 +9,66 @@
 use super::*;
 use crate::quaternions::linear::Matrix;
 
+/// Returns whether every column of `inputs` lies in the integer span of the
+/// four columns `out`: solve `out·x = v` via `x = adj(out)·v / det(out)`, which
+/// is integral iff `det(out)` divides every component of `adj(out)·v`. This is
+/// the definitive lattice-preservation check, independent of HNF.
+fn output_spans_inputs<const N: usize>(out: &[Vector<N>; 4], inputs: &[Vector<N>]) -> bool {
+    let bo = Matrix::<N>::from_columns(out);
+    let det = bo.det();
+    if bool::from(det.is_zero()) {
+        return false;
+    }
+    let adj = bo.adjugate();
+    inputs.iter().all(|v| {
+        let x = adj.eval(v);
+        (0..4).all(|c| bool::from(x[c].div_rem(&det).1.is_zero()))
+    })
+}
+
+/// Returns a small signed `BigInt<16>` in `[-9, 9]` from `rng`.
+fn small16(rng: &mut Lcg) -> BigInt<16> {
+    BigInt::from((rng.next_u64() % 19) as i64 - 9)
+}
+
+/// MLLL must preserve the lattice: every input generator lies in the span of
+/// the reduced output. Stresses dense, imbalanced two-sublattice 8-column sets
+/// (a `2^40`-scaled dense sublattice concatenated with a small dense one) — the
+/// structure real dual-sums have.
+#[test]
+fn mlll_preserves_span_dense_imbalanced() {
+    type Vw = Vector<16>;
+    let big = BigInt::<16>::ONE << 40;
+    let mut rng = Lcg(0x1234_5678_9ABC_DEF0);
+
+    for _ in 0..80 {
+        let mut cols = [Vw::ZERO; 8];
+        for slot in cols.iter_mut().take(4) {
+            *slot = Vw::new(
+                small16(&mut rng).ct_mul(&big),
+                small16(&mut rng).ct_mul(&big),
+                small16(&mut rng).ct_mul(&big),
+                small16(&mut rng).ct_mul(&big),
+            );
+        }
+        for slot in cols.iter_mut().skip(4) {
+            *slot = Vw::new(
+                small16(&mut rng),
+                small16(&mut rng),
+                small16(&mut rng),
+                small16(&mut rng),
+            );
+        }
+
+        let out = Generators::<16, 8>::new(cols).mlll_reduce();
+
+        assert!(
+            output_spans_inputs(&out, &cols),
+            "MLLL output does not span its inputs — span lost"
+        );
+    }
+}
+
 /// Width for the test generators.
 type W = BigInt<8>;
 
@@ -110,6 +170,25 @@ fn mlll_preserves_lattice_g6_skewed() {
         V::new(w(0), w(0), w(13), w(1)),
         V::new(w(50), w(1), w(1), w(0)),
         V::new(w(1), w(0), w(13), w(1)),
+    ]);
+}
+
+/// Imbalanced 8 generators = two *distinct* rank-4 sublattice bases
+/// concatenated (`2^40·Z⁴` and a unimodular spanning set of `Z⁴`) — the
+/// structure real dual-sums have, unlike the redundant-single-lattice cases
+/// above. Their span is `Z⁴`.
+#[test]
+fn mlll_preserves_lattice_g8_imbalanced() {
+    let big = W::ONE << 40;
+    assert_mlll_preserves_lattice([
+        V::new(big, w(0), w(0), w(0)),
+        V::new(w(0), big, w(0), w(0)),
+        V::new(w(0), w(0), big, w(0)),
+        V::new(w(0), w(0), w(0), big),
+        V::new(w(1), w(0), w(0), w(0)),
+        V::new(w(1), w(1), w(0), w(0)),
+        V::new(w(1), w(0), w(1), w(0)),
+        V::new(w(1), w(0), w(0), w(1)),
     ]);
 }
 

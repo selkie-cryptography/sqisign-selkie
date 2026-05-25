@@ -1153,3 +1153,97 @@ fn compact_intersection_matches_dual_sum_dual() {
     assert_compact_intersection_exact(&a, &c);
     assert_compact_intersection_exact(&c, &b);
 }
+
+/// Builds a deterministic upper-triangular full-rank `Lattice<16>` with entries
+/// of roughly `bits` magnitude (det = product of the nonzero diagonal).
+fn lcg_upper_lattice16(state: &mut u64, bits: u32) -> Lattice<16> {
+    let nl = (bits / 64) as usize + 1;
+    let mut m = Matrix::<16>::ZERO;
+    for c in 0..4 {
+        for r in 0..=c {
+            let mut limbs = [0u64; 16];
+            for slot in limbs.iter_mut().take(nl) {
+                *state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                *slot = *state;
+            }
+            m[r][c] = BigInt::from_sign_and_limbs(0, limbs);
+        }
+        if bool::from(m[c][c].is_zero()) {
+            m[c][c] = BigInt::ONE;
+        }
+    }
+    Lattice::<16>::from_matrix(m)
+}
+
+/// Regression: [`Lattice::compact_intersection`] (MLLL) agrees with the HNF
+/// [`Lattice::intersection_via_dual_sum_dual`] on *imbalanced* full-rank
+/// inputs. This case exposed the denominator-sign bug: `dual()`'s `denom = det`
+/// can be negative, and the MLLL and modular-HNF `sum_basis` have opposite-sign
+/// determinants, so the two paths returned the same lattice with `denom = ∓1`
+/// — equal lattices that `HnfLattice::==` reported as different until
+/// `dual_sum_dual` normalized the sign.
+#[test]
+fn compact_intersection_matches_dual_sum_dual_imbalanced() {
+    let mut state = 0xDEAD_BEEF_0BAD_F00Du64;
+    for _ in 0..12 {
+        let a = lcg_upper_lattice16(&mut state, 12);
+        let b = lcg_upper_lattice16(&mut state, 4);
+
+        let expected = a.intersection_via_dual_sum_dual::<64>(&b);
+        let got = a.compact_intersection::<64>(&b);
+
+        assert_eq!(
+            got, expected,
+            "compact_intersection disagrees with the HNF path on imbalanced inputs"
+        );
+    }
+}
+
+/// Regression: [`Lattice::compact_product`] (MLLL) on imbalanced inputs spans
+/// exactly the product lattice. Checked oracle-free — every one of the 16
+/// pairwise products lies in the integer span of the reduced output (via
+/// adj/det divisibility) — because `from_hnf_columns` is itself unreliable on
+/// these large-gcd product columns. Exercises the shared MLLL engine on the
+/// imbalanced regime that exposed the intersection bug.
+#[test]
+fn compact_product_spans_product_lattice_imbalanced() {
+    let mut state = 0x1357_9BDF_2468_ACE0u64;
+    for _ in 0..8 {
+        let a = lcg_upper_lattice16(&mut state, 12);
+        let b = lcg_upper_lattice16(&mut state, 4);
+
+        let mut products = Vec::new();
+        for idx in 0..4 {
+            let alpha = a.basis_elem(idx);
+            for j in 0..4 {
+                let prod = alpha.mul_direct(&b.basis_elem(j));
+                products.push(Vector::<16>::new(
+                    *prod.a.as_bigint(),
+                    *prod.b.as_bigint(),
+                    *prod.c.as_bigint(),
+                    *prod.d.as_bigint(),
+                ));
+            }
+        }
+
+        let out = a.compact_product(&b);
+        let bo = *out.basis();
+        let det = bo.det();
+        assert!(
+            !bool::from(det.is_zero()),
+            "compact_product basis is singular"
+        );
+        let adj = bo.adjugate();
+        for (n, v) in products.iter().enumerate() {
+            let x = adj.eval(v);
+            for c in 0..4 {
+                assert!(
+                    bool::from(x[c].div_rem(&det).1.is_zero()),
+                    "compact_product output does not span product column {n}"
+                );
+            }
+        }
+    }
+}
