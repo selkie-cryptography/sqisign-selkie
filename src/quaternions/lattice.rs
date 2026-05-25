@@ -918,6 +918,42 @@ impl<const N: usize> Lattice<N> {
         }
     }
 
+    /// Lattice product via MLLL instead of HNF — `CompactIdealMultiplication`
+    /// ([Alg. 2] of ePrint 2026/1031).
+    ///
+    /// Forms the 16 pairwise products of the two bases and reduces them with
+    /// [`mlll`]'s ML2 rather than taking an HNF, yielding an LLL-reduced basis
+    /// of the *same* product lattice as [`Lattice::product`] while bounding
+    /// intermediate integers by the largest input norm² instead of HNF's nrd⁴.
+    /// Unlike `product`, the returned basis is reduced, not canonical HNF.
+    ///
+    /// [Alg. 2]: https://eprint.iacr.org/2026/1031.pdf#algorithm.2
+    // reason: validated differentially against the exact product lattice but
+    // not yet wired into callers; the allow comes off when the HNF-based
+    // product / intersection call sites migrate to MLLL.
+    #[allow(dead_code)]
+    #[must_use]
+    pub(crate) fn compact_product(&self, other: &Self) -> Self {
+        let mut cols = [Vector::<N>::ZERO; 16];
+        for i in 0..4 {
+            let alpha = self.basis_elem(i);
+            for j in 0..4 {
+                let prod = alpha.mul_direct(&other.basis_elem(j));
+                cols[i * 4 + j] = Vector::new(
+                    *prod.a.as_bigint(),
+                    *prod.b.as_bigint(),
+                    *prod.c.as_bigint(),
+                    *prod.d.as_bigint(),
+                );
+            }
+        }
+
+        let reduced = mlll::Generators::<N, 16>::new(cols).mlll_reduce();
+        let new_denom = self.denom.ct_mul(&other.denom);
+
+        Self::new(Matrix::from_columns(&reduced), new_denom)
+    }
+
     /// Right-multiply this lattice by a single quaternion element.
     ///
     /// Each basis vector `b_j` of `self` is replaced by `b_j · elem`,
