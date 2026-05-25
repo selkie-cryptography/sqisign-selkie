@@ -2968,7 +2968,15 @@
           <span style="font-size:12px;color:var(--fg-dim)">Unit ${unitSwatch} · Sort ${sortSwatch}</span>
         </div>`;
 
-      for (const g of groups) {
+      // sqisign (the public keygen/sign/verify benches) is the headline
+      // group, so show it first; the rest stay alphabetical.
+      const orderedGroups = [...groups].sort((a, b) => {
+        if (a.name === 'sqisign') return -1;
+        if (b.name === 'sqisign') return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      for (const g of orderedGroups) {
         const benches = [...(g.benchmarks || [])].sort((a, b) =>
           benchSortAsc ? a.time_ns - b.time_ns : b.time_ns - a.time_ns
         );

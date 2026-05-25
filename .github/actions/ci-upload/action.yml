@@ -1,0 +1,35 @@
+name: Upload CI data
+description: >-
+  Compile ci-upload and push a CI payload JSON to the Fly CI site under
+  /<kind>/. Gate the calling step (e.g. on push-to-main) — when its `if:`
+  is false the whole action is skipped. ci-upload validates the payload's
+  per-kind floor internally and fails the step on empty data.
+
+inputs:
+  kind:
+    description: Data kind (the /<kind>/ path on the CI site).
+    required: true
+  payload:
+    description: Path to the payload JSON to upload.
+    required: true
+  sha:
+    description: Commit SHA the data belongs to.
+    required: false
+    default: ${{ github.sha }}
+  fly-api-token:
+    description: Fly API token with access to the CI-site app.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+    - name: Upload ${{ inputs.kind }} to CI site
+      shell: bash
+      env:
+        FLY_API_TOKEN: ${{ inputs.fly-api-token }}
+      run: |
+        # Empty RUSTC_WRAPPER: skip sccache for this standalone compile in
+        # jobs (e.g. ci.yml) that set a wrapper for the crate build.
+        RUSTC_WRAPPER= rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload
+        /tmp/ci-upload "${{ inputs.kind }}" "${{ inputs.payload }}" "${{ inputs.sha }}"
