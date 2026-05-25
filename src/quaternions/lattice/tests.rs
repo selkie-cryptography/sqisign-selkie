@@ -857,3 +857,200 @@ fn from_raw_limbs_smoke() {
     let order = ExtremalOrder::<4>::from_raw_limbs(basis, z, 0);
     assert_eq!(order.q(), 0);
 }
+
+/// Width wide enough that integer overflow is never the failure mode at the
+/// scales probed below: coords ≤ 2^900 ⇒ `|det|` ~2^3600, Gram ~2^2056,
+/// size-reduction intermediates ~2^2956, all within 96·64 = 6144 bits.
+type WideProbe = BigInt<96>;
+
+/// Vector counterpart of [`WideProbe`].
+type VecProbe = Vector<96>;
+
+/// Returns `p` widened to [`WideProbe`].
+fn probe_p() -> WideProbe {
+    let p8 = crate::quaternions::precomputed::P_WIDE;
+    let mut limbs = [0u64; 96];
+    limbs[..8].copy_from_slice(&p8.as_limbs()[..8]);
+    WideProbe::from_sign_and_limbs(0, limbs)
+}
+
+/// Returns an odd multiplier of magnitude `~2^s`: `(1 << s) + (low | 1)`.
+fn odd_pow2(s: u32, low: u64) -> WideProbe {
+    let mut tail = [0u64; 96];
+    tail[0] = low | 1;
+    (WideProbe::ONE << s).ct_add(&WideProbe::from_sign_and_limbs(0, tail))
+}
+
+/// Returns `v` scaled componentwise by `m`.
+fn scale(v: &VecProbe, m: &WideProbe) -> VecProbe {
+    VecProbe::new(
+        v[0].ct_mul(m),
+        v[1].ct_mul(m),
+        v[2].ct_mul(m),
+        v[3].ct_mul(m),
+    )
+}
+
+/// Reduces `Z⟨1, i, j, k⟩` after disguising it with a `~2^s`-coefficient
+/// unimodular transform, then asserts L² recovers the two nrd-1 vectors.
+///
+/// Every column op in [`NrdBasis::l2_reduce`] is exact integer arithmetic and
+/// always unimodular, so `|det|` is preserved regardless of DPE quality —
+/// determinant invariance tests bookkeeping, not precision. The
+/// precision-sensitive failure modes are non-termination (size-reduction
+/// oscillating, per the `l2_reduce` precision note) and accepting a
+/// poorly-reduced output. Hiding *known* short vectors under a large-coordinate
+/// disguise exposes both: a smallest output norm > 1, or a hang, means 53-bit
+/// DPE could not resolve scale `s`.
+fn disguise_recover(s: u32) {
+    let p = probe_p();
+
+    let e0 = VecProbe::new(
+        WideProbe::ONE,
+        WideProbe::ZERO,
+        WideProbe::ZERO,
+        WideProbe::ZERO,
+    );
+    let e1 = VecProbe::new(
+        WideProbe::ZERO,
+        WideProbe::ONE,
+        WideProbe::ZERO,
+        WideProbe::ZERO,
+    );
+    let e2 = VecProbe::new(
+        WideProbe::ZERO,
+        WideProbe::ZERO,
+        WideProbe::ONE,
+        WideProbe::ZERO,
+    );
+    let e3 = VecProbe::new(
+        WideProbe::ZERO,
+        WideProbe::ZERO,
+        WideProbe::ZERO,
+        WideProbe::ONE,
+    );
+
+    // Upper-unitriangular disguise: det = 1, no compounding ⇒ coords stay ~2^s.
+    let cols = [
+        e0 + scale(&e1, &odd_pow2(s, 2)) + scale(&e2, &odd_pow2(s, 4)),
+        e1 + scale(&e2, &odd_pow2(s, 6)) + scale(&e3, &odd_pow2(s, 10)),
+        e2 + scale(&e3, &odd_pow2(s, 12)),
+        e3,
+    ];
+
+    let reduced = NrdBasis::new(cols).l2_reduce();
+    let g = reduced.gram();
+
+    // Diagonal is non-decreasing after L², so [0][0],[1][1] are the two shortest
+    // GSO norms; the lattice's two shortest independent vectors have nrd 1.
+    assert_eq!(g[0][0], WideProbe::ONE, "s={s}: shortest nrd != 1");
+    assert_eq!(g[1][1], WideProbe::ONE, "s={s}: second nrd != 1");
+    assert_eq!(g[2][2], p, "s={s}: third nrd != p");
+    assert_eq!(g[3][3], p, "s={s}: fourth nrd != p");
+}
+
+/// L² resolves a `~2^256`-coordinate disguise of `Z⟨1, i, j, k⟩`.
+#[test]
+fn l2_precision_disguise_256() {
+    disguise_recover(256);
+}
+
+/// L² resolves a `~2^512`-coordinate disguise — the realistic MLLL scale for
+/// products of two NIST-I ideal bases.
+#[test]
+fn l2_precision_disguise_512() {
+    disguise_recover(512);
+}
+
+/// L² resolves a `~2^900`-coordinate disguise (stress beyond the MLLL scale).
+#[test]
+fn l2_precision_disguise_900() {
+    disguise_recover(900);
+}
+
+/// Fills the low `bits/64` limbs from a SplitMix64-style LCG and sets the top
+/// probed bit, yielding a nonnegative [`WideProbe`] of magnitude `~2^bits`.
+fn lcg_fill(state: &mut u64, bits: u32) -> WideProbe {
+    let nlimb = (bits / 64) as usize;
+    let mut limbs = [0u64; 96];
+    for slot in limbs.iter_mut().take(nlimb) {
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        *slot = *state;
+    }
+    if nlimb > 0 {
+        limbs[nlimb - 1] |= 1u64 << 63;
+    }
+    WideProbe::from_sign_and_limbs(0, limbs)
+}
+
+/// L² on a genuinely large-norm basis (coords ~2^512 ⇒ Gram ~2^1280, the real
+/// MLLL operand scale with O(1) dynamic range) preserves the lattice and
+/// reduces it: terminates, keeps `|det|` of the coordinate matrix, yields a
+/// non-decreasing diagonal, and does not lengthen the shortest vector.
+#[test]
+fn l2_precision_largenorm_512() {
+    let mut state = 0x5151_5151_DEAD_BEEF_u64;
+    let cols = [
+        VecProbe::new(
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+        ),
+        VecProbe::new(
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+        ),
+        VecProbe::new(
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+        ),
+        VecProbe::new(
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+            lcg_fill(&mut state, 512),
+        ),
+    ];
+
+    let det_before = Matrix::from_columns(&cols).det().abs();
+
+    let input = NrdBasis::new(cols);
+    let min_in = {
+        let g = input.gram();
+        let mut m = g[0][0];
+        for i in 1..4 {
+            if g[i][i] < m {
+                m = g[i][i];
+            }
+        }
+        m
+    };
+
+    let reduced = input.l2_reduce();
+    let g = reduced.gram();
+    let det_after = Matrix::from_columns(reduced.cols()).det().abs();
+
+    assert_eq!(
+        det_before, det_after,
+        "L² changed |det| ⇒ lattice not preserved"
+    );
+
+    for i in 1..4 {
+        assert!(
+            g[i][i] >= g[i - 1][i - 1],
+            "diagonal not non-decreasing at {i}"
+        );
+    }
+
+    assert!(
+        g[0][0] <= min_in,
+        "shortest output vector longer than shortest input"
+    );
+}
