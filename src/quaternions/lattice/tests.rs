@@ -1103,3 +1103,53 @@ fn compact_product_matches_hnf_product() {
     assert_compact_product_exact(&b, &a);
     assert_compact_product_exact(&a, &a);
 }
+
+/// Asserts [`Lattice::compact_intersection`] (MLLL) yields the same canonical
+/// intersection as the HNF [`Lattice::intersection_via_dual_sum_dual`].
+fn assert_compact_intersection_exact(a: &Lattice<8>, b: &Lattice<8>) {
+    let expected = a.intersection_via_dual_sum_dual::<24>(b);
+    assert!(
+        expected.is_some(),
+        "test input produced no intersection — widen W or fix inputs"
+    );
+
+    let got = a.compact_intersection::<24>(b);
+
+    assert_eq!(
+        got, expected,
+        "compact_intersection disagrees with the HNF dual-sum-dual path"
+    );
+}
+
+/// MLLL-based intersection agrees with the HNF dual-sum-dual path on structured
+/// full-rank lattice pairs, including one with a denominator
+/// (`CompactLatticeIntersection`, Alg. 3).
+#[test]
+fn compact_intersection_matches_dual_sum_dual() {
+    let a = Lattice::<8>::from_matrix(Matrix::from_columns(&[
+        V8::new(i8(2), i8(0), i8(0), i8(0)),
+        V8::new(i8(0), i8(3), i8(0), i8(0)),
+        V8::new(i8(0), i8(0), i8(1), i8(0)),
+        V8::new(i8(0), i8(0), i8(0), i8(1)),
+    ]));
+    let b = Lattice::<8>::from_matrix(Matrix::from_columns(&[
+        V8::new(i8(1), i8(0), i8(0), i8(0)),
+        V8::new(i8(1), i8(1), i8(0), i8(0)),
+        V8::new(i8(0), i8(0), i8(2), i8(0)),
+        V8::new(i8(0), i8(0), i8(0), i8(3)),
+    ]));
+    let c = Lattice::<8>::new(
+        Matrix::from_columns(&[
+            V8::new(i8(2), i8(0), i8(0), i8(0)),
+            V8::new(i8(1), i8(2), i8(0), i8(0)),
+            V8::new(i8(0), i8(0), i8(3), i8(0)),
+            V8::new(i8(0), i8(0), i8(0), i8(1)),
+        ]),
+        i8(2),
+    );
+
+    assert_compact_intersection_exact(&a, &b);
+    assert_compact_intersection_exact(&b, &a);
+    assert_compact_intersection_exact(&a, &c);
+    assert_compact_intersection_exact(&c, &b);
+}
