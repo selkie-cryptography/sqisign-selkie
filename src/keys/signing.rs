@@ -1115,7 +1115,8 @@ impl SigningKey {
                     let compact = i_com_rsp_lat_w.compact_intersection::<64>(&i_aux_lat_w);
                     #[cfg(test)]
                     {
-                        let hnf = i_com_rsp_lat_w.intersection_via_dual_sum_dual::<200>(&i_aux_lat_w);
+                        let hnf =
+                            i_com_rsp_lat_w.intersection_via_dual_sum_dual::<200>(&i_aux_lat_w);
                         assert_eq!(
                             compact, hnf,
                             "compact_intersection::<64> != dual_sum_dual::<200>"
