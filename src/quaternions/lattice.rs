@@ -506,12 +506,26 @@ impl<const N: usize> Lattice<N> {
         // dual of the sum = L1 ∩ L2.
         let result_w = sum_lat.dual();
 
+        // Normalize the denominator sign: `dual()`'s denom = det can be
+        // negative, and `det` sign differs between the MLLL and modular-HNF
+        // `sum_basis`. Negate basis and denom together (the rational lattice is
+        // unchanged) so the canonical HNF is sign-stable and the two reduction
+        // strategies produce identical results.
+        let mut basis_w = result_w.basis;
+        let mut denom_w = result_w.denom;
+        if bool::from(denom_w.is_negative()) {
+            denom_w = denom_w.wrapping_neg();
+            for row in 0..4 {
+                for col in 0..4 {
+                    basis_w[row][col] = basis_w[row][col].wrapping_neg();
+                }
+            }
+        }
+
         // Reduce gcd of basis entries with denom. The double-dual
         // (mathematically self-inverse) leaves a `d^3` factor in basis
         // numerators and `d^4` in the denom; factor it out before narrowing,
         // otherwise the basis entries don't fit in `BigInt<N>`.
-        let mut basis_w = result_w.basis;
-        let denom_w = result_w.denom;
         let mut g = denom_w.abs();
         for r in 0..4 {
             for c in 0..4 {
