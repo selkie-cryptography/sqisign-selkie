@@ -94,10 +94,14 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: [self-hosted, fly, linux, perf-2x]
-    # Two un-`#[ignore]`d sign() KATs (`sign_kat_derand_001/009`) added
-    # to cover `keys/signing.rs`; each is several minutes under llvm-cov
-    # instrumentation. Bumped from 30 to 60 to absorb without flake.
+    # perf-8x for parallelism: nextest's default `test-threads =
+    # num-cpus` puts 8 tests in flight concurrently, and the long
+    # tail under llvm-cov is the 100 `sign_kat_derand_NNN` tests
+    # (40-220s each instrumented). On perf-2x that line item alone
+    # is ~50 min; on perf-8x it's ~12-15 min. Cost-neutral overall
+    # (4× cores × ~1/4 wall time). Memory headroom is fine — each
+    # sign test peaks well under perf-8x's 16 GB.
+    runs-on: [self-hosted, fly, linux, perf-8x]
     timeout-minutes: 60
     permissions:
       contents: read
