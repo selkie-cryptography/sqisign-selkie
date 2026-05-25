@@ -247,13 +247,17 @@ impl Neg for &Fp2 {
 impl<'b> Mul<&'b Fp2> for &Fp2 {
     type Output = Fp2;
 
-    /// Karatsuba multiplication: 3M + 5A instead of 4M + 2A.
+    /// Multiplication via fused sum/difference-of-products.
+    ///
+    /// `(a + bi)(c + di) = (a·c − b·d) + (a·d + b·c)·i`, computed as two
+    /// fused passes — one reduction each — rather than Karatsuba's 3M
+    /// (three reductions): Longa's sum-of-products ([ePrint 2022/367][longa]).
+    ///
+    /// [longa]: https://eprint.iacr.org/2022/367.pdf
     fn mul(self, rhs: &'b Fp2) -> Fp2 {
-        let ac = &self.a * &rhs.a;
-        let bd = &self.b * &rhs.b;
         Fp2 {
-            a: &ac - &bd,
-            b: &(&(&self.a + &self.b) * &(&rhs.a + &rhs.b)) - &(&ac + &bd),
+            a: Fp::difference_of_products(&self.a, &rhs.a, &self.b, &rhs.b),
+            b: Fp::sum_of_products(&self.a, &rhs.b, &self.b, &rhs.a),
         }
     }
 }
