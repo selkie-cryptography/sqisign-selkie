@@ -2968,6 +2968,23 @@
           <span style="font-size:12px;color:var(--fg-dim)">Unit ${unitSwatch} · Sort ${sortSwatch}</span>
         </div>`;
 
+      // Headline library-bench trends (keygen/sign/verify medians, ms)
+      // from the index history — the scalars ci-upload stores per commit.
+      let trendsHtml = '';
+      const addTrend = (key, label) => {
+        const pts = benchIndex.filter(e => e[key] > 0).slice(0, 15);
+        if (pts.length < 2) return;
+        const vals = pts.map(e => e[key] / 1e6).reverse();
+        const labels = pts.map(e => (e.sha || '?').slice(0, 7)).reverse();
+        trendsHtml += `<span style="display:inline-flex;align-items:center;gap:4px"><b>${label}</b>${minichart(vals, { color: 'var(--fg-muted)', labels, suffix: ' ms', decimals: 3, width: 90, height: 22 })}</span>`;
+      };
+      addTrend('keygen_ns', 'keygen');
+      addTrend('sign_ns', 'sign');
+      addTrend('verify_ns', 'verify');
+      if (trendsHtml) {
+        html = `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:12px;color:var(--fg-dim)">${trendsHtml}</div>` + html;
+      }
+
       // sqisign (the public keygen/sign/verify benches) is the headline
       // group, so show it first; the rest stay alphabetical.
       const orderedGroups = [...groups].sort((a, b) => {
