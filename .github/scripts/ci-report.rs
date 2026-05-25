@@ -50,14 +50,24 @@ fn main() {
         _ => format!("_No report renderer for `{kind}`._\n"),
     };
 
-    // Link to the dashboard at the baseline (main) commit, which always
-    // has data; PR-head commits are not uploaded.
+    // Link to the dashboard at the baseline (main) commit (which always
+    // has data — PR-head commits aren't uploaded), jumping to this kind's
+    // section. dudect/tacet share the constant-time section.
+    let anchor = match kind {
+        "bench" => "#bench-section",
+        "iai" => "#iai-section",
+        "kat" => "#kat-section",
+        "dudect" | "tacet" => "#dudect-section",
+        "mutants" => "#mutants-section",
+        "coverage" => "#coverage-section",
+        _ => "",
+    };
     let footer = match base.and_then(|b| b.get("sha")).and_then(Json::as_str) {
         Some(sha) => format!(
-            "\n[📊 Full dashboard (main @ {})]({SITE}/?sha={sha})\n",
+            "\n[📊 Full dashboard (main @ {})]({SITE}/?sha={sha}{anchor})\n",
             &sha[..sha.len().min(7)]
         ),
-        None => format!("\n[📊 Full CI dashboard]({SITE}/)\n"),
+        None => format!("\n[📊 Full CI dashboard]({SITE}/{anchor})\n"),
     };
 
     print!("<!-- ci-report:{kind} -->\n{body}{footer}");
