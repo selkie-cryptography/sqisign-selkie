@@ -209,6 +209,10 @@ jobs:
     # shared-cpu-4x.
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","perf-4x"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
+    permissions:
+      contents: read
+      # Sticky KAT comment on pull requests.
+      pull-requests: write
     # sccache against a Tigris S3 bucket replaces `Swatinem/rust-cache`
     # for this job. The previous pre/post rust-cache steps spent ~5 min
     # restoring + ~2.5 min saving GHA-artifact-stored target/ tarballs
@@ -247,7 +251,6 @@ jobs:
       # reflects the full lib + wycheproof suite, not the narrow
       # 5-binary `expose-internals` re-run.
       - name: Preserve gate JUnit for kat-report
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: cp target/nextest/default/junit.xml target/nextest/default/junit-gate.xml
       # Tests in `tests/` that consume `keys::kat_data::KAT_VECTORS`
       # (api_properties, bit_flip_sweep, malleability,
@@ -281,10 +284,18 @@ jobs:
       # profile) instead of re-running the same tests in a separate
       # job. Only fires on push-to-main, like the upload itself.
       - name: Generate KAT report from JUnit
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           rustc -O .github/scripts/kat-report.rs -o /tmp/kat-report
           /tmp/kat-report "${{ github.sha }}" target/nextest/default/junit-gate.xml > kat.json
+
+      # Job summary always; sticky KAT comment on same-repo PRs.
+      - name: Report KAT
+        uses: ./.github/actions/ci-pr-report
+        with:
+          kind: kat
+          payload: kat.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Verify kat payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '(.suites | length > 0) and ([.suites[].total] | add > 0)' kat.json > /dev/null || { echo "::error::kat.json has no test suites or zero tests across all suites"; cat kat.json >&2; exit 1; }

@@ -7,12 +7,10 @@ name: Constant-Time
 # measurements, run on dedicated hardware off-CI.
 
 on:
-  # CT runs on push-to-main (paths-filtered), workflow_dispatch, and
-  # a weekly cron that acts as a fallback: the `cron-gate` job below
-  # skips a scheduled firing if any non-cron run has fired in the
-  # last 7 days, so the cron only kicks in for genuinely-quiet weeks.
-  # PR triggers are deliberately not wired up — CT runs (especially
-  # ctgrind at up to 2h) gate post-merge on main rather than per-PR.
+  # DudeCT + Tacet run on pushes, pull requests, workflow_dispatch, and a
+  # weekly cron fallback (the `cron-gate` job skips a scheduled firing if
+  # any non-cron run fired in the last 7 days). The expensive ctgrind job
+  # (up to 2h) is guarded to skip pull requests — see its `if:`.
   push:
     branches: [main]
     paths:
@@ -23,6 +21,18 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ct.yml'
+      - '.github/actions/ci-pr-report/action.yml'
+      - '.github/scripts/ci-report.rs'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'benches/dudect.rs'
+      - 'benches/tacet.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ct.yml'
+      - '.github/actions/ci-pr-report/action.yml'
+      - '.github/scripts/ci-report.rs'
   schedule:
     - cron: "0 7 * * *"   # daily 07:00 UTC; conditionally skipped — see `cron-gate`.
   workflow_dispatch:
@@ -99,13 +109,19 @@ jobs:
        needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 30
+    permissions:
+      contents: read
+      # Sticky CT comments on pull requests.
+      pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Signal running
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
@@ -145,13 +161,15 @@ jobs:
           /tmp/dudect-to-json dudect-output.txt "${{ github.sha }}" > dudect.json
           /tmp/tacet-to-json tacet-output.txt "${{ github.sha }}" > tacet.json
 
-      # Upload both to the CI site under separate paths.
+      # Upload both to the CI site under separate paths (push to main only).
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify dudect/tacet payloads have data
         run: |
           jq -e '.total > 0' dudect.json > /dev/null || { echo "::error::dudect.json has no test results"; cat dudect.json >&2; exit 1; }
           jq -e '.total > 0' tacet.json > /dev/null || { echo "::error::tacet.json has no test results"; cat tacet.json >&2; exit 1; }
       - name: Upload to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
@@ -159,11 +177,28 @@ jobs:
           /tmp/ci-upload dudect dudect.json "${{ github.sha }}"
           /tmp/ci-upload tacet tacet.json "${{ github.sha }}"
 
+      # Job summary always; sticky PR comments on same-repo PRs.
+      - name: Report DudeCT
+        uses: ./.github/actions/ci-pr-report
+        with:
+          kind: dudect
+          payload: dudect.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Report Tacet
+        uses: ./.github/actions/ci-pr-report
+        with:
+          kind: tacet
+          payload: tacet.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
   ctgrind:
     name: ctgrind (Valgrind taint tracking)
     needs: [cron-gate]
+    # Skips pull requests — the slow (up to 2h) Valgrind run gates
+    # post-merge on main, not per-PR.
     if: |
       !cancelled() &&
+      github.event_name != 'pull_request' &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, perf-2x]
