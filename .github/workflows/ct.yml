@@ -162,20 +162,24 @@ jobs:
           /tmp/tacet-to-json tacet-output.txt "${{ github.sha }}" > tacet.json
 
       # Upload both to the CI site under separate paths (push to main only).
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify dudect/tacet payloads have data
         run: |
           jq -e '.total > 0' dudect.json > /dev/null || { echo "::error::dudect.json has no test results"; cat dudect.json >&2; exit 1; }
           jq -e '.total > 0' tacet.json > /dev/null || { echo "::error::tacet.json has no test results"; cat tacet.json >&2; exit 1; }
-      - name: Upload to CI site
+      - name: Upload DudeCT to CI site
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload
-          /tmp/ci-upload dudect dudect.json "${{ github.sha }}"
-          /tmp/ci-upload tacet tacet.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: dudect
+          payload: dudect.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+      - name: Upload Tacet to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: tacet
+          payload: tacet.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
       # Job summary always; sticky PR comments on same-repo PRs.
       - name: Report DudeCT
@@ -220,13 +224,13 @@ jobs:
         run: |
           rustc -O .github/scripts/ctgrind-report.rs -o /tmp/ctgrind-report
           /tmp/ctgrind-report "${{ github.sha }}" > ctgrind.json
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify ctgrind payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.tests > 0 and (.results | length > 0)' ctgrind.json > /dev/null || { echo "::error::ctgrind.json has no test results"; cat ctgrind.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload ctgrind ctgrind.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: ctgrind
+          payload: ctgrind.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}

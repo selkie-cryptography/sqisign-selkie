@@ -48,13 +48,14 @@ jobs:
           rustc -O .github/scripts/iai-to-json.rs -o /tmp/iai-to-json
           /tmp/iai-to-json iai-output.txt "${{ github.sha }}" > iai.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - name: Verify iai payload has data
         run: jq -e '.total > 0 and (.results | length > 0)' iai.json > /dev/null || { echo "::error::iai.json has no benchmark results"; cat iai.json >&2; exit 1; }
       - name: Upload to CI site
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload iai iai.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: iai
+          payload: iai.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
       # Job summary on each push run (no PR trigger on this workflow).
       - name: Report (job summary)

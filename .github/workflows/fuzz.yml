@@ -500,11 +500,13 @@ jobs:
 
       - name: Verify fuzz payload has data
         run: jq -e '.targets | length > 0' fuzz.json > /dev/null || { echo "::error::fuzz.json has no targets"; cat fuzz.json >&2; exit 1; }
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - name: Upload to CI site
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload fuzz fuzz.json "${{ github.event.workflow_run.head_sha || github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: fuzz
+          payload: fuzz.json
+          sha: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
       # Sweep the per-SHA scratch intermediates now that the merged
       # fuzz.json is published. The bucket lifecycle rule auto-

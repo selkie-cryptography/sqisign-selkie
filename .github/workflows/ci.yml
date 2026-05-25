@@ -299,13 +299,13 @@ jobs:
       - name: Verify kat payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '(.suites | length > 0) and ([.suites[].total] | add > 0)' kat.json > /dev/null || { echo "::error::kat.json has no test suites or zero tests across all suites"; cat kat.json >&2; exit 1; }
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Upload KAT to CI site
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload kat kat.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: kat
+          payload: kat.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   # Property tests are covered by `gate`'s unfiltered
   # `cargo nextest run` — every `proptest! { #[test] fn foo(...) }`
@@ -464,10 +464,11 @@ jobs:
         run: |
           rustc -O .github/scripts/platform-report.rs -o /tmp/platform-report
           /tmp/platform-report "${{ github.run_id }}" "${{ github.sha }}" > platform.json
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - name: Verify platform payload has data
         run: jq -e '.platforms | length > 0' platform.json > /dev/null || { echo "::error::platform.json has no platforms"; cat platform.json >&2; exit 1; }
       - name: Upload
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload platform platform.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: platform
+          payload: platform.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}

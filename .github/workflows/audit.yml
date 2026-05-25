@@ -92,16 +92,16 @@ jobs:
           rustc -O .github/scripts/deny-report.rs -o /tmp/deny-report
           /tmp/deny-report "${{ github.sha }}" > deny.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify deny payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.status != null and .status != ""' deny.json > /dev/null || { echo "::error::deny.json missing status field"; cat deny.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload deny deny.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: deny
+          payload: deny.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   unsafe-audit:
     name: Unsafe audit
@@ -122,16 +122,16 @@ jobs:
           rustc -O .github/scripts/unsafe-count.rs -o /tmp/unsafe-count
           /tmp/unsafe-count "${{ github.sha }}" > unsafe.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify unsafe payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.modules | length > 0' unsafe.json > /dev/null || { echo "::error::unsafe.json has no modules"; cat unsafe.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload unsafe unsafe.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: unsafe
+          payload: unsafe.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   panic-freedom:
     name: Panic-freedom
@@ -159,16 +159,16 @@ jobs:
           rustc -O .github/scripts/panic-count.rs -o /tmp/panic-count
           /tmp/panic-count "${{ github.sha }}" > panic.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify panic payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e 'has("total") and (.total | type) == "number"' panic.json > /dev/null || { echo "::error::panic.json missing total field"; cat panic.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload panic panic.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: panic
+          payload: panic.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   zeroize:
     name: Zeroize verification
@@ -192,16 +192,16 @@ jobs:
           rustc -O .github/scripts/zeroize-report.rs -o /tmp/zeroize-report
           /tmp/zeroize-report "${{ github.sha }}" > zeroize.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify zeroize payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.status != null and .status != ""' zeroize.json > /dev/null || { echo "::error::zeroize.json missing status field"; cat zeroize.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload zeroize zeroize.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: zeroize
+          payload: zeroize.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   binary-size:
     name: Binary & stack size
@@ -228,16 +228,16 @@ jobs:
           rustc -O .github/scripts/size-report.rs -o /tmp/size-report
           /tmp/size-report "${{ github.sha }}" > size.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify size payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.binary.total_bytes > 0' size.json > /dev/null || { echo "::error::size.json missing binary.total_bytes"; cat size.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload size size.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: size
+          payload: size.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   alloc-budget:
     name: Allocation budget
@@ -265,16 +265,16 @@ jobs:
           rustc -O .github/scripts/alloc-report.rs -o /tmp/alloc-report
           /tmp/alloc-report "${{ github.sha }}" "$STATUS" alloc-report.json > alloc.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify alloc payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.status != null and .status != ""' alloc.json > /dev/null || { echo "::error::alloc.json missing status field"; cat alloc.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload alloc alloc.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: alloc
+          payload: alloc.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   doc-coverage:
     name: Doc coverage
@@ -297,16 +297,16 @@ jobs:
           rustc -O .github/scripts/docs-report.rs -o /tmp/docs-report
           /tmp/docs-report "${{ github.sha }}" > docs.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify docs payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.status != null and .status != ""' docs.json > /dev/null || { echo "::error::docs.json missing status field"; cat docs.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload docs docs.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: docs
+          payload: docs.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   msrv:
     name: MSRV compliance
@@ -329,16 +329,16 @@ jobs:
           rustc -O .github/scripts/msrv-report.rs -o /tmp/msrv-report
           /tmp/msrv-report "${{ github.sha }}" "1.81.0" > msrv.json
 
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify msrv payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.msrv != null and .msrv != ""' msrv.json > /dev/null || { echo "::error::msrv.json missing msrv field"; cat msrv.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload msrv msrv.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: msrv
+          payload: msrv.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   stack-depth:
     name: Stack depth
@@ -359,16 +359,16 @@ jobs:
         run: |
           rustc -O .github/scripts/stack-depth.rs -o /tmp/stack-depth
           /tmp/stack-depth "${{ github.sha }}" > stack.json
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify stack payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.peak_stack_bytes > 0' stack.json > /dev/null || { echo "::error::stack.json has zero peak_stack_bytes"; cat stack.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload stack stack.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: stack
+          payload: stack.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
   api-surface:
     name: API surface
@@ -392,13 +392,13 @@ jobs:
         run: |
           rustc -O .github/scripts/api-surface.rs -o /tmp/api-surface
           /tmp/api-surface "${{ github.sha }}" > api.json
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       - name: Verify api payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: jq -e '.total > 0' api.json > /dev/null || { echo "::error::api.json has zero items"; cat api.json >&2; exit 1; }
       - name: Upload
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload api api.json "${{ github.sha }}"
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: api
+          payload: api.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}

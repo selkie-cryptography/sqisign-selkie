@@ -13,9 +13,7 @@
 //!
 //! Compile: `rustc -O ci-report.rs -o ci-report`
 
-use std::collections::BTreeMap;
-use std::env;
-use std::fs;
+use std::{collections::BTreeMap, env, fs};
 
 /// Dashboard / data host (same Fly app serves the static site and JSON).
 const SITE: &str = "https://sqisign-selkie-ci.fly.dev";
@@ -86,16 +84,24 @@ fn render_bench(base: Option<&Json>, cur: &Json) -> String {
         out.push_str("No baseline on `main` yet — showing this PR's numbers only.\n\n");
     }
 
+    // Top-level library benches (the `sqisign` group — keygen/sign/verify)
+    // are the headline numbers, so list them first; the rest alphabetical.
+    let mut entries: Vec<_> = cur_map.iter().collect();
+    entries.sort_by(|(a, _), (b, _)| {
+        let sqi = |n: &String| n.starts_with("sqisign::");
+        sqi(b).cmp(&sqi(a)).then_with(|| a.cmp(b))
+    });
+
     // Build the table body, counting regressions for the visible summary.
     let mut rows = String::new();
     let mut regressions = 0usize;
 
-    for (name, (median, spread, samples)) in &cur_map {
+    for (name, (median, spread, samples)) in entries {
         let spread_str = spread.map_or_else(String::new, |h| format!(" ± {}", fmt_ns(h)));
         let samples_str = samples.map_or_else(|| "—".to_string(), |s| s.to_string());
 
         let (base_cell, delta) = match base_map.get(name) {
-            Some((b, _, _)) if *b > 0.0 => {
+            Some((b, ..)) if *b > 0.0 => {
                 if *median / *b >= WALLCLOCK_FACTOR {
                     regressions += 1;
                 }
@@ -301,7 +307,11 @@ fn render_kat(_base: Option<&Json>, cur: &Json) -> String {
 /// Renders the `dudect` / `tacet` constant-time report: pass/fail counts
 /// and the worst statistic, flagging new failures against the baseline.
 fn render_ct(kind: &str, base: Option<&Json>, cur: &Json) -> String {
-    let metric = if kind == "dudect" { "max_t" } else { "leak_prob" };
+    let metric = if kind == "dudect" {
+        "max_t"
+    } else {
+        "leak_prob"
+    };
     let label = if kind == "dudect" {
         "DudeCT (Welch t)"
     } else {
@@ -388,9 +398,12 @@ fn render_coverage(base: Option<&Json>, cur: &Json) -> String {
     let Some(p) = pct(Some(cur)) else {
         return "### Coverage\n\nNo coverage data.\n".to_string();
     };
-    let lines = cur
-        .get("total")
-        .and_then(|t| Some((t.get("covered")?.as_f64()? as u64, t.get("total")?.as_f64()? as u64)));
+    let lines = cur.get("total").and_then(|t| {
+        Some((
+            t.get("covered")?.as_f64()? as u64,
+            t.get("total")?.as_f64()? as u64,
+        ))
+    });
     let lines_str = lines.map_or_else(String::new, |(c, t)| format!(" ({c}/{t} lines)"));
 
     let delta = match pct(base) {
