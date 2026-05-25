@@ -2972,7 +2972,10 @@
         );
         if (benches.length === 0) continue;
 
-        const times = benches.map(b => b.time_ns);
+        // Headline is the median; payloads before stddev tracking only
+        // carry time_ns, so fall back to it.
+        const med = b => (b.median_ns != null ? b.median_ns : b.time_ns);
+        const times = benches.map(med);
         const minT = Math.min(...times);
         const maxT = Math.max(...times);
         const open = benchGroupIsOpen(g.name) ? ' open' : '';
@@ -2989,16 +2992,24 @@
           <table class="bench-table">
             <thead><tr>
               <th>Benchmark</th>
-              <th>Time</th>
-              <th>Throughput</th>
+              <th>Median</th>
+              <th>± spread</th>
+              <th>Mean</th>
+              <th>Samples</th>
             </tr></thead><tbody>`;
 
         for (const b of benches) {
-          const tp = b.throughput || '—';
+          // Spread, mean, and samples are absent on pre-stddev payloads.
+          const hasSpread = b.fastest_ns != null && b.slowest_ns != null;
+          const spread = hasSpread ? '± ' + formatTime((b.slowest_ns - b.fastest_ns) / 2) : '—';
+          const mean = b.mean_ns != null ? formatTime(b.mean_ns) : '—';
+          const samples = b.samples != null ? b.samples.toLocaleString() : '—';
           html += `<tr>
             <td class="bench-name">${esc(b.name)}</td>
-            <td>${formatTime(b.time_ns)}</td>
-            <td>${esc(tp)}</td>
+            <td>${formatTime(med(b))}</td>
+            <td>${spread}</td>
+            <td>${mean}</td>
+            <td>${samples}</td>
           </tr>`;
         }
 

@@ -1,9 +1,11 @@
 name: Benchmarks
 
 # Runs on self-hosted Fly runners. Bench numbers reflect Fly's
-# shared-cpu-4x hardware and have non-trivial variance from
-# neighbor jobs. Useful for catching gross regressions; don't quote
-# absolute numbers without controlling the environment.
+# shared-cpu hardware and have non-trivial variance from neighbor
+# jobs. Useful for catching gross regressions and trending on the
+# dashboard; don't quote absolute numbers without controlling the
+# environment. On pull requests we post an informational comparison
+# comment against main's stored baseline (not a merge gate).
 
 on:
   push:
@@ -13,6 +15,16 @@ on:
       - 'benches/**'
       - 'Cargo.toml'
       - '.github/workflows/bench.yml'
+      - '.github/scripts/divan-to-json.rs'
+      - '.github/scripts/bench-compare.rs'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - '.github/workflows/bench.yml'
+      - '.github/scripts/divan-to-json.rs'
+      - '.github/scripts/bench-compare.rs'
   workflow_dispatch:
 
 permissions:
@@ -28,7 +40,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
-      # PR comments with benchmark comparison
+      # PR comments with the benchmark comparison.
       pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -70,38 +82,37 @@ jobs:
           done
           /tmp/divan-to-json < bench-raw.txt > bench-output.json
 
-      # On push to main: upload results to Fly CI site.
-      - name: Generate site JSON
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # Group the flat records into the per-commit payload the dashboard
+      # consumes. `time_ns` stays the headline (now the median) for
+      # backward compatibility with historical data; the spread, mean,
+      # and sample columns are new.
+      - name: Build grouped payload
         run: |
           mkdir -p bench-out
-          jq -n --argjson benches "$(cat bench-output.json)" '{
-            sha: "${{ github.sha }}",
+          jq -n --arg sha "${{ github.sha }}" --argjson benches "$(cat bench-output.json)" '{
+            sha: $sha,
             updated_at: (now | todate),
-            groups: [
+            groups: (
               $benches
               | group_by(.name | split("::")[0])
-              | .[]
-              | {
-                  name: .[0].name | split("::")[0],
-                  benchmarks: [
-                    .[] | {
-                      name: (.name | split("::")[1:] | join("::")),
-                      time_ns: .value
-                    }
-                  ]
-                }
-            ]
+              | map({
+                  name: (.[0].name | split("::")[0]),
+                  benchmarks: map({
+                    name: (.name | split("::")[1:] | join("::")),
+                    time_ns: .median_ns,
+                    median_ns, fastest_ns, slowest_ns, mean_ns, samples, iters
+                  })
+                })
+            )
           }' > bench-out/bench.json
 
-      - name: Verify upload payload is non-empty
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify payload is non-empty
         run: |
           groups=$(jq '.groups | length' bench-out/bench.json)
           benches=$(jq '[.groups[].benchmarks[]] | length' bench-out/bench.json)
           echo "bench-out/bench.json: $groups groups, $benches benchmarks."
           if [ "$groups" -eq 0 ] || [ "$benches" -eq 0 ]; then
-            echo "::error::bench-out/bench.json has no benchmark data — refusing to upload."
+            echo "::error::bench-out/bench.json has no benchmark data."
             echo "--- bench-out/bench.json ---" >&2
             cat bench-out/bench.json >&2 || true
             echo "--- first 200 lines of bench-raw.txt ---" >&2
@@ -109,6 +120,7 @@ jobs:
             exit 1
           fi
 
+      # On push to main: upload results to the Fly CI site.
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
@@ -118,28 +130,42 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: rustc -O .github/scripts/ci-upload.rs -o /tmp/ci-upload && /tmp/ci-upload bench bench-out/bench.json "${{ github.sha }}"
 
-      # PR: compare against stored baseline and comment.
-      - name: Download baseline
-        if: github.event_name == 'pull_request'
+      # On same-repo pull requests: compare against main's stored
+      # baseline and post an informational comment.
+      - name: Download main baseline
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          # Try to fetch the baseline from the CI site.
-          curl -sf https://sqisign-selkie-ci.fly.dev/bench/bench.json \
-            | jq '[.groups[].benchmarks[] as $b | .groups[] |
-                {name: (.name + "::" + $b.name), unit: "ns/iter", value: $b.time_ns}
-              ]' > baseline.json 2>/dev/null || echo "[]" > baseline.json
+          curl -sf https://sqisign-selkie-ci.fly.dev/bench/latest.json -o baseline.json \
+            || echo '{}' > baseline.json
 
-      - name: Compare benchmarks (pull request)
-        if: github.event_name == 'pull_request'
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba
+      - name: Render comparison
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          rustc -O .github/scripts/bench-compare.rs -o /tmp/bench-compare
+          /tmp/bench-compare baseline.json bench-out/bench.json > bench-comment.md
+          cat bench-comment.md
+
+      - name: Post comparison comment
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         with:
-          name: sqisign-selkie benchmarks
-          tool: customSmallerIsBetter
-          output-file-path: bench-output.json
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: false
-          comment-on-alert: true
-          alert-threshold: "115%"
-          fail-on-alert: false
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('bench-comment.md', 'utf8');
+            const marker = '<!-- sqisign-bench-report -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            // Update our previous comment in place if one exists, so the
+            // PR carries a single rolling benchmark report.
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const prev = comments.find(c => c.body && c.body.includes(marker));
+
+            if (prev) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
