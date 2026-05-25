@@ -67,6 +67,13 @@ jobs:
           # Run each bench binary with a timeout so slow ones don't
           # block fast ones. Collect all output then parse.
           cargo build --release --benches --features expose-internals
+          # Pin the measured process to the last core so the scheduler
+          # stops migrating / preempting it mid-run — the main controllable
+          # source of wall-clock variance on a small box. The build above
+          # stays unpinned (it wants all cores). Falls back to unpinned if
+          # taskset is unavailable.
+          pin=()
+          command -v taskset >/dev/null 2>&1 && pin=(taskset -c "$(( $(nproc) - 1 ))")
           : > bench-raw.txt
           for bin in ./target/release/deps/*-????????????????; do
             [ -x "$bin" ] || continue
@@ -78,7 +85,7 @@ jobs:
             # `--bench` is the flag cargo passes when running via `cargo bench`;
             # without it, divan prints only the benchmark tree and exits without
             # running anything (silent exit 0), producing an empty results file.
-            timeout 300 "$bin" --bench --color never >> bench-raw.txt 2>&1 || true
+            timeout 300 "${pin[@]}" "$bin" --bench --color never >> bench-raw.txt 2>&1 || true
           done
           /tmp/divan-to-json < bench-raw.txt > bench-output.json
 
