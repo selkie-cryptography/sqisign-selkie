@@ -1708,7 +1708,9 @@
     let covIndex = [];      // [{sha, percent, updated_at}, ...]
     let benchIndex = [];    // [{sha, updated_at}, ...]
     let mutantsIndex = [];  // [{sha, updated_at}, ...]
-    let selectedSha = null; // Currently viewed commit.
+    // Currently viewed commit. A `?sha=` query param deep-links a
+    // specific commit (CI job summaries and PR comments link here).
+    let selectedSha = new URLSearchParams(location.search).get('sha') || null;
     let covData = null;     // Current coverage data for drill-down.
     let lastManifest = {};  // {kind: sha} from last poll — skip refetches when unchanged.
 
@@ -3440,8 +3442,16 @@
         opt.textContent = label;
         select.appendChild(opt);
       }
-      // Select current or default to first.
+      // Select the current commit, default to first, or — for a
+      // deep-linked sha not in the recent list — add a synthetic option
+      // so the link still resolves (loadCommitData fetches it directly).
       if (selectedSha && commits.some(c => c.sha === selectedSha)) {
+        select.value = selectedSha;
+      } else if (selectedSha) {
+        const opt = document.createElement('option');
+        opt.value = selectedSha;
+        opt.textContent = selectedSha.slice(0, 7) + ' (linked)';
+        select.insertBefore(opt, select.firstChild);
         select.value = selectedSha;
       } else {
         select.value = commits[0].sha;
@@ -3462,6 +3472,8 @@
 
     async function onCommitChange(sha) {
       selectedSha = sha;
+      // Keep the URL shareable: it tracks the viewed commit.
+      history.replaceState(null, '', sha ? '?sha=' + sha : location.pathname);
       const commits = buildCommitList();
       updateCommitTime(commits);
       await loadCommitData(sha, true);

@@ -1,0 +1,57 @@
+name: CI PR report
+description: >-
+  Render a Markdown report for one CI data kind (bench, iai, kat, dudect,
+  tacet, mutants, coverage) comparing the current payload to main's stored
+  baseline. Always writes a job summary; on same-repo pull requests, posts
+  or updates a sticky comment.
+
+inputs:
+  kind:
+    description: Data kind (bench, iai, kat, dudect, tacet, mutants, coverage).
+    required: true
+  payload:
+    description: Path to the current payload JSON this run produced.
+    required: true
+  github-token:
+    description: Token with pull-requests:write, for the PR comment.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Render ${{ inputs.kind }} report
+      shell: bash
+      run: |
+        site=https://sqisign-selkie-ci.fly.dev
+        curl -sf "$site/${{ inputs.kind }}/latest.json" -o /tmp/ci-baseline.json \
+          || echo '{}' > /tmp/ci-baseline.json
+        # Empty RUSTC_WRAPPER: skip sccache for this tiny standalone
+        # compile in jobs (e.g. ci.yml) that set a wrapper for the crate.
+        RUSTC_WRAPPER= rustc -O .github/scripts/ci-report.rs -o /tmp/ci-report
+        /tmp/ci-report "${{ inputs.kind }}" /tmp/ci-baseline.json "${{ inputs.payload }}" \
+          > /tmp/ci-report.md
+        cat /tmp/ci-report.md >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Comment ${{ inputs.kind }} report
+      if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+          const body = fs.readFileSync('/tmp/ci-report.md', 'utf8');
+          // First line is the hidden per-kind marker, e.g. `<!-- ci-report:iai -->`.
+          const marker = body.split('\n', 1)[0];
+          const { owner, repo } = context.repo;
+          const issue_number = context.issue.number;
+
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner, repo, issue_number,
+          });
+          const prev = comments.find(c => c.body && c.body.includes(marker));
+
+          if (prev) {
+            await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body });
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          }
