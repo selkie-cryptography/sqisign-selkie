@@ -56,7 +56,7 @@ RUN apt-get update \
 # rustup and need write access to RUSTUP_HOME.
 RUN useradd -m -s /bin/bash runner \
   && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --default-toolchain stable --no-modify-path \
+      | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path \
   && rustup toolchain install nightly --profile minimal \
   && rustup component add rustfmt clippy --toolchain nightly \
   && chown -R runner:runner "$RUSTUP_HOME" "$CARGO_HOME"
