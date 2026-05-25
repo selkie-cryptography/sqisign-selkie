@@ -105,6 +105,7 @@ RUN apt-get update \
       texlive-science \
       unzip \
       valgrind \
+      zstd \
   && rm -rf /var/lib/apt/lists/*
 
 # AWS CLI v2 (bundled binary distribution).
