@@ -122,6 +122,28 @@ fn render_bench(base: Option<&Json>, cur: &Json) -> String {
         ));
     }
 
+    // Mermaid Δ% bar chart for the headline library benches (GitHub
+    // renders ```mermaid; xychart-beta is beta but adequate here).
+    let mut chart_x = Vec::new();
+    let mut chart_y = Vec::new();
+    for b in ["keygen", "sign", "verify"] {
+        let key = format!("sqisign::{b}");
+        if let (Some((cur, ..)), Some((base, ..))) = (cur_map.get(&key), base_map.get(&key)) {
+            if *base > 0.0 {
+                chart_x.push(b);
+                chart_y.push(format!("{:.1}", (*cur / *base - 1.0) * 100.0));
+            }
+        }
+    }
+    if !chart_x.is_empty() {
+        out.push_str(&format!(
+            "```mermaid\nxychart-beta\n    title \"sqisign median: Δ% vs main\"\n    \
+             x-axis [{}]\n    y-axis \"Δ%\"\n    bar [{}]\n```\n\n",
+            chart_x.join(", "),
+            chart_y.join(", ")
+        ));
+    }
+
     // Fold the ~80-row table so it doesn't dominate the PR conversation.
     out.push_str(&format!(
         "<details><summary>{} benchmarks</summary>\n\n\

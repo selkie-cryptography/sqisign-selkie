@@ -103,7 +103,14 @@ jobs:
                     median_ns, fastest_ns, slowest_ns, mean_ns, samples, iters
                   })
                 })
-            )
+            ),
+            # Headline library benches, hoisted so the dashboard index can
+            # carry a per-commit scalar for the trend charts.
+            summary: {
+              keygen_ns: ([$benches[] | select(.name == "sqisign::keygen") | .median_ns] | first),
+              sign_ns:   ([$benches[] | select(.name == "sqisign::sign")   | .median_ns] | first),
+              verify_ns: ([$benches[] | select(.name == "sqisign::verify") | .median_ns] | first)
+            }
           }' > bench-out/bench.json
 
       - name: Verify payload is non-empty

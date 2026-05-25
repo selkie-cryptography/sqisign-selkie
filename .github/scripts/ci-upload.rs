@@ -206,6 +206,15 @@ fn build_index(kind: &str, sha: &str, json: &str, existing: &str) -> String {
             format!("{{\"sha\":{},\"pass_count\":{},\"fail_count\":{},\"updated_at\":{}{subject_field}}}",
                 json_str(sha), pass, fail, json_str(&updated_at))
         }
+        "bench" => {
+            // Headline library-bench medians (ns) for the dashboard trend
+            // charts; `summary.*` keys are unique to the payload root.
+            let keygen = extract_num_f64(json, "keygen_ns");
+            let sign = extract_num_f64(json, "sign_ns");
+            let verify = extract_num_f64(json, "verify_ns");
+            format!("{{\"sha\":{},\"keygen_ns\":{},\"sign_ns\":{},\"verify_ns\":{},\"updated_at\":{}{subject_field}}}",
+                json_str(sha), keygen, sign, verify, json_str(&updated_at))
+        }
         _ => {
             format!("{{\"sha\":{},\"updated_at\":{}{subject_field}}}", json_str(sha), json_str(&updated_at))
         }
