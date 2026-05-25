@@ -124,6 +124,16 @@ proptest! {
     }
 
     #[test]
+    fn prop_fp_sum_of_products(a in arb_fp(), b in arb_fp(), c in arb_fp(), d in arb_fp()) {
+        prop_assert_eq!(Fp::sum_of_products(&a, &b, &c, &d), &(&a * &b) + &(&c * &d));
+    }
+
+    #[test]
+    fn prop_fp_difference_of_products(a in arb_fp(), b in arb_fp(), c in arb_fp(), d in arb_fp()) {
+        prop_assert_eq!(Fp::difference_of_products(&a, &b, &c, &d), &(&a * &b) - &(&c * &d));
+    }
+
+    #[test]
     fn prop_fp_mul_zero(a in arb_fp()) {
         prop_assert_eq!(a * Fp::ZERO, Fp::ZERO);
     }
