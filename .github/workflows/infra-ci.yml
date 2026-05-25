@@ -230,6 +230,20 @@ jobs:
           echo "value=$digest" >> "$GITHUB_OUTPUT"
           echo ":base digest: $digest"
 
+      # Fly's Machine runtime fails to unpack an image past ~7 GiB
+      # uncompressed (documented as 8 GiB, empirically less — we had
+      # a 6.77 GiB image fail). Catch it at deploy time, not later
+      # when Machines silently fail to start and runs hang in
+      # "queued" forever. The Rust script in .github/scripts/ does
+      # the layer-by-layer zstd decompress + size sum.
+      - name: Verify :base unpacked size
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
+        run: |
+          rustc -O .github/scripts/check-image-size.rs -o /tmp/check-image-size
+          /tmp/check-image-size \
+            "registry.fly.io/sqisign-infra-runners@${{ steps.digest.outputs.value }}" 7
+
   # Build + push the thin `:latest` runtime runner image, FROM the
   # `:base` that `deploy-runners-base` (skipped or just-pushed) left
   # in the registry. `!failure()` lets us run when base was skipped
@@ -280,6 +294,19 @@ jobs:
             --image-label latest \
             --build-arg "BASE_IMAGE=${base_image}" \
             --push
+
+      # Same unpacked-size guard as deploy-runners-base, but on
+      # `:latest` (the tag Machines actually unpack at spawn). If
+      # `:base` slipped under the limit but the runtime layer
+      # pushed `:latest` over, catch it here before the orchestrator
+      # starts spawning broken Machines. The script resolves the tag
+      # to its current digest itself.
+      - name: Verify :latest unpacked size
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_RUNNERS }}
+        run: |
+          rustc -O .github/scripts/check-image-size.rs -o /tmp/check-image-size
+          /tmp/check-image-size registry.fly.io/sqisign-infra-runners:latest 7
 
   # Deploy the orchestrator last, after any freshly-pushed
   # `:latest` it'll spawn Machines from.
