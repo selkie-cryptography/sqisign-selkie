@@ -278,13 +278,15 @@ jobs:
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.head_branch == 'main' &&
        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
-    # 90 min is enough now that `.cargo/mutants.toml` skips
-    # `sign_kat_derand_*` again. The brief experiment that ran the
-    # full 100-KAT suite per mutant pushed per-shard wall-time past
-    # 3h even with the perf-8x + `-j 6` fan-out below; with the KATs
-    # filtered out we're back to ~30-60s per mutant and ~20 min per
-    # shard, well under this cap.
-    timeout-minutes: 90
+    # 180 min. With sign-KAT exclusion restored, the median per-mutant
+    # is ~30-60s, but a long tail of timeout-inducing mutations
+    # (infinite loops introduced by mutating a divisor / shift) each
+    # consume the full cargo-mutants per-test budget. 90 min wasn't
+    # enough to absorb those plus 246 mutants/shard under `-j 6`
+    # contention; bumped back to 180 to give the tail room. Paired
+    # with the `timeout_multiplier = 3` in `.cargo/mutants.toml` which
+    # caps each timeout-tail mutant at ~8 min instead of ~13 min.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
