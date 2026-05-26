@@ -5,7 +5,7 @@
 //! Markdown to stdout). Either file may be missing or empty — a missing
 //! baseline yields a current-only report rather than an error.
 //!
-//! `kind` is one of `bench`, `iai`, `kat`, `dudect`, `tacet`, `mutants`,
+//! `kind` is one of `bench`, `instructions`, `kat`, `dudect`, `tacet`, `mutants`,
 //! `coverage` — the same kinds the dashboard stores per commit. The first
 //! output line is a hidden marker (`<!-- ci-report:<kind> -->`) so the
 //! comment poster can update its own previous comment in place, and the
@@ -20,7 +20,7 @@ const SITE: &str = "https://sqisign-selkie-ci.fly.dev";
 
 /// Wall-clock regression threshold for the ⚠️ marker (matches the
 /// historical 115% alert). Wall-clock noise means smaller deltas on
-/// `bench` are not signal; `iai` instruction counts are deterministic and
+/// `bench` are not signal; `instructions` counts are deterministic and
 /// use a much tighter threshold.
 const WALLCLOCK_FACTOR: f64 = 1.15;
 
@@ -42,7 +42,7 @@ fn main() {
 
     let body = match kind {
         "bench" => render_bench(base, cur),
-        "iai" => render_iai(base, cur),
+        "instructions" => render_instructions(base, cur),
         "kat" => render_kat(base, cur),
         "dudect" | "tacet" => render_ct(kind, base, cur),
         "mutants" => render_mutants(base, cur),
@@ -55,7 +55,7 @@ fn main() {
     // section. dudect/tacet share the constant-time section.
     let anchor = match kind {
         "bench" => "#bench-section",
-        "iai" => "#iai-section",
+        "instructions" => "#instructions-section",
         "kat" => "#kat-section",
         "dudect" | "tacet" => "#dudect-section",
         "mutants" => "#mutants-section",
@@ -84,7 +84,7 @@ fn render_bench(base: Option<&Json>, cur: &Json) -> String {
         "_Wall-clock medians via [divan](https://github.com/nvzqz/divan) on \
          dedicated `perf-2x` Fly runners — lower-noise than shared CPUs but \
          still wall-clock, so informational, not a merge gate. Deterministic \
-         instruction-count gating (iai) is separate._\n\n",
+         instruction-count gating (instructions) is separate._\n\n",
     );
 
     if cur_map.is_empty() {
@@ -215,16 +215,16 @@ fn bench_map(root: Option<&Json>) -> BTreeMap<String, (f64, Option<f64>, Option<
     map
 }
 
-/// Renders the `iai` report: deterministic instruction-count deltas. Any
-/// increase is real signal (no runner noise), so the threshold is tight.
-fn render_iai(base: Option<&Json>, cur: &Json) -> String {
-    let base_map = iai_map(base);
-    let cur_map = iai_map(Some(cur));
+/// Renders the `instructions` report: deterministic instruction-count deltas.
+/// Any increase is real signal (no runner noise), so the threshold is tight.
+fn render_instructions(base: Option<&Json>, cur: &Json) -> String {
+    let base_map = instructions_map(base);
+    let cur_map = instructions_map(Some(cur));
 
     let mut out = String::from("### Instruction counts (PR vs `main`)\n\n");
     out.push_str(
         "_Deterministic instruction counts via \
-         [iai-callgrind](https://github.com/iai-callgrind/iai-callgrind) \
+         [gungraun](https://github.com/gungraun/gungraun) \
          (Valgrind) — immune to runner noise, so any change is real._\n\n",
     );
 
@@ -280,11 +280,37 @@ fn render_iai(base: Option<&Json>, cur: &Json) -> String {
         cur_map.len()
     ));
 
+    let flamegraphs = instructions_flamegraphs(Some(cur));
+    if !flamegraphs.is_empty() {
+        out.push_str("\n#### Flamegraphs (`Ir`)\n\n");
+
+        // Embed the heaviest benchmark's flamegraph inline (most interesting
+        // call tree); link the rest. SVGs are hosted on the CI site and
+        // render via GitHub's image proxy, like SVG badges.
+        let featured = cur_map
+            .iter()
+            .filter(|(name, _)| flamegraphs.contains_key(*name))
+            .max_by_key(|(_, &ir)| ir)
+            .map(|(name, _)| name.clone())
+            .or_else(|| flamegraphs.keys().next().cloned());
+
+        if let Some(url) = featured.as_ref().and_then(|name| flamegraphs.get(name)) {
+            let name = featured.as_deref().unwrap_or("");
+            out.push_str(&format!("**`{name}`**\n\n![{name} flamegraph]({url})\n\n"));
+        }
+
+        out.push_str("<details><summary>All flamegraphs</summary>\n\n");
+        for (name, url) in &flamegraphs {
+            out.push_str(&format!("- [`{name}`]({url})\n"));
+        }
+        out.push_str("\n</details>\n");
+    }
+
     out
 }
 
-/// Builds a `name -> instructions` map from an `iai` payload.
-fn iai_map(root: Option<&Json>) -> BTreeMap<String, u64> {
+/// Builds a `name -> instructions` map from an `instructions` payload.
+fn instructions_map(root: Option<&Json>) -> BTreeMap<String, u64> {
     let mut map = BTreeMap::new();
 
     let Some(results) = root.and_then(|r| r.get("results")).and_then(Json::as_array) else {
@@ -299,6 +325,26 @@ fn iai_map(root: Option<&Json>) -> BTreeMap<String, u64> {
             continue;
         };
         map.insert(name.to_string(), instr as u64);
+    }
+
+    map
+}
+
+/// Builds a `name -> flamegraph URL` map from an `instructions` payload.
+fn instructions_flamegraphs(root: Option<&Json>) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+
+    let Some(results) = root.and_then(|r| r.get("results")).and_then(Json::as_array) else {
+        return map;
+    };
+
+    for r in results {
+        if let (Some(name), Some(url)) = (
+            r.get("name").and_then(Json::as_str),
+            r.get("flamegraph").and_then(Json::as_str),
+        ) {
+            map.insert(name.to_string(), url.to_string());
+        }
     }
 
     map

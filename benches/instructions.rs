@@ -1,16 +1,23 @@
-//! Deterministic instruction-count benchmarks via iai-callgrind.
+//! Deterministic instruction-count benchmarks via gungraun (the renamed
+//! iai-callgrind).
 //!
-//! Measures instructions, L1/L2 cache misses, and branch mispredictions
-//! per function. Deterministic across CI runners — no timing noise.
+//! `main!` configures Callgrind with `--cache-sim=yes --branch-sim=yes`, so
+//! each benchmark reports instructions, L1/last-level cache misses, branch
+//! mispredictions, and estimated cycles — all deterministic across CI runners
+//! (no timing noise). A per-benchmark `Ir` flamegraph is emitted as
+//! `Ir.flamegraph.svg` next to each summary for the dashboard.
 //!
 //! Requires Valgrind: `apt install valgrind` or `brew install valgrind`.
-//! Run with: `cargo bench --bench iai --features expose-internals`
+//! Run with: `cargo bench --bench instructions --features expose-internals`
 
 mod common;
 
 use std::hint::black_box;
 
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
+use gungraun::{
+    Callgrind, EventKind, FlamegraphConfig, LibraryBenchmarkConfig, library_benchmark,
+    library_benchmark_group, main,
+};
 use sqisign_selkie::{
     curves::{
         Scalar,
@@ -120,21 +127,18 @@ fn kat_verify() {
 }
 
 // Deterministic keygen from KAT seed 0.
-// Too slow under Valgrind (~30 min). Excluded from the benchmark
-// group below; uncomment in `operations` to run manually.
 #[library_benchmark]
 fn kat_keygen() {
     let seed = common::kat0_seed();
     let _ = black_box(sqisign_selkie::SigningKey::generate_derand(&seed));
 }
 
-// Deterministic sign with KAT key 0.
-// Too slow under Valgrind (~30 min). Excluded from the benchmark
-// group below; uncomment in `operations` to run manually.
+// Deterministic sign with KAT key 0 — the response-phase flat profile and
+// flamegraph that drive optimization targeting.
 #[library_benchmark]
 fn kat_sign() {
     let sk = common::kat0_signing_key();
-    let msg = b"iai benchmark message";
+    let msg = b"instructions benchmark message";
     let randomness = [0x42u8; 48];
     let _ = black_box(sk.sign_derand(msg, &randomness));
 }
@@ -156,12 +160,16 @@ library_benchmark_group!(
 
 library_benchmark_group!(
     name = operations;
-    // TODO: re-enable kat_keygen and kat_sign once they complete under
-    // Valgrind within the CI timeout (currently ~30 min each).
-    benchmarks = kat_verify
+    // Full keygen/sign/verify under Valgrind. keygen and sign are the slow,
+    // high-value profiles — their flamegraphs locate the optimization targets.
+    benchmarks = kat_verify, kat_sign, kat_keygen
 );
 
 main!(
+    config = LibraryBenchmarkConfig::default().tool(
+        Callgrind::with_args(["--cache-sim=yes", "--branch-sim=yes"])
+            .flamegraph(FlamegraphConfig::default().event_kinds([EventKind::Ir])),
+    );
     library_benchmark_groups = field,
     curves,
     parsing,

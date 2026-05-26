@@ -1,4 +1,4 @@
-//! Shared fixtures for divan and iai benches.
+//! Shared fixtures for divan and gungraun benches.
 //!
 //! Anchored on KAT[0] (pinned to the C reference commit
 //! `91e9e464fe5400192d13e1f9240cbf180200a103`) — every bench that

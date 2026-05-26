@@ -79,7 +79,7 @@ jobs:
             [ -x "$bin" ] || continue
             # Skip non-bench binaries (test harnesses, build scripts).
             case "$(basename "$bin")" in
-              dudect-*|tacet-*|iai-*|iai_slow-*) continue ;; # CT/iai benches run separately
+              dudect-*|tacet-*|instructions-*) continue ;; # CT + gungraun benches run separately
             esac
             echo "=== Running $(basename "$bin") ===" >&2
             # `--bench` is the flag cargo passes when running via `cargo bench`;
