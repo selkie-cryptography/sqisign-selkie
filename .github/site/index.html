@@ -3825,7 +3825,19 @@
       return { a, el: document.getElementById(id) };
     }).filter(s => s.el);
 
+    // A click expresses intent directly. Honor it and lock out the observer
+    // during the smooth scroll, so short sections near the page bottom — which
+    // can't scroll into the observer's band — aren't immediately overridden by
+    // the following section.
+    let observerLockUntil = 0;
+    navLinks.forEach(a => a.addEventListener('click', () => {
+      navLinks.forEach(x => x.classList.remove('active'));
+      a.classList.add('active');
+      observerLockUntil = Date.now() + 800;
+    }));
+
     const observer = new IntersectionObserver(entries => {
+      if (Date.now() < observerLockUntil) return;
       entries.forEach(entry => {
         if (entry.isIntersecting) {
           navLinks.forEach(a => a.classList.remove('active'));
