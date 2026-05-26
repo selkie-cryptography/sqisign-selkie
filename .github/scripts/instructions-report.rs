@@ -64,7 +64,7 @@ impl BenchResult {
     /// callgrind totals worth reporting (e.g. a non-callgrind tool run, or a
     /// summary without an extractable name).
     fn from_summary(summary: &Json, dir: &Path, sha: &str) -> Option<BenchResult> {
-        let name = summary_name(summary, dir)?;
+        let name = summary_name(dir)?;
         let metrics = callgrind_totals(summary)?;
 
         // gungraun writes the regular Ir flamegraph beside the summary as
@@ -112,38 +112,23 @@ fn dir_has_ir_flamegraph(dir: &Path) -> bool {
     })
 }
 
-/// Derives the `group::bench` name for a summary from its `module_path` and
-/// `function_name` fields, falling back to the directory path.
+/// Derives the `group::bench` name from the summary's directory, which
+/// gungraun lays out as `.../<group>/<bench>/summary.json`.
 ///
-/// gungraun records `module_path` as `<crate>::<group>` (the
-/// library-benchmark-group id joined onto the bench crate) and the benchmark
-/// `function_name` separately; the group is therefore the last `module_path`
-/// segment. We join `group::function_name`, appending the benchmark `id` when
-/// one is present (parametrized benches). When the fields are absent, fall
-/// back to the last two components of the summary's directory
-/// (`.../<group>/<bench>`).
-fn summary_name(summary: &Json, dir: &Path) -> Option<String> {
-    let module_path = summary.get("module_path").and_then(Json::as_str);
-    let function_name = summary.get("function_name").and_then(Json::as_str);
-
-    if let (Some(module_path), Some(function_name)) = (module_path, function_name) {
-        let group = module_path.rsplit("::").next().unwrap_or(module_path);
-        let mut name = format!("{group}::{function_name}");
-        if let Some(id) = summary.get("id").and_then(Json::as_str) {
-            name.push_str("::");
-            name.push_str(id);
-        }
-        return Some(name);
-    }
-
-    // Fallback: the last two path components are `<group>/<bench>`.
-    let components: Vec<String> = dir
+/// The directory is the reliable source: the summary's `module_path` ends in
+/// the function name, not the group, so parsing it yields `bench::bench`. The
+/// directory's last two components are `<group>/<bench>`, and this matches the
+/// `<group>__<bench>` asset name `ci-upload` derives from the flamegraph's own
+/// path — so the URLs `instructions-report` emits line up with the files
+/// `ci-upload` writes.
+fn summary_name(dir: &Path) -> Option<String> {
+    let components: Vec<&str> = dir
         .components()
-        .filter_map(|c| c.as_os_str().to_str().map(String::from))
+        .filter_map(|c| c.as_os_str().to_str())
         .collect();
     match components.as_slice() {
         [.., group, bench] => Some(format!("{group}::{bench}")),
-        [.., bench] => Some(bench.clone()),
+        [.., bench] => Some((*bench).to_string()),
         _ => None,
     }
 }
