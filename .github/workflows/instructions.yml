@@ -1,0 +1,108 @@
+name: Instruction count
+
+# Runs on self-hosted Fly runners. Valgrind instruction counts are
+# largely CPU-independent (they count instructions, not cycles), so
+# shared-CPU noise barely matters here. Wall-clock latency may vary;
+# the reported instruction counts are reliable. The bench is configured
+# (in benches/instructions.rs) with cache + branch simulation and emits
+# a per-benchmark Ir flamegraph.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - '.github/workflows/instructions.yml'
+      - '.github/scripts/instructions-report.rs'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - '.github/workflows/instructions.yml'
+      - '.github/scripts/instructions-report.rs'
+  workflow_dispatch:
+
+# Supersede in-flight PR runs; never cancel a main run mid-upload.
+concurrency:
+  group: instructions-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: write  # sticky comment on PRs
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  instructions:
+    name: gungraun
+    runs-on: [self-hosted, fly, linux, x64]
+    # Generous: keygen + sign run under Valgrind with cache simulation.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: instructions
+
+      # gungraun-runner must match the `gungraun` lib version the bench
+      # links (0.19). Not in taiki-e/install-action's manifest, so build
+      # it from crates.io. Cached by rust-cache across runs.
+      - name: Install gungraun-runner
+        run: cargo install gungraun-runner --version 0.19.0 --locked
+
+      # The bench config enables --cache-sim/--branch-sim and flamegraphs;
+      # --save-summary=json writes the per-bench summary.json we parse.
+      - name: Run gungraun
+        run: |
+          cargo bench --bench instructions --features expose-internals -- \
+            --save-summary=json 2>&1 | tee instructions-output.txt
+
+      - name: Generate JSON
+        run: |
+          rustc -O .github/scripts/instructions-report.rs -o /tmp/instructions-report
+          /tmp/instructions-report target/gungraun "${{ github.sha }}" > instructions.json
+
+      - name: Verify instructions payload has data
+        run: jq -e '.total > 0 and (.results | length > 0)' instructions.json > /dev/null || { echo "::error::instructions.json has no benchmark results"; cat instructions.json >&2; exit 1; }
+
+      # Host the per-benchmark flamegraph SVGs so the report can embed them.
+      # Ungated (PR runs need their graphs live to render in the comment) but
+      # skipped on fork PRs, which can't see the Fly token.
+      - name: Host flamegraphs
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/ci-upload
+        with:
+          assets: target/gungraun
+          remote-subdir: instructions/flamegraphs/${{ github.sha }}
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+      # Upload the data payload only from main: a PR or branch dispatch must
+      # not clobber main's stored baseline.
+      - name: Upload to CI site
+        if: github.ref == 'refs/heads/main'
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: instructions
+          payload: instructions.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+      # Job summary always; sticky comment on same-repo PRs.
+      - name: Report
+        uses: ./.github/actions/ci-pr-report
+        with:
+          kind: instructions
+          payload: instructions.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}

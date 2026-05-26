@@ -1,13 +1,13 @@
 name: CI PR report
 description: >-
-  Render a Markdown report for one CI data kind (bench, iai, kat, dudect,
+  Render a Markdown report for one CI data kind (bench, instructions, kat, dudect,
   tacet, mutants, coverage) comparing the current payload to main's stored
   baseline. Always writes a job summary; on same-repo pull requests, posts
   or updates a sticky comment.
 
 inputs:
   kind:
-    description: Data kind (bench, iai, kat, dudect, tacet, mutants, coverage).
+    description: Data kind (bench, instructions, kat, dudect, tacet, mutants, coverage).
     required: true
   payload:
     description: Path to the current payload JSON this run produced.
@@ -48,7 +48,7 @@ runs:
         script: |
           const fs = require('fs');
           const body = fs.readFileSync('/tmp/ci-report.md', 'utf8');
-          // First line is the hidden per-kind marker, e.g. `<!-- ci-report:iai -->`.
+          // First line is the hidden per-kind marker, e.g. `<!-- ci-report:instructions -->`.
           const marker = body.split('\n', 1)[0];
           const { owner, repo } = context.repo;
 

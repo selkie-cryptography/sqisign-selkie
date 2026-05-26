@@ -30,7 +30,7 @@ zeroize = { version = "1", default-features = false, features = ["zeroize_derive
 [dev-dependencies]
 divan = "0.1"
 dudect-bencher = "0.7"
-iai-callgrind = "0.16"
+gungraun = "0.19"
 dhat = "0.3"
 tacet = "0.4"
 proptest = "1"
@@ -142,7 +142,7 @@ name = "cross_kat_verify"
 required-features = ["expose-internals"]
 
 [[bench]]
-name = "iai"
+name = "instructions"
 harness = false
 required-features = ["expose-internals"]
 

@@ -1508,7 +1508,7 @@
         <a href="#dudect-section">Constant-Time</a>
         <a href="#kat-section">Test Vectors</a>
         <a href="#platform-section">Platforms</a>
-        <a href="#iai-section">Instructions</a>
+        <a href="#instructions-section">Instructions</a>
         <a href="#audits-section">Audits</a>
         <a href="#fuzz-section">Fuzzing</a>
       </nav>
@@ -1632,18 +1632,18 @@
         </div>
       </section>
 
-      <section class="section" id="iai-section">
+      <section class="section" id="instructions-section">
         <div class="section__header">
           <h2 class="section__title">Instructions<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Deterministic instruction-count benchmarks via <a href="https://github.com/iai-callgrind/iai-callgrind" style="color:var(--fg)">iai-callgrind</a> (Valgrind). Immune to CI runner noise.</p>
+            <p style="margin-bottom:8px">Deterministic instruction-count benchmarks via <a href="https://github.com/gungraun/gungraun" style="color:var(--fg)">gungraun</a> (Valgrind). Immune to CI runner noise.</p>
             <dl>
             <dt>Instructions</dt><dd>Total executed instructions. Deterministic — identical across runs and machines.</dd>
             <dt>L1/L2 misses</dt><dd>Simulated cache misses. High L1 misses on secret data may indicate a cache side-channel.</dd>
             <dt>Branch misses</dt><dd>Mispredicted branches. Data-dependent branches on secrets leak via branch prediction.</dd>
             </dl></span></span></h2>
-          <span class="meta" id="iai-meta"></span>
+          <span class="meta" id="instructions-meta"></span>
         </div>
-        <div id="iai-content">
+        <div id="instructions-content">
           <p class="empty">Awaiting first run.</p>
         </div>
       </section>
@@ -2530,7 +2530,7 @@
       return html;
     }
 
-    function renderIaiData(data) {
+    function renderInstructionsData(data) {
       const results = data.results || [];
       if (results.length === 0) return '<p class="empty">No data for this commit.</p>';
 
@@ -2538,19 +2538,27 @@
         <thead><tr>
           <th>Function</th>
           <th>Instructions</th>
+          <th>Est. cycles</th>
           <th>L1 misses</th>
           <th>L2 misses</th>
           <th>Branch misses</th>
+          <th>Flame</th>
         </tr></thead><tbody>`;
 
       for (const r of results) {
         const fmt = (v) => v != null ? esc(String(v)) : '\u2014';
+        // Own-site SVG renders directly; opens full-size in a new tab.
+        const flame = r.flamegraph
+          ? `<a href="${esc(r.flamegraph)}" target="_blank" rel="noopener" title="Ir flamegraph">\u{1F525}</a>`
+          : '\u2014';
         html += `<tr>
           <td class="fn-name">${esc(r.name)}</td>
           <td>${fmt(r.instructions)}</td>
+          <td>${fmt(r.estimated_cycles)}</td>
           <td>${fmt(r.l1_misses)}</td>
           <td>${fmt(r.l2_misses)}</td>
           <td>${fmt(r.branch_misses)}</td>
+          <td>${flame}</td>
         </tr>`;
       }
 
@@ -3522,7 +3530,7 @@
       const cacheKey = `${kind}:${sha}`;
       if (dataCache.has(cacheKey)) return dataCache.get(cacheKey);
       let data = await fetchJson(`/${kind}/${sha}.json`);
-      // For infrequently-run data (fuzzing, CT, iai, etc.), fall back
+      // For infrequently-run data (fuzzing, CT, instructions, etc.), fall back
       // to latest.json so the dashboard isn't empty for most commits.
       if (!data) {
         data = await fetchJson(`/${kind}/latest.json`);
@@ -3549,7 +3557,7 @@
       const dudectMeta = document.getElementById('dudect-meta');
 
       // Fetch all kinds in parallel, using the cache to skip unchanged data.
-      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, iaiData, allocData, platformData, stackData, ctgrindData, apiData, katData] = await Promise.all([
+      const [cov, bench, mut, dudect, tacetData, deny, unsafeData, sizeData, docsData, msrvData, panicData, fuzzData, instructionsData, allocData, platformData, stackData, ctgrindData, apiData, katData] = await Promise.all([
         fetchKind('coverage', sha),
         fetchKind('bench', sha),
         fetchKind('mutants', sha),
@@ -3562,7 +3570,7 @@
         fetchKind('msrv', sha),
         fetchKind('panic', sha),
         fetchKind('fuzz', sha),
-        fetchKind('iai', sha),
+        fetchKind('instructions', sha),
         fetchKind('alloc', sha),
         fetchKind('platform', sha),
         fetchKind('stack', sha),
@@ -3683,15 +3691,15 @@
       }
 
       // Instruction count.
-      const iaiEl = document.getElementById('iai-content');
-      const iaiMeta = document.getElementById('iai-meta');
-      if (iaiData) {
-        if (iaiMeta) iaiMeta.innerHTML = staleTag(iaiData);
-        iaiEl.innerHTML = renderIaiData(iaiData);
-        applyStale(iaiEl, iaiData);
+      const instructionsEl = document.getElementById('instructions-content');
+      const instructionsMeta = document.getElementById('instructions-meta');
+      if (instructionsData) {
+        if (instructionsMeta) instructionsMeta.innerHTML = staleTag(instructionsData);
+        instructionsEl.innerHTML = renderInstructionsData(instructionsData);
+        applyStale(instructionsEl, instructionsData);
       } else {
-        if (iaiMeta) iaiMeta.textContent = '';
-        iaiEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
+        if (instructionsMeta) instructionsMeta.textContent = '';
+        instructionsEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
       }
 
       // Test vectors.

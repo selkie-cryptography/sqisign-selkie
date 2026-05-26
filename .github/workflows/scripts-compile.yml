@@ -10,7 +10,7 @@ name: Compile scripts
 #
 # Replaces the incidental coverage that the previous
 # `.github/scripts/**` entry in ci.yml / audit.yml / bench.yml /
-# coverage.yml / iai.yml provided by re-running their full pipelines
+# coverage.yml / instructions.yml provided by re-running their full pipelines
 # on script-only changes.
 
 on:
@@ -83,7 +83,7 @@ jobs:
           mutants  | {"sha":"abc123","updated_at":"x","summary":{"total":100}}        | {"sha":"abc123","updated_at":"x","summary":{"total":0}}
           fuzz     | {"sha":"abc123","updated_at":"x","pass":7,"fail":0,"targets":[{"target":"a"}]} | {"sha":"abc123","updated_at":"x","pass":0,"fail":0,"targets":[]}
           platform | {"sha":"abc123","updated_at":"x","platforms":[{"name":"linux"}]} | {"sha":"abc123","updated_at":"x","platforms":[]}
-          iai      | {"sha":"abc123","updated_at":"x","total":11,"results":[{"name":"a"}]} | {"sha":"abc123","updated_at":"x","total":0,"results":[]}
+          instructions | {"sha":"abc123","updated_at":"x","total":11,"results":[{"name":"a"}]} | {"sha":"abc123","updated_at":"x","total":0,"results":[]}
           kat      | {"sha":"abc123","updated_at":"x","suites":[{"name":"a"}]}        | {"sha":"abc123","updated_at":"x","suites":[]}
           dudect   | {"sha":"abc123","updated_at":"x","total":14}                     | {"sha":"abc123","updated_at":"x","total":0}
           tacet    | {"sha":"abc123","updated_at":"x","total":24}                     | {"sha":"abc123","updated_at":"x","total":0}

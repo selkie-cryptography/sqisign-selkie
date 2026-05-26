@@ -1,6 +1,7 @@
 //! Upload CI data (coverage, bench, mutants, dudect) to the Fly.io CI site.
 //!
 //! Usage: ci-upload [--dry-run] <kind> <json-file> <sha>
+//!        ci-upload --assets <local-root> <remote-subdir>   (flamegraph SVGs)
 //!
 //! - Stores per-commit data at /data/<kind>/<sha>.json
 //! - Updates /data/<kind>/latest.json
@@ -18,6 +19,7 @@
 use std::env;
 use std::fs;
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 const APP: &str = "sqisign-selkie-ci";
@@ -26,6 +28,15 @@ const MAX_INDEX: usize = 50;
 const MAX_FILES: usize = 30;
 
 fn main() {
+    // Asset mode: `ci-upload --assets <local-root> <remote-subdir>` hosts
+    // flamegraph SVGs. Separate from the JSON-payload path below (no floor,
+    // index, or manifest) and run ungated so PR runs can host their graphs.
+    let raw: Vec<String> = env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("--assets") {
+        upload_assets(&raw[1..]);
+        return;
+    }
+
     let mut dry_run = false;
     let positional: Vec<String> = env::args()
         .skip(1)
@@ -131,7 +142,7 @@ fn update_manifest(kind: &str, sha: &str) {
     // Parse existing entries (simple key extraction).
     let all_kinds = [
         "coverage", "bench", "mutants", "dudect", "tacet", "deny",
-        "unsafe", "size", "docs", "msrv", "panic", "fuzz", "iai",
+        "unsafe", "size", "docs", "msrv", "panic", "fuzz", "instructions",
         "alloc", "platform", "stack", "ctgrind", "api", "kat", "zeroize",
     ];
 
@@ -271,6 +282,69 @@ fn run(cmd: &str, args: &[&str]) {
     if !status.success() {
         eprintln!("warning: {cmd} {:?} exited with {status}", args);
     }
+}
+
+/// Uploads flamegraph SVGs to the CI site under `/data/<remote-subdir>/`.
+///
+/// Walks `<local-root>` for gungraun's `Ir.flamegraph.svg` files, names each
+/// `<group>__<bench>.svg` from its directory, and `sftp_put`s it. Ungated by
+/// design — PR runs host their flamegraphs so the report can embed them.
+fn upload_assets(args: &[String]) {
+    if args.len() != 2 {
+        eprintln!("usage: ci-upload --assets <local-root> <remote-subdir>");
+        std::process::exit(1);
+    }
+
+    let root = Path::new(&args[0]);
+    let remote_subdir = &args[1];
+    let svgs = find_flamegraphs(root);
+    if svgs.is_empty() {
+        eprintln!("[ci-upload] no Ir.flamegraph.svg found under {}", root.display());
+        return;
+    }
+
+    // sftp `put` doesn't create remote directories; make the sha dir first.
+    ssh_cmd(&format!("mkdir -p /data/{remote_subdir}"));
+    for (local, asset) in &svgs {
+        sftp_put(local, &format!("/data/{remote_subdir}/{asset}"));
+    }
+    eprintln!("[ci-upload] uploaded {} flamegraph(s) to /data/{remote_subdir}", svgs.len());
+}
+
+/// Collects `(local-path, asset-name)` for every `Ir.flamegraph.svg` under
+/// `root`, where the asset name is `<group>__<bench>.svg` derived from the two
+/// enclosing directories (matching `instructions-report`'s URL scheme).
+fn find_flamegraphs(root: &Path) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.file_name().and_then(|n| n.to_str()) == Some("Ir.flamegraph.svg") {
+                if let (Some(local), Some(asset)) =
+                    (path.to_str().map(String::from), flamegraph_asset_name(&path))
+                {
+                    found.push((local, asset));
+                }
+            }
+        }
+    }
+
+    found.sort();
+    found
+}
+
+/// Names a flamegraph asset `<group>__<bench>.svg` from its
+/// `.../<group>/<bench>/` directory, or `None` if the path is too shallow.
+fn flamegraph_asset_name(svg: &Path) -> Option<String> {
+    let bench_dir = svg.parent()?;
+    let bench = bench_dir.file_name()?.to_str()?;
+    let group = bench_dir.parent()?.file_name()?.to_str()?;
+    Some(format!("{group}__{bench}.svg"))
 }
 
 fn ssh_cmd(cmd: &str) {
@@ -417,8 +491,8 @@ fn validate_floor(kind: &str, path: &str, json: &str) {
         "fuzz"      => require(extract_num_u64(json, "pass") + extract_num_u64(json, "fail") > 0
                                || array_len("targets") > 0,
                                "fuzz has no per-target results (pass+fail == 0 and targets is empty)"),
-        "iai"       => require(extract_num_u64(json, "total") > 0 || array_len("results") > 0,
-                               "iai has no instruction-count results"),
+        "instructions" => require(extract_num_u64(json, "total") > 0 || array_len("results") > 0,
+                                  "instructions has no instruction-count results"),
         "api"       => require(extract_num_u64(json, "total") > 0,
                                "api.total == 0 (no public items measured)"),
         "size"      => require(extract_num_in_section(json, "binary", "total_bytes") > 0,
