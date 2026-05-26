@@ -311,9 +311,12 @@ fn upload_assets(args: &[String]) {
     eprintln!("[ci-upload] uploaded {} flamegraph(s) to /data/{remote_subdir}", svgs.len());
 }
 
-/// Collects `(local-path, asset-name)` for every `Ir.flamegraph.svg` under
-/// `root`, where the asset name is `<group>__<bench>.svg` derived from the two
-/// enclosing directories (matching `instructions-report`'s URL scheme).
+/// Collects `(local-path, asset-name)` for every regular Ir flamegraph under
+/// `root`. gungraun names them `callgrind.<bench>.total.Ir.flamegraph.svg`, so
+/// match the `Ir.flamegraph.svg` suffix (the `.old`/`.diff` baseline variants
+/// end differently and are skipped). The asset name is `<group>__<bench>.svg`
+/// derived from the two enclosing directories (matching `instructions-report`'s
+/// URL scheme).
 fn find_flamegraphs(root: &Path) -> Vec<(String, String)> {
     let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -324,7 +327,11 @@ fn find_flamegraphs(root: &Path) -> Vec<(String, String)> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.file_name().and_then(|n| n.to_str()) == Some("Ir.flamegraph.svg") {
+            } else if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with("Ir.flamegraph.svg"))
+            {
                 if let (Some(local), Some(asset)) =
                     (path.to_str().map(String::from), flamegraph_asset_name(&path))
                 {

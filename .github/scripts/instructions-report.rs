@@ -67,10 +67,12 @@ impl BenchResult {
         let name = summary_name(summary, dir)?;
         let metrics = callgrind_totals(summary)?;
 
-        // gungraun writes `Ir.flamegraph.svg` beside the summary. Derive its
+        // gungraun writes the regular Ir flamegraph beside the summary as
+        // `callgrind.<bench>.total.Ir.flamegraph.svg` (prefix + `total`
+        // modifier), so match the suffix rather than an exact name. Derive the
         // eventual public URL from the asset name (`group__bench.svg`); the
         // upload step writes the file to the matching path.
-        let flamegraph = dir.join("Ir.flamegraph.svg").is_file().then(|| {
+        let flamegraph = dir_has_ir_flamegraph(dir).then(|| {
             format!("{SITE}/instructions/flamegraphs/{sha}/{}.svg", name.replace("::", "__"))
         });
 
@@ -93,6 +95,21 @@ impl BenchResult {
             flamegraph,
         })
     }
+}
+
+/// Returns whether `dir` holds gungraun's regular Ir flamegraph. The file is
+/// named `callgrind.<bench>.total.Ir.flamegraph.svg`, so match the
+/// `Ir.flamegraph.svg` suffix; the `.old`/`.diff` baseline variants end
+/// differently and are excluded.
+fn dir_has_ir_flamegraph(dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.file_name()
+            .to_str()
+            .is_some_and(|n| n.ends_with("Ir.flamegraph.svg"))
+    })
 }
 
 /// Derives the `group::bench` name for a summary from its `module_path` and
