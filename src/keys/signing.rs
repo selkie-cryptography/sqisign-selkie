@@ -94,7 +94,7 @@ pub struct SigningKey {
     /// [§4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.6
     ideal_gen: Element<4>,
     /// Change-of-basis matrix M_sk from (φ_sk(P₀), φ_sk(Q₀)) to B_pk.
-    mat_sk: SecretKeyMatrix,
+    mat_sk: SigningKeyMatrix,
 }
 
 /// The secret change-of-basis matrix `M_sk` (part of the signing key).
@@ -102,7 +102,7 @@ pub struct SigningKey {
 /// `M_sk` is the 2×2 matrix mod `2^f` (full even torsion) such that
 /// `(φ_sk(P₀), φ_sk(Q₀)) = M_sk · (P_pk, Q_pk)` ([Algorithm 4.1][Alg. 4.1],
 /// line 9). The "full torsion" is intrinsic — every constructor
-/// ([`SecretKeyMatrix::new`], [`SecretKeyMatrix::from_bases`],
+/// ([`SigningKeyMatrix::new`], [`SigningKeyMatrix::from_bases`],
 /// [`From<ChangeOfBasisMatrix>`]) fixes the torsion exponent at
 /// [`TorsionExponent::FULL`].
 ///
@@ -111,10 +111,10 @@ pub struct SigningKey {
 ///
 /// [Alg. 4.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.1
 #[derive(Clone)]
-pub(crate) struct SecretKeyMatrix(ChangeOfBasisMatrix);
+pub(crate) struct SigningKeyMatrix(ChangeOfBasisMatrix);
 
-impl SecretKeyMatrix {
-    /// Constructs a [`SecretKeyMatrix`] from raw 2×2 scalar entries.
+impl SigningKeyMatrix {
+    /// Constructs a [`SigningKeyMatrix`] from raw 2×2 scalar entries.
     ///
     /// Always uses the full torsion exponent `f` ([`TORSION_EVEN_POWER`])
     /// since `M_sk` entries are mod `2^f`.
@@ -130,7 +130,7 @@ impl SecretKeyMatrix {
     /// `M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk,
     /// Q_pk))` per [Algorithm 4.1][Alg. 4.1] line 9. The torsion
     /// exponent is fixed at [`TorsionExponent::FULL`] (`2^f`) — see the
-    /// type-level documentation on [`SecretKeyMatrix`].
+    /// type-level documentation on [`SigningKeyMatrix`].
     ///
     /// Returns `None` when [`ChangeOfBasisMatrix::from_bases`] cannot
     /// invert the source basis matrix mod `2^f` — the caller (keygen)
@@ -150,7 +150,7 @@ impl SecretKeyMatrix {
     }
 }
 
-impl Deref for SecretKeyMatrix {
+impl Deref for SigningKeyMatrix {
     type Target = ChangeOfBasisMatrix;
 
     fn deref(&self) -> &Self::Target {
@@ -158,7 +158,7 @@ impl Deref for SecretKeyMatrix {
     }
 }
 
-impl From<ChangeOfBasisMatrix> for SecretKeyMatrix {
+impl From<ChangeOfBasisMatrix> for SigningKeyMatrix {
     fn from(m: ChangeOfBasisMatrix) -> Self {
         Self(m)
     }
@@ -181,7 +181,7 @@ impl SigningKey {
         verifying_key: VerifyingKey,
         ideal: LeftIdeal<4>,
         ideal_gen: Element<4>,
-        mat_sk: SecretKeyMatrix,
+        mat_sk: SigningKeyMatrix,
     ) -> Self {
         debug_assert!(
             {
@@ -310,7 +310,7 @@ impl SigningKey {
 
             // Line 9: M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk, Q_pk)).
             let eval_basis = TorsionBasis::from_propagated(phi_p, phi_pmq, phi_q);
-            let Some(mat_sk) = SecretKeyMatrix::from_bases(&eval_basis, &basis_pk) else {
+            let Some(mat_sk) = SigningKeyMatrix::from_bases(&eval_basis, &basis_pk) else {
                 continue; // basis lift failed — retry with fresh ideal
             };
 
@@ -410,7 +410,7 @@ impl SigningKey {
                 Scalar::ZERO.sub_mod2k(&wire[1][1], f),
             ],
         ];
-        let mat_sk = SecretKeyMatrix::new(entries);
+        let mat_sk = SigningKeyMatrix::new(entries);
 
         Ok(Self::from_parts(verifying_key, ideal, gen, mat_sk))
     }
