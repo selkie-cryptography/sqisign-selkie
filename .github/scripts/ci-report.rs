@@ -50,9 +50,11 @@ fn main() {
         _ => format!("_No report renderer for `{kind}`._\n"),
     };
 
-    // Link to the dashboard at the baseline (main) commit (which always
-    // has data — PR-head commits aren't uploaded), jumping to this kind's
-    // section. dudect/tacet share the constant-time section.
+    // Deep-link the dashboard at a specific commit, jumping to this kind's
+    // section. Prefer the main baseline (which has uploaded data); fall back
+    // to the commit this run reported (e.g. a PR head, or a kind with no main
+    // baseline yet) so the link is always sha-specific. dudect/tacet share
+    // the constant-time section.
     let anchor = match kind {
         "bench" => "#bench-section",
         "instructions" => "#instructions-section",
@@ -62,9 +64,14 @@ fn main() {
         "coverage" => "#coverage-section",
         _ => "",
     };
-    let footer = match base.and_then(|b| b.get("sha")).and_then(Json::as_str) {
-        Some(sha) => format!(
-            "\n[📊 Full dashboard (main @ {})]({SITE}/?sha={sha}{anchor})\n",
+    let link_sha = base
+        .and_then(|b| b.get("sha"))
+        .and_then(Json::as_str)
+        .map(|sha| ("main @ ", sha))
+        .or_else(|| cur.get("sha").and_then(Json::as_str).map(|sha| ("", sha)));
+    let footer = match link_sha {
+        Some((label, sha)) => format!(
+            "\n[📊 Full dashboard ({label}{})]({SITE}/?sha={sha}{anchor})\n",
             &sha[..sha.len().min(7)]
         ),
         None => format!("\n[📊 Full CI dashboard]({SITE}/{anchor})\n"),
