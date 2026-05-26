@@ -5,7 +5,7 @@
 //! each benchmark reports instructions, L1/last-level cache misses, branch
 //! mispredictions, and estimated cycles — all deterministic across CI runners
 //! (no timing noise). A per-benchmark `Ir` flamegraph is emitted as
-//! `Ir.flamegraph.svg` next to each summary for the dashboard.
+//! `callgrind.<bench>.total.Ir.flamegraph.svg` next to each summary.
 //!
 //! Requires Valgrind: `apt install valgrind` or `brew install valgrind`.
 //! Run with: `cargo bench --bench instructions --features expose-internals`
