@@ -60,9 +60,7 @@ impl SplittingKernel {
     /// bad curves. Treating `count != 1` as an explicit error
     /// is the difference between "signing key is wrong but
     /// keygen looks successful" and "keygen retries with a fresh
-    /// random ideal." The SQIsign v2 spec review flags this as
-    /// a recommended spec clarification (§\textsc{SplittingIsomorphism}
-    /// must handle malformed input).
+    /// random ideal."
     ///
     /// [§8.5.7]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.7
     pub(crate) fn isogeny(

@@ -563,9 +563,9 @@ fn modular_sqrt_non_residue() {
     assert!(r.is_none());
 }
 
-// Width-aware regression tests (see paper §5 "Bugs from Fixed-Width
-// Arithmetic"). Confirm the `_w` variants give correct answers on
-// moduli where the plain versions would silently truncate.
+// Width-aware regression tests at extreme widths where the plain
+// `BigInt<N>` ops would silently truncate. Confirm the `_w` variants
+// give correct answers on moduli that exceed the narrow path.
 
 #[test]
 fn pow_mod_w_dmix_fermat() {

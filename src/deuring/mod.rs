@@ -389,8 +389,7 @@ impl<const N: usize> LeftIdeal<N> {
         // C ref `1/(nrd(I)·d₁)`), and in whether `[d₁]` appears on
         // the first component. We follow the C ref because it is
         // the implementation whose signatures verify against the
-        // published KAT vectors; the spec's matrix-product ordering
-        // is flagged in `latex/sqisign-v2-spec-review.tex`.
+        // published KAT vectors.
         //
         // Using the identity `M_{conj(β)} ≡ adj(M_β) (mod 2^f)` —
         // both have determinant `nrd(β)`, and
