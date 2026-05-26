@@ -204,10 +204,16 @@ jobs:
       # prevents that contention from being misread as a timeout kill.
       - name: Run cargo-mutants on changed code
         continue-on-error: true
+        # `--in-place` is incompatible with `-j > 1` in cargo-mutants
+        # (parallel workers would step on the same source tree). We
+        # keep `--in-place` here — the changed-code mutant set on a
+        # PR is small enough that the overhead of copying the tree per
+        # worker would outweigh the parallel speedup, and `--in-place`
+        # lets the baseline build be shared. `full` runs `-j 6` without
+        # `--in-place` because its shard already partitions the work.
         run: |
           cargo mutants --no-shuffle -vV \
             --in-place \
-            -j 6 \
             --minimum-test-timeout 180 \
             --in-diff git.diff
 
