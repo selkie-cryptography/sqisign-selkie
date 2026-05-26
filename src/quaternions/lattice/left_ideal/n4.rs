@@ -321,9 +321,7 @@ impl LeftIdeal<4> {
     /// failed silently and rejected every one of the 10,000
     /// samples. `random_norm` then always returned `None`, signing
     /// quietly ran out of its 1000-iteration retry budget, and
-    /// failed as `SigningFailed`. See the paper's `§Bugs from Fixed
-    /// Width Arithmetic -> random_norm narrows nrd(β) into
-    /// BigInt<4>` entry.
+    /// failed as `SigningFailed`.
     ///
     /// WARNING: Not constant-time.
     ///

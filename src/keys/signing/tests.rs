@@ -607,8 +607,7 @@ fn kat_sk_roundtrip_all() {
     }
 }
 
-/// Sign + self-verify on KAT vector 0 only — focused test for
-/// task #32 ("First sign() SUCCESS + self-verify roundtrip").
+/// Sign + self-verify on KAT vector 0 only.
 ///
 /// Avoids the cost of running through all 100 KAT vectors when
 /// all we want is the answer to "does any signature round-trip

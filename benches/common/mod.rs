@@ -1,11 +1,11 @@
 //! Shared fixtures for divan and gungraun benches.
 //!
-//! Anchored on KAT[0] (pinned to the C reference commit
-//! `91e9e464fe5400192d13e1f9240cbf180200a103`) — every bench that
-//! pulls a fixture from here measures byte-identical inputs across
-//! files and runs. The hex strings live in
-//! [`sqisign_selkie::keys::kat_data::KAT_VECTORS`]; we read them
-//! through that one source of truth rather than duplicating.
+//! Anchored on KAT[0] (pinned to a specific C reference commit; see
+//! [`C_REF_COMMIT`]) — every bench that pulls a fixture from here
+//! measures byte-identical inputs across files and runs. The hex
+//! strings live in [`sqisign_selkie::keys::kat_data::KAT_VECTORS`];
+//! we read them through that one source of truth rather than
+//! duplicating.
 //!
 //! All bench targets that include this module enable the
 //! `expose-internals` feature in `Cargo.toml`, which is what makes
@@ -24,6 +24,9 @@ use sqisign_selkie::{
     fields::{fp::Fp, fp2::Fp2},
     keys::kat_data::KAT_VECTORS,
 };
+
+/// Pinned C reference commit the KAT fixtures track.
+pub const C_REF_COMMIT: &str = "91e9e464fe5400192d13e1f9240cbf180200a103";
 
 /// Precomputed x-coordinate of `P₀ − Q₀` on E₀, used by surface and
 /// curve benches that need a propagated `PmQ` to seed differential
