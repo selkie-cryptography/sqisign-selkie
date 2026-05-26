@@ -1,11 +1,15 @@
 //! Deterministic instruction-count benchmarks via gungraun (the renamed
 //! iai-callgrind).
 //!
-//! `main!` configures Callgrind with `--cache-sim=yes --branch-sim=yes`, so
-//! each benchmark reports instructions, L1/last-level cache misses, branch
-//! mispredictions, and estimated cycles — all deterministic across CI runners
-//! (no timing noise). A per-benchmark `Ir` flamegraph is emitted as
+//! Measures `Ir` (instructions) per benchmark — deterministic across CI
+//! runners, no timing noise — and emits a per-benchmark `Ir` flamegraph as
 //! `callgrind.<bench>.total.Ir.flamegraph.svg` next to each summary.
+//!
+//! Cache and branch simulation are off by default: they ~double Valgrind time
+//! on the billion-instruction sign/keygen benches. Enable them — and the
+//! resulting L1/LL/branch/EstimatedCycles metrics — on demand via the
+//! `deep_profile` dispatch input on instructions.yml, which appends
+//! `--cache-sim=yes --branch-sim=yes` globally.
 //!
 //! Requires Valgrind: `apt install valgrind` or `brew install valgrind`.
 //! Run with: `cargo bench --bench instructions --features expose-internals`
@@ -167,8 +171,7 @@ library_benchmark_group!(
 
 main!(
     config = LibraryBenchmarkConfig::default().tool(
-        Callgrind::with_args(["--cache-sim=yes", "--branch-sim=yes"])
-            .flamegraph(FlamegraphConfig::default().event_kinds([EventKind::Ir])),
+        Callgrind::default().flamegraph(FlamegraphConfig::default().event_kinds([EventKind::Ir])),
     );
     library_benchmark_groups = field,
     curves,

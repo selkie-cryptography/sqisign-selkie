@@ -27,6 +27,11 @@ on:
       - '.github/workflows/instructions.yml'
       - '.github/scripts/instructions-report.rs'
   workflow_dispatch:
+    inputs:
+      deep_profile:
+        description: "Cache + branch simulation (full L1/LL/branch + EstimatedCycles; ~2x slower)"
+        type: boolean
+        default: false
 
 # Supersede in-flight PR runs; never cancel a main run mid-upload.
 concurrency:
@@ -61,12 +66,18 @@ jobs:
       - name: Install gungraun-runner
         run: cargo install gungraun-runner --version 0.19.0 --locked
 
-      # The bench config enables --cache-sim/--branch-sim and flamegraphs;
-      # --save-summary=json writes the per-bench summary.json we parse.
+      # --save-summary=json writes the per-bench summary.json we parse. Cache
+      # and branch simulation are off by default (fast); the deep_profile
+      # dispatch input appends them globally for a full L1/LL/branch +
+      # EstimatedCycles profile (~2x slower — sign/keygen roughly double).
       - name: Run gungraun
         run: |
+          args=(--save-summary=json)
+          if [ "${{ inputs.deep_profile }}" = "true" ]; then
+            args+=(--callgrind-args="--cache-sim=yes --branch-sim=yes")
+          fi
           cargo bench --bench instructions --features expose-internals -- \
-            --save-summary=json 2>&1 | tee instructions-output.txt
+            "${args[@]}" 2>&1 | tee instructions-output.txt
 
       - name: Generate JSON
         run: |
@@ -79,7 +90,11 @@ jobs:
       # Host the per-benchmark flamegraph SVGs so the report can embed them.
       # Ungated (PR runs need their graphs live to render in the comment) but
       # skipped on fork PRs, which can't see the Fly token.
+      # Best-effort: a flaky flyctl download or sftp hiccup must not fail the
+      # run or skip the Report below — the flamegraph URLs just 404 until the
+      # next successful run.
       - name: Host flamegraphs
+        continue-on-error: true
         if: >-
           github.event_name != 'pull_request' ||
           github.event.pull_request.head.repo.full_name == github.repository
