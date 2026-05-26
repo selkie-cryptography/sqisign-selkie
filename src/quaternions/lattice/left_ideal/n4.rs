@@ -1,5 +1,7 @@
 //! Width-4 specializations of [`LeftIdeal<4>`][super::LeftIdeal]:
 //! the [`new`][LeftIdeal::new] constructor at storage width 4,
+//! the [`connecting`][LeftIdeal::connecting] precomputed
+//! connecting-ideal lookup,
 //! the [`random_prime_norm`][LeftIdeal::random_prime_norm] and
 //! [`random_norm`][LeftIdeal::random_norm] sampling routines, and the
 //! [`generator`][LeftIdeal::generator] small-generator finder
@@ -17,6 +19,10 @@ use super::{
             algebra::{Coordinate, Denominator, Element},
             bigint::BigInt,
             linear::{Matrix, Vector},
+            precomputed::{
+                CONNECTING_IDEAL_NORMS, CONNECTING_IDEAL_X, CONNECTING_IDEAL_Y,
+                NUM_EXTREMAL_ORDERS, STANDARD_ORDER,
+            },
         },
         ExtremalOrder, HnfLattice, Lattice, Order,
     },
@@ -24,6 +30,56 @@ use super::{
 };
 
 impl LeftIdeal<4> {
+    /// Returns the precomputed connecting ideal `J_t` for extremal
+    /// order index `t`, or `None` if `t >= NUM_EXTREMAL_ORDERS`.
+    ///
+    /// For `t = 0` returns `O₀` itself (norm 1, `x = y = 1`), which
+    /// lets the alternate-order search in
+    /// [`LeftIdeal::suitable_ideals`] treat `t = 0` uniformly with
+    /// `t > 0`.
+    ///
+    /// The basis HNF leading entries are `2·N` (not `N`): at denom 2
+    /// this gives the affine elements `α₀ = N` and `α₁ = N·i`. Halving
+    /// these would represent `N/2`, which is not in `O₀` for an
+    /// odd-norm ideal. Compare with [`CONNECTING_IDEAL_NORMS`]
+    /// (which stores the reduced norm `N`).
+    ///
+    /// The constants `(N, x, y)` come from the precomputed tables in
+    /// [`crate::quaternions::precomputed`]; the
+    /// [`From<Lattice<4>>`](HnfLattice) conversion to
+    /// [`HnfLattice<4>`] is idempotent here — computing the HNF
+    /// again just re-validates it.
+    ///
+    /// See [§3.1.7.2] of the spec for the connecting-ideal construction.
+    ///
+    /// [§3.1.7.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.7.2
+    #[doc(alias = "connecting_ideal")]
+    #[must_use]
+    pub fn connecting(t: usize) -> Option<Self> {
+        if t >= NUM_EXTREMAL_ORDERS {
+            return None;
+        }
+        let norm = CONNECTING_IDEAL_NORMS[t];
+        let x = CONNECTING_IDEAL_X[t];
+        let y = CONNECTING_IDEAL_Y[t];
+        // Columns are basis vectors (α₀, α₁, α₂, α₃) in the {1, i, j, k}
+        // basis; rows are components. Pre-denom basis:
+        //   α₀ = 2N,    α₁ = 2N·i,    α₂ = x·i + j,   α₃ = y + k,
+        // after dividing by denom = 2 yields (N, N·i, (x·i + j)/2, (y + k)/2).
+        // For t = 0 (N = 1) this is the standard order basis
+        // (1, i, (i+j)/2, (1+k)/2).
+        let two_norm = norm.ct_add(&norm);
+        let basis = Matrix::from_rows(
+            Vector::new(two_norm, BigInt::ZERO, BigInt::ZERO, y),
+            Vector::new(BigInt::ZERO, two_norm, x, BigInt::ZERO),
+            Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ONE, BigInt::ZERO),
+            Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ZERO, BigInt::ONE),
+        );
+        let denom = BigInt::<4>::from_u64(2);
+        let hnf = HnfLattice::from(Lattice::new(basis, denom));
+        Some(Self::from_parts(hnf, norm, *STANDARD_ORDER.order()))
+    }
+
     /// Create the left ideal I = O⟨α, N⟩ = Oα + ON at width 4.
     ///
     /// Uses [`Element<4>::mul`] which widens to `BigInt<8>`

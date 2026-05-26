@@ -11,7 +11,7 @@ use super::super::{
     bigint::BigInt,
     lattice::{ExtremalOrder, Lattice, LeftIdeal, NrdBasis},
     linear::{Matrix, Vector},
-    precomputed::{EXTREMAL_ORDERS, NUM_EXTREMAL_ORDERS, P_WIDE, connecting_ideal},
+    precomputed::{EXTREMAL_ORDERS, NUM_EXTREMAL_ORDERS, P_WIDE},
 };
 use crate::curves::{TorsionExponent, isogeny::IsogenyDegree};
 
@@ -724,11 +724,11 @@ impl<const N: usize> LeftIdeal<N> {
                 let Some((ref conj_lat, ref k_norm, ref n_self_w2, ..)) = conj_reduced_state else {
                     continue;
                 };
-                let j_t_lat: Lattice<W2> = {
-                    let l = *connecting_ideal(t).widen::<W2>().lattice();
-                    l.into()
-                };
-                let j_t_norm: BigInt<W2> = *connecting_ideal(t).widen::<W2>().norm();
+                let j_t = LeftIdeal::<4>::connecting(t)
+                    .expect("t < NUM_EXTREMAL_ORDERS by loop bound")
+                    .widen::<W2>();
+                let j_t_lat: Lattice<W2> = (*j_t.lattice()).into();
+                let j_t_norm: BigInt<W2> = *j_t.norm();
                 let prod_norm = k_norm.ct_mul(&j_t_norm);
                 // Use `Lattice::product`'s built-in `det(first 4 cols)`
                 // modulus rather than the precomputed
