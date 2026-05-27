@@ -4,8 +4,6 @@
 //! the high-level modular-exponentiation entry points
 //! [`pow_mod`][BigInt::pow_mod] and [`pow_mod_w`][BigInt::pow_mod_w].
 
-use core::cmp::Ordering;
-
 use super::{BigInt, ct_select_u64};
 
 /// Precomputed Montgomery reducer for a runtime-supplied odd modulus.
@@ -26,10 +24,12 @@ use super::{BigInt, ct_select_u64};
 ///
 /// # Constant-time
 ///
-/// **Variable-time.** The final conditional subtract in `mul`/`square`
-/// branches on a data-dependent comparison, and the modular-inverse
-/// precomputation uses early-exit Newton iteration. Constant-time
-/// Montgomery will be reintroduced in a separate pass.
+/// The Montgomery reductions are constant-time: `mul`, `square` (via
+/// `reduce_wide`), and the `R^2` setup in `new` end with a branchless
+/// `ct_select` subtract, and `n_inv_neg` is a fixed four-iteration Newton
+/// loop. The residual variable-time surface is the `mag_div_rem`-based
+/// reduction `pow` applies to its base, whose effective-length scan leaks
+/// the modulus's limb count — tracked for the constant-time division pass.
 ///
 /// **Caching note.** The cached fields (`n_inv_neg`, `r_squared`) are
 /// derived purely from `n` and leak nothing the modulus didn't. A
@@ -142,9 +142,15 @@ impl<const N: usize> MontReducer<N> {
         // After N iterations the result is in t[0..N] plus an at-most-1
         // overflow bit in t_n. By Montgomery's bound the value is in
         // `[0, 2n)`, so a single conditional subtract reduces.
-        if t_n != 0 || BigInt::<N>::mag_cmp(&t, n) != Ordering::Less {
-            let (sub, _) = BigInt::<N>::mag_sub(&t, n);
-            t = sub;
+        // Constant-time reduce into [0, n): t is in [0, 2n) plus the
+        // overflow bit t_n, so subtract n iff t_n != 0 or t >= n. Compute
+        // t - n unconditionally and select per-limb — no branch on t.
+        let (sub, borrow) = BigInt::<N>::mag_sub(&t, n);
+        let t_n_nz = (t_n | t_n.wrapping_neg()) >> 63;
+        let ge_n = 1 ^ ((borrow | borrow.wrapping_neg()) >> 63);
+        let need = t_n_nz | ge_n;
+        for (tj, &sj) in t.iter_mut().zip(sub.iter()) {
+            *tj = ct_select_u64(*tj, sj, need);
         }
         t
     }
@@ -317,9 +323,15 @@ impl<const N: usize> MontReducer<N> {
         // t_np1 should be 0 (all hi limbs consumed).
         debug_assert_eq!(t_np1, 0, "reduce_wide: t_np1 nonzero at end");
 
-        if t_n != 0 || BigInt::<N>::mag_cmp(&t, n) != Ordering::Less {
-            let (sub, _) = BigInt::<N>::mag_sub(&t, n);
-            t = sub;
+        // Constant-time reduce into [0, n): t is in [0, 2n) plus the
+        // overflow bit t_n, so subtract n iff t_n != 0 or t >= n. Compute
+        // t - n unconditionally and select per-limb — no branch on t.
+        let (sub, borrow) = BigInt::<N>::mag_sub(&t, n);
+        let t_n_nz = (t_n | t_n.wrapping_neg()) >> 63;
+        let ge_n = 1 ^ ((borrow | borrow.wrapping_neg()) >> 63);
+        let need = t_n_nz | ge_n;
+        for (tj, &sj) in t.iter_mut().zip(sub.iter()) {
+            *tj = ct_select_u64(*tj, sj, need);
         }
         t
     }
@@ -468,12 +480,17 @@ impl<const N: usize> MontReducer<N> {
                 x[i] = new;
                 i += 1;
             }
-            // Try the subtraction unconditionally; `borrow == 0` means
-            // `x >= n`. Combined with `carry == 1` (overflowed past
-            // `2^{64N}`), we always want to subtract in those cases.
+            // Constant-time conditional subtract: `borrow == 0` means
+            // `x >= n`, and `carry == 1` means we overflowed past 2^{64N};
+            // either way subtract n. Select per-limb instead of branching.
             let (sub, borrow) = BigInt::<N>::mag_sub(&x, n);
-            if carry == 1 || borrow == 0 {
-                x = sub;
+            let carry_nz = (carry | carry.wrapping_neg()) >> 63;
+            let ge_n = 1 ^ ((borrow | borrow.wrapping_neg()) >> 63);
+            let need = carry_nz | ge_n;
+            let mut k = 0;
+            while k < N {
+                x[k] = ct_select_u64(x[k], sub[k], need);
+                k += 1;
             }
             iter += 1;
         }
