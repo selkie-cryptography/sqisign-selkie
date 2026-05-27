@@ -333,6 +333,8 @@ jobs:
           shared-key: linux-x64-default-stable
 
       - name: Build docs
+        env:
+          RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --document-private-items
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1

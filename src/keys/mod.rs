@@ -384,6 +384,7 @@ impl ChallengeMatrix {
     ///
     /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
     /// [`e`]: crate::curves::ChangeOfBasisMatrix
+    /// [`ChangeOfBasisMatrix::mul`]: crate::curves::ChangeOfBasisMatrix::mul
     pub(crate) fn parse(
         data: &[u8; M_CHL_BYTES],
         bound: TorsionExponent,
