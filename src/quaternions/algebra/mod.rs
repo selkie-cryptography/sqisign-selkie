@@ -786,8 +786,16 @@ impl Element<4> {
 
     /// Quaternion multiplication: self · rhs (widening to `BigInt<8>`).
     ///
+    /// Returns `None` if the GCD-normalized product coordinates do
+    /// not fit in `BigInt<4>` (256-bit) storage — that is, the
+    /// caller picked the wrong width and should use
+    /// [`Element<N>::mul_direct`] at a wider `N`. For NIST-I
+    /// narrow-path inputs with `|coord| < 2^127`, the product
+    /// always fits and `Some` is returned.
+    ///
     /// [fig1]: https://sqisign.org/spec/sqisign-20250707.pdf#figure.3.1
-    pub fn mul(&self, rhs: &Self) -> Self {
+    #[must_use]
+    pub fn mul(&self, rhs: &Self) -> Option<Self> {
         let (a1, b1, c1, d1) = (self.a.wide(), self.b.wide(), self.c.wide(), self.d.wide());
         let (a2, b2, c2, d2) = (rhs.a.wide(), rhs.b.wide(), rhs.c.wide(), rhs.d.wide());
         let p: BigInt<8> = P_WIDE;
@@ -815,9 +823,23 @@ impl Element<4> {
         Self::from_wide(a, b, c, d, new_denom)
     }
 
-    /// Construct an `Element<4>` from wide (`BigInt<8>`) intermediates,
-    /// normalizing and narrowing back to `Coordinate` storage.
-    fn from_wide(a: BigInt<8>, b: BigInt<8>, c: BigInt<8>, d: BigInt<8>, r: BigInt<8>) -> Self {
+    /// Constructs an `Element<4>` from wide (`BigInt<8>`)
+    /// intermediates, GCD-normalizing and narrowing back to
+    /// `Coordinate` storage.
+    ///
+    /// Returns `None` if any normalized coordinate (or the denom)
+    /// does not fit in `BigInt<4>`. The previous `debug_assert!` +
+    /// release-truncate behavior allowed silent numerical
+    /// corruption to escape into downstream ideals and action
+    /// matrices; surfacing the overflow as `None` lets callers
+    /// either widen (via [`Element<N>::mul_direct`]) or reject.
+    fn from_wide(
+        a: BigInt<8>,
+        b: BigInt<8>,
+        c: BigInt<8>,
+        d: BigInt<8>,
+        r: BigInt<8>,
+    ) -> Option<Self> {
         // GCD-normalize in wide representation.
         let mut g = a.abs().gcd(&b.abs());
         g = g.gcd(&c.abs());
@@ -847,37 +869,25 @@ impl Element<4> {
             wr = wr.wrapping_neg();
         }
 
-        // Narrow to `BigInt<4>`. If the normalized values don't fit,
-        // the product genuinely exceeds `Element<4>`'s budget and
-        // the caller picked the wrong width. Panicking here is
-        // strictly better than silently truncating: narrow-path
-        // callers (e.g. `LeftIdeal<4>::random_norm`) that expect
-        // the product to fit must ensure their inputs are bounded
-        // (`|coord| < 2^127`-ish for a `p ≈ 2^250` quaternion
-        // algebra); wide-input callers should use
-        // `Element<N>::mul_direct` at a width with headroom.
-        //
-        // Previously this was a `debug_assert!` + release-truncate,
-        // which let silent numerical corruption escape into
-        // downstream ideals and action matrices.
-        let narrow = |v: BigInt<8>| -> BigInt<4> {
-            let ct: subtle::CtOption<BigInt<4>> = v.into();
-            assert!(
-                bool::from(ct.is_some()),
-                "Element<4>::mul: quaternion coordinate overflow after GCD \
-                 normalization (product exceeds BigInt<4>'s 256-bit budget; \
-                 caller should use Element<N>::mul_direct at a wider N)"
-            );
-            ct.unwrap()
-        };
-
-        Self {
-            a: Coordinate(narrow(wa)),
-            b: Coordinate(narrow(wb)),
-            c: Coordinate(narrow(wc)),
-            d: Coordinate(narrow(wd)),
-            denom: Denominator(narrow(wr)),
+        // Narrow each coordinate. `subtle::CtOption::and_then` keeps
+        // the chain constant-time over the values (every conversion
+        // runs; only the `is_some` flag gates the final unwrap).
+        let na: subtle::CtOption<BigInt<4>> = wa.into();
+        let nb: subtle::CtOption<BigInt<4>> = wb.into();
+        let nc: subtle::CtOption<BigInt<4>> = wc.into();
+        let nd: subtle::CtOption<BigInt<4>> = wd.into();
+        let nr: subtle::CtOption<BigInt<4>> = wr.into();
+        let all_some = na.is_some() & nb.is_some() & nc.is_some() & nd.is_some() & nr.is_some();
+        if !bool::from(all_some) {
+            return None;
         }
+        Some(Self {
+            a: Coordinate(na.unwrap()),
+            b: Coordinate(nb.unwrap()),
+            c: Coordinate(nc.unwrap()),
+            d: Coordinate(nd.unwrap()),
+            denom: Denominator(nr.unwrap()),
+        })
     }
 }
 

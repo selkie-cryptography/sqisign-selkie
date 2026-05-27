@@ -262,7 +262,7 @@ impl ExtremalOrder<8> {
                 // `ω · j = i · j = +k` flips the k-coefficient's sign,
                 // breaking byte-equality with C ref's RepresentInteger
                 // for any input where `ω` has an `i`-component.
-                let omega_j = Element::<4>::J.mul(omega);
+                let omega_j = Element::<4>::J.mul(omega)?;
 
                 let omega_coords = [
                     omega.a.wide(),

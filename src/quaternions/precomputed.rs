@@ -482,7 +482,10 @@ mod tests {
         for (idx, order) in EXTREMAL_ORDERS.iter().enumerate() {
             let q = order.q();
             let z = order.z();
-            let z_sq = z.mul(z).normalized();
+            let z_sq = z
+                .mul(z)
+                .expect("z² of an extremal-order generator fits in BigInt<4>")
+                .normalized();
 
             assert_eq!(
                 z_sq.a,
