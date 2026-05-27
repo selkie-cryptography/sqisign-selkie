@@ -23,7 +23,7 @@ fn fresh_sk() -> SigningKey {
 }
 
 /// Signing the same `(sk, msg)` with different seeds must produce
-/// different signatures — nonce reuse leaks the secret key
+/// different signatures — nonce reuse leaks the signing key
 /// (ePrint 2025/897).
 #[test]
 fn nonce_independence() {

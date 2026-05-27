@@ -2,7 +2,7 @@
 //!
 //! A signing key contains the secret isogeny φ_sk : E₀ → E_pk represented
 //! as a quaternion ideal I_sk, plus the change-of-basis matrix M_sk and the
-//! public key.
+//! verifying key.
 //!
 //! See [§4.3] (key generation), [§4.4] (signing), and [§4.6] (binary format).
 //!
@@ -106,7 +106,7 @@ pub struct SigningKey {
 /// [`From<ChangeOfBasisMatrix>`]) fixes the torsion exponent at
 /// [`TorsionExponent::FULL`].
 ///
-/// No `PartialEq` / `Eq` / `ConstantTimeEq`: comparing secret key
+/// No `PartialEq` / `Eq` / `ConstantTimeEq`: comparing signing key
 /// material is a code smell.
 ///
 /// [Alg. 4.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.1

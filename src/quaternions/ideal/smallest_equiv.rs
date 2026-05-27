@@ -29,9 +29,9 @@ impl LeftIdeal<4> {
     /// **Not constant-time.** This algorithm has data-dependent branches
     /// (L2 reduction loop count, pair search termination, GCD/primality
     /// checks) and data-dependent memory access patterns (sort, Vec
-    /// growth). The input ideal I is derived from the secret key during
+    /// growth). The input ideal I is derived from the signing key during
     /// signing (Algorithm 4.2, lines 13–19), so timing variations could
-    /// in principle leak information about the secret.
+    /// in principle leak information about the signing key.
     ///
     /// The spec (§9.3.2) analyzes SuitableIdeals only in terms of
     /// failure probability, not side-channel resistance. The C reference

@@ -2,10 +2,10 @@
 use libfuzzer_sys::fuzz_target;
 use sqisign_selkie::{SIGNATURE_BYTES, VERIFYING_KEY_BYTES, Signature, VerifyingKey};
 
-/// Fuzz the full verify path: parse pk, parse sig, verify.
+/// Fuzz the full verify path: parse vk, parse sig, verify.
 /// Any combination of inputs must not panic.
 fuzz_target!(|data: &[u8]| {
-    // Need at least pk + sig bytes; remaining bytes are the message.
+    // Need at least vk + sig bytes; remaining bytes are the message.
     const MIN: usize = VERIFYING_KEY_BYTES + SIGNATURE_BYTES;
     if data.len() < MIN {
         return;

@@ -1,7 +1,7 @@
 #![no_main]
 //! Structure-aware verify fuzz target.
 //!
-//! Anchors the public key and the `curve_aux` Fp2 region of the
+//! Anchors the verifying key and the `curve_aux` Fp2 region of the
 //! signature to KAT 0's bytes (both known to parse), then XORs
 //! libFuzzer's input over the remaining sig bytes — `n_bt`, `r_rsp`,
 //! `M_chl`, `chl`, both hint bytes — plus an optional trailing

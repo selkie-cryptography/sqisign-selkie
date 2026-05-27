@@ -123,7 +123,7 @@ fn sk_parse() {
 
 // --- Top-level operations ---
 
-// KAT vector 0 verification: parse pk + sig, verify.
+// KAT vector 0 verification: parse vk + sig, verify.
 #[library_benchmark]
 fn kat_verify() {
     let (vk, sig, msg) = common::kat0_vk_sig_msg();
