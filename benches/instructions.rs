@@ -163,18 +163,22 @@ library_benchmark_group!(
 );
 
 library_benchmark_group!(
-    name = operations;
-    // Full keygen/sign/verify under Valgrind. keygen and sign are the slow,
-    // high-value profiles — their flamegraphs locate the optimization targets.
+    name = sqisign;
+    // Top-level sqisign keygen/sign/verify under Valgrind. keygen and sign are
+    // the slow, high-value profiles — their flamegraphs locate the targets.
     benchmarks = kat_verify, kat_sign, kat_keygen
 );
 
 main!(
     config = LibraryBenchmarkConfig::default().tool(
-        Callgrind::default().flamegraph(FlamegraphConfig::default().event_kinds([EventKind::Ir])),
+        // gungraun defaults --cache-sim=yes, so disable it explicitly (and
+        // branch-sim) — `Callgrind::default()` would leave the slow cache
+        // simulation on. The deep_profile dispatch re-enables both globally.
+        Callgrind::with_args(["--cache-sim=no", "--branch-sim=no"])
+            .flamegraph(FlamegraphConfig::default().event_kinds([EventKind::Ir])),
     );
     library_benchmark_groups = field,
     curves,
     parsing,
-    operations
+    sqisign
 );
