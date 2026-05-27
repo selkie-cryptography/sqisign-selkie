@@ -56,7 +56,7 @@ const HINT_OFFSET: usize = CHL_OFFSET + CHALLENGE_BYTES;
 pub struct Challenge(Scalar);
 
 impl Challenge {
-    /// Derive the challenge via Fiat-Shamir: hash the public key,
+    /// Derive the challenge via Fiat-Shamir: hash the verifying key,
     /// commitment curve, and message.
     ///
     /// `chl ← HASH(pk ∥ j(E_com) ∥ msg)` ([Alg. 4.2][Alg. 4.2], line 10).
@@ -463,7 +463,7 @@ pub enum SignatureError {
         /// Actual length in bytes.
         actual: usize,
     },
-    /// The encoded public key curve is not supersingular.
+    /// The encoded verifying key curve is not supersingular.
     NotSupersingular,
     /// The encoded field element is not canonical (>= p).
     NonCanonical,

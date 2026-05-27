@@ -343,7 +343,7 @@ impl<const W: usize> NrdBasis<W> {
     /// `(u, v)` decomposition byte-different from C ref's, which
     /// then propagates through every downstream stage
     /// (`fixed_degree_isogeny`, the inner chain, the outer chain,
-    /// the splitter) so the resulting public key fails to match the
+    /// the splitter) so the resulting verifying key fails to match the
     /// KAT vector at the byte level.
     fn enumerate_short_vectors(
         &self,
@@ -453,7 +453,7 @@ impl<const W: usize> NrdBasis<W> {
         // short vectors but in different orders → `try_find_uv`
         // selects a different first valid `(β_s, β_t)` pair → the
         // entire downstream Deuring correspondence diverges → keygen
-        // pk bytes don't match C ref.
+        // vk bytes don't match C ref.
         vectors.sort_by(|a, b| {
             let al = a.degree.limbs();
             let bl = b.degree.limbs();

@@ -1,6 +1,6 @@
 //! Zeroization verification tests.
 //!
-//! Verifies that secret key material is zeroed from memory after drop.
+//! Verifies that signing key material is zeroed from memory after drop.
 //! Uses a boxed allocation so we can inspect the memory after drop
 //! without it being reused by the stack.
 //!

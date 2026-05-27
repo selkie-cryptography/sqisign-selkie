@@ -1,6 +1,6 @@
 //! The SQIsign challenge hash function HASH.
 //!
-//! HASH produces a challenge value `chl` from the public key, a
+//! HASH produces a challenge value `chl` from the verifying key, a
 //! j-invariant, and a message. For NIST-I:
 //!
 //! ```text
