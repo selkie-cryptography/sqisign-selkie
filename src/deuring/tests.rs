@@ -670,7 +670,9 @@ fn action_matrix_composition_equals_direct() {
         let m_composed = m_beta2.mat_mul_mod(&m_beta1.adjugate_mod(fv), fv);
 
         // Route B: direct apply on the quaternion product.
-        let theta = beta2.mul(&beta1.conjugate());
+        let theta = beta2
+            .mul(&beta1.conjugate())
+            .unwrap_or_else(|| panic!("case {n}: β₂·conj(β₁) overflows BigInt<4>"));
         let m_direct = endo
             .apply(&theta, f)
             .unwrap_or_else(|| panic!("case {n}: apply(θ) failed"));

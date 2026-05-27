@@ -183,7 +183,7 @@ fn norm_w_matches_norm() {
 fn mul_i_squared() {
     // i² = -1
     let unit_i = Element::<4>::from_i64(0, 1, 0, 0);
-    let result = unit_i.mul(&unit_i);
+    let result = unit_i.mul(&unit_i).expect("unit product fits in BigInt<4>");
     assert_eq!(result, Element::<4>::from_i64(-1, 0, 0, 0));
 }
 
@@ -192,7 +192,7 @@ fn mul_ij_eq_k() {
     // ij = k
     let unit_i = Element::<4>::from_i64(0, 1, 0, 0);
     let unit_j = Element::<4>::from_i64(0, 0, 1, 0);
-    let result = unit_i.mul(&unit_j);
+    let result = unit_i.mul(&unit_j).expect("unit product fits in BigInt<4>");
     assert_eq!(result, Element::<4>::from_i64(0, 0, 0, 1));
 }
 
@@ -201,7 +201,7 @@ fn mul_ji_eq_neg_k() {
     // ji = -k
     let unit_i = Element::<4>::from_i64(0, 1, 0, 0);
     let unit_j = Element::<4>::from_i64(0, 0, 1, 0);
-    let result = unit_j.mul(&unit_i);
+    let result = unit_j.mul(&unit_i).expect("unit product fits in BigInt<4>");
     assert_eq!(result, Element::<4>::from_i64(0, 0, 0, -1));
 }
 
@@ -209,7 +209,9 @@ fn mul_ji_eq_neg_k() {
 fn norm_is_multiplicative() {
     let alpha = Element::<4>::from_i64(1, 2, 0, 1);
     let beta = Element::<4>::from_i64(3, 0, 1, 0);
-    let product = alpha.mul(&beta);
+    let product = alpha
+        .mul(&beta)
+        .expect("small-coord product fits in BigInt<4>");
 
     let (na, da) = alpha.norm();
     let (nb, db) = beta.norm();
@@ -225,7 +227,10 @@ fn norm_is_multiplicative() {
 fn mul_by_conjugate_is_norm() {
     let e = Element::<4>::from_i64(1, 2, 3, 4);
     let conj = e.conjugate();
-    let product = e.mul(&conj).normalized();
+    let product = e
+        .mul(&conj)
+        .expect("small-coord product fits in BigInt<4>")
+        .normalized();
 
     let (_n_num, _n_den) = e.norm();
     // product should be scalar: (nrd, 0, 0, 0).
