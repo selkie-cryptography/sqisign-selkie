@@ -80,8 +80,8 @@ impl<const N: usize> BigInt<N> {
     ///
     /// Constant-time over the limb values. Called on secret-derived
     /// values in `SuitableIdeals`, so the per-limb CT primitive
-    /// [`trailing_zeros`](super::trailing_zeros) is used instead of
-    /// the variable-time `u64::trailing_zeros` intrinsic.
+    /// [`trailing_zeros`] is used instead of the variable-time
+    /// `u64::trailing_zeros` intrinsic.
     pub fn two_adic_val(&self) -> u32 {
         let mut count: u32 = 0;
         let mut still_zero = 1u64;
