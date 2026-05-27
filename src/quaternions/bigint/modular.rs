@@ -6,7 +6,7 @@
 
 use core::cmp::Ordering;
 
-use super::BigInt;
+use super::{BigInt, ct_select_u64};
 
 /// Precomputed Montgomery reducer for a runtime-supplied odd modulus.
 ///
@@ -355,13 +355,19 @@ impl<const N: usize> MontReducer<N> {
     /// `base^i` for `i in 0..16`, then process the exponent four bits at
     /// a time with 4 squarings + 1 multiply per window.
     ///
-    /// **Variable-time on the exponent.** The window-indexed table
-    /// access is a cache-line side channel on the exponent bits — fine
-    /// for SQIsign's Miller-Rabin (witness exponents are public and
-    /// pre-determined small primes minus one) and for any other
-    /// public-exponent path. For a future secret-exponent CT path the
-    /// table read needs to be made oblivious (scan all 16 entries with
-    /// `subtle::ConditionallySelectable`).
+    /// # Constant-time
+    ///
+    /// The window table is read **obliviously**: each window scans all
+    /// 16 entries with `ct_select_u64`, so the memory-access pattern does
+    /// not leak the exponent nibbles. This matters because in Miller-Rabin
+    /// the exponent is `d = (n-1)/2^s` for the candidate `n`, which is
+    /// secret-derived on the signing path — the base is the public
+    /// witness, the exponent is not.
+    ///
+    /// Two residual data dependences remain, tracked for the
+    /// constant-time Montgomery pass: the window count is `bitsize(exp)`
+    /// (leaks the exponent's bit-length, not its bits), and `mul`/`square`
+    /// end in a conditional subtract (see the [`MontReducer`] note).
     pub(crate) fn pow(&self, base: &BigInt<N>, exp: &BigInt<N>) -> BigInt<N> {
         BigInt {
             sign: 0,
@@ -424,8 +430,6 @@ impl<const N: usize> MontReducer<N> {
                 }
                 b += 1;
             }
-            let w = w as usize;
-
             // First-window optimization: result is still 1, so 4
             // squarings are no-ops (1^2 = 1 each). Skip them.
             if nib_rev != nibbles - 1 {
@@ -434,10 +438,20 @@ impl<const N: usize> MontReducer<N> {
                 result = self.square(&result);
                 result = self.square(&result);
             }
-            // Multiply by table[w] (skip if w == 0, since table[0] = 1).
-            if w != 0 {
-                result = self.mul(&result, &table[w]);
+            // Oblivious table read: scan all 16 entries with a
+            // constant-time select so the access pattern doesn't reveal
+            // the secret exponent nibble `w`. Multiply unconditionally —
+            // table[0] = 1, so w == 0 is a no-op.
+            let mut factor = [0u64; N];
+            for (idx, entry) in table.iter().enumerate() {
+                let diff = w ^ (idx as u64);
+                // eq = 1 iff w == idx, else 0 (constant-time).
+                let eq = 1 ^ ((diff | diff.wrapping_neg()) >> 63);
+                for (f, &e) in factor.iter_mut().zip(entry.iter()) {
+                    *f = ct_select_u64(*f, e, eq);
+                }
             }
+            result = self.mul(&result, &factor);
         }
 
         result
