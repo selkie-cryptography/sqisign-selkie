@@ -37,6 +37,8 @@ use crate::{
 /// is the cost of one 4-isogeny pushforward (~6M + 2S). Only the
 /// ratio drives the strategy DP, and DFJP is robust to small
 /// mis-estimation.
+///
+/// [§8.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.4
 const P_COST_4ISO: u32 = 11;
 const Q_COST_4ISO: u32 = 8;
 
