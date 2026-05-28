@@ -45,6 +45,10 @@ const A_AUX_BYTES: usize = 64;
 const M_CHL_OFFSET: usize = A_AUX_BYTES + 2;
 const CHL_OFFSET: usize = M_CHL_OFFSET + M_CHL_BYTES;
 const HINT_OFFSET: usize = CHL_OFFSET + CHALLENGE_BYTES;
+// Static check: any layout drift surfaces here at compile time.
+// The two trailing bytes after HINT_OFFSET are `hint_aux` and
+// `hint_chl`. Mirrors the SK-side check in `signing.rs`.
+const _: () = assert!(HINT_OFFSET + 2 == SIGNATURE_BYTES);
 
 /// A challenge value: an integer in [0, 2^e_chl) produced by HASH.
 ///
