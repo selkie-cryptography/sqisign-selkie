@@ -12,12 +12,11 @@
 
 use core::ops::{Div, Mul};
 
-use subtle::{Choice, ConditionallySelectable};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 use crate::{
     curves::{TorsionBasis, TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
     fields::{fp::Fp, fp2::Fp2},
-    quaternions::bigint::BigInt,
 };
 
 /// An element of μ_{2^e}, the group of 2^e-th roots of unity in F_{p²}*.
@@ -92,64 +91,101 @@ impl RootOfUnity {
         Self(result)
     }
 
-    /// Compute the discrete log k ∈ \[0, 2^e) such that target = self^k.
+    /// Compute the discrete log `k ∈ [0, 2^e)` such that `target = self^k`.
     ///
-    /// Uses the Pohlig-Hellman algorithm for 2-power order groups.
-    /// SQIsign only applies this to pairing outputs.
+    /// Iterative windowed Pohlig–Hellman over the 2-power group: at each
+    /// level the residual is projected into the W-bit subgroup μ_{2^W}
+    /// and the window value is identified by a constant-time scan over a
+    /// precomputed table. Window width `W = 4` (a 16-entry table)
+    /// balances iteration count against table-build cost for the
+    /// NIST-I-sized chains. SQIsign only applies this to pairing
+    /// outputs.
+    ///
+    /// # Constant-time
+    ///
+    /// Iteration count is determined by `e` (public); the small table
+    /// is scanned with `ConstantTimeEq` + `ConditionallySelectable`;
+    /// and the per-iteration division by `x_at_level^idx` uses a
+    /// constant-time scatter-gather over the secret-derived window
+    /// index. No early exits and no variable-time `pow_scalar`.
     ///
     /// Implements [NormalizedDlog][Alg. 2.4].
     ///
     /// [Alg. 2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.2.4
     pub fn dlog(&self, target: &Self, e: TorsionExponent) -> Scalar {
-        if e.value() == 0 {
+        let e_val = e.value();
+        if e_val == 0 {
             return Scalar::ZERO;
         }
-        if e.value() == 1 {
-            return if *target == Self::ONE {
-                Scalar::ZERO
-            } else {
-                Scalar::ONE
-            };
+
+        const W: u32 = 4;
+        const TABLE_SIZE: usize = 1 << W;
+
+        // small_table[i] = x_top^i where x_top = self^{2^(e - W)}
+        // generates μ_{2^min(W, e)}. The clamp at zero handles `e < W`.
+        let shift = e_val.saturating_sub(W);
+        let x_top = self.square_n(shift);
+        let mut small_table = [Self::ONE; TABLE_SIZE];
+        for i in 1..TABLE_SIZE {
+            small_table[i] = &small_table[i - 1] * &x_top;
         }
 
-        // e' = ⌊e/2⌋
-        let e_prime = e.halve();
+        let mut target_partial = *target;
+        let mut x_at_level = *self;
+        let mut k_limbs = [0u64; 4];
 
-        // ζ'₀ = ζ₀^{2^{e-e'}},  ζ'₁ = ζ₁^{2^{e-e'}}
-        let diff = e - e_prime;
-        let z0_prime = self.square_n(diff.value());
-        let z1_prime = target.square_n(diff.value());
+        // Full W-bit windows from low bits to high.
+        let n_full_levels = e_val / W;
+        for level in 0..n_full_levels {
+            // Project the residual into μ_{2^W}.
+            let proj = target_partial.square_n(e_val - (level + 1) * W);
 
-        // k' = NormalizedDlog(ζ'₀, ζ'₁) — low bits
-        let k_prime = z0_prime.dlog(&z1_prime, e_prime);
+            // CT scan: idx_u8 = i iff small_table[i] == proj.
+            let mut idx_u8: u8 = 0;
+            for (i, entry) in small_table.iter().enumerate() {
+                let eq = entry.0.ct_eq(&proj.0);
+                idx_u8.conditional_assign(&(i as u8), eq);
+            }
 
-        // ζ''₀ = ζ₀^{2^{e'}},  ζ''₁ = ζ₁ / ζ₀^{k'}
-        //
-        // `k'` is a `Scalar` and may exceed `u32::MAX`: the recursion
-        // bounds `k' < 2^{e'}`, so for e ≥ 64 the low 32 bits are not
-        // enough. `pow_scalar` walks all 256 bits of the scalar.
-        // (The `M_chl` / `M_sk` matrix entries reach `2^126`, so a
-        // truncating `pow(u32)` here corrupts every entry whose dlog
-        // exceeds 2^32 — they all collapse to a fixed root of unity
-        // and the recovered matrix has the same value in every slot.)
-        //
-        // TODO(ct): `pow_scalar` is variable-time in `k_prime`. When
-        // this dlog is called from `from_bases` with secret-derived
-        // bases (M_sk in Algorithm 4.1, M_chl in Algorithm 4.8), the
-        // pow leaks bits of the dlog. Replace with a constant-time
-        // square-and-multiply that processes a fixed number of bits.
-        let z0_double_prime = self.square_n(e_prime.value());
-        let z1_double_prime = target / &self.pow_scalar(&k_prime);
+            let bit_pos = level * W;
+            k_limbs[(bit_pos / 64) as usize] |= (idx_u8 as u64) << (bit_pos % 64);
 
-        // k'' = NormalizedDlog(ζ''₀, ζ''₁) — high bits
-        let k_double_prime = z0_double_prime.dlog(&z1_double_prime, diff);
+            // Divide target_partial by x_at_level^idx using a CT
+            // scatter-gather over a per-level table.
+            let mut level_table = [Self::ONE; TABLE_SIZE];
+            for i in 1..TABLE_SIZE {
+                level_table[i] = &level_table[i - 1] * &x_at_level;
+            }
+            let mut x_pow_idx = Self::ONE;
+            for (i, entry) in level_table.iter().enumerate() {
+                let eq = (i as u8).ct_eq(&idx_u8);
+                x_pow_idx = Self::conditional_select(&x_pow_idx, entry, eq);
+            }
+            target_partial = &target_partial / &x_pow_idx;
 
-        // k = k' + 2^{e'} · k''
-        let k_prime_big = BigInt::<4>::from(k_prime);
-        let k_double_prime_big = BigInt::<4>::from(k_double_prime);
-        let k_high = k_double_prime_big << e_prime.value();
-        let k = k_prime_big.ct_add(&k_high);
-        Scalar::from_limbs(*k.as_limbs())
+            x_at_level = x_at_level.square_n(W);
+        }
+
+        // Partial last window if `e` is not a multiple of `W`.
+        let remaining = e_val - n_full_levels * W;
+        if remaining > 0 {
+            let partial_size = 1usize << remaining;
+            let mut partial_table = [Self::ONE; TABLE_SIZE];
+            for i in 1..partial_size {
+                partial_table[i] = &partial_table[i - 1] * &x_at_level;
+            }
+
+            let mut idx_u8: u8 = 0;
+            for (i, entry) in partial_table.iter().take(partial_size).enumerate() {
+                let eq = entry.0.ct_eq(&target_partial.0);
+                idx_u8.conditional_assign(&(i as u8), eq);
+            }
+
+            let bit_pos = n_full_levels * W;
+            k_limbs[(bit_pos / 64) as usize] |= (idx_u8 as u64) << (bit_pos % 64);
+        }
+
+        Scalar::from_limbs(k_limbs)
     }
 }
 
@@ -587,6 +623,7 @@ mod tests {
         deuring::precomputed::torsion_basis::ExtremalCurve,
         fields::fp2::Fp2,
         params,
+        quaternions::bigint::BigInt,
     };
 
     /// Build the E₀ torsion basis from params.
