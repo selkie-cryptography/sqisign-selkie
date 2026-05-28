@@ -51,20 +51,23 @@ jobs:
     runs-on: [self-hosted, fly, linux, x64]
     # Generous: keygen + sign run under Valgrind with cache simulation.
     timeout-minutes: 120
+    # sccache (Tigris) instead of rust-cache; survives dep-version bumps.
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_BUCKET: selkie-ci-sccache
+      SCCACHE_ENDPOINT: https://fly.storage.tigris.dev
+      SCCACHE_REGION: auto
+      AWS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SCCACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          key: instructions
+      - uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e  # v0.0.10
 
-      # gungraun-runner must match the `gungraun` lib version the bench
-      # actually resolves to (gungraun-runner refuses on version skew, so an
-      # exact pin breaks the moment upstream ships a patch). Read the resolved
-      # version from `cargo metadata` and install that. Not in taiki-e/install-
-      # action's manifest, so build from crates.io; cached by rust-cache.
+      # gungraun-runner refuses on lib/runner version skew; install the
+      # version cargo actually resolved.
       - name: Install gungraun-runner
         run: |
           set -euo pipefail
@@ -93,7 +96,8 @@ jobs:
 
       - name: Generate JSON
         run: |
-          rustc -O .github/scripts/instructions-report.rs -o /tmp/instructions-report
+          # Skip sccache for this standalone compile.
+          env -u RUSTC_WRAPPER rustc -O .github/scripts/instructions-report.rs -o /tmp/instructions-report
           /tmp/instructions-report target/gungraun "${{ github.sha }}" > instructions.json
 
       - name: Verify instructions payload has data
@@ -133,3 +137,7 @@ jobs:
           kind: instructions
           payload: instructions.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: sccache stats
+        if: ${{ !cancelled() }}
+        run: sccache --show-stats
