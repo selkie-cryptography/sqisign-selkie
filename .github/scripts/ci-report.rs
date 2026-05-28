@@ -281,6 +281,35 @@ fn render_instructions(base: Option<&Json>, cur: &Json) -> String {
         ));
     }
 
+    // Headline Δ% for the sqisign top-level ops as a ```diff block, mirroring
+    // the bench section: GitHub colors `-` rows red (more instructions =
+    // slower) and `+` rows green (fewer = faster), with a █ bar proportional
+    // to magnitude. Threshold matches bench (0.5%) for visual consistency.
+    let mut diff_rows = String::new();
+    for b in ["keygen", "sign", "verify"] {
+        let key = format!("sqisign::kat_{b}");
+        if let (Some(&cur), Some(&base)) = (cur_map.get(&key), base_map.get(&key)) {
+            if base > 0 {
+                let pct = (cur as f64 / base as f64 - 1.0) * 100.0;
+                let bar = "█".repeat(((pct.abs() / 3.0).ceil() as usize).clamp(1, 8));
+                let prefix = if pct > 0.5 {
+                    "-"
+                } else if pct < -0.5 {
+                    "+"
+                } else {
+                    " "
+                };
+                let pct_str = format!("{pct:+.1}%");
+                diff_rows.push_str(&format!("{prefix} {b:<7} {pct_str:>6}  {bar}\n"));
+            }
+        }
+    }
+    if !diff_rows.is_empty() {
+        out.push_str("```diff\n@@ sqisign instructions vs main  (- slower / + faster) @@\n");
+        out.push_str(&diff_rows);
+        out.push_str("```\n\n");
+    }
+
     out.push_str(&format!(
         "<details><summary>{} benchmarks</summary>\n\n\
          | Benchmark | `main` | PR | Δ |\n|---|--:|--:|--:|\n{rows}\n</details>\n",
