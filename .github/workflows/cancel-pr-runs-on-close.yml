@@ -59,6 +59,11 @@ jobs:
             );
             let cancelled = 0;
             for (const r of runs) {
+              // Skip self — this workflow's own run shares the PR's
+              // head_sha and would otherwise be the first thing
+              // cancelled (alphabetical or API order), killing the
+              // cancellation job before it gets to anything else.
+              if (r.id === context.runId) continue;
               if (r.status === 'queued' || r.status === 'in_progress') {
                 core.info(`  cancel run ${r.id} ${r.name} (${r.status}, event=${r.event})`);
                 await github.rest.actions.cancelWorkflowRun({
