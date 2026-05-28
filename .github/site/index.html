@@ -1705,9 +1705,10 @@
     const POLL_INTERVAL = 15000;
 
     // State.
-    let covIndex = [];      // [{sha, percent, updated_at}, ...]
-    let benchIndex = [];    // [{sha, updated_at}, ...]
-    let mutantsIndex = [];  // [{sha, updated_at}, ...]
+    let covIndex = [];          // [{sha, percent, updated_at}, ...]
+    let benchIndex = [];        // [{sha, updated_at}, ...]
+    let mutantsIndex = [];      // [{sha, updated_at}, ...]
+    let instructionsIndex = []; // [{sha, results:{name:instructions}, updated_at}, ...]
     // Currently viewed commit. A `?sha=` query param deep-links a
     // specific commit (CI job summaries and PR comments link here).
     let selectedSha = new URLSearchParams(location.search).get('sha') || null;
@@ -2530,14 +2531,27 @@
       return html;
     }
 
-    function renderInstructionsData(data) {
+    function renderInstructionsData(data, index) {
       const results = data.results || [];
       if (results.length === 0) return '<p class="empty">No data for this commit.</p>';
+
+      // Per-bench instruction-count trend from the index history \u2014 the
+      // {name: instructions} maps ci-upload stores per commit. Oldest-first,
+      // last 15 commits; self-normalized so each bench's own scale is fine.
+      const idx = index || [];
+      const trend = (name) => {
+        const pts = idx.filter(e => e.results && e.results[name] > 0).slice(0, 15);
+        if (pts.length < 2) return '\u2014';
+        const vals = pts.map(e => e.results[name]).reverse();
+        const labels = pts.map(e => (e.sha || '?').slice(0, 7)).reverse();
+        return minichart(vals, { color: 'var(--fg-muted)', labels, width: 80, height: 18, decimals: 0 });
+      };
 
       let html = `<table class="dudect-table">
         <thead><tr>
           <th>Function</th>
           <th>Instructions</th>
+          <th>Trend</th>
           <th>Est. cycles</th>
           <th>L1 misses</th>
           <th>L2 misses</th>
@@ -2554,6 +2568,7 @@
         html += `<tr>
           <td class="fn-name">${esc(r.name)}</td>
           <td>${fmt(r.instructions)}</td>
+          <td>${trend(r.name)}</td>
           <td>${fmt(r.estimated_cycles)}</td>
           <td>${fmt(r.l1_misses)}</td>
           <td>${fmt(r.l2_misses)}</td>
@@ -3695,7 +3710,7 @@
       const instructionsMeta = document.getElementById('instructions-meta');
       if (instructionsData) {
         if (instructionsMeta) instructionsMeta.innerHTML = staleTag(instructionsData);
-        instructionsEl.innerHTML = renderInstructionsData(instructionsData);
+        instructionsEl.innerHTML = renderInstructionsData(instructionsData, instructionsIndex);
         applyStale(instructionsEl, instructionsData);
       } else {
         if (instructionsMeta) instructionsMeta.textContent = '';
@@ -3782,14 +3797,16 @@
 
       // Refetch indices when manifest changed or doesn't exist.
       if (manifestChanged) {
-        const [ci, bi, mi] = await Promise.all([
+        const [ci, bi, mi, ii] = await Promise.all([
           fetchJson('/coverage/index.json'),
           fetchJson('/bench/index.json'),
           fetchJson('/mutants/index.json'),
+          fetchJson('/instructions/index.json'),
         ]);
         covIndex = ci || [];
         benchIndex = bi || [];
         mutantsIndex = mi || [];
+        instructionsIndex = ii || [];
 
         const commits = buildCommitList();
         renderCommitSelect(commits);

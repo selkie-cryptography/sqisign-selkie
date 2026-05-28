@@ -188,6 +188,29 @@ fn commit_subject(sha: &str) -> String {
 
 /// Build a new index JSON array by prepending this commit's entry
 /// and capping at MAX_INDEX entries.
+/// Extracts a compact `{"<name>": <instructions>, ...}` map from an
+/// `instructions` payload's `results` array, for the dashboard's per-bench
+/// trend sparklines. Each result object is `{"name": ..., "instructions": N,
+/// ...}`; the array runs to the end of the payload, so splitting on `{` yields
+/// one chunk per result (the trailing `]}` has no name and is skipped).
+fn extract_instructions_map(json: &str) -> String {
+    let Some(start) = json.find("\"results\"") else {
+        return "{}".to_string();
+    };
+
+    let mut pairs = Vec::new();
+    for chunk in json[start..].split('{').skip(1) {
+        let obj = format!("{{{chunk}");
+        let name = extract_string(&obj, "name");
+        if name.is_empty() {
+            continue;
+        }
+        pairs.push(format!("{}:{}", json_str(&name), extract_num_u64(&obj, "instructions")));
+    }
+
+    format!("{{{}}}", pairs.join(","))
+}
+
 fn build_index(kind: &str, sha: &str, json: &str, existing: &str) -> String {
     let updated_at = extract_string(json, "updated_at");
     let subject = commit_subject(sha);
@@ -225,6 +248,13 @@ fn build_index(kind: &str, sha: &str, json: &str, existing: &str) -> String {
             let verify = extract_num_f64(json, "verify_ns");
             format!("{{\"sha\":{},\"keygen_ns\":{},\"sign_ns\":{},\"verify_ns\":{},\"updated_at\":{}{subject_field}}}",
                 json_str(sha), keygen, sign, verify, json_str(&updated_at))
+        }
+        "instructions" => {
+            // Per-bench instruction counts as a compact {name: instructions}
+            // map, for the dashboard's per-row trend sparklines.
+            let results = extract_instructions_map(json);
+            format!("{{\"sha\":{},\"results\":{},\"updated_at\":{}{subject_field}}}",
+                json_str(sha), results, json_str(&updated_at))
         }
         _ => {
             format!("{{\"sha\":{},\"updated_at\":{}{subject_field}}}", json_str(sha), json_str(&updated_at))
