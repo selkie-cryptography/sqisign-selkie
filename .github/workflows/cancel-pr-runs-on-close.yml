@@ -1,0 +1,72 @@
+name: Cancel PR runs on close
+
+# When a PR closes (merged or otherwise), cancel any workflow runs
+# whose `head_sha` matches the PR's head — including:
+#   - The PR's own `pull_request`-triggered runs (CI, coverage,
+#     fuzz, c-ref-cross-check, sage-cross-check).
+#   - The `workflow_run`-triggered descendants (Mutants Incremental,
+#     Fuzz, anything keyed off CI completion) whose head_sha is
+#     inherited from the parent CI run.
+#
+# GitHub does not auto-cancel these on PR close. Without this
+# workflow, an in-flight mutants run (180 min budget) or fuzz matrix
+# keeps consuming a Fly Machine for up to its full timeout after the
+# PR has merged — wasted runner time and stale dashboard signal.
+#
+# Cancelled runs render as the grey circle-slash "cancelled" status,
+# not the red X "failure" status, so this doesn't pollute the PR's
+# checks tab with apparent failures.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  # cancelWorkflowRun is an `actions: write` operation.
+  actions: write
+  # `pull_request` event payload reading.
+  contents: read
+
+jobs:
+  cancel:
+    name: Cancel queued + in-progress runs for this PR's head_sha
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        with:
+          script: |
+            const head_sha = context.payload.pull_request.head.sha;
+            const head_repo = context.payload.pull_request.head.repo.full_name;
+            // Fork PRs route to GH-hosted `ubuntu-latest`; we don't
+            // run them on Fly, so there's no cost to cancel them
+            // here. (GH also doesn't bill us for them on a public
+            // repo.) Skip to keep this workflow scoped to runs we
+            // actually want to manage.
+            if (head_repo !== context.payload.repository.full_name) {
+              core.info(`fork PR (${head_repo}); nothing to cancel`);
+              return;
+            }
+            core.info(`cancelling queued/in-progress runs for head_sha=${head_sha}`);
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRunsForRepo,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha,
+                per_page: 100,
+              },
+            );
+            let cancelled = 0;
+            for (const r of runs) {
+              if (r.status === 'queued' || r.status === 'in_progress') {
+                core.info(`  cancel run ${r.id} ${r.name} (${r.status}, event=${r.event})`);
+                await github.rest.actions.cancelWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: r.id,
+                });
+                cancelled++;
+              }
+            }
+            core.info(`cancelled ${cancelled} run(s)`);
