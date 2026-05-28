@@ -525,14 +525,38 @@ impl TorsionBasis {
         //   2. clear_cofac → ^5 (since (p+1)/2^TORSION_EVEN_POWER = 5).
         //   3. 2^e_diff squarings → land in μ_{2^e}.
         let e_diff = e_full - e_red;
-        let mut out = [RootOfUnity::ONE; 5];
-        for (idx, (w_x, w_z)) in raw_xz.into_iter().enumerate() {
+        // Two-pass with Montgomery's trick on the five `den` inversions:
+        // one `Fp2::invert` + 12 muls instead of five `Fp2::invert`s.
+        let mut nums: [Fp2; 5] = [Fp2::ZERO; 5];
+        let mut dens: [Fp2; 5] = [Fp2::ZERO; 5];
+        for (idx, (w_x, w_z)) in raw_xz.iter().enumerate() {
             // (X/Z)^(p−1) = (X^p · Z) / (X · Z^p).
             let x_p = w_x.conjugate();
             let z_p = w_z.conjugate();
-            let num = &w_z * &x_p;
-            let den = &w_x * &z_p;
-            let frac = &num * &den.invert();
+            nums[idx] = w_z * &x_p;
+            dens[idx] = w_x * &z_p;
+        }
+
+        // Forward prefix products, one inversion, backward peel.
+        let p1 = &dens[0] * &dens[1];
+        let p2 = &p1 * &dens[2];
+        let p3 = &p2 * &dens[3];
+        let p4 = &p3 * &dens[4];
+        let mut inv = p4.invert();
+        let mut den_invs: [Fp2; 5] = [Fp2::ZERO; 5];
+        den_invs[4] = &inv * &p3;
+        inv = &inv * &dens[4];
+        den_invs[3] = &inv * &p2;
+        inv = &inv * &dens[3];
+        den_invs[2] = &inv * &p1;
+        inv = &inv * &dens[2];
+        den_invs[1] = &inv * &dens[0];
+        inv = &inv * &dens[1];
+        den_invs[0] = inv;
+
+        let mut out = [RootOfUnity::ONE; 5];
+        for idx in 0..5 {
+            let frac = &nums[idx] * &den_invs[idx];
 
             let f2 = frac.square();
             let f4 = f2.square();
