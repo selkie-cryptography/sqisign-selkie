@@ -61,10 +61,21 @@ jobs:
           key: instructions
 
       # gungraun-runner must match the `gungraun` lib version the bench
-      # links (0.19). Not in taiki-e/install-action's manifest, so build
-      # it from crates.io. Cached by rust-cache across runs.
+      # actually resolves to (gungraun-runner refuses on version skew, so an
+      # exact pin breaks the moment upstream ships a patch). Read the resolved
+      # version from `cargo metadata` and install that. Not in taiki-e/install-
+      # action's manifest, so build from crates.io; cached by rust-cache.
       - name: Install gungraun-runner
-        run: cargo install gungraun-runner --version 0.19.0 --locked
+        run: |
+          set -euo pipefail
+          ver=$(cargo metadata --format-version 1 \
+            | jq -r '.packages[] | select(.name=="gungraun") | .version' \
+            | head -1)
+          if [ -z "$ver" ]; then
+            echo "::error::could not resolve gungraun version from cargo metadata"; exit 1
+          fi
+          echo "Installing gungraun-runner $ver to match resolved gungraun"
+          cargo install gungraun-runner --version "$ver" --locked
 
       # --save-summary=json writes the per-bench summary.json we parse. Cache
       # and branch simulation are off by default (fast); the deep_profile
@@ -72,6 +83,7 @@ jobs:
       # EstimatedCycles profile (~2x slower — sign/keygen roughly double).
       - name: Run gungraun
         run: |
+          set -euo pipefail  # so a bench failure isn't masked by `tee` exit 0
           args=(--save-summary=json)
           if [ "${{ inputs.deep_profile }}" = "true" ]; then
             args+=(--callgrind-args="--cache-sim=yes --branch-sim=yes")
