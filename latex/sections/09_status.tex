@@ -1,37 +1,18 @@
-\section{Current Status and Future Work}
+\section{Current Status}
 \label{sec:status}
 
-Verification is complete: all KAT vectors from the C reference
-implementation verify successfully, exercising the full pipeline from
-torsion basis construction through the $(2,2)$-isogeny chain and
-splitting.
+\emph{Baseline interoperability} with the SQIsign v2.0.1 specification
+and the reference C implementation is achieved.  The implementation
+produces byte-identical key pairs and signatures on every
+\emph{known-answer test} (KAT) vector at the NIST-I parameter set
+($100$ signing KATs, $103$ key-generation KATs) and exercises the full
+pipeline end-to-end: quaternion ideal arithmetic, the Deuring
+correspondence, the $(2,2)$-isogeny chain on theta surfaces, and
+Montgomery-curve verification.  This baseline is the foundation that
+the rest of this paper documents reaching: the bugs surfaced from
+specification ambiguity (\S\ref{sec:bugs}), the type-level invariants
+that prevented entire bug classes (\S\ref{sec:types}), and the test
+infrastructure that gates byte-equality with C ref (\S\ref{sec:testing}).
 
-Signing compiles end-to-end and is structurally complete.  The
-commitment phase, challenge derivation, and response phase are wired
-together, with \texttt{Order<N>} tracking maximal orders through the
-Deuring correspondence.  Two coupled blockers remain:
-\begin{itemize}
-  \item The sampling radius in the response phase is a placeholder;
-    the correct value $D_{\mathrm{rsp}} \cdot D_{\mathrm{mix}}^2
-    \cdot 2^{f+1} \approx 2^{1399}$ requires wider lattice
-    arithmetic (${\sim}22$~limbs for the radius, ${\sim}12$ for
-    lattice entries).
-  \item Degree computations in the response phase are missing a
-    $D_{\mathrm{mix}}^2$ division, coupled with the radius fix.
-\end{itemize}
-
-Key generation (Algorithm~4.1) is not yet implemented.  Signature
-serialization to the 148-byte wire format is implemented.
-
-Signing and key generation are \textbf{not yet constant-time.}  The
-quaternion arithmetic layer is variable-time on secret-derived data
-(see \S\ref{sec:ct} for details and our hardening plan).
-
-\paragraph{Next steps.}
-\begin{enumerate}
-  \item Widen the response-phase sampling and degree arithmetic to
-    achieve a first successful signature;
-  \item Wire key generation;
-  \item Achieve full KAT interoperability (sign + verify round-trip);
-  \item Execute the six-phase CT hardening plan (\S\ref{sec:ct}).
-\end{enumerate}
+Section~\ref{sec:post-baseline} documents the post-baseline performance
+and constant-time work in flight on top of this foundation.

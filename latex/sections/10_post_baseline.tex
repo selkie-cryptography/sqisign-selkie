@@ -1,0 +1,152 @@
+\section{Post-Baseline Performance and Constant-Time Work}
+\label{sec:post-baseline}
+
+With baseline interoperability achieved (\S\ref{sec:status}), the
+implementation moves into a post-baseline phase: performance
+optimisation and constant-time hardening built on top of the
+byte-equality foundation.  Each change is interop-safe (KAT bytes
+preserved) unless explicitly noted under
+\S\ref{sec:tried-rejected}.  The field-arithmetic and elliptic-curve
+layers are already constant-time (the Montgomery ladder runs a fixed
+bit count; \texttt{subtle::ConstantTimeEq} guards secret comparisons);
+the quaternion-arithmetic layer is the primary remaining variable-time
+surface, and the entries below describe its progressive hardening.
+
+The remainder of this section is two running logs --- one of
+experiments that landed, one of experiments that did not.  Recording
+the second is as important as recording the first: each entry that
+names a tried-and-rejected approach spares the next reader the same
+dead end.
+
+\subsection{Landed work}
+\label{sec:perf-ct}
+
+Measurements below are the deterministic instruction-count delta
+(Valgrind via \texttt{gungraun}) relative to \texttt{main} at the time
+the work landed, on the operation indicated.  Wall-clock benchmarks
+(\texttt{divan}) are tracked separately because they are sensitive to
+runner conditions.
+
+\paragraph{MLLL replacing dual-sum-dual at the response-phase
+intersection.}
+The response phase computes the intersection
+$I_{\mathrm{sk}} \cap \bar{I}_{\mathrm{com}}$ via the dual-sum-dual
+identity, which required a working width near $500$~limbs to absorb
+HNF coefficient blow-up.  We replaced the HNF reduction with the
+modified-LLL (MLLL) of Kim, Lee, and Yoo~\cite{KLY26}, dropping the
+working width to $128$~limbs at the main intersection site and
+$64$~limbs at the smaller auxiliary one (branch
+\texttt{mlll}).  Cost scales $O(W^2)$, so the narrowing is large.
+Deterministic measurement: $-11.8\%$ on \texttt{kat\_sign}, output
+byte-identical.  A follow-up narrowed the widths further to the
+$\leq 110$-limb bound proven by Kim et al.\ (ePrint 2025/1649),
+giving $110$~limbs at the main site and $48$ at the auxiliary site
+(branch \texttt{narrower-mlll-widths}).
+
+\paragraph{Constant-time modular exponentiation in primality testing.}
+\texttt{MontReducer::pow} (Miller--Rabin during the norm-equation
+prime search of \texttt{represent\_integer}, where the exponent
+$d = (n-1)/2^s$ is secret-derived) was made constant-time: the window
+table is read with a scatter-gather \texttt{ct\_select} so the access
+pattern does not leak the exponent nibbles, and the final Montgomery
+subtracts in \texttt{mul}, \texttt{reduce\_wide}, and
+\texttt{compute\_r\_squared} are now branchless.  Output is identical.
+Deterministic measurement (branch \texttt{ct-modexp}): $-1.01\%$ on
+\texttt{kat\_keygen}, $-0.10\%$ on \texttt{kat\_sign}.  Verify
+untouched.
+
+\paragraph{Windowed Pohlig--Hellman discrete logarithm.}
+\texttt{RootOfUnity::dlog} on the 2-power pairing-output group
+$\mu_{2^e}$ was rewritten from a recursive halving Pohlig--Hellman
+into an iterative windowed variant with window width $W = 4$ and a
+constant-time table scan.  The old recursion called \texttt{pow\_scalar}
+at every node, walking $256$ bits regardless of the exponent size, and
+was variable-time on the secret-derived bases $M_{\mathrm{sk}}$ and
+$M_{\mathrm{chl}}$; that leak is closed.  Deterministic measurement
+(branch \texttt{windowed-ph-dlog}): $-4.84\%$ on \texttt{kat\_keygen},
+$-1.33\%$ on \texttt{kat\_sign}, $-2.03\%$ total --- the largest
+single-branch improvement so far.  Verify essentially unchanged
+($-0.04\%$).
+
+\paragraph{Cost-optimal isogeny strategy for the 4-isogeny chain.}
+The verify-side $2^e$-isogeny chain, decomposed into
+$\lfloor e/2 \rfloor$ 4-isogenies, was changed from runtime balanced
+halving to a compile-time-precomputed cost-optimal De Feo--Jao--Plut
+strategy (standard SIDH dynamic programming on doubling cost $p$ and
+isogeny pushforward cost $q$).  Output is byte-identical for the
+4-isogeny chain (branch \texttt{optimal-isogeny-strategy}).
+
+\subsection{Tried approaches that did not land}
+\label{sec:tried-rejected}
+
+Each entry below names the branch it was attempted on, what was tried,
+and the reason it did not land.
+
+\paragraph{Cost-optimal strategy on the $(2,2)$-theta chain (surfaces).}
+The dynamic-programming strategy that worked on the verify-side
+4-isogeny chain was applied to Phase~1 of the $(2,2)$-theta chain in
+\texttt{src/surfaces/mod.rs}.  $166$ of $707$ lib tests failed,
+including the majority of signing KATs.  Root cause: Phase~1 uses the
+non-standard Jacobian doubling \texttt{double\_for\_theta} (with
+$Z' = 2yz$) deliberately, so the gluing step receives the specific
+projective representative the C reference produces.  Reordering the
+doublings within the strategy walker changes the cumulative $Z$
+scaling, which the gluing matrix multiplies by, which then changes the
+produced signature bytes --- even though the composed isogeny is
+mathematically unchanged.  Cleared to the non-interop pass.
+
+\paragraph{Batch inversion in \texttt{cross\_pairings} final
+exponentiation.}
+The five independent $\mathrm{den}^{-1}$ inversions in the
+\texttt{cross\_pairings} final-exponentiation loop were folded into a
+single inversion via Montgomery's trick.  Output is identical and every
+KAT byte-identical.  However deterministic measurement (branch
+\texttt{batch-inversion-audit}) showed a $+0.05\%$ regression overall
+and $+0.62\%$ on \texttt{kat\_verify}: the two-pass refactor's overhead
+(extra $\mathbb{F}_{p^2}$ array storage, a likely inlining-decision
+change in a now-larger function) exceeded the savings from fewer
+inversions, given how rarely \texttt{cross\_pairings} is invoked per
+signing operation.
+
+\paragraph{Substituting MLLL into ideal multiplication.}
+Replacing the HNF step in \texttt{Lattice::product} with MLLL on the
+same theory as the intersection win.  In practice the multiplication
+runs at small widths where MLLL's fixed overhead --- a $16 \times 16$
+Gram matrix and the iterative reduction --- exceeds the modest HNF
+blow-up it removes.  Result: roughly $1.9\times$ regression on
+\texttt{kat\_keygen} in a controlled A/B.
+
+\paragraph{Input-LLL preprocessing of the intersection.}
+The input-LLL preprocessing of~\cite{KLY26} reduces each input basis
+before dualisation, intending to bound the duals' cubic coefficient
+growth.  Our existing \texttt{l2\_reduce} routine minimises the
+reduced-norm form $a^2 + b^2 + p\,(c^2 + d^2)$, which is the natural
+norm in $B_{p,\infty}$ but is dominated by the $p\,(c^2 + d^2)$ term;
+the coordinate magnitudes that drive the Euclidean blow-up therefore
+remain unbounded under our reduction.  The intersection width did not
+fall below $128$~limbs and the experiment was shelved pending a
+Euclidean reduction step (the constant-time dim-4 LLL of Hanyecz et
+al., ePrint 2025/027, is the intended substitute).
+
+\subsection{Next steps}
+\label{sec:next}
+
+\begin{enumerate}
+  \item Hanyecz et al.\ Euclidean dim-4 LLL (ePrint 2025/027) as
+    preprocessing in front of the MLLL intersection, to push the
+    working width below the $\leq 110$-limb proven bound toward the
+    $\sim 28$-limb compact bound of~\cite{KLY26}.
+  \item Costello--Hisil 4-isogeny formula and Renes square-root-free
+    2-isogeny formula in the elliptic factors (verify-side chain),
+    composed underneath the cost-optimal strategy already in place.
+  \item Leroux CRT intersection~\cite{basso2025}, replacing the
+    dual-sum-dual identity entirely; the roadmap claims
+    signatures-identical, but the surfaces $(2,2)$-theta result above
+    means this should be verified with a small prototype before the
+    full substitution.
+  \item Continue the constant-time hardening sequence
+    (\S\ref{sec:ct}).  Remaining variable-time surface lives in
+    \texttt{MontReducer::pow}'s base reduction (\texttt{mag\_div\_rem}),
+    in \texttt{l2\_reduce} on secret-derived input, and elsewhere in
+    the quaternion-arithmetic layer.
+\end{enumerate}
