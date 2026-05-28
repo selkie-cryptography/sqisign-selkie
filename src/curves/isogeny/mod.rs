@@ -30,6 +30,59 @@ use crate::{
     quaternions::bigint::BigInt,
 };
 
+/// Cost units for the cost-optimal 4-isogeny chain strategy
+/// ([Algorithm 8.25 / §8.4][§8.4]): `P_COST_4ISO` is the cost of one
+/// "step-down" doubling in 4-iso-step terms (two x-only Montgomery
+/// point doublings, ~4M + 2S each with `S ≈ 0.8 M`); `Q_COST_4ISO`
+/// is the cost of one 4-isogeny pushforward (~6M + 2S). Only the
+/// ratio drives the strategy DP, and DFJP is robust to small
+/// mis-estimation.
+const P_COST_4ISO: u32 = 11;
+const Q_COST_4ISO: u32 = 8;
+
+/// Maximum supported subtree size for the precomputed 4-isogeny chain
+/// strategy. NIST-I uses chains of bit length `E_RSP = 126`, decomposed
+/// into ⌊126/2⌋ = 63 4-isogenies; 128 leaves headroom for shorter
+/// chains to share the same array.
+const STRATEGY_4ISO_MAX_LEN: usize = 128;
+
+/// Returns the cost-optimal first-split array for an isogeny chain of
+/// size up to `N - 1`, computed by dynamic programming on the cost
+/// function `cost[h] = j·p + (h − j)·q + cost[j] + cost[h − j]` with
+/// `cost[1] = 0`. `split[h]` (for `1 < h < N`) is the optimal `j` for
+/// a subtree of size `h`; `split[0]` and `split[1]` are unused —
+/// a size-1 subtree is a single kernel, no doublings needed.
+const fn compute_optimal_strategy_splits<const N: usize>(p: u32, q: u32) -> [u32; N] {
+    let mut cost = [0u64; N];
+    let mut split = [0u32; N];
+    let mut h = 2usize;
+    while h < N {
+        let mut best_cost = u64::MAX;
+        let mut best_split = 1u32;
+        let mut j = 1u32;
+        while (j as usize) < h {
+            let c = (j as u64) * (p as u64)
+                + ((h - j as usize) as u64) * (q as u64)
+                + cost[j as usize]
+                + cost[h - j as usize];
+            if c < best_cost {
+                best_cost = c;
+                best_split = j;
+            }
+            j += 1;
+        }
+        cost[h] = best_cost;
+        split[h] = best_split;
+        h += 1;
+    }
+    split
+}
+
+/// Precomputed cost-optimal splits for the 4-isogeny chain at NIST-I
+/// cost parameters. Used by [`Kernel::isogeny`].
+const STRATEGY_4ISO: [u32; STRATEGY_4ISO_MAX_LEN] =
+    compute_optimal_strategy_splits::<STRATEGY_4ISO_MAX_LEN>(P_COST_4ISO, Q_COST_4ISO);
+
 /// A positive odd integer representing the degree of a separable isogeny.
 ///
 /// Stored as an unsigned 256-bit integer (`[u64; 4]`, little-endian).
@@ -190,8 +243,10 @@ impl Kernel {
     /// Compute the 2^e-isogeny defined by this kernel and push
     /// points through it.
     ///
-    /// Uses a balanced strategy: a chain of ⌊e/2⌋ 4-isogenies
-    /// followed by an optional 2-isogeny if e is odd.
+    /// Uses a cost-optimal DFJP strategy precomputed by
+    /// [`compute_optimal_strategy_splits`] at compile time: a chain of
+    /// ⌊e/2⌋ 4-isogenies followed by an optional 2-isogeny if `e` is
+    /// odd.
     ///
     /// Returns the codomain curve and the images of `pts`.
     ///
@@ -220,8 +275,15 @@ impl Kernel {
         for _j in 0..(e / 2) as usize {
             while orders[k] != 2 {
                 k += 1;
-                let n = (orders[k - 1] / 4) * 2 + (orders[k - 1] % 2);
-                let new_order = orders[k - 1] - n;
+                let o = orders[k - 1];
+                // Subtree size in 4-iso-step terms (one 4-iso ≡ two
+                // log-order steps); the odd-parity `extra` doubling
+                // keeps the inner loop converging on `orders[k] == 2`
+                // for odd `e`.
+                let h = (o / 2) as usize;
+                let extra = o % 2;
+                let n = STRATEGY_4ISO[h] * 2 + extra;
+                let new_order = o - n;
                 orders.push(new_order);
                 let mut pt = strat_pts[k - 1];
                 for _ in 0..n {
