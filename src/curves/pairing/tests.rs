@@ -7,6 +7,7 @@ use crate::{
     deuring::precomputed::torsion_basis::ExtremalCurve,
     fields::fp2::Fp2,
     params,
+    quaternions::bigint::BigInt,
 };
 
 /// Builds the E₀ torsion basis from params.
