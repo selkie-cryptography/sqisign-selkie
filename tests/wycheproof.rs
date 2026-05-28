@@ -32,13 +32,15 @@ struct TestFile {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TestGroup {
-    public_key: PublicKey,
+    #[serde(rename = "publicKey")]
+    vk: WycheproofVerifyingKey,
     tests: Vec<TestVector>,
 }
 
 #[derive(serde::Deserialize)]
-struct PublicKey {
-    pk: String,
+struct WycheproofVerifyingKey {
+    #[serde(rename = "pk")]
+    vk: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -86,7 +88,7 @@ fn sqisign_verify_vectors() {
     let mut tested = 0;
 
     for group in &file.test_groups {
-        let pk_bytes = hex::decode(&group.public_key.pk).unwrap();
+        let pk_bytes = hex::decode(&group.vk.vk).unwrap();
         let vk = match pk_bytes.as_slice().try_into() {
             Err(_) => {
                 // pk wrong length — all tests in this group must be invalid
@@ -213,7 +215,7 @@ fn generate_extended_vectors() {
         .iter()
         .find_map(|g| g.tests.iter().find(|t| t.result == "valid").map(|t| (g, t)))
         .expect("no valid donor vector in sqisign_verify.json");
-    let pk_bytes = hex::decode(&donor_group.public_key.pk).unwrap();
+    let pk_bytes = hex::decode(&donor_group.vk.vk).unwrap();
     let valid_sig_bytes_vec = hex::decode(&donor_tv.sig).unwrap();
     let valid_sig_bytes: &[u8; SIGNATURE_BYTES] = valid_sig_bytes_vec
         .as_slice()
@@ -657,7 +659,7 @@ fn sqisign_verify_extended_vectors() {
 
     let mut tested = 0;
     for group in &file.test_groups {
-        let pk_bytes = hex::decode(&group.public_key.pk).unwrap();
+        let pk_bytes = hex::decode(&group.vk.vk).unwrap();
         let pk_arr: &[u8; sqisign_selkie::VERIFYING_KEY_BYTES] =
             pk_bytes.as_slice().try_into().expect("pk length");
 
@@ -741,8 +743,8 @@ struct KeygenTestVector {
     #[allow(dead_code)] // used by deterministic keygen tests (currently #[ignore])
     #[serde(default)]
     seed: Option<String>,
-    #[serde(default)]
-    pk: Option<String>,
+    #[serde(default, rename = "pk")]
+    vk: Option<String>,
     sk: String,
     result: String,
     #[allow(dead_code)]
@@ -772,9 +774,9 @@ fn sqisign_keygen_vectors() {
                     let sk = SigningKey::from_bytes(sk_arr)
                         .unwrap_or_else(|e| panic!("tcId {}: sk parse failed: {e}", tv.tc_id));
 
-                    // If pk is provided, the embedded vk must match
-                    if let Some(pk_hex) = &tv.pk {
-                        let expected_pk = hex::decode(pk_hex).unwrap();
+                    // If vk is provided, the embedded vk must match
+                    if let Some(vk_hex) = &tv.vk {
+                        let expected_pk = hex::decode(vk_hex).unwrap();
                         assert_eq!(
                             sk.verifying_key().to_bytes().as_slice(),
                             expected_pk.as_slice(),
@@ -852,7 +854,8 @@ struct SignTestVector {
     comment: String,
     #[allow(dead_code)] // will be used once sign-then-verify round-trips are wired up
     sk: String,
-    pk: String,
+    #[serde(rename = "pk")]
+    vk: String,
     msg: String,
     sig: String,
     result: String,
@@ -874,14 +877,14 @@ fn sqisign_sign_vectors() {
 
     for group in &file.test_groups {
         for tv in &group.tests {
-            let pk_bytes = hex::decode(&tv.pk).unwrap();
+            let vk_bytes = hex::decode(&tv.vk).unwrap();
             let vk = VerifyingKey::from_bytes(
-                pk_bytes
+                vk_bytes
                     .as_slice()
                     .try_into()
-                    .unwrap_or_else(|_| panic!("tcId {}: pk wrong length", tv.tc_id)),
+                    .unwrap_or_else(|_| panic!("tcId {}: vk wrong length", tv.tc_id)),
             )
-            .unwrap_or_else(|e| panic!("tcId {}: pk parse failed: {e}", tv.tc_id));
+            .unwrap_or_else(|e| panic!("tcId {}: vk parse failed: {e}", tv.tc_id));
 
             let msg = hex::decode(&tv.msg).unwrap();
             let sig_bytes = hex::decode(&tv.sig).unwrap();
