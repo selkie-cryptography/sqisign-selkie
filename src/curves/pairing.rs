@@ -162,6 +162,9 @@ impl<'b> Mul<&'b RootOfUnity> for &RootOfUnity {
 
 impl<'b> Div<&'b RootOfUnity> for &RootOfUnity {
     type Output = RootOfUnity;
+    // reason: in a multiplicative group, division IS multiplication by the
+    // inverse; clippy's heuristic only sees the literal `*` and flags
+    // `Div::div` containing `Mul::mul`.
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn div(self, rhs: &'b RootOfUnity) -> RootOfUnity {
         RootOfUnity(&self.0 * &rhs.0.invert())

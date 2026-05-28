@@ -418,8 +418,7 @@ pub(crate) fn theta_product_to_montgomery(
     product: &EllipticProduct,
 ) -> ProductPoint {
     let (a, b, c, _d) = (&null.a, &null.b, &null.c, &null.d);
-    #[allow(unused_variables)]
-    let (x, y, z, w) = (&P.X, &P.Y, &P.Z, &P.W);
+    let (x, y, z, _w) = (&P.X, &P.Y, &P.Z, &P.W);
 
     // Algorithm 8.45:
     // X₁ = a·z + c·x,  Z₁ = a·z − c·x
