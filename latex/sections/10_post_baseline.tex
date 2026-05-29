@@ -37,7 +37,7 @@ modified-LLL (MLLL) of Kim, Lee, and Yoo~\cite{KLY26}, dropping the
 working width to $128$~limbs at the main intersection site and
 $64$~limbs at the smaller auxiliary one (branch
 \texttt{mlll}).  Cost scales $O(W^2)$, so the narrowing is large.
-Deterministic measurement: $-11.8\%$ on \texttt{kat\_sign}, output
+Deterministic measurement: $-11.8\%$ on signing, output
 byte-identical.  A follow-up narrowed the widths further to the
 $\leq 110$-limb bound proven by Kim et al.\ (ePrint 2025/1649),
 giving $110$~limbs at the main site and $48$ at the auxiliary site
@@ -52,7 +52,7 @@ pattern does not leak the exponent nibbles, and the final Montgomery
 subtracts in \texttt{mul}, \texttt{reduce\_wide}, and
 \texttt{compute\_r\_squared} are now branchless.  Output is identical.
 Deterministic measurement (branch \texttt{ct-modexp}): $-1.01\%$ on
-\texttt{kat\_keygen}, $-0.10\%$ on \texttt{kat\_sign}.  Verify
+key generation, $-0.10\%$ on signing.  Verification
 untouched.
 
 \paragraph{Windowed Pohlig--Hellman discrete logarithm.}
@@ -63,18 +63,10 @@ constant-time table scan.  The old recursion called \texttt{pow\_scalar}
 at every node, walking $256$ bits regardless of the exponent size, and
 was variable-time on the secret-derived bases $M_{\mathrm{sk}}$ and
 $M_{\mathrm{chl}}$; that leak is closed.  Deterministic measurement
-(branch \texttt{windowed-ph-dlog}): $-4.84\%$ on \texttt{kat\_keygen},
-$-1.33\%$ on \texttt{kat\_sign}, $-2.03\%$ total --- the largest
-single-branch improvement so far.  Verify essentially unchanged
+(branch \texttt{windowed-ph-dlog}): $-4.84\%$ on key generation,
+$-1.33\%$ on signing, $-2.03\%$ total --- the largest
+single-branch improvement so far.  Verification essentially unchanged
 ($-0.04\%$).
-
-\paragraph{Cost-optimal isogeny strategy for the 4-isogeny chain.}
-The verify-side $2^e$-isogeny chain, decomposed into
-$\lfloor e/2 \rfloor$ 4-isogenies, was changed from runtime balanced
-halving to a compile-time-precomputed cost-optimal De Feo--Jao--Plut
-strategy (standard SIDH dynamic programming on doubling cost $p$ and
-isogeny pushforward cost $q$).  Output is byte-identical for the
-4-isogeny chain (branch \texttt{optimal-isogeny-strategy}).
 
 \subsection{Tried approaches that did not land}
 \label{sec:tried-rejected}
@@ -82,10 +74,22 @@ isogeny pushforward cost $q$).  Output is byte-identical for the
 Each entry below names the branch it was attempted on, what was tried,
 and the reason it did not land.
 
+\paragraph{Cost-optimal isogeny strategy for the verify-side 4-isogeny
+chain.}
+The verify-side $2^e$-isogeny chain in
+\texttt{src/curves/isogeny/mod.rs} --- decomposed into
+$\lfloor e/2 \rfloor$ 4-isogenies --- was changed from runtime
+balanced halving to a compile-time-precomputed cost-optimal De
+Feo--Jao--Plut strategy.  Output is byte-identical (branch
+\texttt{optimal-isogeny-strategy}).  Deterministic measurement:
+$-0.04\%$ on verification, $0$ on key generation and
+signing --- no measurable gain because verification's hot path
+is $\mathbb{F}_{p^2}$ and elliptic-curve arithmetic, not the strategy
+walker, at our chain length ($e \leq 126$).
+
 \paragraph{Cost-optimal strategy on the $(2,2)$-theta chain (surfaces).}
-The dynamic-programming strategy that worked on the verify-side
-4-isogeny chain was applied to Phase~1 of the $(2,2)$-theta chain in
-\texttt{src/surfaces/mod.rs}.  $166$ of $707$ lib tests failed,
+The same DP strategy was applied to Phase~1 of the $(2,2)$-theta chain
+in \texttt{src/surfaces/mod.rs}.  $166$ of $707$ lib tests failed,
 including the majority of signing KATs.  Root cause: Phase~1 uses the
 non-standard Jacobian doubling \texttt{double\_for\_theta} (with
 $Z' = 2yz$) deliberately, so the gluing step receives the specific
@@ -102,7 +106,7 @@ The five independent $\mathrm{den}^{-1}$ inversions in the
 single inversion via Montgomery's trick.  Output is identical and every
 KAT byte-identical.  However deterministic measurement (branch
 \texttt{batch-inversion-audit}) showed a $+0.05\%$ regression overall
-and $+0.62\%$ on \texttt{kat\_verify}: the two-pass refactor's overhead
+and $+0.62\%$ on verification: the two-pass refactor's overhead
 (extra $\mathbb{F}_{p^2}$ array storage, a likely inlining-decision
 change in a now-larger function) exceeded the savings from fewer
 inversions, given how rarely \texttt{cross\_pairings} is invoked per
@@ -114,7 +118,7 @@ same theory as the intersection win.  In practice the multiplication
 runs at small widths where MLLL's fixed overhead --- a $16 \times 16$
 Gram matrix and the iterative reduction --- exceeds the modest HNF
 blow-up it removes.  Result: roughly $1.9\times$ regression on
-\texttt{kat\_keygen} in a controlled A/B.
+key generation in a controlled A/B.
 
 \paragraph{Input-LLL preprocessing of the intersection.}
 The input-LLL preprocessing of~\cite{KLY26} reduces each input basis
