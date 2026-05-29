@@ -1,6 +1,6 @@
 //! Upload CI data (coverage, bench, mutants, dudect) to the Fly.io CI site.
 //!
-//! Usage: ci-upload [--dry-run] <kind> <json-file> <sha>
+//! Usage: ci-upload [--dry-run] [--pr-only] <kind> <json-file> <sha>
 //!        ci-upload --assets <local-root> <remote-subdir>   (flamegraph SVGs)
 //!
 //! - Stores per-commit data at /data/<kind>/<sha>.json
@@ -13,6 +13,10 @@
 //! with the result. No ssh, sftp, manifest update, prune, or signal
 //! write happens — used by scripts-compile.yml to gate `validate_floor`
 //! regressions at PR time rather than at next-cron time.
+//!
+//! `--pr-only` writes only the per-sha file (skips status, latest, index,
+//! prune, manifest). Used by PR runs that need per-commit data uploaded
+//! for cross-domain reports without clobbering main's baseline state.
 //!
 //! Compile: `rustc -O ci-upload.rs -o ci-upload`
 
@@ -38,14 +42,17 @@ fn main() {
     }
 
     let mut dry_run = false;
+    let mut pr_only = false;
     let positional: Vec<String> = env::args()
         .skip(1)
-        .filter(|a| {
-            if a == "--dry-run" { dry_run = true; false } else { true }
+        .filter(|a| match a.as_str() {
+            "--dry-run" => { dry_run = true; false }
+            "--pr-only" => { pr_only = true; false }
+            _ => true,
         })
         .collect();
     if positional.len() != 3 {
-        eprintln!("usage: ci-upload [--dry-run] <kind> <json-file> <sha>");
+        eprintln!("usage: ci-upload [--dry-run] [--pr-only] <kind> <json-file> <sha>");
         std::process::exit(1);
     }
 
@@ -76,6 +83,16 @@ fn main() {
             // Rewrite the local file so the per-sha and latest copies include it.
             let _ = fs::write(json_path, &json_contents);
         }
+    }
+
+    if pr_only {
+        // Per-sha upload only. status/latest/index/prune/manifest are
+        // main-baseline state PRs must not clobber; the data is fetched
+        // by name (kind/<sha>.json) for cross-domain PR reports.
+        ssh_cmd(&format!("rm -f {dir}/{sha}.json"));
+        sftp_put(json_path, &format!("{dir}/{sha}.json"));
+        eprintln!("[ci-upload] PR-only: uploaded {sha}.json");
+        return;
     }
 
     // The CI VM is configured with min_machines_running=1 and
