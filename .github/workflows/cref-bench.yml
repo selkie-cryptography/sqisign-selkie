@@ -60,7 +60,7 @@ jobs:
       # ---------------- C reference ----------------
       - name: Restore C ref build cache
         id: cref-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: cref/build
           key: cref-build-${{ runner.os }}-${{ env.CREF_REF }}-mini-gmp-ref-v1
