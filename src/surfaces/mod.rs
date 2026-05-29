@@ -55,13 +55,18 @@ mod tests;
 /// Internal to the (2,2)-isogeny computation.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct ThetaNullPoint {
+    /// First theta coordinate `θ_a`.
     pub(crate) a: Fp2,
+    /// Second theta coordinate `θ_b`.
     pub(crate) b: Fp2,
+    /// Third theta coordinate `θ_c`.
     pub(crate) c: Fp2,
+    /// Fourth theta coordinate `θ_d`.
     pub(crate) d: Fp2,
 }
 
 impl ThetaNullPoint {
+    /// Builds a theta null point from its four `Fp²` coordinates.
     pub(crate) fn new(a: Fp2, b: Fp2, c: Fp2, d: Fp2) -> ThetaNullPoint {
         ThetaNullPoint { a, b, c, d }
     }
@@ -94,26 +99,42 @@ impl ThetaNullPoint {
 /// The dual isogenous theta null point and its projective inverse.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct DualThetaNullPoint {
+    /// Dual theta coordinate `α`.
     pub(crate) alpha: Fp2,
+    /// Dual theta coordinate `β`.
     pub(crate) beta: Fp2,
+    /// Dual theta coordinate `γ`.
     pub(crate) gamma: Fp2,
+    /// Dual theta coordinate `δ`.
     pub(crate) delta: Fp2,
+    /// Projective inverse of `α`.
     pub(crate) alpha_inv: Fp2,
+    /// Projective inverse of `β`.
     pub(crate) beta_inv: Fp2,
+    /// Projective inverse of `γ`.
     pub(crate) gamma_inv: Fp2,
+    /// Projective inverse of `δ`.
     pub(crate) delta_inv: Fp2,
 }
 
 /// Precomputed constants for theta doubling.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct ThetaPrecomp {
+    /// Doubling constant `c₁`.
     pub(crate) c1: Fp2,
+    /// Doubling constant `c₂`.
     pub(crate) c2: Fp2,
+    /// Doubling constant `c₃`.
     pub(crate) c3: Fp2,
+    /// Doubling constant `c₄`.
     pub(crate) c4: Fp2,
+    /// Doubling constant `c₅`.
     pub(crate) c5: Fp2,
+    /// Doubling constant `c₆`.
     pub(crate) c6: Fp2,
+    /// Doubling constant `c₇`.
     pub(crate) c7: Fp2,
+    /// Doubling constant `c₈`.
     pub(crate) c8: Fp2,
 }
 
@@ -243,11 +264,14 @@ pub type ProductPoint = (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint);
 /// [§8.5.1]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.1
 #[derive(Clone, Debug)]
 pub(crate) struct Jacobian {
+    /// Theta null point of this surface.
     pub(crate) null: ThetaNullPoint,
+    /// Precomputed doubling constants for `null`.
     pub(crate) precomp: ThetaPrecomp,
 }
 
 impl Jacobian {
+    /// Builds a `Jacobian` from `null` and its precomputed doubling constants.
     pub(crate) fn new(null: ThetaNullPoint) -> Jacobian {
         let precomp = null.precompute();
         Jacobian { null, precomp }
@@ -261,14 +285,20 @@ impl Jacobian {
 /// coordinates.
 #[derive(Clone, Debug)]
 pub(crate) struct JacobianPoint {
+    /// First theta coordinate `X`.
     pub(crate) X: Fp2,
+    /// Second theta coordinate `Y`.
     pub(crate) Y: Fp2,
+    /// Third theta coordinate `Z`.
     pub(crate) Z: Fp2,
+    /// Fourth theta coordinate `W`.
     pub(crate) W: Fp2,
+    /// Surface on which this point lies.
     pub(crate) surface: Jacobian,
 }
 
 impl JacobianPoint {
+    /// Builds a `JacobianPoint` from its four theta coordinates and surface.
     pub(crate) fn new(X: Fp2, Y: Fp2, Z: Fp2, W: Fp2, surface: Jacobian) -> JacobianPoint {
         JacobianPoint {
             X,
@@ -592,6 +622,10 @@ impl Kernel {
         self.isogeny_inner_no_extra_torsion(e, pts, randomize)
     }
 
+    /// Runs the `(2, 2)`-isogeny chain machine implementing
+    /// [Algorithm 8.47][Alg. 8.47] (`Isogeny22ChainWithTorsion`).
+    ///
+    /// [Alg. 8.47]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.47
     fn isogeny_inner(
         &self,
         e: TorsionExponent,

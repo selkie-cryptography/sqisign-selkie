@@ -40,10 +40,15 @@ use crate::{
 /// [ A_aux (64) | n_bt (1) | r_rsp (1) | M_chl (64) | chl (16) | hint_aux (1) | hint_chl (1) ]
 /// ```
 const M_CHL_COMP_BYTES: usize = E_RSP.div_ceil(8) as usize;
+/// Byte length of the encoded `M_chl` matrix in a signature.
 const M_CHL_BYTES: usize = 4 * M_CHL_COMP_BYTES;
+/// Byte length of the auxiliary-curve coefficient `A_aux` in a signature.
 const A_AUX_BYTES: usize = 64;
+/// Byte offset of the `M_chl` matrix in a signature.
 const M_CHL_OFFSET: usize = A_AUX_BYTES + 2;
+/// Byte offset of the challenge `chl` in a signature.
 const CHL_OFFSET: usize = M_CHL_OFFSET + M_CHL_BYTES;
+/// Byte offset of the trailing `(hint_aux, hint_chl)` pair in a signature.
 const HINT_OFFSET: usize = CHL_OFFSET + CHALLENGE_BYTES;
 // Static check: any layout drift surfaces here at compile time.
 // The two trailing bytes after HINT_OFFSET are `hint_aux` and

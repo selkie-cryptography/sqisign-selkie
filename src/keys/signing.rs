@@ -47,12 +47,19 @@ use crate::{
 /// ```text
 /// [ pk (65) | norm (32) | gen[0..4] (4·32) | M_sk (4·32) ]
 /// ```
+/// Byte offset of the ideal-norm field in the wire-format signing key.
 const SK_NORM_OFFSET: usize = VERIFYING_KEY_BYTES;
+/// Byte offset of the ideal generator field in the wire-format signing key.
 const SK_GEN_OFFSET: usize = SK_NORM_OFFSET + FP_ENCODED_BYTES;
+/// Number of quaternion coordinates in the encoded generator.
 const SK_GEN_COORDS: usize = 4;
+/// Byte length of the encoded ideal generator.
 const SK_GEN_BYTES: usize = SK_GEN_COORDS * FP_ENCODED_BYTES;
+/// Byte offset of the change-of-basis matrix `M_sk` in the signing key.
 const SK_MSK_OFFSET: usize = SK_GEN_OFFSET + SK_GEN_BYTES;
+/// Number of entries in the encoded `M_sk` matrix.
 const SK_MSK_ENTRIES: usize = 4;
+/// Byte length of the encoded `M_sk` matrix.
 const SK_MSK_BYTES: usize = SK_MSK_ENTRIES * TORSION_2POWER_BYTES;
 // Static checks: any layout drift surfaces here at compile time.
 const _: () = assert!(SK_MSK_OFFSET + SK_MSK_BYTES == SIGNING_KEY_BYTES);

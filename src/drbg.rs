@@ -28,7 +28,9 @@ use aes::{
 };
 use rand_core::{CryptoRng, Error, RngCore};
 
+/// AES-256 key length in bytes.
 const KEYLEN: usize = 32;
+/// AES block length in bytes.
 const BLOCKLEN: usize = 16;
 
 /// Size in bytes of the 48-byte seed consumed by
@@ -38,7 +40,9 @@ pub(crate) const SEEDLEN: usize = KEYLEN + BLOCKLEN;
 
 /// AES256-CTR-DRBG state: 32-byte Key + 16-byte V counter.
 pub(crate) struct Aes256CtrDrbg {
+    /// 32-byte AES-256 key (`Key` in SP 800-90A §10.2.1).
     key: [u8; KEYLEN],
+    /// 16-byte counter (`V` in SP 800-90A §10.2.1).
     v: [u8; BLOCKLEN],
     /// Total bytes delivered to callers via `fill` since
     /// instantiation. Test-only probe for diffing byte consumption

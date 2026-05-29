@@ -3,7 +3,11 @@
 // lowercase for affine coordinates.
 #![allow(non_snake_case)]
 #![allow(clippy::op_ref)]
-#![deny(missing_docs, clippy::unwrap_used)]
+#![deny(
+    missing_docs,
+    clippy::missing_docs_in_private_items,
+    clippy::unwrap_used
+)]
 // Tests are allowed to use unwrap() / Option::unwrap() / Result::unwrap();
 // production code is not (enforced by the deny above). This must come
 // after the deny to override it.

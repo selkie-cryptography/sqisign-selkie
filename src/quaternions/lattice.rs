@@ -1319,7 +1319,9 @@ impl<const N: usize> core::fmt::Debug for Lattice<N> {
 // back-substitution) are available only when `Form = Hnf`.
 #[derive(Clone)]
 pub struct HnfLattice<const N: usize> {
+    /// Column-style HNF basis matrix.
     basis: Matrix<N>,
+    /// Common denominator shared by all basis entries.
     denom: BigInt<N>,
 }
 

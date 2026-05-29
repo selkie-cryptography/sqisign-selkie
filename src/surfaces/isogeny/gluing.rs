@@ -16,6 +16,11 @@ use crate::{
     },
 };
 
+/// Kernel data for the gluing (2,2)-isogeny `E₁ × E₂ → A`.
+///
+/// Holds two 8-torsion points `T₁'', T₂''` on the elliptic product in
+/// both Montgomery `(X:Z)` form (for `product_to_theta` and codomain)
+/// and Jacobian `(x, y, z)` form (for gluing evaluation, which needs `y`).
 pub(crate) struct GluingKernel {
     /// T₁'' = (T₁''₁, T₁''₂) ∈ E₁ × E₂.
     /// Montgomery (X:Z) coordinates — used for product_to_theta and codomain.
@@ -269,11 +274,17 @@ impl GluingKernel {
 ///
 /// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5
 struct TranslationData {
+    /// `W · Z`, pre-inversion.
     WZ: Fp2,
+    /// `U · X`, pre-inversion.
     UX: Fp2,
+    /// `U · Z`, pre-inversion.
     UZ: Fp2,
+    /// `δ = WX − UZ`; its inverse is needed for the action.
     delta: Fp2,
+    /// `X` coordinate of `P'`.
     X: Fp2,
+    /// `Z` coordinate of `P'`.
     Z: Fp2,
 }
 

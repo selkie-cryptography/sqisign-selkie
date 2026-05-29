@@ -172,6 +172,7 @@ impl DoublePlusExponent {
         r
     }
 
+    /// Renormalizes so that `m ∈ [0.5, 1)`, adjusting `e` accordingly.
     fn normalize(mut self) -> Self {
         if self.m == 0.0 {
             self.e = 0;

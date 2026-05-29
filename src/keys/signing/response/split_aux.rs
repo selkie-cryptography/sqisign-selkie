@@ -37,12 +37,14 @@ use crate::{
 ///
 /// [Alg. 4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.5
 pub(crate) struct SplitAuxiliaryKernel {
+    /// Underlying surface `(2, 2)`-kernel on `E_com × E'_aux`.
     inner: surfaces::Kernel,
     /// Commitment-side basis (reduced to order `2^(e'_rsp + 2 + r_rsp)`)
     /// paired with the zero point on `E'_aux`, pushed through the
     /// chain so the codomain basis on the challenge side carries a
     /// propagated `PmQ`.
     pushed: [surfaces::ProductPoint; 3],
+    /// Chain exponent `e'_rsp` from the response computation.
     e_prime: TorsionExponent,
 }
 
