@@ -278,18 +278,50 @@ fn build_index(kind: &str, sha: &str, json: &str, existing: &str) -> String {
         }
     };
 
-    // Parse existing entries (just extract sha values and raw objects).
     let mut entries = Vec::new();
     entries.push(entry);
 
-    // Collect existing entries, skipping any with the same sha.
-    for chunk in existing.split('{').skip(1) {
-        let obj = format!("{{{chunk}");
-        let obj_sha = extract_string(&obj, "sha");
-        if obj_sha == sha || obj_sha.is_empty() { continue }
-        // Find the closing brace for this object.
-        if let Some(end) = obj.find('}') {
-            entries.push(obj[..end + 1].to_string());
+    // Walk `existing` and slice out each top-level `{...}` entry by tracking
+    // brace depth (skipping braces inside string literals). Naïve split-on-`{`
+    // loses entries whose values contain nested objects — e.g. instructions'
+    // `"results": {…}` map — which silently truncates the index on every
+    // upload. Skip the entry whose sha matches the new one (dedupe).
+    let mut depth = 0usize;
+    let mut start: Option<usize> = None;
+    let mut in_string = false;
+    let mut escape = false;
+    for (i, ch) in existing.char_indices() {
+        if in_string {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(s) = start.take() {
+                        let obj = &existing[s..=i];
+                        let obj_sha = extract_string(obj, "sha");
+                        if obj_sha != sha && !obj_sha.is_empty() {
+                            entries.push(obj.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
