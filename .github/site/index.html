@@ -1509,6 +1509,7 @@
         <a href="#kat-section">Test Vectors</a>
         <a href="#platform-section">Platforms</a>
         <a href="#instructions-section">Instructions</a>
+        <a href="#perf-metrics-section">Perf metrics</a>
         <a href="#audits-section">Audits</a>
         <a href="#fuzz-section">Fuzzing</a>
       </nav>
@@ -1648,6 +1649,22 @@
         </div>
       </section>
 
+      <section class="section" id="perf-metrics-section">
+        <div class="section__header">
+          <h2 class="section__title">Perf metrics<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Resource-cost measurements that move when source moves: binary size, heap allocations, peak stack. Sibling to <a href="#instructions-section" style="color:var(--fg)">Instructions</a>.</p>
+            <dl>
+            <dt>Binary size</dt><dd>Release binary text/data/bss segments and top functions by size (cargo-bloat).</dd>
+            <dt>Alloc budget</dt><dd>Heap allocation counts for keygen, sign, verify (dhat). Budget assertions fail CI if allocations grow.</dd>
+            <dt>Stack depth</dt><dd>Peak stack usage via Valgrind Massif. Tracks signing/verification stack footprint.</dd>
+            </dl></span></span></h2>
+          <span class="meta" id="perf-metrics-meta"></span>
+        </div>
+        <div id="perf-metrics-content">
+          <p class="empty">Awaiting first run.</p>
+        </div>
+      </section>
+
       <section class="section" id="audits-section">
         <div class="section__header">
           <h2 class="section__title">Audits<span class="help-icon">?<span class="tooltip">
@@ -1656,10 +1673,7 @@
             <dt>cargo deny</dt><dd>Dependency advisories and license compliance.</dd>
             <dt>Unsafe</dt><dd>Count of <code>unsafe</code> blocks per module. Should trend toward zero.</dd>
             <dt>Panic count</dt><dd>Panic symbols in the release binary via <code>nm</code>. Each is a potential DoS channel.</dd>
-            <dt>Binary size</dt><dd>Release binary text/data/bss segments and top functions by size (cargo-bloat).</dd>
-            <dt>Alloc budget</dt><dd>Heap allocation counts for keygen, sign, verify (dhat). Budget assertions fail CI if allocations grow.</dd>
             <dt>Zeroize</dt><dd>Verifies SigningKey memory is zeroed after drop.</dd>
-            <dt>Stack depth</dt><dd>Peak stack usage via Valgrind Massif. Tracks signing/verification stack footprint.</dd>
             <dt>API surface</dt><dd>Public API item count by category (cargo-public-api). Tracks API growth.</dd>
             <dt>MSRV</dt><dd>Minimum Supported Rust Version compliance (1.81.0).</dd>
             </dl></span></span></h2>
@@ -2872,7 +2886,7 @@
       return html;
     }
 
-    function renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData) {
+    function renderAuditsData(deny, unsafeData, docsData, msrvData, panicData, ctgrindData, apiData) {
       // Link each badge to its Actions run (if run_id is available).
       const fallbackUrl = `https://github.com/${REPO}/actions/workflows/audit.yml`;
       let html = '<div class="audit-grid">';
@@ -2921,15 +2935,51 @@
         badge(unsafeData.total, 'unsafe', detail, color, unsafeData, unsafeData.total > 5 ? 0 : unsafeData.total > 0 ? 1 : 2);
       }
 
-      if (sizeData && sizeData.binary) {
-        const kb = (sizeData.binary.total_bytes / 1024).toFixed(0);
-        badge(`${esc(kb)} KB`, 'binary size', `text: ${sizeData.binary.text}, data: ${sizeData.binary.data}, bss: ${sizeData.binary.bss}`, null, sizeData);
-      }
-
       if (msrvData) {
         const color = msrvData.status === 'pass' ? 'var(--green)' : 'var(--red)';
         const icon = msrvData.status === 'pass' ? '\u2714' : '\u2718';
         badge(icon, `MSRV ${esc(msrvData.msrv || '')}`, msrvData.status === 'pass' ? 'compiles' : msrvData.errors + ' errors', color, msrvData, msrvData.status === 'pass' ? 2 : 0);
+      }
+
+      if (apiData) {
+        badge(apiData.total || 0, 'public API', `fn:${apiData.functions||0} struct:${apiData.structs||0} enum:${apiData.enums||0}`, null, apiData);
+      }
+
+      // Sort: failures first, then warnings, then passing.
+      badges.sort((a, b) => a.severity - b.severity);
+      for (const b of badges) html += b.html;
+      html += '</div>';
+      return html;
+    }
+
+    // Sibling badge grid for the perf-metrics section: binary size,
+    // alloc budget, peak stack. Shape mirrors renderAuditsData.
+    function renderPerfMetricsData(sizeData, allocData, stackData) {
+      const fallbackUrl = `https://github.com/${REPO}/actions/workflows/perf-metrics.yml`;
+      let html = '<div class="audit-grid">';
+
+      function runUrl(data) {
+        if (data && data.run_id) return `https://github.com/${REPO}/actions/runs/${data.run_id}`;
+        return fallbackUrl;
+      }
+
+      function badgeHtml(status, label, detail, color, data) {
+        const url = runUrl(data);
+        return `<a class="audit-badge" href="${url}" target="_blank" rel="noopener">
+          <div class="badge-status"${color ? ` style="color:${color}"` : ''}>${status}</div>
+          <div class="badge-label">${label}</div>
+          ${detail ? `<div class="badge-detail">${detail}</div>` : ''}
+        </a>`;
+      }
+
+      const badges = [];
+      function badge(status, label, detail, color, data, severity) {
+        badges.push({ html: badgeHtml(status, label, detail, color, data), severity: severity ?? 2 });
+      }
+
+      if (sizeData && sizeData.binary) {
+        const kb = (sizeData.binary.total_bytes / 1024).toFixed(0);
+        badge(`${esc(kb)} KB`, 'binary size', `text: ${sizeData.binary.text}, data: ${sizeData.binary.data}, bss: ${sizeData.binary.bss}`, null, sizeData);
       }
 
       if (allocData) {
@@ -2944,12 +2994,6 @@
         badge(`${esc(kb)} KB`, 'peak stack', 'via Valgrind Massif', null, stackData);
       }
 
-
-      if (apiData) {
-        badge(apiData.total || 0, 'public API', `fn:${apiData.functions||0} struct:${apiData.structs||0} enum:${apiData.enums||0}`, null, apiData);
-      }
-
-      // Sort: failures first, then warnings, then passing.
       badges.sort((a, b) => a.severity - b.severity);
       for (const b of badges) html += b.html;
       html += '</div>';
@@ -3672,10 +3716,29 @@
       // Cross-analysis — needs at least coverage + one other source.
       renderRisks(cov, mut, bench, dudect, panicData, unsafeData);
 
-      // Audits.
+      // Perf metrics (size + alloc + stack — sibling to instructions).
+      const perfMetricsEl = document.getElementById('perf-metrics-content');
+      const perfMetricsMeta = document.getElementById('perf-metrics-meta');
+      const perfSources = { sizeData, allocData, stackData };
+      const perfAny = Object.values(perfSources).some(Boolean);
+      if (perfAny) {
+        const stale = Object.entries(perfSources).filter(([, v]) => v && v._stale).map(([k]) => k);
+        if (perfMetricsMeta) {
+          perfMetricsMeta.innerHTML = stale.length === 0
+            ? ''
+            : `<span class="stale-pill" title="Stale sub-panels: ${stale.join(', ')}">${stale.length} STALE</span>`;
+        }
+        perfMetricsEl.innerHTML = renderPerfMetricsData(sizeData, allocData, stackData);
+        perfMetricsEl.classList.toggle('is-stale', stale.length > 0);
+      } else {
+        if (perfMetricsMeta) perfMetricsMeta.textContent = '';
+        perfMetricsEl.innerHTML = '<p class="empty">Awaiting first run.</p>';
+      }
+
+      // Audits (policy: deny, unsafe, panic, zeroize, docs, msrv, api).
       const auditsEl = document.getElementById('audits-content');
       const auditsMeta = document.getElementById('audits-meta');
-      const auditSources = { deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData };
+      const auditSources = { deny, unsafeData, docsData, msrvData, panicData, ctgrindData, apiData };
       const auditsAny = Object.values(auditSources).some(Boolean);
       if (auditsAny) {
         const staleEntries = Object.entries(auditSources)
@@ -3686,7 +3749,7 @@
             ? ''
             : `<span class="stale-pill" title="Stale sub-panels: ${staleEntries.join(', ')}">${staleEntries.length} STALE</span>`;
         }
-        auditsEl.innerHTML = renderAuditsData(deny, unsafeData, sizeData, docsData, msrvData, panicData, allocData, stackData, ctgrindData, apiData);
+        auditsEl.innerHTML = renderAuditsData(deny, unsafeData, docsData, msrvData, panicData, ctgrindData, apiData);
         auditsEl.classList.toggle('is-stale', staleEntries.length > 0);
       } else {
         if (auditsMeta) auditsMeta.textContent = '';
