@@ -21,9 +21,13 @@ use crate::fields::fp2::Fp2;
 /// layers (curves vs surfaces).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct JacobianPoint {
+    /// Jacobian `X` coordinate.
     pub(crate) X: Fp2,
+    /// Jacobian `Y` coordinate.
     pub(crate) Y: Fp2,
+    /// Jacobian `Z` coordinate.
     pub(crate) Z: Fp2,
+    /// Curve on which this point lies.
     curve: Curve,
 }
 

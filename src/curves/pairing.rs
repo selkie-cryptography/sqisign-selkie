@@ -197,7 +197,9 @@ impl ConditionallySelectable for RootOfUnity {
 /// cubical arithmetic context where the formulas differ.
 #[derive(Copy, Clone, Debug)]
 struct CubicalPoint {
+    /// Projective `X` coordinate.
     X: Fp2,
+    /// Projective `Z` coordinate.
     Z: Fp2,
 }
 

@@ -147,6 +147,9 @@ fn sample_normalization_index<R: rand_core::RngCore + ?Sized>(rng: &mut R) -> u8
     }
 }
 
+/// The 10 valid `(i, j)` splitting indices for [Algorithm 8.41][Alg. 8.41].
+///
+/// [Alg. 8.41]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.41
 #[derive(Clone, Copy)]
 enum SplittingIndex {
     /// (i, j) = (0, 0)

@@ -19,6 +19,8 @@
 
 use crate::surfaces::{DualThetaNullPoint, Jacobian, JacobianPoint, ThetaNullPoint, hadamard4};
 
+/// Computes the chain-interior `(2, 2)`-isogeny codomain from 8-torsion
+/// kernel points `T₁, T₂`, applying the final Hadamard transform.
 pub(crate) fn codomain_8torsion(
     T1: &JacobianPoint,
     T2: &JacobianPoint,

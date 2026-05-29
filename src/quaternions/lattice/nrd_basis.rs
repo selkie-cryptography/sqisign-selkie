@@ -38,7 +38,9 @@ const D: usize = 4;
 /// columns. It is computed once at construction and updated
 /// incrementally during L² reduction.
 pub struct NrdBasis<const N: usize> {
+    /// Four basis column vectors over `{1, i, j, k}`.
     cols: [Vector<N>; D],
+    /// Reduced-norm Gram matrix `G[i][j] = nrd_bilinear(b_i, b_j)`.
     gram: Matrix<N>,
 }
 

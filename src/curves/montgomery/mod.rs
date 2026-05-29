@@ -270,8 +270,11 @@ impl From<DoublingConstants> for ProjectiveCoefficient {
 /// - [`DoublingConstants`]: (A₂₄, C₂₄) = (A+2C, 4C) (for point arithmetic)
 #[derive(Copy, Clone, Debug)]
 pub struct Curve {
+    /// Affine Montgomery coefficient `A`.
     affine: Coefficient,
+    /// Projective representative `(A : C)`.
     projective: ProjectiveCoefficient,
+    /// Doubling constants `(A₂₄, C₂₄) = (A + 2C, 4C)`.
     pub(crate) doubling: DoublingConstants,
 }
 

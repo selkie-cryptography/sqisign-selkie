@@ -33,8 +33,11 @@ use crate::{
 ///
 /// [Alg. 4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.6
 pub(crate) struct EvenResponseKernel {
+    /// Kernel generator `K = [s]P + [t]Q` on `E_chl`.
     K: ProjectiveXOnlyPoint,
+    /// `2^r_rsp`-torsion basis on `E_chl`, propagated through the isogeny.
     basis: TorsionBasis,
+    /// Chain length `r_rsp` of the response isogeny.
     r_rsp: TorsionExponent,
 }
 
@@ -45,6 +48,7 @@ pub(crate) struct EvenResponseKernel {
 /// input challenge basis on `E_chl`. The codomain curve
 /// `E = φ^even_rsp(E_chl)` is accessible as `basis.P.curve()`.
 pub(crate) struct EvenResponseCodomain {
+    /// Image basis `(φ^even_rsp(P), φ^even_rsp(P − Q), φ^even_rsp(Q))`.
     pub basis: TorsionBasis,
 }
 

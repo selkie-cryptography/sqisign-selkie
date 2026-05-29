@@ -25,6 +25,7 @@ pub struct Isomorphism {
     pub(super) ac_prime: Fp2,
     /// A'C (target A · source C).
     pub(super) a_prime_c: Fp2,
+    /// Target (codomain) curve.
     pub(super) target: Curve,
 }
 
