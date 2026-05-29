@@ -2,22 +2,14 @@ name: Benchmarks
 
 # Runs on self-hosted Fly `perf-2x` runners — dedicated vCPUs,
 # lower-noise than shared, but still wall-clock with some variance.
-# Useful for catching gross regressions and trending on the
-# dashboard; don't quote absolute numbers without controlling the
-# environment. On pull requests we post an informational comparison
-# comment against main's stored baseline (not a merge gate).
+# Useful for catching gross regressions and trending on the dashboard;
+# don't quote absolute numbers without controlling the environment.
+# Main-only — wall-clock on PRs is too noisy to be informative; use
+# the deterministic `instructions` workflow for PR-time perf signal.
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'benches/**'
-      - 'Cargo.toml'
-      - '.github/workflows/bench.yml'
-      - '.github/scripts/divan-to-json.rs'
-      - '.github/scripts/bench-compare.rs'
-  pull_request:
     paths:
       - 'src/**'
       - 'benches/**'
