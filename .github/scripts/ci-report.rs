@@ -42,7 +42,20 @@ fn main() {
 
     let body = match kind {
         "bench" => render_bench(base, cur),
-        "instructions" => render_instructions(base, cur),
+        "instructions" => {
+            let alloc_pr = args.get(4).and_then(|p| Json::from_file(p));
+            let alloc_latest = args.get(5).and_then(|p| Json::from_file(p));
+            let stack_pr = args.get(6).and_then(|p| Json::from_file(p));
+            let stack_latest = args.get(7).and_then(|p| Json::from_file(p));
+            render_instructions(
+                base,
+                cur,
+                alloc_pr.as_ref(),
+                alloc_latest.as_ref(),
+                stack_pr.as_ref(),
+                stack_latest.as_ref(),
+            )
+        }
         "kat" => render_kat(base, cur),
         "dudect" | "tacet" => render_ct(kind, base, cur),
         "mutants" => render_mutants(base, cur),
@@ -224,7 +237,14 @@ fn bench_map(root: Option<&Json>) -> BTreeMap<String, (f64, Option<f64>, Option<
 
 /// Renders the `instructions` report: deterministic instruction-count deltas.
 /// Any increase is real signal (no runner noise), so the threshold is tight.
-fn render_instructions(base: Option<&Json>, cur: &Json) -> String {
+fn render_instructions(
+    base: Option<&Json>,
+    cur: &Json,
+    alloc_pr: Option<&Json>,
+    alloc_latest: Option<&Json>,
+    stack_pr: Option<&Json>,
+    stack_latest: Option<&Json>,
+) -> String {
     let base_map = instructions_map(base);
     let cur_map = instructions_map(Some(cur));
 
@@ -310,6 +330,11 @@ fn render_instructions(base: Option<&Json>, cur: &Json) -> String {
         out.push_str("```\n\n");
     }
 
+    if let Some(line) = resources_block(alloc_pr, alloc_latest, stack_pr, stack_latest) {
+        out.push_str(&line);
+        out.push_str("\n\n");
+    }
+
     out.push_str(&format!(
         "<details><summary>{} benchmarks</summary>\n\n\
          | Benchmark | `main` | PR | Δ |\n|---|--:|--:|--:|\n{rows}\n</details>\n",
@@ -384,6 +409,83 @@ fn instructions_flamegraphs(root: Option<&Json>) -> BTreeMap<String, String> {
     }
 
     map
+}
+
+/// Builds a one-line **Resources** block summarising peak alloc per top-level
+/// op (sign/keygen/verify) and peak stack, with PR-vs-main deltas when both
+/// values exist. Falls back to main's latest as bare context if the PR didn't
+/// run perf-metrics. Returns `None` when no resource data is present at all.
+fn resources_block(
+    alloc_pr: Option<&Json>,
+    alloc_latest: Option<&Json>,
+    stack_pr: Option<&Json>,
+    stack_latest: Option<&Json>,
+) -> Option<String> {
+    fn op_bytes(root: Option<&Json>, name: &str) -> Option<u64> {
+        let ops = root?.get("operations")?.as_array()?;
+        for o in ops {
+            if o.get("name").and_then(Json::as_str) == Some(name) {
+                return o.get("bytes").and_then(Json::as_f64).map(|f| f as u64);
+            }
+        }
+        None
+    }
+    fn stack_bytes(root: Option<&Json>) -> Option<u64> {
+        root?.get("peak_stack_bytes")
+            .and_then(Json::as_f64)
+            .map(|f| f as u64)
+    }
+    fn delta(pr: Option<u64>, main: Option<u64>) -> String {
+        match (pr, main) {
+            (Some(p), Some(m)) if p != m => {
+                let d = p as i64 - m as i64;
+                let sign = if d > 0 { "+" } else { "-" };
+                format!(" ({sign}{})", fmt_bytes(d.unsigned_abs()))
+            }
+            _ => String::new(),
+        }
+    }
+    // Prefer the PR value; fall back to main's latest as context when absent.
+    fn pick(pr: Option<u64>, main: Option<u64>) -> Option<(u64, String)> {
+        pr.or(main).map(|b| (b, delta(pr, main)))
+    }
+
+    let ops: Vec<(&str, Option<(u64, String)>)> = ["sign", "keygen", "verify"]
+        .iter()
+        .map(|n| (*n, pick(op_bytes(alloc_pr, n), op_bytes(alloc_latest, n))))
+        .collect();
+    let stack = pick(stack_bytes(stack_pr), stack_bytes(stack_latest));
+
+    let any_op = ops.iter().any(|(_, v)| v.is_some());
+    if !any_op && stack.is_none() {
+        return None;
+    }
+
+    let mut tokens: Vec<String> = Vec::new();
+    for (name, v) in ops {
+        if let Some((b, d)) = v {
+            tokens.push(format!("{name} {}{d}", fmt_bytes(b)));
+        }
+    }
+    if let Some((b, d)) = stack {
+        tokens.push(format!("stack {}{d}", fmt_bytes(b)));
+    }
+
+    Some(format!("**Resources** · {}", tokens.join(" · ")))
+}
+
+/// Humanizes a byte count as `X.Y MB` / `X.Y KB` / `N B`.
+fn fmt_bytes(b: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    let bf = b as f64;
+    if bf >= MB {
+        format!("{:.1} MB", bf / MB)
+    } else if bf >= KB {
+        format!("{:.1} KB", bf / KB)
+    } else {
+        format!("{b} B")
+    }
 }
 
 /// Renders the `kat` report: known-answer-test pass/fail across suites.

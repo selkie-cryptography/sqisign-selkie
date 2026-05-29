@@ -25,10 +25,24 @@ runs:
         site=https://sqisign-selkie-ci.fly.dev
         curl -sf "$site/${{ inputs.kind }}/latest.json" -o /tmp/ci-baseline.json \
           || echo '{}' > /tmp/ci-baseline.json
+        # For instructions, also pull alloc/stack PR-sha + main-latest so the
+        # report can surface PR-vs-main resource deltas (perf-metrics jobs
+        # write /<kind>/<sha>.json on PRs via ci-upload --pr-only).
+        extra=()
+        if [ "${{ inputs.kind }}" = "instructions" ]; then
+          for k in alloc stack; do
+            curl -sf "$site/$k/${{ github.sha }}.json" -o "/tmp/$k-pr.json" \
+              || echo '{}' > "/tmp/$k-pr.json"
+            curl -sf "$site/$k/latest.json" -o "/tmp/$k-latest.json" \
+              || echo '{}' > "/tmp/$k-latest.json"
+            extra+=("/tmp/$k-pr.json" "/tmp/$k-latest.json")
+          done
+        fi
         # Empty RUSTC_WRAPPER: skip sccache for this tiny standalone
         # compile in jobs (e.g. ci.yml) that set a wrapper for the crate.
         RUSTC_WRAPPER= rustc -O .github/scripts/ci-report.rs -o /tmp/ci-report
-        /tmp/ci-report "${{ inputs.kind }}" /tmp/ci-baseline.json "${{ inputs.payload }}" \
+        /tmp/ci-report "${{ inputs.kind }}" /tmp/ci-baseline.json \
+          "${{ inputs.payload }}" "${extra[@]}" \
           > /tmp/ci-report.md
         cat /tmp/ci-report.md >> "$GITHUB_STEP_SUMMARY"
 
