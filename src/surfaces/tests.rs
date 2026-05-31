@@ -314,7 +314,9 @@ fn cref_kat0_main1_codomain_8torsion_byte_eq() {
         domain,
     );
 
-    let (_dual, codomain) = isogeny::codomain_8torsion(&t1, &t2);
+    let codomain = isogeny::EightTorsionStepKernel::Interior { T1: &t1, T2: &t2 }
+        .isogeny()
+        .into_codomain();
 
     let expected_a = fp2_from_dump_hex(
         "0x00f92571a7895818ea5c88ff6b9970fb5f0a09677aa16f793aeb9deb294a6cf3",
