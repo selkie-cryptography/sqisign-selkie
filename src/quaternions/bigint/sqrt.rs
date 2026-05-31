@@ -3,25 +3,21 @@
 use super::BigInt;
 
 impl<const N: usize> BigInt<N> {
-    /// Integer square root: returns the largest `s` such that `s*s <= self`.
+    /// Integer square root: returns the largest `s` such that
+    /// `s·s ≤ self`, or `None` if `self` is negative.
     ///
-    /// Only defined for non-negative values. Based on Newton-Raphson
-    /// reciprocal square root (Algorithm 10, §2.5) from
-    /// [Kouider et al.][ct-bigint], simplified here as a binary search
-    /// on the result bits.
+    /// Based on Newton-Raphson reciprocal square root (Algorithm 10,
+    /// §2.5) from [Kouider et al.][ct-bigint], simplified here as a
+    /// binary search on the result bits.
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self` is negative.
-    pub fn sqrt_floor(&self) -> Self {
-        assert!(
-            !bool::from(self.is_negative()),
-            "sqrt_floor called on negative value"
-        );
+    #[must_use]
+    pub fn sqrt_floor(&self) -> Option<Self> {
+        if bool::from(self.is_negative()) {
+            return None;
+        }
         if bool::from(self.is_zero()) {
-            return Self::ZERO;
+            return Some(Self::ZERO);
         }
 
         // Binary search: set bits from MSB to LSB, keeping the bit if
@@ -47,6 +43,6 @@ impl<const N: usize> BigInt<N> {
                 }
             }
         }
-        result
+        Some(result)
     }
 }

@@ -56,7 +56,7 @@ impl<const N: usize> BigInt<N> {
     pub fn cornacchia(q: &Self, m: &Self) -> Option<(Self, Self)> {
         // Special case: q = 0 reduces to x² = m.
         if bool::from(q.is_zero()) {
-            let s = m.sqrt_floor();
+            let s = m.sqrt_floor()?;
             return if s.ct_mul(&s) == *m {
                 Some((s, Self::ZERO))
             } else {
@@ -91,7 +91,7 @@ impl<const N: usize> BigInt<N> {
         // square does not exceed m.
         let mut r = *m;
         let mut s = r0;
-        let bound = m.sqrt_floor();
+        let bound = m.sqrt_floor()?;
 
         let mut i = 0;
         while i < 2 * Self::BITS {
@@ -118,7 +118,7 @@ impl<const N: usize> BigInt<N> {
         }
 
         // y² must be a perfect square.
-        let y = y_sq.sqrt_floor();
+        let y = y_sq.sqrt_floor()?;
         if y.ct_mul(&y) != y_sq {
             return None;
         }
