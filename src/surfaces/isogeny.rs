@@ -5,19 +5,19 @@
 //! | Kernel | Domain → Codomain | Data |
 //! |---|---|---|
 //! | [`GluingKernel`] | [`EllipticProduct`] → [`Jacobian`] | Two 8-torsion `ProductPoint` |
-//! | [`GenericKernel4`] | [`Jacobian`] → [`Jacobian`] | One 4-torsion `JacobianPoint` (penultimate-only) |
-//! | [`GenericKernel2`] | [`Jacobian`] → [`Jacobian`] | Domain Jacobian only (ultimate-only) |
+//! | [`EightTorsionStepKernel`] | [`Jacobian`] → [`Jacobian`] | Two 8-torsion `JacobianPoint` (chain-interior) |
+//! | [`FourTorsionStepKernel`] | [`Jacobian`] → [`Jacobian`] | One 4-torsion `JacobianPoint` (penultimate-only) |
+//! | [`TwoTorsionStepKernel`] | [`Jacobian`] → [`Jacobian`] | Domain Jacobian only (ultimate-only) |
 //! | [`SplittingKernel`] | [`Jacobian`] → [`EllipticProduct`] | Domain Jacobian only |
 //!
-//! Chain-interior steps consume 8-torsion data via
-//! [`EightTorsionStep`] in the [`step`] submodule; the penultimate
-//! and ultimate steps of an `extra_torsion=false` chain tail use
-//! [`FourTorsionStep`] and [`TwoTorsionStep`] respectively. Each
-//! returns a [`StepIsogeny`] (parallel to
-//! [`Isomorphism`](crate::curves::montgomery::Isomorphism)) that
-//! exposes `eval` for point pushing. The orchestrator
-//! [`Kernel::isogeny`] in [`crate::surfaces`] picks the right
-//! kernel per chain position.
+//! Each step kernel exposes `.isogeny() -> `[`StepIsogeny`], which
+//! in turn exposes `eval` for point pushing — parallel to
+//! [`Curve::isomorphism`](crate::curves::montgomery::Curve::isomorphism)
+//! returning an
+//! [`Isomorphism`](crate::curves::montgomery::Isomorphism) with
+//! its own `eval`. The orchestrator [`Kernel::isogeny`] in
+//! [`crate::surfaces`] picks the right step kernel per chain
+//! position.
 //!
 //! See [§2.4.1] and [§8.5.3] through [§8.5.8].
 //!
