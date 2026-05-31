@@ -884,8 +884,8 @@ impl Kernel {
     ///     dedicated 4- and 2-isogeny tail steps after the loop.
     ///   * After the loop: push the level-0 kernel point through the last
     ///     main-loop step, then run a dedicated 4-isogeny
-    ///     ([`isogeny::GenericKernel4::isogeny_penultimate`]) and a dedicated
-    ///     2-isogeny ([`isogeny::GenericKernel2::isogeny_ultimate`]) before
+    ///     ([`isogeny::FourTorsionStepKernel`]) and a dedicated
+    ///     2-isogeny ([`isogeny::TwoTorsionStepKernel`]) before
     ///     handing off to the splitter.
     fn isogeny_inner_no_extra_torsion(
         &self,
