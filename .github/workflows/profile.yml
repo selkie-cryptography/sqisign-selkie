@@ -71,18 +71,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Glob patterns over the gungraun bench module path
+          # (`FILENAME::GROUP::FUNCTION::ID`).  Wildcards are required;
+          # plain substrings don't match.
           - shard: field
-            filter: 'field::'
+            filter: '*::field::*'
           - shard: curves
-            filter: 'curves::'
+            filter: '*::curves::*'
           - shard: parsing
-            filter: 'parsing::'
+            filter: '*::parsing::*'
           - shard: keygen
-            filter: 'sqisign::kat_keygen'
+            filter: '*::kat_keygen*'
           - shard: sign
-            filter: 'sqisign::kat_sign'
+            filter: '*::kat_sign*'
           - shard: verify
-            filter: 'sqisign::kat_verify'
+            filter: '*::kat_verify*'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
@@ -113,6 +116,14 @@ jobs:
           cargo bench --bench instructions --features expose-internals -- \
             '${{ matrix.filter }}' --save-summary=json 2>&1 \
             | tee profile-output-${{ matrix.shard }}.txt
+          # Guard: gungraun-runner reports "0 benchmarks finished" when the
+          # filter matched nothing instead of failing.  Catch that here so
+          # we don't tar an empty directory and silently swallow a regression
+          # in the filter syntax (FILENAME::GROUP::FUNCTION::ID globs).
+          if [ ! -d target/gungraun ] || [ -z "$(ls -A target/gungraun 2>/dev/null)" ]; then
+            echo "::error::no gungraun output for shard '${{ matrix.shard }}' (filter '${{ matrix.filter }}' matched nothing?)" >&2
+            exit 1
+          fi
 
       - name: Build ci-scratch
         run: env -u RUSTC_WRAPPER rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
