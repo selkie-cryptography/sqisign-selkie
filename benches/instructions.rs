@@ -1,15 +1,17 @@
-//! Deterministic instruction-count benchmarks via gungraun (the renamed
+//! Deterministic profile benchmarks via gungraun (the renamed
 //! iai-callgrind).
 //!
-//! Measures `Ir` (instructions) per benchmark — deterministic across CI
-//! runners, no timing noise — and emits a per-benchmark `Ir` flamegraph as
-//! `callgrind.<bench>.total.Ir.flamegraph.svg` next to each summary.
+//! Runs each bench under Valgrind/callgrind with cache + branch
+//! simulation, so every run emits `Ir` (instructions), `EstimatedCycles`,
+//! L1/LL cache misses, and branch mispredicts --- all deterministic
+//! across CI runners (no timing noise).  A per-benchmark `Ir` flamegraph
+//! is written alongside each summary as
+//! `callgrind.<bench>.total.Ir.flamegraph.svg`.
 //!
-//! Cache and branch simulation are off by default: they ~double Valgrind time
-//! on the billion-instruction sign/keygen benches. Enable them — and the
-//! resulting L1/LL/branch/EstimatedCycles metrics — on demand via the
-//! `deep_profile` dispatch input on instructions.yml, which appends
-//! `--cache-sim=yes --branch-sim=yes` globally.
+//! Sharded under the `Profile` workflow (`.github/workflows/profile.yml`),
+//! one matrix job per bench group / slow sqisign bench, so the wall-clock
+//! cost of cache simulation is bounded by the longest single bench rather
+//! than their sum.
 //!
 //! Requires Valgrind: `apt install valgrind` or `brew install valgrind`.
 //! Run with: `cargo bench --bench instructions --features expose-internals`
@@ -171,10 +173,12 @@ library_benchmark_group!(
 
 main!(
     config = LibraryBenchmarkConfig::default().tool(
-        // gungraun defaults --cache-sim=yes, so disable it explicitly (and
-        // branch-sim) — `Callgrind::default()` would leave the slow cache
-        // simulation on. The deep_profile dispatch re-enables both globally.
-        Callgrind::with_args(["--cache-sim=no", "--branch-sim=no"])
+        // gungraun defaults `--cache-sim=yes --branch-sim=yes`, which is
+        // what we want here: every bench produces estimated_cycles, L1/LL
+        // cache misses, and branch mispredicts alongside Ir.  Cache
+        // simulation roughly doubles per-bench wall-clock; the workflow
+        // shards across benches to keep total wall-clock bounded.
+        Callgrind::default()
             .flamegraph(FlamegraphConfig::default().event_kinds([EventKind::Ir])),
     );
     library_benchmark_groups = field,

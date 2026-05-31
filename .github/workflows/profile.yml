@@ -1,0 +1,229 @@
+name: Profile
+
+# Runs on self-hosted Fly runners.  Valgrind/callgrind under
+# `--cache-sim=yes --branch-sim=yes` collects instruction counts,
+# estimated cycles, L1/LL cache misses, and branch mispredicts ---
+# all deterministic (no shared-CPU noise affects the numbers).
+#
+# Sharded across six matrix jobs --- one per bench group (field,
+# curves, parsing) and one per slow `sqisign::kat_*` bench --- so
+# wall-clock is bounded by the longest single bench (kat_sign)
+# instead of the sum of all benches.  Each shard ships its
+# `target/gungraun/` to Tigris scratch via `ci-scratch put`; an
+# aggregation job pulls every shard, merges them, runs the report
+# generator, and posts the sticky comment.
+#
+# The data kind on the CI dashboard is still `instructions` for
+# continuity --- the JSON payload carries all metrics (instructions,
+# estimated_cycles, l1_misses, l2_misses, branch_misses) regardless
+# of the surface label.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - '.github/workflows/profile.yml'
+      - '.github/scripts/instructions-report.rs'
+      - '.github/scripts/ci-scratch.rs'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - '.github/workflows/profile.yml'
+      - '.github/scripts/instructions-report.rs'
+      - '.github/scripts/ci-scratch.rs'
+  workflow_dispatch:
+
+# Supersede in-flight PR runs; never cancel a main run mid-upload.
+concurrency:
+  group: profile-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: write  # sticky comment on PRs
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    name: gungraun (${{ matrix.shard }})
+    runs-on: [self-hosted, fly, linux, x64]
+    # Per-shard, not per-workflow: even the slow sqisign::kat_sign
+    # shard comfortably fits in 60 min under cache + branch simulation.
+    timeout-minutes: 90
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_BUCKET: selkie-ci-sccache
+      SCCACHE_ENDPOINT: https://fly.storage.tigris.dev
+      SCCACHE_REGION: auto
+      AWS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SCCACHE_SECRET_ACCESS_KEY }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: field
+            filter: 'field::'
+          - shard: curves
+            filter: 'curves::'
+          - shard: parsing
+            filter: 'parsing::'
+          - shard: keygen
+            filter: 'sqisign::kat_keygen'
+          - shard: sign
+            filter: 'sqisign::kat_sign'
+          - shard: verify
+            filter: 'sqisign::kat_verify'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e  # v0.0.10
+
+      # gungraun-runner refuses on lib/runner version skew; install the
+      # version cargo actually resolved.
+      - name: Install gungraun-runner
+        run: |
+          set -euo pipefail
+          ver=$(cargo metadata --format-version 1 \
+            | jq -r '.packages[] | select(.name=="gungraun") | .version' \
+            | head -1)
+          if [ -z "$ver" ]; then
+            echo "::error::could not resolve gungraun version from cargo metadata"; exit 1
+          fi
+          cargo install gungraun-runner --version "$ver" --locked
+
+      # Cache + branch simulation is on by default in benches/instructions.rs
+      # (no `--cache-sim=no` override), so every run produces estimated_cycles,
+      # L1/LL cache misses, and branch mispredicts alongside the headline Ir.
+      # The positional filter restricts this shard to its slice of benches.
+      - name: Run gungraun (${{ matrix.shard }})
+        run: |
+          set -euo pipefail  # so a bench failure isn't masked by `tee` exit 0
+          cargo bench --bench instructions --features expose-internals -- \
+            '${{ matrix.filter }}' --save-summary=json 2>&1 \
+            | tee profile-output-${{ matrix.shard }}.txt
+
+      - name: Build ci-scratch
+        run: env -u RUSTC_WRAPPER rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+
+      # Tarball the shard's gungraun output and ship to Tigris scratch.
+      # ci-scratch appends `.json` to the bucket key; the aggregator
+      # untars the file regardless of suffix.
+      - name: Ship gungraun output to Tigris scratch
+        env:
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          tar -czf gungraun-shard.tar.gz -C target gungraun
+          /tmp/ci-scratch put gungraun-shards "${{ github.sha }}" \
+            "${{ matrix.shard }}" gungraun-shard.tar.gz
+
+      - name: sccache stats
+        if: ${{ !cancelled() }}
+        run: sccache --show-stats
+
+  # Merges every shard's output into one combined report and posts
+  # the sticky comment.  Job name `gungraun` matches the prior
+  # single-job name so the required-status-check on the PR keeps
+  # working.
+  aggregate:
+    name: gungraun
+    needs: bench
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+
+      - name: Build ci-scratch
+        run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+
+      - name: Pull all shards from Tigris scratch
+        env:
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+        run: |
+          mkdir -p /tmp/gungraun-shards
+          /tmp/ci-scratch get gungraun-shards "${{ github.sha }}" /tmp/gungraun-shards/
+
+      # Each shard's tarball has `gungraun/` as the top-level entry
+      # (it was created from `target/`), so untarring into `target/`
+      # reconstructs the original combined layout.  Per-bench
+      # subdirectories are disjoint across shards, so no collisions.
+      - name: Merge shards into target/gungraun/
+        run: |
+          set -euo pipefail
+          mkdir -p target
+          for f in /tmp/gungraun-shards/*.json; do
+            tar -xzf "$f" -C target
+          done
+          echo "Merged layout:"
+          find target/gungraun -maxdepth 4 -type d | sort
+
+      - name: Generate JSON
+        run: |
+          # Skip sccache for this standalone compile.
+          env -u RUSTC_WRAPPER rustc -O .github/scripts/instructions-report.rs -o /tmp/instructions-report
+          /tmp/instructions-report target/gungraun "${{ github.sha }}" > instructions.json
+
+      - name: Verify profile payload has data
+        run: jq -e '.total > 0 and (.results | length > 0)' instructions.json > /dev/null || { echo "::error::instructions.json has no benchmark results"; cat instructions.json >&2; exit 1; }
+
+      # Host the per-benchmark flamegraph SVGs so the report can embed them.
+      # Ungated (PR runs need their graphs live to render in the comment) but
+      # skipped on fork PRs, which can't see the Fly token.
+      # Best-effort: a flaky flyctl download or sftp hiccup must not fail the
+      # run or skip the Report below --- the flamegraph URLs just 404 until
+      # the next successful run.
+      - name: Host flamegraphs
+        continue-on-error: true
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/ci-upload
+        with:
+          assets: target/gungraun
+          remote-subdir: instructions/flamegraphs/${{ github.sha }}
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+      # Upload the data payload only from main: a PR or branch dispatch
+      # must not clobber main's stored baseline.
+      - name: Upload to CI site
+        if: github.ref == 'refs/heads/main'
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: instructions
+          payload: instructions.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+      # Job summary always; sticky comment on same-repo PRs.
+      - name: Report
+        uses: ./.github/actions/ci-pr-report
+        with:
+          kind: instructions
+          payload: instructions.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Hygiene: drop the per-shard scratch entries now that we've
+      # consumed them.  Bucket lifecycle auto-expires at 7 days as a
+      # backstop; this is just being polite.
+      - name: Clean Tigris scratch
+        if: ${{ !cancelled() }}
+        env:
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+        run: /tmp/ci-scratch clean gungraun-shards "${{ github.sha }}"

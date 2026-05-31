@@ -235,8 +235,10 @@ fn bench_map(root: Option<&Json>) -> BTreeMap<String, (f64, Option<f64>, Option<
     map
 }
 
-/// Renders the `instructions` report: deterministic instruction-count deltas.
-/// Any increase is real signal (no runner noise), so the threshold is tight.
+/// Renders the `instructions` report: deterministic Valgrind/callgrind
+/// metrics --- instructions, estimated cycles, L1/LL cache misses, and
+/// branch mispredicts --- with PR-vs-main deltas.  No runner noise, so
+/// any change is real signal and the threshold is tight.
 fn render_instructions(
     base: Option<&Json>,
     cur: &Json,
@@ -245,41 +247,70 @@ fn render_instructions(
     stack_pr: Option<&Json>,
     stack_latest: Option<&Json>,
 ) -> String {
-    let base_map = instructions_map(base);
-    let cur_map = instructions_map(Some(cur));
+    let base_ir = metric_map(base, "instructions");
+    let cur_ir = metric_map(Some(cur), "instructions");
+    let base_cyc = metric_map(base, "estimated_cycles");
+    let cur_cyc = metric_map(Some(cur), "estimated_cycles");
+    let base_l1 = metric_map(base, "l1_misses");
+    let cur_l1 = metric_map(Some(cur), "l1_misses");
+    let base_ll = metric_map(base, "l2_misses");
+    let cur_ll = metric_map(Some(cur), "l2_misses");
+    let base_br = metric_map(base, "branch_misses");
+    let cur_br = metric_map(Some(cur), "branch_misses");
 
-    let mut out = String::from("### Instruction counts (PR vs `main`)\n\n");
+    let mut out = String::from("### Profile (PR vs `main`)\n\n");
     out.push_str(
-        "_Deterministic instruction counts via \
-         [gungraun](https://github.com/gungraun/gungraun) \
-         (Valgrind) — immune to runner noise, so any change is real._\n\n",
+        "_Deterministic Valgrind/callgrind metrics via \
+         [gungraun](https://github.com/gungraun/gungraun) --- \
+         immune to runner noise, so any change is real._\n\n",
     );
 
-    if cur_map.is_empty() {
-        return out + "No instruction-count data.\n";
+    if cur_ir.is_empty() {
+        return out + "No profile data.\n";
     }
 
-    let cur_total: u64 = cur_map.values().sum();
-    let base_total: u64 = base_map.values().sum();
-    if base_total > 0 {
+    let cur_ir_total: u64 = cur_ir.values().sum();
+    let base_ir_total: u64 = base_ir.values().sum();
+    let cur_cyc_total: u64 = cur_cyc.values().sum();
+    let base_cyc_total: u64 = base_cyc.values().sum();
+    if base_ir_total > 0 {
         out.push_str(&format!(
-            "**Total: {} instructions ({} vs `main`).**\n\n",
-            fmt_int(cur_total),
-            signed_pct(cur_total as f64, base_total as f64)
+            "**Total: {} instructions ({} vs `main`)",
+            fmt_int(cur_ir_total),
+            signed_pct(cur_ir_total as f64, base_ir_total as f64)
         ));
+        if base_cyc_total > 0 {
+            out.push_str(&format!(
+                "; {} estimated cycles ({} vs `main`).",
+                fmt_int(cur_cyc_total),
+                signed_pct(cur_cyc_total as f64, base_cyc_total as f64)
+            ));
+        } else {
+            out.push_str(".");
+        }
+        out.push_str("**\n\n");
     }
 
-    let mut rows = String::new();
+    // Two stacked ```diff blocks for the sqisign top-level ops --- one for
+    // instructions, one for estimated cycles.  GitHub colors `-` rows red
+    // (slower) and `+` rows green (faster); the █ bar is proportional to
+    // magnitude.  Threshold matches bench (0.5%) for visual consistency.
+    out.push_str(&diff_block("instructions", &base_ir, &cur_ir));
+    if !cur_cyc.is_empty() {
+        out.push_str(&diff_block("estimated cycles", &base_cyc, &cur_cyc));
+    }
+
+    let mut ir_rows = String::new();
     let mut increased = 0usize;
 
-    for (name, &cur_instr) in &cur_map {
-        let (base_cell, delta) = match base_map.get(name) {
+    for (name, &cur_v) in &cur_ir {
+        let (base_cell, delta) = match base_ir.get(name) {
             Some(&b) if b > 0 => {
-                let pct = (cur_instr as f64 / b as f64 - 1.0) * 100.0;
-                let mark = if cur_instr > b {
+                let pct = (cur_v as f64 / b as f64 - 1.0) * 100.0;
+                let mark = if cur_v > b {
                     increased += 1;
                     " ⚠️"
-                } else if cur_instr < b {
+                } else if cur_v < b {
                     " ✅"
                 } else {
                     ""
@@ -289,45 +320,16 @@ fn render_instructions(
             _ => ("—".to_string(), "new".to_string()),
         };
 
-        rows.push_str(&format!(
+        ir_rows.push_str(&format!(
             "| `{name}` | {base_cell} | {} | {delta} |\n",
-            fmt_int(cur_instr)
+            fmt_int(cur_v)
         ));
     }
 
     if increased > 0 {
         out.push_str(&format!(
-            "⚠️ **{increased} benchmark(s) with more instructions than `main`** (deterministic — real, not noise).\n\n"
+            "⚠️ **{increased} benchmark(s) with more instructions than `main`** (deterministic --- real, not noise).\n\n"
         ));
-    }
-
-    // Headline Δ% for the sqisign top-level ops as a ```diff block, mirroring
-    // the bench section: GitHub colors `-` rows red (more instructions =
-    // slower) and `+` rows green (fewer = faster), with a █ bar proportional
-    // to magnitude. Threshold matches bench (0.5%) for visual consistency.
-    let mut diff_rows = String::new();
-    for b in ["keygen", "sign", "verify"] {
-        let key = format!("sqisign::kat_{b}");
-        if let (Some(&cur), Some(&base)) = (cur_map.get(&key), base_map.get(&key)) {
-            if base > 0 {
-                let pct = (cur as f64 / base as f64 - 1.0) * 100.0;
-                let bar = "█".repeat(((pct.abs() / 3.0).ceil() as usize).clamp(1, 8));
-                let prefix = if pct > 0.5 {
-                    "-"
-                } else if pct < -0.5 {
-                    "+"
-                } else {
-                    " "
-                };
-                let pct_str = format!("{pct:+.1}%");
-                diff_rows.push_str(&format!("{prefix} {b:<7} {pct_str:>6}  {bar}\n"));
-            }
-        }
-    }
-    if !diff_rows.is_empty() {
-        out.push_str("```diff\n@@ sqisign instructions vs main  (- slower / + faster) @@\n");
-        out.push_str(&diff_rows);
-        out.push_str("```\n\n");
     }
 
     if let Some(line) = resources_block(alloc_pr, alloc_latest, stack_pr, stack_latest) {
@@ -336,10 +338,32 @@ fn render_instructions(
     }
 
     out.push_str(&format!(
-        "<details><summary>{} benchmarks</summary>\n\n\
-         | Benchmark | `main` | PR | Δ |\n|---|--:|--:|--:|\n{rows}\n</details>\n",
-        cur_map.len()
+        "<details><summary>{} benchmarks (instructions)</summary>\n\n\
+         | Benchmark | `main` | PR | Δ |\n|---|--:|--:|--:|\n{ir_rows}\n</details>\n",
+        cur_ir.len()
     ));
+
+    // Sibling table for cycles + cache + branch metrics, shown as Δs to
+    // stay narrow.  Each benchmark from the instructions table appears
+    // here with whatever metrics callgrind reported for it (most have
+    // all four; some fast-path benches may be missing branch counts).
+    if !cur_cyc.is_empty() || !cur_l1.is_empty() || !cur_br.is_empty() {
+        let mut sec_rows = String::new();
+        for name in cur_ir.keys() {
+            sec_rows.push_str(&format!(
+                "| `{name}` | {} | {} | {} | {} |\n",
+                pct_cell(base_cyc.get(name).copied(), cur_cyc.get(name).copied()),
+                pct_cell(base_l1.get(name).copied(), cur_l1.get(name).copied()),
+                pct_cell(base_ll.get(name).copied(), cur_ll.get(name).copied()),
+                pct_cell(base_br.get(name).copied(), cur_br.get(name).copied()),
+            ));
+        }
+        out.push_str(&format!(
+            "\n<details><summary>cycles + cache + branches (Δ%)</summary>\n\n\
+             | Benchmark | Δ EstCyc | Δ L1m | Δ LLm | Δ BrMis |\n\
+             |---|--:|--:|--:|--:|\n{sec_rows}\n</details>\n"
+        ));
+    }
 
     let flamegraphs = instructions_flamegraphs(Some(cur));
     if !flamegraphs.is_empty() {
@@ -348,7 +372,7 @@ fn render_instructions(
         // Embed the heaviest benchmark's flamegraph inline (most interesting
         // call tree); link the rest. SVGs are hosted on the CI site and
         // render via GitHub's image proxy, like SVG badges.
-        let featured = cur_map
+        let featured = cur_ir
             .iter()
             .filter(|(name, _)| flamegraphs.contains_key(*name))
             .max_by_key(|(_, &ir)| ir)
@@ -370,8 +394,14 @@ fn render_instructions(
     out
 }
 
-/// Builds a `name -> instructions` map from an `instructions` payload.
-fn instructions_map(root: Option<&Json>) -> BTreeMap<String, u64> {
+/// Builds a `name -> <field>` map from an `instructions` payload.  The
+/// payload format is the JSON written by `instructions-report.rs`; each
+/// entry in `.results` is `{name, instructions, estimated_cycles,
+/// l1_misses, l2_misses, branch_misses, ...}`.  Benchmarks missing the
+/// requested field are skipped (rare for `instructions` since gungraun
+/// always emits Ir, more common for `branch_misses` on fast benches
+/// that don't exercise the predictor enough to register).
+fn metric_map(root: Option<&Json>, field: &str) -> BTreeMap<String, u64> {
     let mut map = BTreeMap::new();
 
     let Some(results) = root.and_then(|r| r.get("results")).and_then(Json::as_array) else {
@@ -382,13 +412,65 @@ fn instructions_map(root: Option<&Json>) -> BTreeMap<String, u64> {
         let Some(name) = r.get("name").and_then(Json::as_str) else {
             continue;
         };
-        let Some(instr) = r.get("instructions").and_then(Json::as_f64) else {
+        let Some(v) = r.get(field).and_then(Json::as_f64) else {
             continue;
         };
-        map.insert(name.to_string(), instr as u64);
+        map.insert(name.to_string(), v as u64);
     }
 
     map
+}
+
+/// Renders the headline ```diff block for the three sqisign top-level
+/// benches.  Per-bench Δ% gets a `+` (faster) / `-` (slower) / ` ` (no
+/// change) prefix and a `█` bar proportional to magnitude.  Returns an
+/// empty string if no benches have valid base data.
+fn diff_block(title: &str, base: &BTreeMap<String, u64>, cur: &BTreeMap<String, u64>) -> String {
+    let mut rows = String::new();
+    for b in ["keygen", "sign", "verify"] {
+        let key = format!("sqisign::kat_{b}");
+        if let (Some(&c), Some(&bb)) = (cur.get(&key), base.get(&key)) {
+            if bb > 0 {
+                let pct = (c as f64 / bb as f64 - 1.0) * 100.0;
+                let bar = "█".repeat(((pct.abs() / 3.0).ceil() as usize).clamp(1, 8));
+                let prefix = if pct > 0.5 {
+                    "-"
+                } else if pct < -0.5 {
+                    "+"
+                } else {
+                    " "
+                };
+                let pct_str = format!("{pct:+.1}%");
+                rows.push_str(&format!("{prefix} {b:<7} {pct_str:>6}  {bar}\n"));
+            }
+        }
+    }
+    if rows.is_empty() {
+        return String::new();
+    }
+    format!(
+        "```diff\n@@ sqisign {title} vs main  (- slower / + faster) @@\n{rows}```\n\n"
+    )
+}
+
+/// Formats one Δ% cell against optional base+current absolute values.
+/// `—` when either side is missing or `base == 0` (the metric didn't
+/// register on this bench).
+fn pct_cell(base: Option<u64>, cur: Option<u64>) -> String {
+    match (base, cur) {
+        (Some(b), Some(c)) if b > 0 => {
+            let pct = (c as f64 / b as f64 - 1.0) * 100.0;
+            let mark = if c > b {
+                " ⚠️"
+            } else if c < b {
+                " ✅"
+            } else {
+                ""
+            };
+            format!("{pct:+.2}%{mark}")
+        }
+        _ => "—".to_string(),
+    }
 }
 
 /// Builds a `name -> flamegraph URL` map from an `instructions` payload.

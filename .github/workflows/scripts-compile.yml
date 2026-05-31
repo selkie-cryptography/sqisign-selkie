@@ -10,7 +10,7 @@ name: Compile scripts
 #
 # Replaces the incidental coverage that the previous
 # `.github/scripts/**` entry in ci.yml / audit.yml / bench.yml /
-# coverage.yml / instructions.yml provided by re-running their full pipelines
+# coverage.yml / profile.yml provided by re-running their full pipelines
 # on script-only changes.
 
 on:
