@@ -115,14 +115,14 @@ impl ExtremalOrder<8> {
             if q_quot <= q {
                 return None;
             }
-            q_quot.ct_sub(&q).sqrt_floor()
+            q_quot.ct_sub(&q).sqrt_floor()?
         };
         if bool::from(z_max_big.is_zero()) {
             return None;
         }
         let counter_big = {
             let qp2 = q.ct_mul(&p).ct_mul(&p);
-            let qp2_sqrt = qp2.sqrt_floor();
+            let qp2_sqrt = qp2.sqrt_floor()?;
             if bool::from(qp2_sqrt.is_zero()) {
                 return None;
             }
@@ -187,7 +187,7 @@ impl ExtremalOrder<8> {
                 continue;
             }
             let (rem_div_qp, _) = remaining.div_rem(&qp);
-            let t_max_big = rem_div_qp.sqrt_floor();
+            let t_max_big = rem_div_qp.sqrt_floor()?;
             let z_sq = z.ct_mul(&z);
             if bool::from(t_max_big.is_zero()) {
                 continue;

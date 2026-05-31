@@ -1211,7 +1211,7 @@ impl<const N: usize> Lattice<N> {
             }
             let prod = diag.ct_mul(&rad);
             let (quot, _) = prod.div_rem(&det_g);
-            *bound = quot.sqrt_floor();
+            *bound = quot.sqrt_floor()?;
             if !bool::from(bound.is_zero()) {
                 all_zero = false;
             }
