@@ -117,6 +117,15 @@ pub(crate) struct DualThetaNullPoint {
     pub(crate) delta_inv: Fp2,
 }
 
+impl From<&DualThetaNullPoint> for ThetaNullPoint {
+    /// Codomain theta null point from its dual via the Hadamard
+    /// transform on the four coordinates.
+    fn from(dual: &DualThetaNullPoint) -> Self {
+        let (a, b, c, d) = hadamard4(&dual.alpha, &dual.beta, &dual.gamma, &dual.delta);
+        ThetaNullPoint::new(a, b, c, d)
+    }
+}
+
 /// Precomputed constants for theta doubling.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct ThetaPrecomp {
@@ -814,41 +823,34 @@ impl Kernel {
             // These apply unconditionally for both extra_torsion
             // true and false. The penultimate/ultimate produce dual
             // form directly, which the splitting step expects.
-            let (dual, new_jac) = if steps_remaining == 1 {
+            let T1 = &theta_strat[k].0;
+            let T2 = &theta_strat[k].1;
+            let step = if steps_remaining == 1 {
                 // Ultimate: bool_1=1, bool_2=0
-                isogeny::codomain_8torsion_ultimate(&theta_strat[k].0, &theta_strat[k].1)
+                isogeny::EightTorsionStepKernel::Ultimate { T1, T2 }
             } else if steps_remaining == 2 {
                 // Penultimate: bool_1=0, bool_2=0
-                isogeny::codomain_8torsion_no_hadamard(&theta_strat[k].0, &theta_strat[k].1)
+                isogeny::EightTorsionStepKernel::Penultimate { T1, T2 }
             } else {
                 // Normal: bool_1=0, bool_2=1
-                isogeny::codomain_8torsion(&theta_strat[k].0, &theta_strat[k].1)
+                isogeny::EightTorsionStepKernel::Interior { T1, T2 }
             };
-
-            let eval_fn = |pt: &JacobianPoint| -> JacobianPoint {
-                if steps_remaining == 1 {
-                    isogeny::eval_ultimate(pt, &dual, &new_jac)
-                } else if steps_remaining == 2 {
-                    isogeny::eval_no_outer_hadamard(pt, &dual, &new_jac)
-                } else {
-                    isogeny::eval(pt, &dual, &new_jac)
-                }
-            };
+            let iso = step.isogeny();
 
             for pt in theta_pts.iter_mut() {
-                *pt = eval_fn(pt);
+                *pt = iso.eval(pt);
             }
 
             for i in 0..k {
-                theta_strat[i].0 = eval_fn(&theta_strat[i].0);
-                theta_strat[i].1 = eval_fn(&theta_strat[i].1);
+                theta_strat[i].0 = iso.eval(&theta_strat[i].0);
+                theta_strat[i].1 = iso.eval(&theta_strat[i].1);
                 orders[i] -= 1;
             }
 
             theta_strat.truncate(k);
             orders.truncate(k);
             k = k.saturating_sub(1);
-            current_jacobian = new_jac;
+            current_jacobian = iso.into_codomain();
 
             _step_index += 1;
             steps_remaining -= 1;
@@ -969,7 +971,7 @@ impl Kernel {
         // through the last step *after* the loop exits (mirrors C
         // ref's `if (n >= 3) { theta_isogeny_eval(thetaQ1[0], step,
         // thetaQ1[0]); }` at `theta_isogenies.c:1252`).
-        let mut last_step: Option<(DualThetaNullPoint, Jacobian)> = None;
+        let mut last_step: Option<isogeny::StepIsogeny> = None;
         let mut last_kernel: Option<(JacobianPoint, JacobianPoint)> = None;
 
         while !orders.is_empty() && (k > 0 || orders[0] != 0) {
@@ -988,30 +990,44 @@ impl Kernel {
                 }
             }
 
-            let (dual, new_jac) = isogeny::codomain_8torsion(&theta_strat[k].0, &theta_strat[k].1);
+            let iso = isogeny::EightTorsionStepKernel::Interior {
+                T1: &theta_strat[k].0,
+                T2: &theta_strat[k].1,
+            }
+            .isogeny();
 
             // If this is the last main-loop iteration (kernel at
-            // level 0), capture the level-0 point and the step's
-            // (dual, codomain) for the post-loop push.
-            if k == 0 {
+            // level 0), capture the level-0 point so the post-loop
+            // 4-isogeny step can push it through the stashed
+            // [`StepIsogeny`].
+            let stash_level_0 = k == 0;
+            if stash_level_0 {
                 last_kernel = Some(theta_strat[0].clone());
-                last_step = Some((dual, new_jac.clone()));
             }
 
             for pt in theta_pts.iter_mut() {
-                *pt = isogeny::eval(pt, &dual, &new_jac);
+                *pt = iso.eval(pt);
             }
 
             for i in 0..k {
-                theta_strat[i].0 = isogeny::eval(&theta_strat[i].0, &dual, &new_jac);
-                theta_strat[i].1 = isogeny::eval(&theta_strat[i].1, &dual, &new_jac);
+                theta_strat[i].0 = iso.eval(&theta_strat[i].0);
+                theta_strat[i].1 = iso.eval(&theta_strat[i].1);
                 orders[i] -= 1;
             }
 
             theta_strat.truncate(k);
             orders.truncate(k);
             k = k.saturating_sub(1);
-            current_jacobian = new_jac;
+
+            // At level 0, keep the whole [`StepIsogeny`] so the
+            // post-loop push reuses it without re-cloning the
+            // codomain. Otherwise, take the codomain out by value.
+            if stash_level_0 {
+                current_jacobian = iso.codomain().clone();
+                last_step = Some(iso);
+            } else {
+                current_jacobian = iso.into_codomain();
+            }
         }
 
         // Post-loop: push the level-0 kernel point through the last
@@ -1019,33 +1035,36 @@ impl Kernel {
         // kernel for the dedicated penultimate (4-iso) step.
         // Mirrors C ref's `if (n >= 3) { theta_isogeny_eval(thetaQ1[0],
         // step, thetaQ1[0]); }` at `theta_isogenies.c:1252`.
-        let (last_dual, last_codomain) = last_step?;
+        let last_iso = last_step?;
         let (kp1, _kp2) = last_kernel?;
-        let kp1 = isogeny::eval(&kp1, &last_dual, &last_codomain);
+        let kp1 = last_iso.eval(&kp1);
 
         // Dedicated penultimate: 4-isogeny.
         // C ref: `theta_isogeny_compute_4(step, theta, thetaQ1[0],
-        // thetaQ2[0], 0, 0)` at `theta_isogenies.c:1258`. We use only
-        // `kp1` because [`isogeny::codomain_4torsion_no_hadamard`]
-        // computes the codomain from a single 4-torsion generator
-        // (Algorithm 8.32).
-        let kernel_4 = isogeny::GenericKernel4 { T1: kp1 };
-        let (codomain_after_4iso, theta_pts_after_4iso) =
-            kernel_4.isogeny_penultimate(&current_jacobian, &theta_pts);
-        theta_pts = theta_pts_after_4iso;
-        current_jacobian = codomain_after_4iso;
+        // thetaQ2[0], 0, 0)` at `theta_isogenies.c:1258`. Algorithm
+        // 8.32 computes the codomain from a single 4-torsion
+        // generator, so [`FourTorsionStepKernel`] takes just `kp1`
+        // and the domain.
+        let iso_4 = isogeny::FourTorsionStepKernel {
+            T1: &kp1,
+            domain: &current_jacobian,
+        }
+        .isogeny();
+        theta_pts = theta_pts.iter().map(|p| iso_4.eval(p)).collect();
+        current_jacobian = iso_4.into_codomain();
 
         // Dedicated ultimate: 2-isogeny.
         // C ref: `theta_isogeny_compute_2(step, theta, thetaQ1[0],
         // thetaQ2[0], 1, 0)` at `theta_isogenies.c:1266`. Algorithm
         // 8.33 computes the codomain from the null point alone — the
-        // kernel basis is implicit in the null structure, so our
-        // [`isogeny::GenericKernel2::isogeny_ultimate`] takes only
-        // the domain.
-        let (codomain_after_2iso, theta_pts_after_2iso) =
-            isogeny::GenericKernel2::isogeny_ultimate(&current_jacobian, &theta_pts);
-        theta_pts = theta_pts_after_2iso;
-        current_jacobian = codomain_after_2iso;
+        // kernel basis is implicit in the null structure, so
+        // [`TwoTorsionStepKernel`] takes only the domain.
+        let iso_2 = isogeny::TwoTorsionStepKernel {
+            domain: &current_jacobian,
+        }
+        .isogeny();
+        theta_pts = theta_pts.iter().map(|p| iso_2.eval(p)).collect();
+        current_jacobian = iso_2.into_codomain();
 
         // Phase 4: splitting.
         let splitter = SplittingKernel {
