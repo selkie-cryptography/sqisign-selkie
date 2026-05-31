@@ -514,13 +514,14 @@ fn invert_mod_verify() {
 
 #[test]
 fn sqrt_floor_basic() {
-    assert_eq!(I256::ZERO.sqrt_floor(), I256::ZERO);
-    assert_eq!(I256::ONE.sqrt_floor(), I256::ONE);
-    assert_eq!(I256::from(4i64).sqrt_floor(), I256::from(2i64));
-    assert_eq!(I256::from(9i64).sqrt_floor(), I256::from(3i64));
-    assert_eq!(I256::from(10i64).sqrt_floor(), I256::from(3i64));
-    assert_eq!(I256::from(99i64).sqrt_floor(), I256::from(9i64));
-    assert_eq!(I256::from(100i64).sqrt_floor(), I256::from(10i64));
+    assert_eq!(I256::ZERO.sqrt_floor(), Some(I256::ZERO));
+    assert_eq!(I256::ONE.sqrt_floor(), Some(I256::ONE));
+    assert_eq!(I256::from(4i64).sqrt_floor(), Some(I256::from(2i64)));
+    assert_eq!(I256::from(9i64).sqrt_floor(), Some(I256::from(3i64)));
+    assert_eq!(I256::from(10i64).sqrt_floor(), Some(I256::from(3i64)));
+    assert_eq!(I256::from(99i64).sqrt_floor(), Some(I256::from(9i64)));
+    assert_eq!(I256::from(100i64).sqrt_floor(), Some(I256::from(10i64)));
+    assert_eq!(I256::from(-1i64).sqrt_floor(), None);
 }
 
 #[test]

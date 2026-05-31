@@ -172,7 +172,7 @@ impl<const N: usize> LeftIdeal<N> {
             return None;
         }
 
-        let n_sqrt = index.sqrt_floor();
+        let n_sqrt = index.sqrt_floor()?;
         // Verify perfect square: n_sqrt² == index.
         if n_sqrt.ct_mul(&n_sqrt) != index {
             #[cfg(test)]
