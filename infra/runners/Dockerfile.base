@@ -61,6 +61,25 @@ RUN useradd -m -s /bin/bash runner \
   && rustup component add rustfmt clippy --toolchain nightly \
   && chown -R runner:runner "$RUSTUP_HOME" "$CARGO_HOME"
 
+# Pre-install `gungraun-runner` so `profile.yml`'s `Install
+# gungraun-runner` step becomes a fast no-op (~1 s "package already
+# installed") instead of an ~8 min from-source rebuild on every matrix
+# shard.  Cost is paid once at image-build time; the workflow's
+# `cargo install gungraun-runner --version $ver --locked` then short-
+# circuits when the baked binary satisfies the exact version cargo
+# resolves from `gungraun = "0.19"` in `Cargo.toml`.
+#
+# The version requirement here tracks `Cargo.toml`, not a specific
+# patch: each base-image build picks up the latest `0.19.x` from
+# crates.io.  Bump this string when the workspace bumps `gungraun`'s
+# major.minor (e.g. `0.19` -> `0.20`); the workflow's pinned install
+# falls back to a from-source build in the gap.
+#
+# Sized ~20 MB binary plus its registry footprint; well under the
+# 8 GB unpack ceiling that the warning above tracks.
+RUN cargo install gungraun-runner --version '^0.19' --locked \
+  && chown -R runner:runner "$CARGO_HOME"
+
 # System tools + TeX Live (latex-extra family, ~1-1.5 GB).
 #
 # `libclang-dev` is needed by the `crabgrind` build script (uses
