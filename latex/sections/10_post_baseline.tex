@@ -132,14 +132,38 @@ fall below $128$~limbs and the experiment was shelved pending a
 Euclidean reduction step (the constant-time dim-4 LLL of Hanyecz et
 al., ePrint 2025/027, is the intended substitute).
 
+\paragraph{Hanyecz constant-time dim-4 BKZ-2 as preprocessing in front
+of the MLLL intersection.}
+Hanyecz et al.\ (ePrint 2025/027) give a constant-time dim-4 BKZ
+with block size $2$ as the Euclidean-norm replacement for
+\texttt{l2\_reduce} on secret-derived inputs.  Their five algorithms
+port to \texttt{src/quaternions/lattice/bkz2.rs} on branch
+\texttt{hanyecz-euclidean-input-lll}; invoked in front of
+\texttt{compact\_intersection} at the two response-phase call sites
+of \S\ref{sec:perf-ct}, output stays byte-identical with the C
+reference (canonical-HNF depends only on the inputs'
+$\mathbb{Z}$-modules, not their basis representatives).
+
+The integration did not land.  MLLL already runs at the proven
+width bound of~\cite{KLY26}, which is a property of the lattice and
+not of any basis representation, so BKZ-2 preprocessing cannot
+narrow it further; in our measurements the preprocessing added cost
+at every parameter setting tried and regressed signing wall-clock
+by roughly an order of magnitude.  Separately, the paper's own
+proposed use of BKZ-2 --- substituting for \texttt{l2\_reduce} on
+secret-derived inputs --- is KAT-breaking, since the surviving
+\texttt{l2\_reduce} call sites are followed by basis-dependent
+downstream logic.  Capturing the paper-claimed CT win therefore
+requires a KAT re-baseline; it bundles with the Cornacchia fix
+(ePrint 2025/2192) and the fast-primality items (\S\ref{sec:next})
+into a single non-interop release.  The four BKZ-2 algorithm
+commits remain on \texttt{hanyecz-euclidean-input-lll} as a
+self-contained library; the integration commit is shelved.
+
 \subsection{Next steps}
 \label{sec:next}
 
 \begin{enumerate}
-  \item Hanyecz et al.\ Euclidean dim-4 LLL (ePrint 2025/027) as
-    preprocessing in front of the MLLL intersection, to push the
-    working width below the $\leq 110$-limb proven bound toward the
-    $\sim 28$-limb compact bound of~\cite{KLY26}.
   \item Costello--Hisil 4-isogeny formula and Renes square-root-free
     2-isogeny formula in the elliptic factors (verify-side chain),
     composed underneath the cost-optimal strategy already in place.
@@ -149,8 +173,12 @@ al., ePrint 2025/027, is the intended substitute).
     means this should be verified with a small prototype before the
     full substitution.
   \item Continue the constant-time hardening sequence
-    (\S\ref{sec:ct}).  Remaining variable-time surface lives in
-    \texttt{MontReducer::pow}'s base reduction (\texttt{mag\_div\_rem}),
-    in \texttt{l2\_reduce} on secret-derived input, and elsewhere in
-    the quaternion-arithmetic layer.
+    (\S\ref{sec:ct}).  The remaining variable-time surfaces are
+    \texttt{MontReducer::pow}'s base reduction
+    (\texttt{mag\_div\_rem}), Cornacchia in the norm-equation search
+    (ePrint 2025/2192, the highest-severity item --- poly-time key
+    recovery from the input leak), and \texttt{l2\_reduce} on
+    secret-derived input (where the Hanyecz BKZ-2 substitution above
+    is the intended fix, bundled with the other KAT-breaking CT items
+    into a single non-interop release).
 \end{enumerate}
