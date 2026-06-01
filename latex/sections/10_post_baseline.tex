@@ -3,7 +3,7 @@
 
 With baseline interoperability achieved (\S\ref{sec:status}), the
 implementation moves into a post-baseline phase: performance
-optimisation and constant-time hardening built on top of the
+optimization and constant-time hardening built on top of the
 byte-equality foundation.  Each change is interop-safe (KAT bytes
 preserved) unless explicitly noted under
 \S\ref{sec:tried-rejected}.  The field-arithmetic and elliptic-curve
@@ -35,13 +35,12 @@ identity, which required a working width near $500$~limbs to absorb
 HNF coefficient blow-up.  We replaced the HNF reduction with the
 modified-LLL (MLLL) of Kim, Lee, and Yoo~\cite{KLY26}, dropping the
 working width to $128$~limbs at the main intersection site and
-$64$~limbs at the smaller auxiliary one (branch
-\texttt{mlll}).  Cost scales $O(W^2)$, so the narrowing is large.
-Deterministic measurement: $-11.8\%$ on signing, output
-byte-identical.  A follow-up narrowed the widths further to the
-$\leq 110$-limb bound proven by Kim et al.\ (ePrint 2025/1649),
-giving $110$~limbs at the main site and $48$ at the auxiliary site
-(branch \texttt{narrower-mlll-widths}).
+$64$~limbs at the smaller auxiliary one.  Cost scales $O(W^2)$, so
+the narrowing is large.  Deterministic measurement: $-11.8\%$ on
+signing, output byte-identical.  A follow-up narrowed the widths
+further to the $\leq 110$-limb bound proven by Kim et al.\ (ePrint
+2025/1649), giving $110$~limbs at the main site and $48$ at the
+auxiliary site.
 
 \paragraph{Constant-time modular exponentiation in primality testing.}
 \texttt{MontReducer::pow} (Miller--Rabin during the norm-equation
@@ -50,10 +49,9 @@ $d = (n-1)/2^s$ is secret-derived) was made constant-time: the window
 table is read with a scatter-gather \texttt{ct\_select} so the access
 pattern does not leak the exponent nibbles, and the final Montgomery
 subtracts in \texttt{mul}, \texttt{reduce\_wide}, and
-\texttt{compute\_r\_squared} are now branchless.  Output is identical.
-Deterministic measurement (branch \texttt{ct-modexp}): $-1.01\%$ on
-key generation, $-0.10\%$ on signing.  Verification
-untouched.
+\texttt{compute\_r\_squared} are now branchless.  Output is
+identical.  Deterministic measurement: $-1.01\%$ on key
+generation, $-0.10\%$ on signing.  Verification untouched.
 
 \paragraph{Windowed Pohlig--Hellman discrete logarithm.}
 \texttt{RootOfUnity::dlog} on the 2-power pairing-output group
@@ -62,17 +60,16 @@ into an iterative windowed variant with window width $W = 4$ and a
 constant-time table scan.  The old recursion called \texttt{pow\_scalar}
 at every node, walking $256$ bits regardless of the exponent size, and
 was variable-time on the secret-derived bases $M_{\mathrm{sk}}$ and
-$M_{\mathrm{chl}}$; that leak is closed.  Deterministic measurement
-(branch \texttt{windowed-ph-dlog}): $-4.84\%$ on key generation,
-$-1.33\%$ on signing, $-2.03\%$ total --- the largest
-single-branch improvement so far.  Verification essentially unchanged
-($-0.04\%$).
+$M_{\mathrm{chl}}$; that leak is closed.  Deterministic measurement:
+$-4.84\%$ on key generation, $-1.33\%$ on signing, $-2.03\%$
+total --- the largest single-step improvement so far.  Verification
+essentially unchanged ($-0.04\%$).
 
 \subsection{Tried approaches that did not land}
 \label{sec:tried-rejected}
 
-Each entry below names the branch it was attempted on, what was tried,
-and the reason it did not land.
+Each entry below names what was tried and the reason it did not
+land.
 
 \paragraph{Cost-optimal isogeny strategy for the verify-side 4-isogeny
 chain.}
@@ -80,8 +77,8 @@ The verify-side $2^e$-isogeny chain in
 \texttt{src/curves/isogeny/mod.rs} --- decomposed into
 $\lfloor e/2 \rfloor$ 4-isogenies --- was changed from runtime
 balanced halving to a compile-time-precomputed cost-optimal De
-Feo--Jao--Plut strategy.  Output is byte-identical (branch
-\texttt{optimal-isogeny-strategy}).  Deterministic measurement:
+Feo--Jao--Plut strategy.  Output is byte-identical.
+Deterministic measurement:
 $-0.04\%$ on verification, $0$ on key generation and
 signing --- no measurable gain because verification's hot path
 is $\mathbb{F}_{p^2}$ and elliptic-curve arithmetic, not the strategy
@@ -103,10 +100,10 @@ mathematically unchanged.  Cleared to the non-interop pass.
 exponentiation.}
 The five independent $\mathrm{den}^{-1}$ inversions in the
 \texttt{cross\_pairings} final-exponentiation loop were folded into a
-single inversion via Montgomery's trick.  Output is identical and every
-KAT byte-identical.  However deterministic measurement (branch
-\texttt{batch-inversion-audit}) showed a $+0.05\%$ regression overall
-and $+0.62\%$ on verification: the two-pass refactor's overhead
+single inversion via Montgomery's trick.  Output is identical and
+every KAT byte-identical.  However deterministic measurement showed
+a $+0.05\%$ regression overall and $+0.62\%$ on verification: the
+two-pass refactor's overhead
 (extra $\mathbb{F}_{p^2}$ array storage, a likely inlining-decision
 change in a now-larger function) exceeded the savings from fewer
 inversions, given how rarely \texttt{cross\_pairings} is invoked per
@@ -122,8 +119,8 @@ key generation in a controlled A/B.
 
 \paragraph{Input-LLL preprocessing of the intersection.}
 The input-LLL preprocessing of~\cite{KLY26} reduces each input basis
-before dualisation, intending to bound the duals' cubic coefficient
-growth.  Our existing \texttt{l2\_reduce} routine minimises the
+before dualization, intending to bound the duals' cubic coefficient
+growth.  Our existing \texttt{l2\_reduce} routine minimizes the
 reduced-norm form $a^2 + b^2 + p\,(c^2 + d^2)$, which is the natural
 norm in $B_{p,\infty}$ but is dominated by the $p\,(c^2 + d^2)$ term;
 the coordinate magnitudes that drive the Euclidean blow-up therefore

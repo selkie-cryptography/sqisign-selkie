@@ -131,16 +131,16 @@ intentionally honest about what verification claims this codebase
 \emph{does} and \emph{does not} support today.
 
 \begin{itemize}[nosep]
-  \item KAT correctness (Layer~7): \textbf{partially done}.
-        \emph{Verify} accepts 100/100 C ref signatures; \emph{sign}
-        completes for ${\geq}~50$/100 KAT seeds within the current
-        CI per-test budget.  All completed signatures
-        cross-verify against the C ref harness.  The remaining
-        gap is sign throughput, not correctness.
-  \item Empirical CT (Layer~5): \textbf{infrastructure present, not
-        a verification claim}.  \texttt{dudect} and \texttt{tacet}
-        runs are wired into CI; baseline measurements exist but
-        the codebase is not yet constant-time on secret-derived
+  \item KAT correctness (Layer~7): \textbf{done}.
+        \emph{Verify} accepts the C reference's 100 NIST-I KAT
+        signatures byte-for-byte; \emph{sign} produces
+        byte-identical signatures on all 100 KAT seeds and on the
+        full 103-vector keygen suite.  All signatures cross-verify
+        against the C reference harness.
+  \item Empirical CT (Layer~5): \textbf{infrastructure present;
+        not a verification claim}.  \texttt{dudect} and
+        \texttt{tacet} are wired into CI with baseline measurements,
+        but the codebase is not yet constant-time on secret-derived
         paths (see~\S\ref{sec:ct}).
   \item Asm-vs-Rust differential testing (Layer~6):
         \textbf{NOT STARTED}.  Activates when the asm path lands.

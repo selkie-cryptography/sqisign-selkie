@@ -43,16 +43,18 @@ cannot call it on the wrong type.
 
 \subsection{IdealFactor}
 
-\texttt{SuitableIdeals} returns two factors, each with an element
-$\beta$, a degree $d$, and a parent order.  In the C reference, these
-are six separate variables.  Accidentally pairing one factor's degree
-with the other's element is a plausible mistake---the types are the
-same.  Our \texttt{IdealFactor} struct bundles them:
+\texttt{SuitableIdeals} returns two factors, each with a short
+vector $\beta$, a degree $d$, a parent extremal order, and the
+parent left ideal of $\beta$.  In the C reference, these are
+several separate variables.  Accidentally pairing one factor's
+degree with the other's element is a plausible mistake---the types
+are the same.  Our \texttt{IdealFactor} struct bundles them:
 \begin{lstlisting}[language=Rust]
-pub struct IdealFactor {
+pub struct IdealFactor<const N: usize> {
     pub order: &'static ExtremalOrder<4>,
-    pub beta: Element,
+    pub beta: ShortVector,
     pub degree: IsogenyDegree,
+    pub parent_ideal: LeftIdeal<N>,
 }
 \end{lstlisting}
 Cross-wiring requires reaching into both structs and swapping fields

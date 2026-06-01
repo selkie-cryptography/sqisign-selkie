@@ -3,11 +3,11 @@ SQIsign has the smallest signatures and public keys of any post-quantum
 signature scheme.  It is also one of the hardest to implement correctly.
 We describe \texttt{sqisign-selkie}, a Rust implementation of SQIsign~v2.0.1
 for NIST-I, built from the specification and C reference implementation.
-Along the way we found nine bugs traceable to specification ambiguities
-or implicit C reference conventions, and four classes of bugs arising
-from fixed-precision arithmetic.  We catalog these, explain how they
-arose, and extract concrete lessons for anyone implementing
-isogeny-based schemes from a spec.  We show how Rust's type system
+Along the way we found a catalog of bugs traceable to specification
+ambiguities, implicit C reference conventions, and fixed-precision
+arithmetic.  We catalog these, explain how they arose, and extract
+concrete lessons for anyone implementing isogeny-based schemes from a
+spec.  We show how Rust's type system
 enforces cryptographic invariants at compile time, survey the
 published constant-time techniques for SQIsign's quaternion arithmetic,
 and describe a negative test vector suite (in C2SP/wycheproof JSON
