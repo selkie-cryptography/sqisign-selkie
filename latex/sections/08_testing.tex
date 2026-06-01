@@ -211,12 +211,13 @@ the test suite catches bugs, not just that it runs.  Mutation testing
 inserts faults (replacing operators, return values, conditionals) and
 checks whether any test fails.  A surviving mutant is a missing test.
 
-Running \texttt{cargo-mutants} on the \texttt{keys/} module (212
-mutants) found 8 surviving mutants---6 in \texttt{ChallengeMatrix::from\_bytes}
-validation and 2 in keygen---all of which represented real test gaps.
-Writing targeted tests killed the validation mutants; the keygen
-mutants survive because keygen tests are slow (each invocation runs
-a $(2,2)$-isogeny chain) and are marked \texttt{\#[ignore]}.
+Running \texttt{cargo-mutants} on the \texttt{keys/} module
+surfaced surviving mutants concentrated in
+\texttt{ChallengeMatrix::from\_bytes} validation, plus a handful
+in keygen.  Each one represented a real test gap.  Writing targeted
+tests killed the validation mutants; the keygen mutants survive
+because keygen tests are slow (each invocation runs a
+$(2,2)$-isogeny chain) and are marked \texttt{\#[ignore]}.
 
 CI runs incremental mutation testing on every pull request (only
 changed code via \texttt{-{}-in-diff}) and a full sharded run weekly.

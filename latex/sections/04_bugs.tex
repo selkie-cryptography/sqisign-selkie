@@ -1734,7 +1734,7 @@ this: every outer-chain attempt printed
 with the mismatch tracking the ratio
 $\mathrm{nrd}(I')/\mathrm{nrd}(I)$ across KAT inputs.
 
-Two fixes produce the same behaviour:
+Two fixes produce the same behavior:
 \begin{itemize}
   \item \textbf{Send $\beta$ back.}  After \textsc{SuitableIdeals}
     picks the pair, rewrite $\beta_i \leftarrow \delta \beta_i$ so
@@ -1779,10 +1779,10 @@ $\mathcal{O}_t$.  Each $J_t$ is stored as
 \item a basis matrix $B_t \in M_4(\mathbb{Z})$,
 \item a denominator $d_t \in \mathbb{Z}_{>0}$ (with $d_t = 2$ for
   the NIST-I orders),
-\item a labelled norm $N_t \in \mathbb{Z}_{>0}$,
+\item a labeled norm $N_t \in \mathbb{Z}_{>0}$,
 \end{itemize}
 where the rational basis vectors are the columns of $B_t / d_t$.
-The labelled norm $N_t$ is supposed to be the \emph{reduced norm}
+The labeled norm $N_t$ is supposed to be the \emph{reduced norm}
 $N(J_t) = \sqrt{[\mathcal{O}_0 : J_t]}$; the C reference's
 \texttt{quat\_lideal\_norm}
 (\texttt{quaternion/ref/generic/ideal.c:7}) computes it from the
@@ -1804,7 +1804,7 @@ which returns the leading first-coordinate entry of the integer
 HNF row space---i.e., $2 N_t$, not $N_t$.  Every entry of
 \texttt{CONNECTING\_IDEAL\_NORMS[\textit{t}]} for
 $t = 0, \ldots, 6$ was therefore exactly twice the C reference's
-labelled norm.
+labeled norm.
 
 This was latent for 99 of the 100 NIST-I lvl1 KATs because
 \textsc{SuitableIdeals} usually finds a viable $(\beta_s, \beta_t)$
@@ -1850,10 +1850,10 @@ match the C reference's
 byte-for-byte.  The \texttt{connecting\_ideal()} runtime
 constructor was simultaneously updated to use $2 \cdot N_t$ as
 the leading basis entry, keeping the constructed lattice
-byte-unchanged while the labelled norm is corrected.
+byte-unchanged while the labeled norm is corrected.
 
 \paragraph{Catching this earlier.}  A self-consistency assertion
-in \texttt{connecting\_ideal()} comparing the labelled norm to
+in \texttt{connecting\_ideal()} comparing the labeled norm to
 $\sqrt{[\mathcal{O}_0 : J_t]}$ (computable from the basis at
 construction time) would have flagged this immediately.  None
 of our 99 working keygen KATs exercised the cross-order code
