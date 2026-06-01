@@ -29,6 +29,7 @@
       --yellow: #d29922;
       --red: #f85149;
       --red-bg: rgba(248, 81, 73, 0.08);
+      --shadow-tooltip: 0 2px 8px rgba(0, 0, 0, 0.3);
     }
 
     @media (prefers-color-scheme: light) {
@@ -46,6 +47,7 @@
         --yellow: #9a6700;
         --red: #cf222e;
         --red-bg: rgba(207, 34, 46, 0.08);
+        --shadow-tooltip: 0 2px 8px rgba(0, 0, 0, 0.15);
       }
     }
 
@@ -2691,7 +2693,7 @@
 
     // 10\u00d710 plate grid with hex-style row/column axis labels and a
     // 5-cell gutter splitting each axis (low-nibble / high-nibble).
-    function renderKatGrid(tests, expected) {
+    function renderKatGrid(tests, expected, sha) {
       const cells = new Array(expected).fill(null).map(() => ({ status: 'unknown' }));
       for (const t of tests) {
         const idx = katIndexFromName(t.name);
@@ -2716,6 +2718,14 @@
       }
       html += '</div>';
 
+      // Fail cells link to the commit's GitHub checks page so the
+      // user can jump from a red tile straight to the failing job's
+      // logs in one click. Pass / ignored / unknown tiles stay as
+      // decorative <div>s \u2014 no useful diagnostic to drill into.
+      const checksUrl = sha
+        ? `https://github.com/${REPO}/commit/${esc(sha)}/checks`
+        : null;
+
       // Grid: 11 columns / 11 rows (10 cells + 1 spacer between halves).
       html += '<div class="plate-grid">';
       for (let r = 0; r < 10; r++) {
@@ -2731,7 +2741,16 @@
                     : (t.status === 'ignored' || t.status === 'skip') ? 'ignored'
                     : 'unknown';
           const id3 = String(i).padStart(3, '0');
-          html += `<div class="plate-cell ${cls}" style="--i:${i}" title="KAT[${id3}] \u2014 ${esc(t.status)}"></div>`;
+
+          const namePart = t.name ? ` ${t.name}` : '';
+          const detailPart = (t.status === 'fail' && t.detail) ? ` \u2014 ${t.detail}` : '';
+          const title = `KAT[${id3}]${namePart} \u2014 ${t.status}${detailPart}`;
+
+          if (cls === 'fail' && checksUrl) {
+            html += `<a class="plate-cell fail" style="--i:${i}" href="${checksUrl}" title="${esc(title)}" target="_blank" rel="noopener"></a>`;
+          } else {
+            html += `<div class="plate-cell ${cls}" style="--i:${i}" title="${esc(title)}"></div>`;
+          }
         }
       }
       html += '</div>';
@@ -2741,7 +2760,7 @@
 
     // One family entry: heading, description, status badge, and (when
     // expected=100) a plate grid + per-test list.
-    function renderKatFamily(fam, tests) {
+    function renderKatFamily(fam, tests, sha) {
       const c = katFamilyCounts(tests);
       const badge = katBadge(c);
       const badgeColor = katBadgeColor(badge.status);
@@ -2758,7 +2777,7 @@
       html += `<div class="plate-family-body">`;
       if (fam.expected) {
         html += `<div class="plate-family-cols">`;
-        html += renderKatGrid(tests, fam.expected);
+        html += renderKatGrid(tests, fam.expected, sha);
         html += `<div>`;
       }
       html += `<table class="plate-test-list"><thead><tr><th>Test</th><th>Status</th></tr></thead><tbody>`;
@@ -2842,7 +2861,7 @@
       for (const fam of KAT_FAMILIES) {
         const tests = familyTests[fam.key];
         if (tests.length === 0) continue;
-        html += renderKatFamily(fam, tests);
+        html += renderKatFamily(fam, tests, data.sha);
       }
 
       const vectorFiles = wycheSuite ? (wycheSuite.vector_files || []) : [];
@@ -3958,7 +3977,7 @@
 
     // --- Chart tooltip ---
     const chartTipEl = document.createElement('div');
-    chartTipEl.style.cssText = 'position:fixed;pointer-events:none;padding:3px 8px;border-radius:4px;font-size:11px;font-family:SF Mono,Menlo,Consolas,monospace;background:var(--bg-raised);border:1px solid var(--border);color:var(--fg);z-index:20;display:none;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3)';
+    chartTipEl.style.cssText = 'position:fixed;pointer-events:none;padding:3px 8px;border-radius:4px;font-size:11px;font-family:SF Mono,Menlo,Consolas,monospace;background:var(--bg-raised);border:1px solid var(--border);color:var(--fg);z-index:20;display:none;white-space:nowrap;box-shadow:var(--shadow-tooltip)';
     document.body.appendChild(chartTipEl);
 
     function showChartTip(e, text) {
