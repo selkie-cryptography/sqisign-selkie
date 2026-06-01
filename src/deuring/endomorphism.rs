@@ -267,18 +267,19 @@ impl EndomorphismAction {
             coords_w[3].narrow_to::<4>()?,
         ];
 
-        // Reduce all coefficients mod 2^f. For negative coefficients,
-        // ct_mod returns a negative remainder (truncated division),
-        // so add the modulus to get the canonical representative in
-        // [0, 2^f).
+        // Reduce all coefficients mod 2^f.  `ct_mod` is truncated
+        // division (negative remainder on negative inputs); compute
+        // both `r` and `r + modulus` unconditionally and pick the
+        // non-negative one via a branch-free
+        // [`ConditionallySelectable`] swap, so the sign of `r`
+        // (a derived bit of the secret quaternion coefficient `c`)
+        // does not leak through the canonicalization branch.
         let modulus = BigInt::<4>::ONE << f.value();
         let reduce = |c: &BigInt<4>| -> Scalar {
             let r = c.ct_mod(&modulus);
-            if bool::from(r.is_negative()) {
-                Scalar::from(r.ct_add(&modulus))
-            } else {
-                Scalar::from(r)
-            }
+            let r_plus_mod = r.ct_add(&modulus);
+            let neg = r.is_negative();
+            Scalar::from(BigInt::<4>::conditional_select(&r, &r_plus_mod, neg))
         };
 
         let c0_scalar = reduce(&coords[0]);
