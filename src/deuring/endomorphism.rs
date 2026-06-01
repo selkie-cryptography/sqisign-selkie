@@ -268,17 +268,18 @@ impl EndomorphismAction {
         // None, then a spurious sign retry). The matrix action only
         // depends on the coordinates mod 2^f, and `2^f < 2^256`, so
         // reducing first lands every coordinate in `[0, 2^f)`, which
-        // always fits `BigInt<4>`. For negative coordinates `ct_mod`
-        // returns a negative remainder (truncated division), so add the
-        // modulus to land in the canonical range.
+        // always fits `BigInt<4>`. `ct_mod` is truncated division
+        // (negative remainder on negative inputs); compute both `r` and
+        // `r + modulus` unconditionally and select the non-negative one
+        // via a branch-free `ConditionallySelectable` swap, so the sign
+        // of `r` (a derived bit of the secret quaternion coefficient)
+        // does not leak through the canonicalization.
         let modulus_w = BigInt::<20>::ONE << f.value();
         let reduce = |c: &BigInt<20>| -> Scalar {
             let r = c.ct_mod(&modulus_w);
-            let r = if bool::from(r.is_negative()) {
-                r.ct_add(&modulus_w)
-            } else {
-                r
-            };
+            let r_plus_mod = r.ct_add(&modulus_w);
+            let neg = r.is_negative();
+            let r = BigInt::<20>::conditional_select(&r, &r_plus_mod, neg);
             Scalar::from(
                 r.narrow_to::<4>()
                     .expect("coordinate reduced mod 2^f fits in BigInt<4>"),
