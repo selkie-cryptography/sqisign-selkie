@@ -14,6 +14,8 @@
 //!
 //! [Alg. 4.6]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.6
 
+use subtle::{Choice, ConditionallySelectable};
+
 use crate::{
     curves::{
         TorsionBasis, TorsionExponent, isogeny::Kernel as CurveKernel,
@@ -64,19 +66,24 @@ impl EvenResponseKernel {
     ///
     /// # Side-channel considerations
     ///
-    /// WARNING: Not constant-time. Called on the secret response
-    /// quaternion `α` during signing ([Algorithm 4.2][Alg. 4.2]
-    /// line 27). Variable-time operations on `α`-derived values:
+    /// WARNING: Not yet fully constant-time. Called on the secret
+    /// response quaternion `α` during signing
+    /// ([Algorithm 4.2][Alg. 4.2] line 27).  Variable-time operations
+    /// on `α`-derived values:
     /// - [`LeftIdeal::new`] on `conj(α) + 2^r_rsp`
     /// - [`LeftIdeal::generator`] (`ideal.generator()`)
-    /// - [`BigInt::gcd`] on the `M_α` column-0 entries `s0, t0`
-    /// - the parity branch `if g0_is_even { ... } else { ... }` selecting
-    ///   column 0 or 1 of `M_α` as the kernel scalars. Leaks one bit of `α` per
-    ///   signature, plus the timing of `gcd` itself.
+    /// - [`BigInt::gcd`] on the `M_α` column-0 entries `s0, t0` — timing leak
+    ///   only, no longer a direct bit leak (the column selection below is now
+    ///   branch-free).
     ///
-    /// TODO(ct): Make constant-time before production use. Convert
-    /// the column selection to a [`subtle::ConditionallySelectable`]
-    /// branch and use a constant-time `gcd` once one is available.
+    /// The previous 1-bit parity branch
+    /// `if g0_is_even { col 1 } else { col 0 }` is now a
+    /// constant-time [`subtle::ConditionallySelectable`] swap; the
+    /// kernel scalars are picked obliviously on the parity of
+    /// `gcd(s0, t0)`.
+    ///
+    /// TODO(ct): close the residual `gcd` timing leak by routing
+    /// through a constant-time `gcd` (Bernstein--Yang divstep).
     ///
     /// # Divergences
     ///
@@ -144,17 +151,22 @@ impl EvenResponseKernel {
 
         let m_alpha = endo_e0.apply(&alpha_conj, TorsionExponent::try_from(r_rsp_val).ok()?)?;
         let modulus = BigInt::<4>::ONE << r_rsp_val;
+        // Pick the column of `M_α` whose gcd is odd.  Both columns are
+        // computed unconditionally and the selection is a branch-free
+        // [`ConditionallySelectable`] swap so the column choice does
+        // not leak the parity of `gcd(s0, t0)` (a derived bit of α).
+        //
+        // The `gcd` call is still variable-time on its inputs; that
+        // residual leak is a separate `TODO(ct)` (Bernstein--Yang
+        // divstep replacement of `BigInt::gcd`).
         let s0 = BigInt::<4>::from(*m_alpha.entry(0, 0)).vt_mod(&modulus);
         let t0 = BigInt::<4>::from(*m_alpha.entry(1, 0)).vt_mod(&modulus);
+        let s1 = BigInt::<4>::from(*m_alpha.entry(0, 1)).vt_mod(&modulus);
+        let t1 = BigInt::<4>::from(*m_alpha.entry(1, 1)).vt_mod(&modulus);
         let g0 = s0.gcd(&t0);
-        let g0_is_even = g0.as_limbs()[0] & 1 == 0;
-        let (s, t) = if g0_is_even {
-            let s1 = BigInt::<4>::from(*m_alpha.entry(0, 1)).vt_mod(&modulus);
-            let t1 = BigInt::<4>::from(*m_alpha.entry(1, 1)).vt_mod(&modulus);
-            (s1, t1)
-        } else {
-            (s0, t0)
-        };
+        let pick_col1 = Choice::from(((g0.as_limbs()[0] & 1) ^ 1) as u8);
+        let s = BigInt::conditional_select(&s0, &s1, pick_col1);
+        let t = BigInt::conditional_select(&t0, &t1, pick_col1);
 
         // Step 3: double the basis down to order 2^r_rsp, then
         // compute K = [s]P_red + [t]Q_red on the reduced basis.
