@@ -12,13 +12,11 @@ Implements [SQIsign][sqisign] as specified in the [v2.0.1
 specification][spec] (2025-07-07), targeting the NIST-I parameter set
 (p = 5 · 2²⁴⁸ − 1).
 
-> **Status: work in progress.** Key generation and verification are
-> functional. Signing is structurally complete with commitment phase
-> working; the response phase is slow due to unoptimized quaternion
-> arithmetic. All 100 C reference KAT verification vectors pass.
-> Signing and key generation are **not yet constant-time** — the
-> quaternion layer is variable-time with `TODO(ct)` markers throughout.
-> **Do not use in production.**
+> **Status: work in progress.** Key generation, signing, and
+> verification are functional and pass all 100 C reference KAT
+> vectors. Signing and key generation are **not yet constant-time** —
+> the quaternion layer is variable-time with `TODO(ct)` markers
+> throughout. **Do not use in production.**
 
 ## Example
 
@@ -68,7 +66,7 @@ NIST-I.
 # Building and Testing
 
 ```sh
-cargo test --lib              # run the full test suite (~200 tests)
+cargo test --lib              # run the full test suite
 cargo +nightly fmt            # format
 cargo clippy                  # lint
 ```
@@ -111,8 +109,8 @@ file as their provenance.
 
 | File | Vectors | What it covers |
 |------|---------|----------------|
-| `sqisign_verify.json` | 39 | Wrong msg/pk, bit flips per field, exponent overflow, non-canonical Fp, singular curves, j=1728, starting curve E_0, degenerate matrix, zero challenge, scalar/challenge overflow, cross-field splicing, malformed pk |
-| `sqisign_keygen.json` | 12 | KAT round-trip, sk/pk consistency, truncated/extended/all-zero/all-FF sk, bit flips per region, Frankenstein sk |
+| `sqisign_verify.json` | 39 | Wrong msg/vk, bit flips per field, exponent overflow, non-canonical Fp, singular curves, j=1728, starting curve E_0, degenerate matrix, zero challenge, scalar/challenge overflow, cross-field splicing, malformed vk |
+| `sqisign_keygen.json` | 12 | KAT round-trip, sk/vk consistency, truncated/extended/all-zero/all-FF sk, bit flips per region, Frankenstein sk |
 | `sqisign_sign.json` | 1 | KAT round-trip (skeleton; grows as signing stabilizes) |
 
 The algorithm identifier is `SQIsign_248` (the torsion exponent f=248,
