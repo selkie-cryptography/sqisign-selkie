@@ -47,8 +47,10 @@ We target four goals:
     Cornacchia's algorithm.  Constant-time execution is not a
     nice-to-have; it is a requirement.  Our signing and key generation
     code is currently variable-time, with every secret-touching code
-    path marked \texttt{TODO(ct)}.  We plan to harden after achieving
-    end-to-end interoperability (\S\ref{sec:ct}).
+    path marked \texttt{TODO(ct)}.  End-to-end interoperability
+    against the C reference is complete (\S\ref{sec:status}); the
+    constant-time hardening described in \S\ref{sec:ct} is the
+    active workstream.
 
   \item \textbf{Idiomatic Rust.}  Methods on types over free functions.
     Invariants via distinct types, not runtime checks.  Code that a
@@ -60,12 +62,13 @@ This paper is a living document, updated as the implementation progresses.
 
 \paragraph{Contributions.}
 \begin{itemize}
-  \item A catalog of thirteen implementation bugs (\S\ref{sec:bugs},
+  \item A catalog of implementation bugs (\S\ref{sec:bugs},
     \S\ref{sec:fixed-width-bugs}) with root causes and lessons.
   \item Compile-time invariant enforcement via Rust's type system
     (\S\ref{sec:types}).
-  \item A survey of constant-time SQIsign techniques and a concrete
-    hardening plan (\S\ref{sec:ct}).
+  \item A survey of published constant-time SQIsign techniques and
+    the in-progress hardening work
+    (\S\ref{sec:ct}, \S\ref{sec:post-baseline}).
   \item A negative test vector suite for SQIsign verification,
     signing, and key generation (\S\ref{sec:testing})---portable
     JSON vectors in C2SP/wycheproof format that other implementations

@@ -44,10 +44,12 @@ Algorithm~4.2 line that makes the input secret-derived.
 Field arithmetic (\S\ref{sec:arch}), curve operations, and
 verification are constant-time or operate on purely public data.
 
-We plan a six-phase CT hardening immediately after achieving
-end-to-end interoperability.
+End-to-end interoperability against the C reference is complete
+(\S\ref{sec:status}); constant-time hardening is the active
+workstream, and \S\ref{sec:post-baseline} logs each landed and
+tried-rejected step.
 
-\subsection{Specific findings during audit}
+\subsection{Findings from the constant-time audit pass}
 
 A focused audit of the deuring layer and the underlying bigint
 arithmetic surfaced two undocumented CT leaks on the sign-side
