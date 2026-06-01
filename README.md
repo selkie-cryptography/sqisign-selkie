@@ -20,7 +20,6 @@ specification][spec] (2025-07-07), targeting the NIST-I parameter set
 
 ## Example
 
-<!-- TODO: remove no_run once signing completes in reasonable time -->
 ```rust,no_run
 use sqisign_selkie::{SigningKey, VerifyingKey, SIGNATURE_BYTES};
 
@@ -63,7 +62,7 @@ the number of 64-bit limbs. Worst-case bounds from [Kim et al.][kim]
 (ePrint 2025/1649) establish N=110 limbs (7,040 bits) as sufficient for
 NIST-I.
 
-# Building and Testing
+## Building and Testing
 
 ```sh
 cargo test --lib              # run the full test suite
@@ -116,15 +115,17 @@ file as their provenance.
 The algorithm identifier is `SQIsign_248` (the torsion exponent f=248,
 from which all parameters derive). Vectors use the C2SP/wycheproof
 JSON schema and are designed to be consumed by any SQIsign
-implementation. We intend to upstream these to the C2SP/wycheproof
-project once independently-generated valid vectors are available
-(Phase 2, via Sage).
+implementation.
+
+We intend to upstream these to the C2SP/wycheproof project once we
+have independently-generated valid vectors (via Sage, rather than
+sourced from the C reference KAT file).
 
 ```sh
 cargo test --test wycheproof    # run all test vectors
 ```
 
-# Safety
+## Safety
 
 The `sqisign-selkie` types are designed to make illegal states
 unrepresentable. For example, any instance of a `ProjectiveXOnlyPoint`
@@ -137,9 +138,10 @@ achieved.** The quaternion arithmetic layer (lattice reduction, HNF,
 Cornacchia, `IdealToIsogeny`) is currently variable-time on
 secret-derived data. Every variable-time code path on secret data is
 marked with a `TODO(ct)` comment documenting which spec algorithm line
-makes the input secret-derived. Once end-to-end signing interoperability
-is complete, we plan a six-phase CT hardening based on published
-techniques (Kouider et al., Hanyecz et al., Basso et al., Kim et al.).
+makes the input secret-derived. End-to-end signing interoperability
+with the C reference is complete; the next milestone is CT hardening
+for production use, drawing on published techniques (Kouider et al.,
+Hanyecz et al., Basso et al., Kim et al.).
 
 Variable-time code is only acceptable on truly public data (e.g.,
 verification). We use the [`subtle` crate][subtle_doc] for conditional
@@ -160,13 +162,13 @@ functions.
 
 The implementation is memory-safe and contains no `unsafe` code.
 
-# Minimum Supported Rust Version
+## Minimum Supported Rust Version
 
 | Releases | MSRV   |
 | :---     | :---   |
 | 0.x      | 1.81.0 |
 
-# License
+## License
 
 Licensed under either of
 
@@ -175,7 +177,7 @@ Licensed under either of
 
 at your option.
 
-# About
+## About
 
 *"In very ancient times some of the Clan Coneely, one of the early
 septs of the county, were changed by "art magick" into seals; since
