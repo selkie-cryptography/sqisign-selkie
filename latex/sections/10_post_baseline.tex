@@ -91,6 +91,19 @@ green).  Profiled on an Apple M4, the key-schedule self-time in key
 generation fell from about $1.05\%$ to $0.50\%$ of the total, with the
 generate-loop encryption falling below the sampling threshold.
 
+\paragraph{Branch-free reductions on the secret-quaternion-action path.}
+Two adjacent one-bit leaks fired on derived bits of the secret
+response quaternion $\alpha$:
+(a) \texttt{EvenResponseKernel::from\_quaternion} (\S\,Alg. 4.6)
+picked one of two columns of $M_\alpha$ for the kernel scalars
+$(s, t)$ on the parity of $\gcd(s_0, t_0)$;
+(b) \texttt{EndomorphismAction::apply} canonicalized each
+truncated-mod remainder via \texttt{if r.is\_negative()}.
+Both rewritten as branch-free \texttt{conditional\_select}s.
+Byte-identical across $100/100$ sign KATs.  The residual variable-time
+\texttt{BigInt::gcd} on $(s_0, t_0)$ in (a) is a separate
+\texttt{TODO(ct)}, deferred to the divstep wiring pass.
+
 \subsection{Tried approaches that did not land}
 \label{sec:tried-rejected}
 
