@@ -25,7 +25,7 @@
 //!
 //! # Why nine 29-bit limbs rather than eight 31-bit limbs
 //!
-//! NEON's widening multiply-accumulate is `u32 × u32 → u64`.  With 31-bit
+//! NEON's widening multiply-accumulate is `u32 * u32 -> u64`.  With 31-bit
 //! limbs the accumulator only has 2 bits of headroom before the upper
 //! `u64` lane overflows, leaving no slack for the Montgomery cross-terms
 //! that fold `P4 = 5·2^44` into limb positions.  With 29-bit limbs the
@@ -237,6 +237,94 @@ impl Fp29 {
         Self { limbs: c }
     }
 
+    /// Modular addition, reduced to `[0, 2p)`.
+    ///
+    /// Adds limbwise, subtracts `2p` (via add-2-to-limb-0 / subtract-`2·P4_29`-
+    /// from-limb-8), propagates carries, then conditionally adds `2p` back if
+    /// the propagation detected a borrow.  Mirrors `Fp::add` structurally.
+    pub(super) fn add(self, rhs: Fp29) -> Fp29 {
+        let mut n = Self {
+            limbs: [
+                self.limbs[0] + rhs.limbs[0],
+                self.limbs[1] + rhs.limbs[1],
+                self.limbs[2] + rhs.limbs[2],
+                self.limbs[3] + rhs.limbs[3],
+                self.limbs[4] + rhs.limbs[4],
+                self.limbs[5] + rhs.limbs[5],
+                self.limbs[6] + rhs.limbs[6],
+                self.limbs[7] + rhs.limbs[7],
+                self.limbs[8] + rhs.limbs[8],
+            ],
+        };
+        n.limbs[0] = n.limbs[0].wrapping_add(2);
+        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_sub(2 * P4_29);
+        let carry = n.prop();
+        n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
+        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P4_29) & carry);
+        n.prop();
+        n
+    }
+
+    /// Modular subtraction, reduced to `[0, 2p)`.
+    ///
+    /// Limbwise wrapping-subtract; if the propagation detects a borrow,
+    /// adds `2p` back.  Mirrors `Fp::sub` structurally.
+    pub(super) fn sub(self, rhs: Fp29) -> Fp29 {
+        let mut n = Self {
+            limbs: [
+                self.limbs[0].wrapping_sub(rhs.limbs[0]),
+                self.limbs[1].wrapping_sub(rhs.limbs[1]),
+                self.limbs[2].wrapping_sub(rhs.limbs[2]),
+                self.limbs[3].wrapping_sub(rhs.limbs[3]),
+                self.limbs[4].wrapping_sub(rhs.limbs[4]),
+                self.limbs[5].wrapping_sub(rhs.limbs[5]),
+                self.limbs[6].wrapping_sub(rhs.limbs[6]),
+                self.limbs[7].wrapping_sub(rhs.limbs[7]),
+                self.limbs[8].wrapping_sub(rhs.limbs[8]),
+            ],
+        };
+        let carry = n.prop();
+        n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
+        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P4_29) & carry);
+        n.prop();
+        n
+    }
+
+    /// Squares this element via [`Fp29::mul`].
+    ///
+    /// The optimised radix-29 square (symmetric cross-terms, `2 · a[i] · a[j]`)
+    /// is deferred to the NEON-intrinsics commit, where the symmetry
+    /// translates to fewer vectorised products.
+    pub(super) fn square(&self) -> Fp29 {
+        self.mul(self)
+    }
+
+    /// Propagates carries through the limbs, returning a sign mask:
+    /// `0` if the final accumulator was non-negative, `0xFFFFFFFF` if it
+    /// was negative (indicating a borrow occurred upstream).
+    ///
+    /// Mirrors [`Fp::prop`]: arithmetic right-shift on an `i64` carry
+    /// preserves the sign, and the high bit of `limbs[LIMBS_29 - 1]` after
+    /// the final wrapping add encodes whether the cumulative value
+    /// overflowed (borrowed).
+    ///
+    /// The cast chain `u32 -> i32 -> i64` is load-bearing: `u32 -> i64`
+    /// zero-extends and would lose the borrow sign, while `u32 -> i32`
+    /// preserves bits (same width) and `i32 -> i64` then sign-extends.
+    fn prop(&mut self) -> u32 {
+        let mut carry = (self.limbs[0] as i32) as i64;
+        carry >>= RADIX_29;
+        self.limbs[0] &= MASK_29;
+        for i in 1..LIMBS_29 - 1 {
+            carry += (self.limbs[i] as i32) as i64;
+            self.limbs[i] = (carry as u32) & MASK_29;
+            carry >>= RADIX_29;
+        }
+        self.limbs[LIMBS_29 - 1] = self.limbs[LIMBS_29 - 1].wrapping_add(carry as u32);
+        let sign = (self.limbs[LIMBS_29 - 1] >> 1) >> 30;
+        sign.wrapping_neg()
+    }
+
     /// Conditionally subtracts `p` to canonicalise an in-range result.
     ///
     /// Assumes `self < 2p` with each limb already `< 2^29`.  Returns the
@@ -263,7 +351,7 @@ impl Fp29 {
         Self { limbs: out }
     }
 
-    /// Exits Montgomery form: `mont → mont / R = canonical`.
+    /// Exits Montgomery form: `mont -> mont / R = canonical`.
     ///
     /// Multiplies by `1` in non-Montgomery form ([`ONE_RAW`]); the Montgomery
     /// product is `mont · 1 · R⁻¹ = mont / R`.  Then canonicalises via
