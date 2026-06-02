@@ -1,6 +1,7 @@
 {
   "algorithm": "SQIsign_248",
   "schema": "sqisign_keygen_schema.json",
+  "generatorVersion": "sqisign-selkie-0.0.1",
   "numberOfTests": 14,
   "header": [
     "SQIsign_248: f=248, p = 5*2^248 - 1 (NIST security level I).",
