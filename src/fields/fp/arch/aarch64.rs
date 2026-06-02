@@ -42,6 +42,9 @@
 //!
 //! [2026-394]: https://eprint.iacr.org/2026/394.pdf
 
+#[cfg(test)]
+mod tests;
+
 /// Bits per limb in the radix-29 representation.
 pub(super) const RADIX_29: u32 = 29;
 
@@ -92,6 +95,84 @@ impl Fp29 {
     pub(super) const ZERO: Self = Self {
         limbs: [0; LIMBS_29],
     };
+
+    /// Decodes 32 bytes (little-endian) into a normalised radix-29 element.
+    ///
+    /// Mirrors [`super::super::Fp::from_bytes`] but stays out of Montgomery
+    /// form: the limbs hold the canonical integer value, not `value · R mod p`.
+    /// The input must encode a value less than `p`; out-of-range bits in
+    /// `bytes[31]` simply flow into the high limb without canonicalisation.
+    pub(super) fn from_bytes_le(bytes: &[u8; 32]) -> Self {
+        let mut limbs = [0u32; LIMBS_29];
+        let mut acc: u64 = 0;
+        let mut bits: u32 = 0;
+        let mut limb_idx = 0;
+
+        for &byte in bytes.iter() {
+            acc |= (byte as u64) << bits;
+            bits += 8;
+            if bits >= RADIX_29 && limb_idx < LIMBS_29 - 1 {
+                limbs[limb_idx] = (acc as u32) & MASK_29;
+                acc >>= RADIX_29;
+                bits -= RADIX_29;
+                limb_idx += 1;
+            }
+        }
+        limbs[limb_idx] = acc as u32;
+
+        Self { limbs }
+    }
+
+    /// Encodes a normalised radix-29 element as 32 bytes, little-endian.
+    ///
+    /// Each limb must be `< 2^29`; if the value is unsaturated the encoded
+    /// bytes will overflow into adjacent positions.
+    pub(super) fn to_bytes_le(self) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        let mut acc: u64 = 0;
+        let mut bits: u32 = 0;
+        let mut pos = 0;
+
+        for &limb in self.limbs.iter() {
+            acc |= (limb as u64) << bits;
+            bits += RADIX_29;
+            while bits >= 8 && pos < 32 {
+                out[pos] = acc as u8;
+                acc >>= 8;
+                bits -= 8;
+                pos += 1;
+            }
+        }
+        if pos < 32 {
+            out[pos] = acc as u8;
+        }
+
+        out
+    }
+}
+
+impl From<super::super::Fp> for Fp29 {
+    /// Converts radix-51 Montgomery form to canonical radix-29 form.
+    ///
+    /// Routes through canonical bytes: [`super::super::Fp::to_bytes`] exits
+    /// Montgomery form and emits the integer value, which
+    /// [`Fp29::from_bytes_le`] then repacks at radix-29.  Expensive (one full
+    /// Montgomery reduction); intended for test boundaries, not the
+    /// production hot path.
+    fn from(fp: super::super::Fp) -> Self {
+        Self::from_bytes_le(&fp.to_bytes())
+    }
+}
+
+impl From<Fp29> for super::super::Fp {
+    /// Converts canonical radix-29 form to radix-51 Montgomery form.
+    ///
+    /// Symmetric to [`From<super::super::Fp> for Fp29`]: emits the canonical
+    /// integer bytes, then runs [`super::super::Fp::from_bytes`] to enter
+    /// Montgomery form.
+    fn from(fp29: Fp29) -> Self {
+        Self::from_bytes(&fp29.to_bytes_le())
+    }
 }
 
 const _: () = {
