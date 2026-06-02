@@ -115,6 +115,41 @@ fn fp_mul_4_independent(bencher: divan::Bencher) {
     });
 }
 
+/// Karatsuba-decomposed `Fp29x4::mul_karatsuba` — three independent
+/// sub-product chains (5x5, 4x4, 5x5) plus polynomial assembly and
+/// Montgomery reduction.  Compare against `fp29x4_mul_neon` (schoolbook).
+#[cfg(target_arch = "aarch64")]
+#[divan::bench]
+fn fp29x4_mul_karatsuba(bencher: divan::Bencher) {
+    let a_fp = [
+        Fp::from_small(3),
+        Fp::from_small(7),
+        Fp::from_small(11),
+        Fp::from_small(13),
+    ];
+    let b_fp = [
+        Fp::from_small(17),
+        Fp::from_small(19),
+        Fp::from_small(23),
+        Fp::from_small(29),
+    ];
+    let a29 = [
+        Fp29::from(a_fp[0]),
+        Fp29::from(a_fp[1]),
+        Fp29::from(a_fp[2]),
+        Fp29::from(a_fp[3]),
+    ];
+    let b29 = [
+        Fp29::from(b_fp[0]),
+        Fp29::from(b_fp[1]),
+        Fp29::from(b_fp[2]),
+        Fp29::from(b_fp[3]),
+    ];
+    let a4 = Fp29x4::from_scalars(&a29);
+    let b4 = Fp29x4::from_scalars(&b29);
+    bencher.bench(|| divan::black_box(&a4).mul_karatsuba(divan::black_box(&b4)));
+}
+
 /// One vectorised `Fp29x4::mul` — computes four independent products in one
 /// NEON-vectorised CIOS schoolbook.  Compare against `fp_mul_4_independent`.
 #[cfg(target_arch = "aarch64")]

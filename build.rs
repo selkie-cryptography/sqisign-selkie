@@ -4,11 +4,11 @@
 //! benefits from the NEON-vectorised Fp29x4 path.  Currently:
 //!
 //! - **Set** on aarch64 with `target_cpu` not in the known-loss list, and on
-//!   native macOS builds whose host chip is M1 or earlier (M-series cores
-//!   wider than M1 lose to scalar Fp51).
-//! - **Not set** on `aarch64-apple-darwin` whose detected host chip is
-//!   Apple M2 / M3 / M4 (or any future model spelled `Apple M{N≥2}`),
-//!   and on any target whose `target_cpu` matches a known-loss entry.
+//!   native macOS builds whose host chip is M1 or earlier (M-series cores wider
+//!   than M1 lose to scalar Fp51).
+//! - **Not set** on `aarch64-apple-darwin` whose detected host chip is Apple M2
+//!   / M3 / M4 (or any future model spelled `Apple M{N≥2}`), and on any target
+//!   whose `target_cpu` matches a known-loss entry.
 //!
 //! The list reflects measured / projected outcomes for the 2026/394
 //! NEON Fp port:
