@@ -9,21 +9,28 @@ use subtle::Choice;
 use super::BigInt;
 
 impl<const N: usize> BigInt<N> {
-    /// Constant-time Euclidean division: returns `(quotient, remainder)`
-    /// such that `self = quotient * divisor + remainder` with
+    /// Euclidean division: returns `(quotient, remainder)` such that
+    /// `self = quotient * divisor + remainder` with
     /// `0 <= remainder < |divisor|`.
     ///
     /// The quotient sign follows standard Euclidean division convention:
-    /// the remainder is always non-negative.
-    ///
-    /// Based on Algorithm 5 (§3.4) from [Kouider et al.][ct-bigint],
-    ///
-    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    /// operating on magnitudes then adjusting signs.
+    /// the remainder is always non-negative. Magnitude division is
+    /// Knuth's Algorithm D; the sign-adjustment step is constant-time
+    /// over its inputs.
     ///
     /// # Panics
     ///
     /// Panics if `divisor` is zero.
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time on both operands' effective lengths and on the
+    /// at-most-one fix-up step inside the magnitude loop. `TODO(ct)`:
+    /// replace [`mag_div_rem`][Self::mag_div_rem] with the CT divider
+    /// from [Kouider et al.][ct-bigint] before any caller that operates
+    /// on secret-derived inputs is shipped.
+    ///
+    /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
     pub fn div_rem(&self, divisor: &Self) -> (Self, Self) {
         assert!(!bool::from(divisor.is_zero()), "division by zero");
 
