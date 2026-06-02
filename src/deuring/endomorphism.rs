@@ -89,7 +89,7 @@ impl EndomorphismMatrix {
         (BigInt::from(r0), BigInt::from(r1))
     }
 
-    /// Apply this matrix, scaled by a scalar, to a propagated basis.
+    /// Applies this matrix, scaled by a scalar, to a propagated basis.
     ///
     /// Computes
     ///   P'   = [s·m₀₀]P + [s·m₁₀]Q
@@ -212,7 +212,7 @@ pub(crate) struct EndomorphismAction {
 }
 
 impl EndomorphismAction {
-    /// Apply this representation to `alpha ∈ O_t ≅ End(E_t)`,
+    /// Applies this representation to `alpha ∈ O_t ≅ End(E_t)`,
     /// returning the action matrix on `E_t[2^f]`.
     ///
     /// Decomposes `alpha` from the `{1, i, j, k}` basis into the

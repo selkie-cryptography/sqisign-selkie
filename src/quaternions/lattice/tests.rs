@@ -283,7 +283,7 @@ fn i8(v: i64) -> I8 {
     I8::from(v)
 }
 
-/// Compute the Gram matrix for the quaternion bilinear form
+/// Computes the Gram matrix for the quaternion bilinear form
 /// ⟨α, β⟩ = tr(αβ̄) with Gram diag(2, 2, 2p, 2p) on {1,i,j,k}.
 fn quat_gram(basis: &[V8; 4], p: &I8) -> Matrix<8> {
     let two = i8(2);

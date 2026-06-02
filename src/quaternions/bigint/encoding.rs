@@ -10,7 +10,7 @@ use core::fmt;
 use super::BigInt;
 
 impl<const N: usize> BigInt<N> {
-    /// Decode from little-endian bytes (unsigned, non-negative).
+    /// Decodes from little-endian bytes (unsigned, non-negative).
     ///
     /// Packs bytes into u64 limbs. Caller must ensure
     /// `bytes.len() <= N * 8`; oversized input panics on the inevitable
@@ -28,7 +28,7 @@ impl<const N: usize> BigInt<N> {
         Self { sign: 0, limbs }
     }
 
-    /// Decode from little-endian bytes (signed, two's complement).
+    /// Decodes from little-endian bytes (signed, two's complement).
     ///
     /// The highest bit of the last byte is the sign bit. Same
     /// precondition as [`Self::from_bytes_le_unsigned`].
@@ -87,7 +87,7 @@ impl<const N: usize> BigInt<N> {
         if neg { -val } else { val }
     }
 
-    /// Convert the **magnitude** to `f64` byte-for-byte matching
+    /// Converts the **magnitude** to `f64` byte-for-byte matching
     /// mini-GMP's `mpz_get_d`
     /// (`the-sqisign/src/mini-gmp/mini-gmp.c:1773-1808`).
     ///

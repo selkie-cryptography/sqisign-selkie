@@ -592,7 +592,7 @@ fn kat_sk_pk_match_all() {
     }
 }
 
-/// Parse → serialize → re-parse round-trip for every KAT signing key.
+/// Parses → serialize → re-parse round-trip for every KAT signing key.
 #[test]
 fn kat_sk_roundtrip_all() {
     for (i, &(_, _, sk_hex, ..)) in crate::keys::kat_data::KAT_VECTORS.iter().enumerate() {
@@ -607,7 +607,7 @@ fn kat_sk_roundtrip_all() {
     }
 }
 
-/// Sign + self-verify on KAT vector 0 only.
+/// Signs + self-verify on KAT vector 0 only.
 ///
 /// Avoids the cost of running through all 100 KAT vectors when
 /// all we want is the answer to "does any signature round-trip
@@ -1221,7 +1221,7 @@ fn sign_kat_derand_099() {
     sign_kat_idx_probe_inner(99);
 }
 
-/// Verify the *C reference's* KAT[0] signature with our verifier.
+/// Verifies the *C reference's* KAT[0] signature with our verifier.
 ///
 /// Isolates `verify` bugs from `sign` bugs: if our verifier rejects the
 /// C ref's known-good signature, the bug is on the verify side. If it
@@ -1281,7 +1281,7 @@ fn verify_kat_zero_cref_sig() {
         .expect("C ref's KAT[0] signature must verify against our verifier");
 }
 
-/// Generate a fresh key, sign a random message, verify.
+/// Generates a fresh key, sign a random message, verify.
 ///
 /// Uses `OsRng`; rejection sampling in the response phase can
 /// stretch a single iteration, so this test sits under the
@@ -1307,7 +1307,7 @@ fn sign_fresh() {
         .expect("signature should verify");
 }
 
-/// Sign with KAT vector 0's keypair and verify.
+/// Signs with KAT vector 0's keypair and verifies.
 ///
 /// Run with: `cargo test --lib --release sign_with_kat_key -- --ignored`.
 #[test]
@@ -1334,7 +1334,7 @@ fn sign_with_kat_key() {
         .expect("signature should verify against KAT pk");
 }
 
-/// Lock in byte-stream alignment of `Lattice::random_prime_norm_wide`
+/// Locks in byte-stream alignment of `Lattice::random_prime_norm_wide`
 /// with the C reference's `quat_sampling_random_ideal_O0_given_norm`
 /// (`normeq.c:297-384`).
 ///

@@ -48,7 +48,7 @@ pub(crate) struct GluingData {
 }
 
 impl GluingKernel {
-    /// Compute the gluing (2,2)-isogeny codomain and evaluation data.
+    /// Computes the gluing (2,2)-isogeny codomain and evaluation data.
     ///
     /// Implements `GluingCodomain` ([§8.5.5], Algorithm 8.38).
     ///
@@ -251,7 +251,7 @@ impl GluingKernel {
         JacobianPoint::new(xp, yp, zp, wp, data.codomain.clone())
     }
 
-    /// Compute the gluing and push all points through.
+    /// Computes the gluing and pushes all points through.
     pub(crate) fn isogeny(
         &self,
         pts: &[(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)],
@@ -288,7 +288,7 @@ struct TranslationData {
     Z: Fp2,
 }
 
-/// Compute the pre-inversion data for `ActionByTranslation`
+/// Computes the pre-inversion data for `ActionByTranslation`
 /// ([§8.5.5], Algorithm 8.35).
 ///
 /// [§8.5.5]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.8.5.5

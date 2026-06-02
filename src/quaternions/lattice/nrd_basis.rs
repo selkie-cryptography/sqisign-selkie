@@ -45,14 +45,14 @@ pub struct NrdBasis<const N: usize> {
 }
 
 impl<const N: usize> NrdBasis<N> {
-    /// Construct from column vectors, computing the reduced-norm
+    /// Constructs from column vectors, computing the reduced-norm
     /// Gram matrix.
     pub fn new(cols: [Vector<N>; D]) -> Self {
         let gram = Self::compute_gram(&cols);
         Self { cols, gram }
     }
 
-    /// Compute the reduced-norm Gram matrix for column vectors in
+    /// Computes the reduced-norm Gram matrix for column vectors in
     /// B_{p,∞} = (−1, −p)_Q.
     fn compute_gram(cols: &[Vector<N>; D]) -> Matrix<N> {
         let p: BigInt<N> = {
@@ -82,7 +82,7 @@ impl<const N: usize> NrdBasis<N> {
         gram
     }
 
-    /// Construct from columns and a precomputed Gram matrix.
+    /// Constructs from columns and a precomputed Gram matrix.
     ///
     /// The caller is responsible for ensuring `gram` is the correct
     /// inner-product matrix for `cols`. This exists for callers that

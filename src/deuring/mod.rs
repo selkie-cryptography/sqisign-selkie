@@ -43,7 +43,7 @@ use crate::{
     surfaces,
 };
 
-/// Compute a u-isogeny from E_t via a (2,2)-isogeny chain.
+/// Computes a u-isogeny from E_t via a (2,2)-isogeny chain.
 ///
 /// [FixedDegreeIsogeny][Alg. 3.15] (Algorithm [3.15][Alg. 3.15]):
 /// given a positive odd [`IsogenyDegree`] u < 2^{f−2} and the
@@ -269,7 +269,7 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
 /// [Alg. 3.15]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.15
 /// [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
 impl<const N: usize> LeftIdeal<N> {
-    /// Compute the isogeny corresponding to this ideal.
+    /// Computes the isogeny corresponding to this ideal.
     ///
     /// Returns `(E_I, φ_I(P₀), φ_I(Q₀), φ_I(P₀ − Q₀))` or `None` if
     /// the decomposition or chain fails probabilistically.

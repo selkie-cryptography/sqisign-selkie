@@ -168,7 +168,7 @@ pub const BASIS_E0_Q_X: Fp2 = Fp2::new(
 mod tests {
     use super::*;
 
-    /// Check that x³ + x is a square in F_{p²} (i.e., (x, ·) is on E₀).
+    /// Checks that x³ + x is a square in F_{p²} (i.e., (x, ·) is on E₀).
     fn is_on_e0(x: &Fp2) -> bool {
         let x2 = x.square();
         let rhs = &(&x2 + &Fp2::ONE) * x;

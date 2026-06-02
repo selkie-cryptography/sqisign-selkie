@@ -30,7 +30,7 @@ pub struct Isomorphism {
 }
 
 impl Isomorphism {
-    /// Apply this isomorphism to a projective x-only point.
+    /// Applies this isomorphism to a projective x-only point.
     ///
     /// Implements lines 5–6 of [Alg. 8.9][Alg. 8.9]:
     /// ```text

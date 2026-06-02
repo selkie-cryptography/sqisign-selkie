@@ -1,7 +1,7 @@
 use super::*;
 use crate::curves::montgomery::{Curve, ProjectiveXOnlyPoint};
 
-/// Test the splitting function with a synthetic product null point.
+/// Tests the splitting function with a synthetic product null point.
 ///
 /// A product theta null point for E₁ × E₂ with theta constants
 /// (a₁, b₁) and (a₂, b₂) is (a₁a₂, a₁b₂, b₁a₂, b₁b₂).
@@ -37,7 +37,7 @@ fn splitting_synthetic_product() {
     );
 }
 
-/// Test the gluing codomain computation in isolation.
+/// Tests the gluing codomain computation in isolation.
 ///
 /// Uses E₀ × E₀ with the precomputed basis. This exercises the
 /// gluing's `ActionByTranslation`, `theta_change_of_basis`,
@@ -199,7 +199,7 @@ fn theta_product_to_montgomery_matches_formula() {
     assert_eq!(out2, exp2, "(X₂ : Z₂) mismatch");
 }
 
-/// Decode a 32-byte big-endian hex string (as emitted by `[CHAIN_DUMP]`
+/// Decodes a 32-byte big-endian hex string (as emitted by `[CHAIN_DUMP]`
 /// dumps on either side) into a 32-byte little-endian array suitable for
 /// `Fp::from_bytes` / `Fp2::from_bytes`.
 ///
@@ -218,7 +218,7 @@ fn fp32_le_from_dump_hex(be_hex: &str) -> [u8; 32] {
     le
 }
 
-/// Build an `Fp2` from a `(re_be_hex, im_be_hex)` pair in the C
+/// Builds an `Fp2` from a `(re_be_hex, im_be_hex)` pair in the C
 /// reference's `[CHAIN_DUMP]` format.
 fn fp2_from_dump_hex(re_be_hex: &str, im_be_hex: &str) -> Fp2 {
     let re_le = fp32_le_from_dump_hex(re_be_hex);
@@ -415,7 +415,7 @@ fn print_e0_basis_even_limbs() {
     crate::selkie_trace!("E0_PMQ_X.im limbs = {:#018x?}", pmq_x.b.0);
 }
 
-/// Print Montgomery-form limbs for `1/2 mod p`, needed for E0's
+/// Prints Montgomery-form limbs for `1/2 mod p`, needed for E0's
 /// normalized doubling constant `A24 = (A + 2C)/(4C) = 1/2`.
 #[test]
 fn print_one_half_limbs() {
@@ -425,7 +425,7 @@ fn print_one_half_limbs() {
     crate::selkie_trace!("1/2 limbs (Montgomery) = {:#018x?}", half.0);
 }
 
-/// Print Montgomery-form limbs for `-1 mod p`, needed for the
+/// Prints Montgomery-form limbs for `-1 mod p`, needed for the
 /// `NORMALIZATION_TRANSFORMS` matrices in the splitter.
 #[test]
 fn print_minus_one_limbs() {

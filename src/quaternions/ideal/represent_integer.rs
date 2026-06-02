@@ -12,12 +12,12 @@ use super::super::{
     precomputed::{EXTREMAL_ORDERS, P_WIDE},
 };
 
-/// Find γ ∈ O with nrd(γ) = M, trying each precomputed extremal order.
+/// Finds γ ∈ O with nrd(γ) = M, trying each precomputed extremal order.
 ///
 /// Iterates over the seven precomputed extremal orders, calling
 /// [`ExtremalOrder::represent_integer`] on each until one succeeds.
 impl ExtremalOrder<8> {
-    /// Find γ ∈ O with nrd(γ) = M, trying all precomputed orders.
+    /// Finds γ ∈ O with nrd(γ) = M, trying all precomputed orders.
     ///
     /// Iterates over [`EXTREMAL_ORDERS`] and calls
     /// [`Self::represent_integer`] on each until one succeeds.
@@ -38,7 +38,7 @@ impl ExtremalOrder<8> {
         None
     }
 
-    /// Find γ ∈ O with nrd(γ) = M using this extremal order.
+    /// Finds γ ∈ O with nrd(γ) = M using this extremal order.
     ///
     /// Implements [Alg. 3.12].
     ///

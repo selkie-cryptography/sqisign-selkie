@@ -89,7 +89,7 @@ impl VerifyingKey {
         &self.curve
     }
 
-    /// Verify a signature on a message.
+    /// Verifies a signature on a message.
     ///
     /// Corresponds to `SQIsign.Verify` ([§4.5], Algorithm 4.9).
     /// See the doc comment on this method in the source for a

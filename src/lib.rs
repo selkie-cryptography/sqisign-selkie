@@ -48,11 +48,11 @@ pub mod l2_trace_active {
     thread_local! {
         static ACTIVE: Cell<bool> = const { Cell::new(false) };
     }
-    /// Set the active flag.
+    /// Sets the active flag.
     pub fn set(v: bool) {
         ACTIVE.with(|c| c.set(v));
     }
-    /// Read the active flag.
+    /// Reads the active flag.
     pub fn get() -> bool {
         ACTIVE.with(|c| c.get())
     }

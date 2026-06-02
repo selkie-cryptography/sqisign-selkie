@@ -687,7 +687,7 @@ fn from_hnf_columns_predictable_4cols() {
     assert_eq!(hnf_classical, hnf_mod, "classical vs mod");
 }
 
-/// Take the predictable test inputs and shift left by 200 bits.
+/// Takes the predictable test inputs and shift left by 200 bits.
 /// HNF should still agree across all three Selkie variants — but at
 /// width 30 with large entries this exposes the bug.
 #[test]

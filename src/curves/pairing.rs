@@ -37,7 +37,7 @@ impl RootOfUnity {
         &self.0
     }
 
-    /// Compute ζ^{2^n} by repeated squaring.
+    /// Computes ζ^{2^n} by repeated squaring.
     #[must_use]
     pub fn square_n(&self, n: u32) -> Self {
         let mut result = self.0;
@@ -47,7 +47,7 @@ impl RootOfUnity {
         Self(result)
     }
 
-    /// Compute ζ^k for a scalar k.
+    /// Computes ζ^k for a scalar k.
     #[must_use]
     pub fn pow(&self, k: u32) -> Self {
         if k == 0 {
@@ -66,7 +66,7 @@ impl RootOfUnity {
         Self(result)
     }
 
-    /// Compute ζ^k for a [`Scalar`]-sized exponent.
+    /// Computes ζ^k for a [`Scalar`]-sized exponent.
     ///
     /// Iterates over the scalar's little-endian byte representation
     /// and performs a standard square-and-multiply loop.
@@ -92,7 +92,7 @@ impl RootOfUnity {
         Self(result)
     }
 
-    /// Compute the discrete log k ∈ \[0, 2^e) such that target = self^k.
+    /// Computes the discrete log k ∈ \[0, 2^e) such that target = self^k.
     ///
     /// Uses the Pohlig-Hellman algorithm for 2-power order groups.
     /// SQIsign only applies this to pairing outputs.
@@ -212,7 +212,7 @@ impl CubicalPoint {
         }
     }
 
-    /// Construct from an affine x-coordinate: (x : 1).
+    /// Constructs from an affine x-coordinate: (x : 1).
     fn from_affine(x: Fp2) -> Self {
         Self { X: x, Z: Fp2::ONE }
     }
@@ -282,7 +282,7 @@ impl CubicalPoint {
     }
 }
 
-/// Compute the reduced Tate pairing t_{2^e}(P, Q).
+/// Computes the reduced Tate pairing t_{2^e}(P, Q).
 ///
 /// Takes three projective x-only points P, Q, P+Q on the same curve
 /// and the torsion exponent e (where 2^e · P = O_E). Internally
@@ -554,7 +554,7 @@ impl TorsionBasis {
     }
 }
 
-/// Compute the Weil pairing e_{2^e}(P, Q).
+/// Computes the Weil pairing e_{2^e}(P, Q).
 ///
 /// Defined as `e(P, Q) = T(P, Q) / T(Q, P)` where `T` is the
 /// reduced Tate pairing. Takes the same `(P, Q, P+Q)` triple as
@@ -589,7 +589,7 @@ mod tests {
         params,
     };
 
-    /// Build the E₀ torsion basis from params.
+    /// Builds the E₀ torsion basis from params.
     fn e0_basis() -> TorsionBasis {
         let curve = Curve::E0;
         let p = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_P_X, &curve);
@@ -809,7 +809,7 @@ mod tests {
         );
     }
 
-    /// Verify Tate pairing bilinearity (P+Q convention).
+    /// Verifies Tate pairing bilinearity (P+Q convention).
     ///
     /// `T([2]P, Q, [2]P+Q) == T(P, Q, P+Q)^2`. The third argument
     /// is the SUM, computed via `differential_add(P, Q, P-Q)`.
@@ -845,7 +845,7 @@ mod tests {
         );
     }
 
-    /// Verify Tate pairing bilinearity (P-Q convention).
+    /// Verifies Tate pairing bilinearity (P-Q convention).
     ///
     /// `T([2]P, Q, [2]P-Q) == T(P, Q, P-Q)^2`. Same root cause as
     /// [`tate_bilinear_in_first_arg_with_sum`] — fails for both
@@ -869,7 +869,7 @@ mod tests {
         );
     }
 
-    /// Verify Tate pairing antisymmetry — the property
+    /// Verifies Tate pairing antisymmetry — the property
     /// `from_bases` relies on for the cross-pairing dlog.
     ///
     /// Specifically: `t(P, Q) · t(Q, P) == 1` so that
@@ -893,7 +893,7 @@ mod tests {
         );
     }
 
-    /// Verify Weil pairing antisymmetry: `W(P, Q) * W(Q, P) == 1`.
+    /// Verifies Weil pairing antisymmetry: `W(P, Q) * W(Q, P) == 1`.
     #[test]
     fn weil_antisymmetric() {
         let basis = e0_basis();
