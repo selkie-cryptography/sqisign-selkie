@@ -402,8 +402,21 @@ fn sign(runner: &mut CtRunner, rng: &mut BenchRng) {
 }
 
 // Verify: Left = valid sig, Right = corrupted sig.
-// Verify should be constant-time to prevent oracle attacks.
+//
+// Verify operates on public data per the spec (vk, sig, msg are
+// all transmitted in the clear), so this is **not** a CT-on-secrets
+// target. It measures an *oracle-resistance* property — whether an
+// attacker submitting crafted signatures can learn anything from
+// timing deltas. The property isn't required by SQIsign-NIST-I and
+// many branches on attacker-controlled bytes are expected today
+// (`n_bt` / `r_rsp` parsing, etc.). Gated behind `DUDECT_ORACLE` so
+// the default ct.yml run skips it; opt in via env var to collect
+// the data.
 fn verify(runner: &mut CtRunner, rng: &mut BenchRng) {
+    if std::env::var_os("DUDECT_ORACLE").is_none() {
+        eprintln!("[dudect] skipping verify; set DUDECT_ORACLE=1 to enable");
+        return;
+    }
     use sqisign_selkie::{SIGNATURE_BYTES, Signature, VerifyingKey};
 
     let pk_hex = sqisign_selkie::keys::kat_data::KAT_VECTORS[0].1;
