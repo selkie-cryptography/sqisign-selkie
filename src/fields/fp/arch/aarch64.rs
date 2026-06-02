@@ -409,96 +409,28 @@ impl Fp29x4 {
     /// Vectorised Montgomery multiplication: returns
     /// `[a[0] * b[0] * R^-1, ..., a[3] * b[3] * R^-1]` packed in SoA form.
     ///
-    /// Vectorised version of [`Fp29::mul`]: 17 schoolbook columns with the
-    /// Montgomery fold interleaved at `i >= 8`, accumulating four lane-
-    /// parallel partial products per column.  Two `uint64x2_t` accumulators
-    /// (`t_lo` for lanes 0..2, `t_hi` for lanes 2..4) hold the running totals;
-    /// `vmlal_u32` and `vmlal_high_u32` do the `u32 * u32 -> u64` multiply-
-    /// accumulate in a single instruction.
+    /// Karatsuba-decomposed: splits each 9-limb input as
+    /// `a = a_lo + a_hi * 2^(5 * 29)` with `a_lo = a[0..5]` (5 limbs) and
+    /// `a_hi = a[5..9]` (4 limbs), computes three sub-products
     ///
-    /// Output lane bounds match the scalar [`Fp29::mul`]: each output limb is
-    /// `< 2^29` for `i < 8` and `< 2^20` for `i = 8`.
-    pub fn mul(&self, rhs: &Fp29x4) -> Fp29x4 {
-        let a = &self.limbs;
-        let b = &rhs.limbs;
-
-        // SAFETY: every intrinsic below is part of the aarch64 NEON base ISA
-        // (`target_feature = "neon"` is always-on for `target_arch = "aarch64"`).
-        // All operate on register-width `uint32x4_t` / `uint64x2_t` values with
-        // no memory access beyond the input vectors, so there is no aliasing or
-        // alignment concern.  `vshrq_n_u64::<29>` is well-defined: 29 < 64.
-        unsafe {
-            let zero_u32 = vdupq_n_u32(0);
-            let zero_u64 = vdupq_n_u64(0);
-            let mask_u32 = vdupq_n_u32(MASK_29);
-            let p4_vec = vdupq_n_u32(P4_29);
-
-            let mut t_lo = zero_u64;
-            let mut t_hi = zero_u64;
-            let mut v = [zero_u32; LIMBS_29];
-            let mut c = [zero_u32; LIMBS_29];
-
-            for i in 0..(2 * LIMBS_29 - 1) {
-                let j_lo = if i >= LIMBS_29 { i - LIMBS_29 + 1 } else { 0 };
-                let j_hi = i.min(LIMBS_29 - 1);
-                for j in j_lo..=j_hi {
-                    let a_j = a[j];
-                    let b_k = b[i - j];
-                    t_lo = vmlal_u32(t_lo, vget_low_u32(a_j), vget_low_u32(b_k));
-                    t_hi = vmlal_high_u32(t_hi, a_j, b_k);
-                }
-
-                if i >= LIMBS_29 - 1 {
-                    let v_vec = v[i - (LIMBS_29 - 1)];
-                    t_lo = vmlal_u32(t_lo, vget_low_u32(v_vec), vget_low_u32(p4_vec));
-                    t_hi = vmlal_high_u32(t_hi, v_vec, p4_vec);
-                }
-
-                // Extract limb in three instructions: narrow t_lo's low 32 bits,
-                // narrow t_hi into the upper half (fused), then mask to 29 bits in
-                // u32 space.  Replaces the prior 5-instruction (2x and + 2x narrow +
-                // combine) pattern.
-                let limb_low_pair = vmovn_u64(t_lo);
-                let limb_full = vmovn_high_u64(limb_low_pair, t_hi);
-                let limb = vandq_u32(limb_full, mask_u32);
-
-                if i < LIMBS_29 {
-                    v[i] = limb;
-                } else {
-                    c[i - LIMBS_29] = limb;
-                }
-
-                t_lo = vshrq_n_u64::<29>(t_lo);
-                t_hi = vshrq_n_u64::<29>(t_hi);
-            }
-
-            let final_low_pair = vmovn_u64(t_lo);
-            c[LIMBS_29 - 1] = vmovn_high_u64(final_low_pair, t_hi);
-
-            Fp29x4 { limbs: c }
-        }
-    }
-
-    /// Karatsuba-decomposed 9x9 multiplication.
-    ///
-    /// Splits each 9-limb input as `a = a_lo + a_hi * 2^(5 * 29)` where
-    /// `a_lo = a[0..5]` (5 limbs) and `a_hi = a[5..9]` (4 limbs).  Computes
-    /// three sub-products:
-    ///
-    /// - `P0 = a_lo * b_lo` (9 columns, plain 5x5 schoolbook).
-    /// - `P1 = a_hi * b_hi` (7 columns, plain 4x4 schoolbook).
+    /// - `P0 = a_lo * b_lo` (9 columns, plain 5x5).
+    /// - `P1 = a_hi * b_hi` (7 columns, plain 4x4).
     /// - `Q  = (a_lo + a_hi) * (b_lo + b_hi)` (9 columns, plain 5x5).
     ///
-    /// Then `mid = Q - P0 - P1` (the Karatsuba middle term), and the
-    /// 17-column polynomial `full = P0 + mid * x^5 + P1 * x^10` is
-    /// Montgomery-reduced in a separate pass.
+    /// then assembles the 17-column polynomial
+    /// `P0 + (Q - P0 - P1) * x^5 + P1 * x^10` and Montgomery-reduces it in a
+    /// single pass.
     ///
-    /// Mul count vs the schoolbook path: 25 + 16 + 25 = 66 plus 9 Montgomery
-    /// folds, total 75 NEON multiply-accumulates against the schoolbook's
-    /// 81 + 9 = 90.  The bigger potential win is that the three sub-products
-    /// run with independent carry chains and can pipeline across NEON
-    /// execution ports.
-    pub fn mul_karatsuba(&self, rhs: &Fp29x4) -> Fp29x4 {
+    /// 75 multiply-accumulates total (25 + 16 + 25 sub-product plus 9 fold)
+    /// against 90 for the straight 9x9 schoolbook.  The three sub-products
+    /// run with independent carry chains and pipeline across NEON execution
+    /// ports, where the schoolbook serialises on one chain.
+    /// On Cortex-A76 / Neoverse N1 hardware (matched in the 2026/394 paper
+    /// numbers) this path is ~1.4x faster than four scalar `Fp::mul`s.  On
+    /// wider scalar cores (Apple M2+) the radix-29 mul-count tax exceeds the
+    /// NEON parallelism win and scalar `Fp` remains faster; `build.rs` gates
+    /// production routing accordingly.
+    pub fn mul(&self, rhs: &Fp29x4) -> Fp29x4 {
         let a = &self.limbs;
         let b = &rhs.limbs;
 
@@ -593,7 +525,7 @@ impl Fp29x4 {
     }
 
     /// Plain 5x5 polynomial multiplication on NEON SoA layout, used by
-    /// [`Fp29x4::mul_karatsuba`] for the three sub-products.
+    /// [`Fp29x4::mul`] for the three sub-products.
     ///
     /// Returns a 9-column unreduced polynomial product as
     /// `[(uint64x2_t, uint64x2_t); 9]`, one `(lo, hi)` pair per column.
@@ -619,7 +551,7 @@ impl Fp29x4 {
     }
 
     /// Plain 4x4 polynomial multiplication on NEON SoA layout.  Used by
-    /// [`Fp29x4::mul_karatsuba`] for the `P1 = a_hi * b_hi` sub-product.
+    /// [`Fp29x4::mul`] for the `P1 = a_hi * b_hi` sub-product.
     /// Returns a 7-column unreduced polynomial product.
     #[inline]
     fn polynomial_4x4(a: &[uint32x4_t; 4], b: &[uint32x4_t; 4]) -> [(uint64x2_t, uint64x2_t); 7] {
