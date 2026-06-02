@@ -194,6 +194,29 @@
       background: linear-gradient(90deg, var(--border) 0%, transparent 100%);
     }
 
+    /* Sub-panel divider inside a multi-panel section (Profile groups
+       Instructions + Footprint, each with its own data source and
+       independent staleness). */
+    .subpanel { margin-top: 32px; }
+    .subpanel:first-of-type { margin-top: 0; }
+
+    .subpanel__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border-faint);
+    }
+
+    .subpanel__title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+    }
+
     .meta {
       font-size: 12px;
       font-weight: 500;
@@ -1505,15 +1528,14 @@
         <a href="/rustdoc/" target="_blank" rel="noopener">Docs</a>
         <a href="#analysis-section">Risks</a>
         <a href="#coverage-section">Coverage</a>
+        <a href="#profile-section">Profile</a>
         <a href="#bench-section">Benchmarks</a>
-        <a href="#mutants-section">Mutants</a>
-        <a href="#dudect-section">Constant-Time</a>
         <a href="#kat-section">Test Vectors</a>
-        <a href="#platform-section">Platforms</a>
-        <a href="#instructions-section">Instructions</a>
-        <a href="#perf-metrics-section">Perf metrics</a>
-        <a href="#audits-section">Audits</a>
+        <a href="#mutants-section">Mutants</a>
         <a href="#fuzz-section">Fuzzing</a>
+        <a href="#dudect-section">Constant-Time</a>
+        <a href="#platform-section">Platforms</a>
+        <a href="#audits-section">Audits</a>
       </nav>
     </div>
 
@@ -1558,6 +1580,41 @@
         </div>
       </section>
 
+      <section class="section" id="profile-section">
+        <div class="section__header">
+          <h2 class="section__title">Profile<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Deterministic resource-cost metrics that move when source moves. All measured under simulation/instrumentation (<a href="https://github.com/gungraun/gungraun" style="color:var(--fg)">gungraun</a> for instructions, dhat for heap, Valgrind Massif for stack, cargo-bloat for binary size), so changes here are signal, not CI noise.</p>
+            <dl>
+            <dt>Instructions</dt><dd>Total executed instructions per benchmark. Deterministic across runs and machines.</dd>
+            <dt>L1/L2 misses</dt><dd>Simulated cache misses. High L1 misses on secret data may indicate a cache side-channel.</dd>
+            <dt>Branch misses</dt><dd>Mispredicted branches. Data-dependent branches on secrets leak via branch prediction.</dd>
+            <dt>Binary size</dt><dd>Release binary text/data/bss segments and top functions by size (cargo-bloat).</dd>
+            <dt>Alloc budget</dt><dd>Heap allocation counts for keygen, sign, verify (dhat). Budget assertions fail CI if allocations grow.</dd>
+            <dt>Stack depth</dt><dd>Peak stack usage via Valgrind Massif. Tracks signing/verification stack footprint.</dd>
+            </dl></span></span></h2>
+        </div>
+
+        <div class="subpanel">
+          <div class="subpanel__header">
+            <h3 class="subpanel__title">Instructions</h3>
+            <span class="meta" id="instructions-meta"></span>
+          </div>
+          <div id="instructions-content">
+            <p class="empty">Awaiting first run.</p>
+          </div>
+        </div>
+
+        <div class="subpanel">
+          <div class="subpanel__header">
+            <h3 class="subpanel__title">Footprint</h3>
+            <span class="meta" id="perf-metrics-meta"></span>
+          </div>
+          <div id="perf-metrics-content">
+            <p class="empty">Awaiting first run.</p>
+          </div>
+        </div>
+      </section>
+
       <section class="section" id="bench-section">
         <div class="section__header">
           <h2 class="section__title">Benchmarks<span class="help-icon">?<span class="tooltip">
@@ -1570,6 +1627,21 @@
           <span class="meta" id="bench-meta"></span>
         </div>
         <div id="bench-content">
+          <p class="empty">Awaiting first run.</p>
+        </div>
+      </section>
+
+      <section class="section" id="kat-section">
+        <div class="section__header">
+          <h2 class="section__title">Test Vectors<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Compliance with known-answer test vectors and negative/robustness vectors.</p>
+            <dl>
+            <dt>KAT</dt><dd>100 vectors from the <a href="https://github.com/SQISign/the-sqisign/tree/91e9e464fe5400192d13e1f9240cbf180200a103" style="color:var(--fg)">C reference</a> (pinned commit). Tests sk parsing, pk matching, and C-ref signature verification. (<a href="https://github.com/selkie-cryptography/sqisign-selkie/blob/main/src/keys/kat_data.rs" style="color:var(--fg)">source</a>)</dd>
+            <dt>Wycheproof</dt><dd>Negative and robustness vectors in <a href="https://github.com/C2SP/wycheproof" style="color:var(--fg)">C2SP/wycheproof</a> JSON format. Verification rejects, sk parsing edge cases, and sign-then-verify contract. Not yet upstreamed. (<a href="https://github.com/selkie-cryptography/sqisign-selkie/tree/main/tests/vectors" style="color:var(--fg)">vectors</a>, <a href="https://github.com/selkie-cryptography/sqisign-selkie/blob/main/tests/wycheproof.rs" style="color:var(--fg)">runner</a>)</dd>
+            </dl></span></span></h2>
+          <span class="meta" id="kat-meta"></span>
+        </div>
+        <div id="kat-content">
           <p class="empty">Awaiting first run.</p>
         </div>
       </section>
@@ -1592,6 +1664,23 @@
         </div>
       </section>
 
+      <section class="section" id="fuzz-section">
+        <div class="section__header">
+          <h2 class="section__title">Fuzzing<span class="help-icon">?<span class="tooltip">
+            <p style="margin-bottom:8px">Coverage-guided fuzzing with <a href="https://github.com/rust-fuzz/cargo-fuzz" style="color:var(--fg)">cargo-fuzz</a> (libFuzzer). Each target runs for 10 minutes per push, receiving random bytes. Must not panic or crash.</p>
+            <dl>
+            <dt>Targets</dt><dd>signature_parse, verifying_key_parse, signing_key_parse, verify</dd>
+            <dt>Runs</dt><dd>Total fuzzer executions across all targets.</dd>
+            <dt>Crashes</dt><dd>Inputs that caused a panic or crash. Should be zero.</dd>
+            <dt>Corpus</dt><dd>Accumulated interesting inputs that increase coverage.</dd>
+            </dl></span></span></h2>
+          <span class="meta" id="fuzz-meta"></span>
+        </div>
+        <div id="fuzz-content">
+          <p class="empty">Awaiting first run.</p>
+        </div>
+      </section>
+
       <section class="section" id="dudect-section">
         <div class="section__header">
           <h2 class="section__title">Constant-Time<span class="help-icon">?<span class="tooltip">
@@ -1608,21 +1697,6 @@
         </div>
       </section>
 
-      <section class="section" id="kat-section">
-        <div class="section__header">
-          <h2 class="section__title">Test Vectors<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Compliance with known-answer test vectors and negative/robustness vectors.</p>
-            <dl>
-            <dt>KAT</dt><dd>100 vectors from the <a href="https://github.com/SQISign/the-sqisign/tree/91e9e464fe5400192d13e1f9240cbf180200a103" style="color:var(--fg)">C reference</a> (pinned commit). Tests sk parsing, pk matching, and C-ref signature verification. (<a href="https://github.com/selkie-cryptography/sqisign-selkie/blob/main/src/keys/kat_data.rs" style="color:var(--fg)">source</a>)</dd>
-            <dt>Wycheproof</dt><dd>Negative and robustness vectors in <a href="https://github.com/C2SP/wycheproof" style="color:var(--fg)">C2SP/wycheproof</a> JSON format. Verification rejects, sk parsing edge cases, and sign-then-verify contract. Not yet upstreamed. (<a href="https://github.com/selkie-cryptography/sqisign-selkie/tree/main/tests/vectors" style="color:var(--fg)">vectors</a>, <a href="https://github.com/selkie-cryptography/sqisign-selkie/blob/main/tests/wycheproof.rs" style="color:var(--fg)">runner</a>)</dd>
-            </dl></span></span></h2>
-          <span class="meta" id="kat-meta"></span>
-        </div>
-        <div id="kat-content">
-          <p class="empty">Awaiting first run.</p>
-        </div>
-      </section>
-
       <section class="section" id="platform-section">
         <div class="section__header">
           <h2 class="section__title">Platforms<span class="help-icon">?<span class="tooltip">
@@ -1631,38 +1705,6 @@
           <span class="meta" id="platform-meta"></span>
         </div>
         <div id="platform-content">
-          <p class="empty">Awaiting first run.</p>
-        </div>
-      </section>
-
-      <section class="section" id="instructions-section">
-        <div class="section__header">
-          <h2 class="section__title">Instructions<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Deterministic instruction-count benchmarks via <a href="https://github.com/gungraun/gungraun" style="color:var(--fg)">gungraun</a> (Valgrind). Immune to CI runner noise.</p>
-            <dl>
-            <dt>Instructions</dt><dd>Total executed instructions. Deterministic — identical across runs and machines.</dd>
-            <dt>L1/L2 misses</dt><dd>Simulated cache misses. High L1 misses on secret data may indicate a cache side-channel.</dd>
-            <dt>Branch misses</dt><dd>Mispredicted branches. Data-dependent branches on secrets leak via branch prediction.</dd>
-            </dl></span></span></h2>
-          <span class="meta" id="instructions-meta"></span>
-        </div>
-        <div id="instructions-content">
-          <p class="empty">Awaiting first run.</p>
-        </div>
-      </section>
-
-      <section class="section" id="perf-metrics-section">
-        <div class="section__header">
-          <h2 class="section__title">Perf metrics<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Resource-cost measurements that move when source moves: binary size, heap allocations, peak stack. Sibling to <a href="#instructions-section" style="color:var(--fg)">Instructions</a>.</p>
-            <dl>
-            <dt>Binary size</dt><dd>Release binary text/data/bss segments and top functions by size (cargo-bloat).</dd>
-            <dt>Alloc budget</dt><dd>Heap allocation counts for keygen, sign, verify (dhat). Budget assertions fail CI if allocations grow.</dd>
-            <dt>Stack depth</dt><dd>Peak stack usage via Valgrind Massif. Tracks signing/verification stack footprint.</dd>
-            </dl></span></span></h2>
-          <span class="meta" id="perf-metrics-meta"></span>
-        </div>
-        <div id="perf-metrics-content">
           <p class="empty">Awaiting first run.</p>
         </div>
       </section>
@@ -1682,23 +1724,6 @@
           <span class="meta" id="audits-meta"></span>
         </div>
         <div id="audits-content">
-          <p class="empty">Awaiting first run.</p>
-        </div>
-      </section>
-
-      <section class="section" id="fuzz-section">
-        <div class="section__header">
-          <h2 class="section__title">Fuzzing<span class="help-icon">?<span class="tooltip">
-            <p style="margin-bottom:8px">Coverage-guided fuzzing with <a href="https://github.com/rust-fuzz/cargo-fuzz" style="color:var(--fg)">cargo-fuzz</a> (libFuzzer). Each target runs for 10 minutes per push, receiving random bytes. Must not panic or crash.</p>
-            <dl>
-            <dt>Targets</dt><dd>signature_parse, verifying_key_parse, signing_key_parse, verify</dd>
-            <dt>Runs</dt><dd>Total fuzzer executions across all targets.</dd>
-            <dt>Crashes</dt><dd>Inputs that caused a panic or crash. Should be zero.</dd>
-            <dt>Corpus</dt><dd>Accumulated interesting inputs that increase coverage.</dd>
-            </dl></span></span></h2>
-          <span class="meta" id="fuzz-meta"></span>
-        </div>
-        <div id="fuzz-content">
           <p class="empty">Awaiting first run.</p>
         </div>
       </section>
