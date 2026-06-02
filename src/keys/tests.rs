@@ -25,7 +25,7 @@ fn verify_kat(pk_hex: &str, sm_hex: &str) {
 
 // Wire-format round-trip tests.
 
-/// Parse a KAT signature and re-serialize it: the bytes must be
+/// Parses a KAT signature and re-serialize it: the bytes must be
 /// byte-identical.
 #[test]
 fn signature_to_bytes_matches_kat_input() {
@@ -35,7 +35,7 @@ fn signature_to_bytes_matches_kat_input() {
     assert_eq!(sig.to_bytes(), *sig_bytes);
 }
 
-/// Parse a KAT verifying key and re-serialize it: byte-identical.
+/// Parses a KAT verifying key and re-serialize it: byte-identical.
 #[test]
 fn verifying_key_to_bytes_matches_kat_input() {
     let pk_bytes = hex::decode(KAT0_PK).unwrap();
@@ -44,7 +44,7 @@ fn verifying_key_to_bytes_matches_kat_input() {
     assert_eq!(vk.to_bytes(), *pk_array);
 }
 
-/// Double round-trip: parse → serialize → re-parse → serialize again.
+/// Doubles round-trip: parse → serialize → re-parse → serialize again.
 /// Guards against any stateful drift between the two calls.
 #[test]
 fn signature_double_roundtrip() {

@@ -6,7 +6,7 @@ use rand_core::RngCore;
 use super::BigInt;
 
 impl<const N: usize> BigInt<N> {
-    /// Sample a uniform integer in `[a, b]` with rejection sampling on
+    /// Samples a uniform integer in `[a, b]` with rejection sampling on
     /// a top-bit-aligned mask, matching the C reference's
     /// `ibz_rand_interval`
     /// (`quaternion/ref/generic/intbig.c:413-473`).

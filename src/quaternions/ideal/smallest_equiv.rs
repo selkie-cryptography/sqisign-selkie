@@ -388,7 +388,7 @@ impl<const N: usize> LeftIdeal<N> {
         None
     }
 
-    /// Build the equivalent-ideal `LeftIdeal<4>` from a specific
+    /// Builds the equivalent-ideal `LeftIdeal<4>` from a specific
     /// short element `δ` of `self`'s lattice (given by its
     /// coordinate numerators at width `W` and the shared lattice
     /// denominator).

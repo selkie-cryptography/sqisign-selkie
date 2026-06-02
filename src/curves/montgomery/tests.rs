@@ -66,7 +66,7 @@ fn torsion_basis_holds_points() {
     assert_eq!(basis.Q, RS);
 }
 
-/// Verify that Jacobian doubling produces the same affine x
+/// Verifies that Jacobian doubling produces the same affine x
 /// as Montgomery x-only doubling.
 #[test]
 fn jacobian_double_matches_montgomery() {
@@ -93,7 +93,7 @@ fn jacobian_double_matches_montgomery() {
     );
 }
 
-/// Verify that TorsionBasis::lift produces valid Jacobian points
+/// Verifies that TorsionBasis::lift produces valid Jacobian points
 /// that convert back to the correct Montgomery x-coordinates.
 #[test]
 fn lift_basis_round_trip() {
@@ -175,7 +175,7 @@ fn coefficient_is_singular_flags_plus_minus_two() {
     );
 }
 
-/// Verify that jac_to_xz (From<JacobianPoint>) round-trips correctly.
+/// Verifies that jac_to_xz (From<JacobianPoint>) round-trips correctly.
 #[test]
 fn jac_to_xz_round_trip() {
     let curve = Curve::E0;

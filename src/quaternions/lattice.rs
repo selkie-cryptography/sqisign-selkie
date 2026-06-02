@@ -114,7 +114,7 @@ impl<const N: usize> Lattice<N> {
         &self.denom
     }
 
-    /// Reduce this lattice to Hermite Normal Form.
+    /// Reduces this lattice to Hermite Normal Form.
     ///
     /// Prefer using `HnfLattice::from(lattice)` or `lattice.into()`.
     ///
@@ -1074,7 +1074,7 @@ impl<const N: usize> Lattice<N> {
         }
     }
 
-    /// Sample a random element from this lattice whose reduced norm
+    /// Samples a random element from this lattice whose reduced norm
     /// is less than `radius`.
     ///
     /// Uses rejection sampling from a bounding parallelogram of an
@@ -1414,7 +1414,7 @@ pub struct HnfLattice<const N: usize> {
 }
 
 impl<const N: usize> HnfLattice<N> {
-    /// Divide out `gcd(basis_entries, denom)`, mirroring C ref's
+    /// Divides out `gcd(basis_entries, denom)`, mirroring C ref's
     /// `quat_lattice_reduce_denom` (`quaternion/ref/generic/lattice.c:41`).
     ///
     /// After lattice multiplication or alg-elem multiplication the

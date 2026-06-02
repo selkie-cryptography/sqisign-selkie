@@ -40,7 +40,7 @@ const P4: u64 = 5u64 << 44;
 pub struct Fp(pub(crate) [u64; 5]);
 
 impl Fp {
-    /// Construct from raw radix-51 limbs (already in Montgomery form).
+    /// Constructs from raw radix-51 limbs (already in Montgomery form).
     ///
     /// This is a const constructor for embedding precomputed constants.
     /// The caller is responsible for ensuring the limbs represent a
@@ -112,19 +112,19 @@ impl Fp {
         0x00006FFFFFFFFFFF,
     ]);
 
-    /// Construct a field element from a small integer.
+    /// Constructs a field element from a small integer.
     pub fn from_small(x: u32) -> Fp {
         let mut a = Fp::ZERO;
         a.0[0] = x as u64;
         a.to_montgomery()
     }
 
-    /// Convert a field element in normal form to Montgomery form.
+    /// Converts a field element in normal form to Montgomery form.
     fn to_montgomery(self) -> Fp {
         &self * &R2
     }
 
-    /// Convert from Montgomery form back to normal (canonical) form.
+    /// Converts from Montgomery form back to normal (canonical) form.
     fn reduce_montgomery(self) -> Fp {
         let one = Fp([1, 0, 0, 0, 0]);
         let mut r = &self * &one;
@@ -132,7 +132,7 @@ impl Fp {
         r
     }
 
-    /// Encode this field element as 32 bytes, little-endian.
+    /// Encodes this field element as 32 bytes, little-endian.
     pub fn to_bytes(self) -> [u8; FP_ENCODED_BYTES] {
         let c = self.reduce_montgomery();
         let mut out = [0u8; 32];
@@ -159,7 +159,7 @@ impl Fp {
         out
     }
 
-    /// Decode 32 bytes (little-endian) into a field element.
+    /// Decodes 32 bytes (little-endian) into a field element.
     ///
     /// Returns the element in Montgomery form. The input must be a
     /// canonical encoding (i.e., the value must be less than p).
@@ -189,7 +189,7 @@ impl Fp {
         r
     }
 
-    /// Square this field element.
+    /// Squares this field element.
     #[must_use]
     pub fn square(&self) -> Fp {
         let a = &self.0;
@@ -250,136 +250,7 @@ impl Fp {
         Fp([c0, c1, c2, c3, t as u64])
     }
 
-    /// Returns `a1·b1 + a2·b2 mod p` with a single reduction.
-    ///
-    /// Fuses both products into one radix-2^51 column accumulator and folds
-    /// the `P4 = 5*2^44` reduction in once (Longa's sum-of-products,
-    /// [ePrint 2022/367][longa]) — cheaper than two separate multiplies,
-    /// which would each carry their own reduction.
-    ///
-    /// # Implementation
-    ///
-    /// The widest column (k = 4) sums at most `2*5 = 10` partial products,
-    /// each `< (2^51)^2 = 2^102`, plus a reduction term `< 2^51*P4 < 2^97`
-    /// and a carry `< 2^55`, so the `u128` accumulator stays under `2^107.5`.
-    ///
-    /// [longa]: https://eprint.iacr.org/2022/367.pdf
-    #[must_use]
-    #[rustfmt::skip]
-    pub fn sum_of_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
-        debug_assert!(a1.0.iter().all(|&x| x <= MASK), "a1 limb exceeds MASK");
-        debug_assert!(b1.0.iter().all(|&x| x <= MASK), "b1 limb exceeds MASK");
-        debug_assert!(a2.0.iter().all(|&x| x <= MASK), "a2 limb exceeds MASK");
-        debug_assert!(b2.0.iter().all(|&x| x <= MASK), "b2 limb exceeds MASK");
-        let (a, b) = (&a1.0, &b1.0);
-        let (c, d) = (&a2.0, &b2.0);
-        let mut t: u128 = 0;
-
-        // Column 0: a[0]*b[0] + c[0]*d[0]
-        t += (a[0] as u128) * (b[0] as u128);
-        t += (c[0] as u128) * (d[0] as u128);
-        let v0 = (t as u64) & MASK;
-        t >>= RADIX;
-
-        // Column 1
-        t += (a[0] as u128) * (b[1] as u128);
-        t += (a[1] as u128) * (b[0] as u128);
-        t += (c[0] as u128) * (d[1] as u128);
-        t += (c[1] as u128) * (d[0] as u128);
-        let v1 = (t as u64) & MASK;
-        t >>= RADIX;
-
-        // Column 2
-        t += (a[0] as u128) * (b[2] as u128);
-        t += (a[1] as u128) * (b[1] as u128);
-        t += (a[2] as u128) * (b[0] as u128);
-        t += (c[0] as u128) * (d[2] as u128);
-        t += (c[1] as u128) * (d[1] as u128);
-        t += (c[2] as u128) * (d[0] as u128);
-        let v2 = (t as u64) & MASK;
-        t >>= RADIX;
-
-        // Column 3
-        t += (a[0] as u128) * (b[3] as u128);
-        t += (a[1] as u128) * (b[2] as u128);
-        t += (a[2] as u128) * (b[1] as u128);
-        t += (a[3] as u128) * (b[0] as u128);
-        t += (c[0] as u128) * (d[3] as u128);
-        t += (c[1] as u128) * (d[2] as u128);
-        t += (c[2] as u128) * (d[1] as u128);
-        t += (c[3] as u128) * (d[0] as u128);
-        let v3 = (t as u64) & MASK;
-        t >>= RADIX;
-
-        // Column 4 (start reduction: fold v0 * P4)
-        t += (a[0] as u128) * (b[4] as u128);
-        t += (a[1] as u128) * (b[3] as u128);
-        t += (a[2] as u128) * (b[2] as u128);
-        t += (a[3] as u128) * (b[1] as u128);
-        t += (a[4] as u128) * (b[0] as u128);
-        t += (c[0] as u128) * (d[4] as u128);
-        t += (c[1] as u128) * (d[3] as u128);
-        t += (c[2] as u128) * (d[2] as u128);
-        t += (c[3] as u128) * (d[1] as u128);
-        t += (c[4] as u128) * (d[0] as u128);
-        t += (v0 as u128) * (P4 as u128);
-        let v4 = (t as u64) & MASK;
-        t >>= RADIX;
-
-        // Column 5 (reduce v1)
-        t += (a[1] as u128) * (b[4] as u128);
-        t += (a[2] as u128) * (b[3] as u128);
-        t += (a[3] as u128) * (b[2] as u128);
-        t += (a[4] as u128) * (b[1] as u128);
-        t += (c[1] as u128) * (d[4] as u128);
-        t += (c[2] as u128) * (d[3] as u128);
-        t += (c[3] as u128) * (d[2] as u128);
-        t += (c[4] as u128) * (d[1] as u128);
-        t += (v1 as u128) * (P4 as u128);
-        let c0 = (t as u64) & MASK;
-        t >>= RADIX;
-
-        // Column 6 (reduce v2)
-        t += (a[2] as u128) * (b[4] as u128);
-        t += (a[3] as u128) * (b[3] as u128);
-        t += (a[4] as u128) * (b[2] as u128);
-        t += (c[2] as u128) * (d[4] as u128);
-        t += (c[3] as u128) * (d[3] as u128);
-        t += (c[4] as u128) * (d[2] as u128);
-        t += (v2 as u128) * (P4 as u128);
-        let c1 = (t as u64) & MASK;
-        t >>= RADIX;
-
-        // Column 7 (reduce v3)
-        t += (a[3] as u128) * (b[4] as u128);
-        t += (a[4] as u128) * (b[3] as u128);
-        t += (c[3] as u128) * (d[4] as u128);
-        t += (c[4] as u128) * (d[3] as u128);
-        t += (v3 as u128) * (P4 as u128);
-        let c2 = (t as u64) & MASK;
-        t >>= RADIX;
-
-        // Column 8 (reduce v4)
-        t += (a[4] as u128) * (b[4] as u128);
-        t += (c[4] as u128) * (d[4] as u128);
-        t += (v4 as u128) * (P4 as u128);
-        let c3 = (t as u64) & MASK;
-        t >>= RADIX;
-
-        Fp([c0, c1, c2, c3, t as u64])
-    }
-
-    /// Returns `a1·b1 − a2·b2 mod p` with a single reduction.
-    ///
-    /// Negates `b2` (one limb-wise pass) and defers to
-    /// [`Fp::sum_of_products`].
-    #[must_use]
-    pub fn difference_of_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
-        let neg_b2 = -b2;
-        Fp::sum_of_products(a1, b1, a2, &neg_b2)
-    }
-
-    /// Square this element `n` times.
+    /// Squares this element `n` times.
     #[must_use]
     pub fn pow2k(&self, n: u32) -> Fp {
         let mut r = *self;
@@ -389,7 +260,7 @@ impl Fp {
         r
     }
 
-    /// Compute the pow_p3div4: self^((p-3)/4).
+    /// Computes the pow_p3div4: self^((p-3)/4).
     ///
     /// This is used to derive inversions, square roots, and Legendre symbols.
     /// The addition chain is taken from the C reference implementation.
@@ -430,7 +301,7 @@ impl Fp {
         &z * &t0
     }
 
-    /// Compute the multiplicative inverse: self^(p-2).
+    /// Computes the multiplicative inverse: self^(p-2).
     #[must_use]
     pub fn invert(&self) -> Fp {
         let t = self.pow_p3div4();
@@ -438,7 +309,7 @@ impl Fp {
         self * &t
     }
 
-    /// Test whether this element is a quadratic residue (square) in F_p.
+    /// Tests whether this element is a quadratic residue (square) in F_p.
     pub fn is_square(&self) -> Choice {
         let r = self.pow_p3div4();
         let r = r.square();
@@ -446,7 +317,7 @@ impl Fp {
         r.ct_eq(&Fp::ONE) | self.ct_eq(&Fp::ZERO)
     }
 
-    /// Compute the square root (when self is a QR).
+    /// Computes the square root (when self is a QR).
     ///
     /// The result is only meaningful when `self.is_square()` is true.
     #[must_use]

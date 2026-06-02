@@ -65,7 +65,7 @@ const _: () = assert!(HINT_OFFSET + 2 == SIGNATURE_BYTES);
 pub struct Challenge(Scalar);
 
 impl Challenge {
-    /// Derive the challenge via Fiat-Shamir: hash the verifying key,
+    /// Derives the challenge via Fiat-Shamir: hash the verifying key,
     /// commitment curve, and message.
     ///
     /// `chl ← HASH(pk ∥ j(E_com) ∥ msg)` ([Alg. 4.2][Alg. 4.2], line 10).
@@ -166,7 +166,7 @@ impl From<Challenge> for Scalar {
 }
 
 impl From<[u8; CHALLENGE_BYTES]> for Challenge {
-    /// Decode from little-endian bytes.
+    /// Decodes from little-endian bytes.
     fn from(bytes: [u8; CHALLENGE_BYTES]) -> Self {
         let mut limbs = [0u64; 4];
         for (i, chunk) in bytes.chunks(8).enumerate() {
@@ -217,7 +217,7 @@ pub struct Signature {
 }
 
 impl Signature {
-    /// Parse and validate a signature from its byte encoding.
+    /// Parses and validate a signature from its byte encoding.
     ///
     /// Returns an error if the encoding is structurally invalid.
     /// Does **not** verify the signature — use
@@ -376,7 +376,7 @@ impl From<crate::curves::ChangeOfBasisMatrix> for ChallengeMatrix {
 }
 
 impl ChallengeMatrix {
-    /// Parse the wire encoding of M_chl and validate the spec entry bound.
+    /// Parses the wire encoding of M_chl and validate the spec entry bound.
     ///
     /// `data` is the `4 × M_CHL_COMP_BYTES`-byte M_chl region of a
     /// signature: entries `a, b, c, d` concatenated in little-endian
@@ -445,7 +445,7 @@ impl ChallengeMatrix {
     }
 }
 
-/// Multiply a `ChallengeMatrix` by a `TorsionBasis`, producing
+/// Multiplies a `ChallengeMatrix` by a `TorsionBasis`, producing
 /// a new `TorsionBasis` with transformed generators:
 /// `R' = [a]R + [b]S`, `S' = [c]R + [d]S`, and `R'−S'` computed
 /// via `ProjectiveXOnlyPoint::projective_difference`.

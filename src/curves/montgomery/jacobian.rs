@@ -32,7 +32,7 @@ pub struct JacobianPoint {
 }
 
 impl JacobianPoint {
-    /// Create from coordinates and a curve.
+    /// Creates from coordinates and a curve.
     pub fn new(X: Fp2, Y: Fp2, Z: Fp2, curve: &Curve) -> Self {
         Self {
             X,
@@ -47,7 +47,7 @@ impl JacobianPoint {
         &self.curve
     }
 
-    /// Double this Jacobian point on y² = x³ + Ax² + x.
+    /// Doubles this Jacobian point on y² = x³ + Ax² + x.
     ///
     /// **IMPORTANT:** This uses the C reference's unified add-or-double
     /// formula (`ec_add_jac_v2` in ec_jac.c:228-297), NOT standard
@@ -167,7 +167,7 @@ impl JacobianPoint {
         }
     }
 
-    /// Compute the x-only Montgomery projective coordinates of P + Q
+    /// Computes the x-only Montgomery projective coordinates of P + Q
     /// and P − Q from two Jacobian points.
     ///
     /// Returns `(x(P+Q), x(P-Q))` as `ProjectiveXOnlyPoint`s.
@@ -238,7 +238,7 @@ impl Neg for &JacobianPoint {
     }
 }
 
-/// Convert a Jacobian point to Montgomery projective (X:Z) = (x : z²).
+/// Converts a Jacobian point to Montgomery projective (X:Z) = (x : z²).
 ///
 /// This is the C reference's `jac_to_xz` (`ec_jac.c:34`). The
 /// projective representative `(x, z²)` is NOT the same as `(X, Z)`

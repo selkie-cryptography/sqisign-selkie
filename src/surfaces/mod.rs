@@ -170,7 +170,7 @@ pub(crate) fn hadamard4(x: &Fp2, y: &Fp2, z: &Fp2, w: &Fp2) -> (Fp2, Fp2, Fp2, F
 pub(crate) struct GluingMatrix(pub(crate) [[Fp2; 4]; 4]);
 
 impl GluingMatrix {
-    /// Apply this matrix to a theta null point.
+    /// Applies this matrix to a theta null point.
     pub(crate) fn apply_null(&self, null: &ThetaNullPoint) -> ThetaNullPoint {
         let v = [&null.a, &null.b, &null.c, &null.d];
         let mut out = [Fp2::ZERO; 4];
@@ -182,7 +182,7 @@ impl GluingMatrix {
         ThetaNullPoint::new(out[0], out[1], out[2], out[3])
     }
 
-    /// Apply this matrix to a point in theta coordinates.
+    /// Applies this matrix to a point in theta coordinates.
     pub(crate) fn apply_point(&self, P: &JacobianPoint) -> JacobianPoint {
         let v = [&P.X, &P.Y, &P.Z, &P.W];
         let mut out = [Fp2::ZERO; 4];
@@ -252,7 +252,7 @@ pub struct EllipticProduct {
 }
 
 impl EllipticProduct {
-    /// Construct from two curves.
+    /// Constructs from two curves.
     pub fn new(E1: Curve, E2: Curve) -> EllipticProduct {
         EllipticProduct { E1, E2 }
     }
@@ -331,7 +331,7 @@ impl JacobianPoint {
         }
     }
 
-    /// Square each coordinate.
+    /// Squares each coordinate.
     #[must_use]
     pub(crate) fn squared(&self) -> JacobianPoint {
         JacobianPoint {
@@ -355,7 +355,7 @@ impl JacobianPoint {
         }
     }
 
-    /// Compute \[2\]P in theta coordinates.
+    /// Computes \[2\]P in theta coordinates.
     ///
     /// Implements `ThetaDBL` ([§8.5.2], Algorithm 8.29).
     ///
@@ -397,7 +397,7 @@ pub struct Kernel {
 }
 
 impl Kernel {
-    /// Construct from pre-lifted Jacobian points.
+    /// Constructs from pre-lifted Jacobian points.
     ///
     /// Use this when the caller has already lifted from Montgomery
     /// to Jacobian (e.g., because they need to do Jacobian doubling
@@ -410,7 +410,7 @@ impl Kernel {
         Kernel { domain, P, Q }
     }
 
-    /// Construct from Montgomery x-only points by lifting to Jacobian.
+    /// Constructs from Montgomery x-only points by lifting to Jacobian.
     ///
     /// Recovers y-coordinates via the Okeya-Sakurai lift, which
     /// requires the component-wise difference `P − Q` for y-recovery.
@@ -441,7 +441,7 @@ impl Kernel {
         })
     }
 
-    /// Check that this kernel is isotropic for the product Weil
+    /// Checks that this kernel is isotropic for the product Weil
     /// pairing at exponent `e_kernel` (i.e., that the generators
     /// `(P, Q)` have order dividing `2^e_kernel` and span a
     /// Lagrangian subgroup of `E_1[2^e_kernel] × E_2[2^e_kernel]`).
@@ -513,7 +513,7 @@ impl Kernel {
         prod64 == Fp2::ONE
     }
 
-    /// Compute the (2^e, 2^e)-isogeny defined by this kernel via a
+    /// Computes the (2^e, 2^e)-isogeny defined by this kernel via a
     /// chain of (2,2)-isogenies, and push points through it.
     ///
     /// The kernel generators P, Q must have order 2^(e+2). The extra
@@ -571,7 +571,7 @@ impl Kernel {
         self.isogeny_inner(e, pts, false, randomize)
     }
 
-    /// Compute the chain with extra torsion (signing path).
+    /// Computes the chain with extra torsion (signing path).
     ///
     /// The kernel has order 2^(e+2) where the extra 2 bits are
     /// HD_extra_torsion from the C ref. ALL isogeny steps use
@@ -601,7 +601,7 @@ impl Kernel {
         self.isogeny_inner(e, pts, true, None)
     }
 
-    /// Compute the chain consuming a kernel of order exactly `2^e`,
+    /// Computes the chain consuming a kernel of order exactly `2^e`,
     /// using a dedicated 4-isogeny + 2-isogeny tail in place of the
     /// 8-torsion penultimate/ultimate hadamard absorption.
     ///

@@ -71,7 +71,7 @@ impl<const N: usize> core::ops::Deref for Order<N> {
 
 impl<const N: usize> Copy for Order<N> where BigInt<N>: Copy {}
 
-/// Unwrap an order into its underlying lattice.
+/// Unwraps an order into its underlying lattice.
 impl<const N: usize> From<Order<N>> for Lattice<N> {
     fn from(order: Order<N>) -> Self {
         order.0
@@ -150,7 +150,7 @@ impl<const N: usize> ExtremalOrder<N> {
 }
 
 impl ExtremalOrder<4> {
-    /// Construct from raw sign+limbs data, matching the C reference's
+    /// Constructs from raw sign+limbs data, matching the C reference's
     /// `quat_p_extremal_maximal_order_t` layout.
     ///
     /// # Data format

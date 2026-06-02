@@ -80,7 +80,7 @@ impl LeftIdeal<4> {
         Some(Self::from_parts(hnf, norm, *STANDARD_ORDER.order()))
     }
 
-    /// Create the left ideal I = O⟨α, N⟩ = Oα + ON at width 4.
+    /// Creates the left ideal I = O⟨α, N⟩ = Oα + ON at width 4.
     ///
     /// Uses [`Element<4>::mul`] which widens to `BigInt<8>`
     /// internally, so this is the safe choice for small moduli
@@ -273,7 +273,7 @@ impl LeftIdeal<4> {
         }
     }
 
-    /// Construct a random left ideal of a given prime norm.
+    /// Constructs a random left ideal of a given prime norm.
     ///
     /// [Alg. 3.10] from the spec (prime case).
     ///
@@ -362,7 +362,7 @@ impl LeftIdeal<4> {
         None
     }
 
-    /// Construct a random left ideal of a given (not necessarily prime) norm.
+    /// Constructs a random left ideal of a given (not necessarily prime) norm.
     ///
     /// [Alg. 3.10][Alg. 3.10] from the spec (non-prime case).
     /// Uses [`ExtremalOrder::represent_integer`] to find γ with
@@ -605,7 +605,7 @@ impl LeftIdeal<4> {
         None
     }
 
-    /// Find a primitive generator γ of this ideal.
+    /// Finds a primitive generator γ of this ideal.
     ///
     /// [Alg. 3.8] from the spec.
     ///

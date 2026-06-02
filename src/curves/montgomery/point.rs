@@ -31,7 +31,7 @@ pub struct ProjectiveXOnlyPoint {
 }
 
 impl ProjectiveXOnlyPoint {
-    /// Construct the identity (point at infinity) on the given curve.
+    /// Constructs the identity (point at infinity) on the given curve.
     pub fn identity(curve: &Curve) -> ProjectiveXOnlyPoint {
         ProjectiveXOnlyPoint {
             X: Fp2::ONE,
@@ -40,7 +40,7 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
-    /// Construct from projective coordinates on the given curve.
+    /// Constructs from projective coordinates on the given curve.
     pub fn from_XZ(X: Fp2, Z: Fp2, curve: &Curve) -> ProjectiveXOnlyPoint {
         ProjectiveXOnlyPoint {
             X,
@@ -49,13 +49,13 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
-    /// Compute the affine x-coordinate x = X/Z.
+    /// Computes the affine x-coordinate x = X/Z.
     #[must_use]
     pub fn to_affine_x(self) -> AffineX {
         AffineX::from(&self.X * &self.Z.invert())
     }
 
-    /// Construct from an affine x-coordinate on the given curve.
+    /// Constructs from an affine x-coordinate on the given curve.
     pub fn from_affine_x(x: Fp2, curve: &Curve) -> ProjectiveXOnlyPoint {
         ProjectiveXOnlyPoint {
             X: x,
@@ -69,12 +69,12 @@ impl ProjectiveXOnlyPoint {
         &self.curve
     }
 
-    /// Check if this is the point at infinity (Z == 0).
+    /// Checks if this is the point at infinity (Z == 0).
     pub fn is_identity(&self) -> Choice {
         self.Z.ct_eq(&Fp2::ZERO)
     }
 
-    /// Compute \[2\]self.
+    /// Computes \[2\]self.
     ///
     /// See [§8.2], Algorithm 8.3 (`xDBL`).
     ///
@@ -94,7 +94,7 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
-    /// Compute \[2\]self using **un-normalized** projective curve
+    /// Computes \[2\]self using **un-normalized** projective curve
     /// constants `(A + 2C : 4C)` derived from `self.curve.projective`.
     ///
     /// Mirrors C ref's `xDBL` (`ec.c:234`): the formula uses
@@ -155,7 +155,7 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
-    /// Compute \[2\]self specialized for `A = 0` (the curve `E_0`).
+    /// Computes \[2\]self specialized for `A = 0` (the curve `E_0`).
     ///
     /// Implements the C reference's `xDBL_E0` (`ec.c:215-231`):
     ///
@@ -191,7 +191,7 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
-    /// Compute self + other, given self − other.
+    /// Computes self + other, given self − other.
     ///
     /// See [§8.2], Algorithm 8.4 (`xADD`).
     ///
@@ -213,7 +213,7 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
-    /// Compute the x-coordinate of self − other (or self + other)
+    /// Computes the x-coordinate of self − other (or self + other)
     /// deterministically in projective coordinates.
     ///
     /// Given two points P = (X_P : Z_P) and Q = (X_Q : Z_Q) on the
@@ -275,7 +275,7 @@ impl ProjectiveXOnlyPoint {
         }
     }
 
-    /// Clear the odd cofactor: computes `[c]P` where `c = 5 = (p+1)/2^f`.
+    /// Clears the odd cofactor: computes `[c]P` where `c = 5 = (p+1)/2^f`.
     ///
     /// Projects a point onto the 2^f-torsion subgroup. Uses two
     /// doublings and one differential addition (much cheaper than

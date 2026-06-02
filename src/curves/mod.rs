@@ -66,13 +66,13 @@ impl TorsionExponent {
         self.0
     }
 
-    /// Subtract, returning `None` if the result would be negative
+    /// Subtracts, returning `None` if the result would be negative
     /// or exceeds f.
     pub fn checked_sub(self, rhs: u32) -> Option<TorsionExponent> {
         self.0.checked_sub(rhs).and_then(|e| e.try_into().ok())
     }
 
-    /// Floor-divide by 2: ⌊e/2⌋. Always valid since ⌊e/2⌋ ≤ e.
+    /// Halves, rounding down: ⌊e/2⌋. Always valid since ⌊e/2⌋ ≤ e.
     #[must_use]
     pub fn halve(self) -> TorsionExponent {
         TorsionExponent(self.0 / 2)
@@ -81,7 +81,7 @@ impl TorsionExponent {
 
 impl Sub for TorsionExponent {
     type Output = Self;
-    /// Subtract two exponents. The result is always ≤ self, so always valid.
+    /// Subtracts two exponents. The result is always ≤ self, so always valid.
     ///
     /// # Panics
     ///
@@ -133,7 +133,7 @@ impl BasisHint {
         self.0 >> 1
     }
 
-    /// Construct from the (h_A, h) pair.
+    /// Constructs from the (h_A, h) pair.
     fn new(h_A: u8, h: u8) -> BasisHint {
         debug_assert!(h_A <= 1);
         debug_assert!(h < 128);
@@ -145,7 +145,7 @@ impl BasisHint {
         self.0
     }
 
-    /// Construct from a raw byte.
+    /// Constructs from a raw byte.
     pub fn from_byte(b: u8) -> BasisHint {
         BasisHint(b)
     }
@@ -268,7 +268,7 @@ pub struct TorsionBasis {
     pub Q: ProjectiveXOnlyPoint,
 }
 
-/// Construct a [`TorsionBasis`] from two [`ProjectiveXOnlyPoint`]s,
+/// Constructs a [`TorsionBasis`] from two [`ProjectiveXOnlyPoint`]s,
 /// computing `P − Q` via [`ProjectiveXOnlyPoint::projective_difference`].
 ///
 /// # Security
@@ -279,7 +279,7 @@ pub struct TorsionBasis {
 /// is guaranteed by construction from `TorsionBasisFromHint` or
 /// from the `ChallengeMatrix` transformation.
 impl From<(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> for TorsionBasis {
-    /// Build a torsion basis from the pair `(P, Q)`, computing the
+    /// Builds a torsion basis from the pair `(P, Q)`, computing the
     /// differential `P − Q` internally.
     ///
     /// Each named field holds its semantic content:
@@ -293,7 +293,7 @@ impl From<(ProjectiveXOnlyPoint, ProjectiveXOnlyPoint)> for TorsionBasis {
 }
 
 impl TorsionBasis {
-    /// Construct a basis from pre-propagated components.
+    /// Constructs a basis from pre-propagated components.
     ///
     /// Arguments correspond directly to fields:
     /// - `P`: first basis point.
@@ -322,7 +322,7 @@ impl TorsionBasis {
         TorsionBasis { P, PmQ, Q }
     }
 
-    /// Lift this x-only basis to Jacobian coordinates on the
+    /// Lifts this x-only basis to Jacobian coordinates on the
     /// given curve.
     ///
     /// Normalizes `P` internally and uses the Okeya-Sakurai
@@ -380,7 +380,7 @@ impl TorsionBasis {
         Some((p_jac, s_jac))
     }
 
-    /// Convert kernel scalars on E₀\[2^f\] to the corresponding
+    /// Converts kernel scalars on E₀\[2^f\] to the corresponding
     /// left O₀-ideal.
     ///
     /// Given scalars (c₁, c₂) such that the kernel generator is
@@ -445,7 +445,7 @@ impl TorsionBasis {
         Some(LeftIdeal::new(&alpha, &modulus, EXTREMAL_ORDERS[0].order()))
     }
 
-    /// Compute `P + [m]·(P − Q)` via the three-point Montgomery ladder.
+    /// Computes `P + [m]·(P − Q)` via the three-point Montgomery ladder.
     ///
     /// The scalar `m` is a [`Scalar`] (256-bit unsigned integer in four
     /// u64 limbs); the ladder always processes exactly 256 bits, in
@@ -515,7 +515,7 @@ impl TorsionBasis {
         self.biscalar_mul(a, b, TorsionExponent::FULL)
     }
 
-    /// Compute `[m]·P + [n]·(P − Q)` from this basis.
+    /// Computes `[m]·P + [n]·(P − Q)` from this basis.
     ///
     /// **Spec-permuted convention.** This function multiplies the
     /// *differential* `P − Q` (the [`PmQ`](Self::PmQ) field), not the
@@ -918,7 +918,7 @@ impl ChangeOfBasisMatrix {
             .all(|entry| entry.bit_length() <= k)
     }
 
-    /// Compute the change-of-basis matrix expressing `reduced` (a basis
+    /// Computes the change-of-basis matrix expressing `reduced` (a basis
     /// of E[2^e]) in terms of `canonical` (a basis at the curve's full
     /// 2^TORSION_EVEN_POWER torsion).
     ///
@@ -993,7 +993,7 @@ impl ChangeOfBasisMatrix {
         })
     }
 
-    /// Compute the change-of-basis matrix expressing `canonical` (a
+    /// Computes the change-of-basis matrix expressing `canonical` (a
     /// basis at full 2^TORSION_EVEN_POWER torsion) in terms of
     /// `reduced` (a basis of E[2^e]) — the inverse direction of
     /// [`from_bases`].
@@ -1042,7 +1042,7 @@ impl ChangeOfBasisMatrix {
         })
     }
 
-    /// Multiply this matrix by a [`TorsionBasis`]: `(P', Q') = M · (P, Q)`.
+    /// Multiplies this matrix by a [`TorsionBasis`]: `(P', Q') = M · (P, Q)`.
     ///
     /// Applies the matrix by **columns** (matching the C reference):
     /// - `R' = [a]P + [c]Q` where `a = M[0][0]`, `c = M[1][0]` (column 0)
@@ -1076,7 +1076,7 @@ impl ChangeOfBasisMatrix {
     // the signature's M_chl, hint_aux, and hint_chl.
 }
 
-/// Subtract 1 from a little-endian byte array, conditionally.
+/// Subtracts 1 from a little-endian byte array, conditionally.
 /// `mask` is 0xff to subtract, 0x00 to skip.
 fn sub_one_ct(a: &mut [u8], mask: u8) {
     let mut borrow: u16 = (mask & 1) as u16;
@@ -1107,7 +1107,7 @@ fn swap_bytes_ct(a: &mut [u8], b: &mut [u8], mask: u8) {
     }
 }
 
-/// Check if x³ + Ax² + x is a square in F_{p²} (i.e., (x, ·) is on E_A).
+/// Checks if x³ + Ax² + x is a square in F_{p²} (i.e., (x, ·) is on E_A).
 fn is_on_curve(x: &Fp2, A: &Fp2) -> bool {
     let t = &(x + A) * x; // x² + Ax
     let t = &(&t + &Fp2::ONE) * x; // x³ + Ax² + x
@@ -1128,7 +1128,7 @@ fn is_on_curve(x: &Fp2, A: &Fp2) -> bool {
 /// many tries it gets.
 const FIND_X_COORD_MAX_TRIES: u32 = 1 << 10;
 
-/// Find `n` such that `n*A` is a valid x-coordinate on E_A. Returns
+/// Finds `n` such that `n*A` is a valid x-coordinate on E_A. Returns
 /// `Some(x(P))` on success or `None` if no `n` in
 /// `[start, start + FIND_X_COORD_MAX_TRIES)` satisfies the predicate
 /// (which only happens for adversarial / fuzz-crafted curves).
@@ -1143,7 +1143,7 @@ fn find_na_x_coord(A: &Fp2, _curve: &Curve, start: u8) -> Option<Fp2> {
     None
 }
 
-/// Find `n*A` and return `(x, hint)`. Used in signing where `A` is
+/// Finds `n*A` and returns `(x, hint)`. Used in signing where `A` is
 /// honestly generated and the predicate is satisfied for some small
 /// `n`; the bound is here for defense in depth.
 fn find_na_x_coord_with_hint(A: &Fp2, _curve: &Curve) -> Option<(Fp2, u8)> {
@@ -1158,7 +1158,7 @@ fn find_na_x_coord_with_hint(A: &Fp2, _curve: &Curve) -> Option<(Fp2, u8)> {
     None
 }
 
-/// Find `b` such that `-A/(1+i*b)` is a valid NQR x-coordinate on E_A.
+/// Finds `b` such that `-A/(1+i*b)` is a valid NQR x-coordinate on E_A.
 /// Returns `None` if no `b` in `[start, start + FIND_X_COORD_MAX_TRIES)`
 /// satisfies the predicate.
 fn find_nqr_factor(A: &Fp2, _curve: &Curve, start: u8) -> Option<Fp2> {
@@ -1173,7 +1173,7 @@ fn find_nqr_factor(A: &Fp2, _curve: &Curve, start: u8) -> Option<Fp2> {
     None
 }
 
-/// Find `-A/(1+i*b)` and return `(x, hint)`.
+/// Finds `-A/(1+i*b)` and returns `(x, hint)`.
 fn find_nqr_factor_with_hint(A: &Fp2, _curve: &Curve) -> Option<(Fp2, u8)> {
     for n in 1u32..=FIND_X_COORD_MAX_TRIES {
         let z = Fp2::new(Fp::ONE, Fp::from_small(n));

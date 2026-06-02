@@ -98,7 +98,7 @@ impl Scalar {
     // carrying k at runtime, or a `ScalarRing` builder. Revisit when
     // the signing flow stabilizes and the set of k values is clearer.
 
-    /// Reduce mod 2^k by zeroing bits ≥ k.
+    /// Reduces mod 2^k by zeroing bits ≥ k.
     #[must_use]
     pub fn reduce_mod2k(&self, k: u32) -> Self {
         debug_assert!(k <= 256);
@@ -118,7 +118,7 @@ impl Scalar {
         Self(out)
     }
 
-    /// Add mod 2^k.
+    /// Adds mod 2^k.
     #[must_use]
     pub fn add_mod2k(&self, rhs: &Self, k: u32) -> Self {
         let mut out = [0u64; 4];
@@ -132,7 +132,7 @@ impl Scalar {
         Self(out).reduce_mod2k(k)
     }
 
-    /// Subtract mod 2^k (wrapping).
+    /// Subtracts mod 2^k (wrapping).
     #[must_use]
     pub fn sub_mod2k(&self, rhs: &Self, k: u32) -> Self {
         let mut out = [0u64; 4];
@@ -146,7 +146,7 @@ impl Scalar {
         Self(out).reduce_mod2k(k)
     }
 
-    /// Multiply mod 2^k (schoolbook, keep low 256 bits).
+    /// Multiplies mod 2^k (schoolbook, keep low 256 bits).
     #[must_use]
     pub fn mul_mod2k(&self, rhs: &Self, k: u32) -> Self {
         let mut out = [0u64; 4];
@@ -164,7 +164,7 @@ impl Scalar {
         Self(out).reduce_mod2k(k)
     }
 
-    /// Invert mod 2^k via Hensel lifting.
+    /// Inverts mod 2^k via Hensel lifting.
     ///
     /// Returns `None` if `self` is even (no inverse mod 2^k).
     /// Constant-time: always performs ⌈log₂(k)⌉ iterations.
@@ -196,7 +196,7 @@ impl From<u64> for Scalar {
 }
 
 impl From<Scalar> for BigInt<4> {
-    /// Convert a `Scalar` (unsigned) to a non-negative `BigInt<4>`.
+    /// Converts a `Scalar` (unsigned) to a non-negative `BigInt<4>`.
     fn from(s: Scalar) -> Self {
         Self::from_limbs(s.0)
     }
@@ -208,7 +208,7 @@ impl From<&Scalar> for BigInt<4> {
     }
 }
 
-/// Convert a signed `BigInt<4>` to a `Scalar` (unsigned mod 2^256).
+/// Converts a signed `BigInt<4>` to a `Scalar` (unsigned mod 2^256).
 ///
 /// Negative values are reduced: `-x` becomes `2^256 - x`. This is
 /// necessary because `BigInt` is sign-magnitude while `Scalar` is

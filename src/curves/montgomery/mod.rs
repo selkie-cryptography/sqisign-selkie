@@ -94,12 +94,12 @@ impl Coefficient {
         &self.0
     }
 
-    /// Encode as bytes (delegates to F_{p²} encoding).
+    /// Encodes as bytes (delegates to F_{p²} encoding).
     pub fn to_bytes(self) -> [u8; crate::params::CURVE_ENCODED_BYTES] {
         self.0.to_bytes()
     }
 
-    /// Decode from bytes.
+    /// Decodes from bytes.
     pub fn from_bytes(bytes: &[u8; crate::params::CURVE_ENCODED_BYTES]) -> Coefficient {
         Coefficient(Fp2::from_bytes(bytes))
     }
@@ -205,7 +205,7 @@ impl DoublingConstants {
         (&self.A24, &self.C24)
     }
 
-    /// Normalize to `(A₂₄/C₂₄ : 1)`.
+    /// Normalizes to `(A₂₄/C₂₄ : 1)`.
     pub fn normalize(&mut self) {
         if self.C24 != Fp2::ONE {
             let inv = self.C24.invert();
@@ -214,7 +214,7 @@ impl DoublingConstants {
         }
     }
 
-    /// Check if normalized (C₂₄ = 1).
+    /// Checks if normalized (C₂₄ = 1).
     pub fn is_normalized(&self) -> bool {
         self.C24 == Fp2::ONE
     }
@@ -309,7 +309,7 @@ impl PartialEq for Curve {
 impl Eq for Curve {}
 
 impl From<Coefficient> for Curve {
-    /// Construct from affine A (C = 1).
+    /// Constructs from affine A (C = 1).
     fn from(a: Coefficient) -> Self {
         let pc = ProjectiveCoefficient::from(a);
         let dc = DoublingConstants::from(pc);
@@ -322,7 +322,7 @@ impl From<Coefficient> for Curve {
 }
 
 impl From<ProjectiveCoefficient> for Curve {
-    /// Construct from projective (A : C). Requires one inversion for affine A.
+    /// Constructs from projective (A : C). Requires one inversion for affine A.
     fn from(pc: ProjectiveCoefficient) -> Self {
         let a_affine = &pc.A * &pc.C.invert();
         let dc = DoublingConstants::from(pc);
@@ -335,7 +335,7 @@ impl From<ProjectiveCoefficient> for Curve {
 }
 
 impl From<DoublingConstants> for Curve {
-    /// Construct from doubling constants (A₂₄ : C₂₄). Requires one inversion
+    /// Constructs from doubling constants (A₂₄ : C₂₄). Requires one inversion
     /// for affine A.
     fn from(dc: DoublingConstants) -> Self {
         let pc = ProjectiveCoefficient::from(dc);
@@ -382,7 +382,7 @@ impl Curve {
         },
     };
 
-    /// Normalize the doubling constants to (A₂₄/C₂₄ : 1).
+    /// Normalizes the doubling constants to (A₂₄/C₂₄ : 1).
     ///
     /// The C reference (`ec_normalize_curve_and_A24`) normalizes
     /// the projective constants before torsion basis generation.
@@ -393,7 +393,7 @@ impl Curve {
         self.doubling.normalize();
     }
 
-    /// Check if the doubling constants are normalized (C₂₄ = 1).
+    /// Checks if the doubling constants are normalized (C₂₄ = 1).
     pub fn is_normalized(&self) -> bool {
         self.doubling.is_normalized()
     }
@@ -413,7 +413,7 @@ impl Curve {
         &self.doubling
     }
 
-    /// Compute the [j-invariant] j(E_A).
+    /// Computes the [j-invariant] j(E_A).
     ///
     /// j(E) = 256(A² − 3)³ / (A² − 4)
     ///
@@ -449,7 +449,7 @@ impl Curve {
         }
     }
 
-    /// Compute the isomorphism from `self` to `target`.
+    /// Computes the isomorphism from `self` to `target`.
     ///
     /// Both curves must have the same j-invariant. Returns `None` if
     /// λ_x = 0 or λ_z = 0 (degenerate case, see Remark 1 in the spec).

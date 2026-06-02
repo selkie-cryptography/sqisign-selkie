@@ -22,7 +22,7 @@ use super::{
 };
 
 impl LeftIdeal<30> {
-    /// Construct a left ideal `I = O⟨α, N⟩` at storage width
+    /// Constructs a left ideal `I = O⟨α, N⟩` at storage width
     /// `N = 30` via modular HNF, avoiding the classical HNF
     /// coefficient blow-up that corrupts the generic
     /// [`from_generator`][Self::from_generator] path at this
@@ -167,7 +167,7 @@ impl LeftIdeal<30> {
         })
     }
 
-    /// Construct a random left ideal of a given prime norm (wide version).
+    /// Constructs a random left ideal of a given prime norm (wide version).
     ///
     /// For the commitment phase (Algorithm 4.2 line 4), the norm D_MIX
     /// = 2^512 + 75 is 513 bits. This method stores the resulting
