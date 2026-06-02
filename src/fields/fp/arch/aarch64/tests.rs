@@ -1,15 +1,16 @@
 //! Cross-implementation tests for the radix-29 [`Fp29`] mirror.
 //!
 //! Until the NEON arithmetic methods land, the only externally observable
-//! behaviour of `Fp29` is its byte layout and its round-trip with
-//! [`super::super::super::Fp`].  These tests pin both.
+//! behaviour of `Fp29` is its byte layout and its round-trip with [`Fp`].
+//! These tests pin both, and `fp29_mul_matches_fp_mul` proves the scalar
+//! radix-29 Montgomery multiplication is byte-equivalent to `Fp::mul`.
 
 use proptest::prelude::*;
 
 use super::{super::super::Fp, Fp29, LIMBS_29, MASK_29, RADIX_29};
 
 /// Builds an `Fp` from arbitrary 32-byte inputs, matching the convention used
-/// in [`super::super::super::tests`].
+/// in the parent `Fp` test module.
 fn arb_fp() -> impl Strategy<Value = Fp> {
     any::<[u8; 32]>().prop_map(|b| Fp::from_bytes(&b))
 }
@@ -50,6 +51,20 @@ proptest! {
         let fp = Fp::from_bytes(&canonical);
         let fp29 = Fp29::from_bytes_le(&canonical);
         prop_assert_eq!(fp.to_bytes(), fp29.to_bytes_le());
+    }
+
+    /// Cross-impl multiplication: `Fp29::mul` must agree with `Fp::mul`
+    /// after converting both inputs and converting the product back.
+    /// This is the gold-standard correctness check for the radix-29
+    /// CIOS Montgomery implementation.
+    #[test]
+    fn fp29_mul_matches_fp_mul(a in arb_fp(), b in arb_fp()) {
+        let a29 = Fp29::from(a);
+        let b29 = Fp29::from(b);
+        let product29 = a29.mul(&b29);
+        let product_back = Fp::from(product29);
+        let expected = &a * &b;
+        prop_assert_eq!(product_back.to_bytes(), expected.to_bytes());
     }
 }
 

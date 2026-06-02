@@ -1,4 +1,4 @@
-//! aarch64 NEON backend for [`Fp`][super::super::Fp] arithmetic.
+//! aarch64 NEON backend for [`Fp`] arithmetic.
 //!
 //! Future home for the vectorised `Fp` implementation of De Feo,
 //! Jian, Wang, Yang ([ePrint 2026/394][2026-394], CHES 2026), adapted
@@ -42,6 +42,10 @@
 //!
 //! [2026-394]: https://eprint.iacr.org/2026/394.pdf
 
+use subtle::{Choice, ConditionallySelectable};
+
+use super::super::Fp;
+
 #[cfg(test)]
 mod tests;
 
@@ -57,33 +61,72 @@ pub(super) const MASK_29: u32 = (1u32 << RADIX_29) - 1;
 /// above the 248-bit modulus.
 pub(super) const LIMBS_29: usize = 9;
 
-/// Field element in radix-29 unsaturated limb form.
+/// Montgomery fold multiplier: `5 · 2^16`.
 ///
-/// Parallel representation to [`super::super::Fp`]'s radix-51 layout,
+/// At the boundary where the schoolbook column index `i ≥ 8`, the CIOS
+/// Montgomery reduction adds `v[i-8] · P4_29` to the accumulator.  This is
+/// equivalent (mod p) to adding `v[i-8] · 5 · 2^248` because `5 · 2^248 ≡ 1
+/// (mod p)`, and within limb 8 the offset is `248 − 8·29 = 16`.
+const P4_29: u32 = 5 << 16;
+
+/// `p` in radix-29 form.
+///
+/// Used by [`Fp29::final_sub`] to subtract the modulus from an unreduced
+/// result.  Computed from `p = 5 · 2^248 − 1`:
+/// limbs 0..7 are `2^29 − 1`, limb 8 is `0x4FFFF`.
+const P_LIMBS: [u32; LIMBS_29] = [
+    0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF,
+    0x0004FFFF,
+];
+
+/// `R²_29 mod p` where `R_29 = 2^261`.
+///
+/// Precomputed via `pow(2, 522, p)` and packed into 9 × 29-bit limbs.
+/// Used by [`From<Fp>`] to enter Fp29 Montgomery form:
+/// `canonical_value · R²_29 · R⁻¹ = canonical_value · R`.
+const R2_29: Fp29 = Fp29 {
+    limbs: [
+        0x0CF5_C28F,
+        0x0666_6666,
+        0x1333_3333,
+        0x1999_9999,
+        0x0CCC_CCCC,
+        0x0666_6666,
+        0x1333_3333,
+        0x1999_9999,
+        0x0001_CCCC,
+    ],
+};
+
+/// `1` in non-Montgomery form, used to exit Montgomery form via
+/// [`Fp29::mul`]: `mont · 1 · R⁻¹ = mont / R = canonical`.
+const ONE_RAW: Fp29 = Fp29 {
+    limbs: [1, 0, 0, 0, 0, 0, 0, 0, 0],
+};
+
+/// Field element in radix-29 limb form, in Montgomery representation.
+///
+/// Parallel representation to [`Fp`]'s radix-51 layout,
 /// laid out for NEON 32-bit-lane packing.  Limbs are little-endian:
-/// `limbs[0]` is the least significant 29 bits.  Unsaturated: each
-/// limb may briefly carry more than `2^29` while a chain of operations
-/// is in flight; normalisation happens at boundaries that require it
-/// (`to_bytes`, equality, square-root, …).
+/// `limbs[0]` is the least significant 29 bits.  The stored value is
+/// `value · R_29 mod p` where `R_29 = 2^261`; multiplication is
+/// Montgomery-style ([`Fp29::mul`] returns `a · b · R⁻¹`).
 ///
 /// # Invariants
 ///
-/// - In *normalised* form, each `limbs[i] < 2^29`.  The high limb `limbs[8]`
-///   satisfies the additional bound implied by the modulus `p = 5 · 2^248 − 1`.
-/// - In *unsaturated* form, each `limbs[i] < 2^29 + ε` where `ε` is bounded by
-///   the depth of the operation chain since last normalisation.
+/// - After [`Fp29::mul`] or [`From<Fp>`], `limbs[i] < 2^29` for `i < 8` and
+///   `limbs[8] < 2^20` (sub-`2p` bound).
+/// - [`Fp29::from_bytes_le`] / [`Fp29::to_bytes_le`] operate on canonical
+///   (non-Montgomery) limbs; they're the byte boundary, before/after the
+///   Montgomery scaling.
 ///
-/// The arithmetic methods that consume and produce `Fp29` document
-/// which form they accept and produce.  Public conversion via
-/// [`super::super::Fp`] always normalises.
+/// # Why this is not yet wired into [`Fp`]
 ///
-/// # Why this is not yet wired into [`super::super::Fp`]
-///
-/// The NEON arithmetic methods on `Fp29` are unwritten.  Until they
-/// exist, switching the production path from radix-51 to scalar
-/// radix-29 would be a regression: 81 `u32 × u32` muls beats 25
-/// `u64 × u64` muls only when four `Fp29` products run in parallel
-/// across NEON lanes.
+/// Switching the production path from radix-51 to scalar radix-29 is a
+/// regression: 81 `u32 × u32` muls beat 25 `u64 × u64` muls only when four
+/// `Fp29` products run in parallel across NEON lanes.  The current scalar
+/// implementation exists to anchor cross-impl tests against `Fp`; the NEON
+/// vectorised version replaces these method bodies in a follow-on commit.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Fp29 {
     /// Nine 29-bit limbs, little-endian.
@@ -98,7 +141,7 @@ impl Fp29 {
 
     /// Decodes 32 bytes (little-endian) into a normalised radix-29 element.
     ///
-    /// Mirrors [`super::super::Fp::from_bytes`] but stays out of Montgomery
+    /// Mirrors [`Fp::from_bytes`] but stays out of Montgomery
     /// form: the limbs hold the canonical integer value, not `value · R mod p`.
     /// The input must encode a value less than `p`; out-of-range bits in
     /// `bytes[31]` simply flow into the high limb without canonicalisation.
@@ -149,29 +192,109 @@ impl Fp29 {
 
         out
     }
-}
 
-impl From<super::super::Fp> for Fp29 {
-    /// Converts radix-51 Montgomery form to canonical radix-29 form.
+    /// Montgomery multiplication: returns `a · b · R⁻¹ mod p`.
     ///
-    /// Routes through canonical bytes: [`super::super::Fp::to_bytes`] exits
-    /// Montgomery form and emits the integer value, which
-    /// [`Fp29::from_bytes_le`] then repacks at radix-29.  Expensive (one full
-    /// Montgomery reduction); intended for test boundaries, not the
-    /// production hot path.
-    fn from(fp: super::super::Fp) -> Self {
-        Self::from_bytes_le(&fp.to_bytes())
+    /// Implements CIOS Montgomery reduction interleaved with schoolbook
+    /// product over the 17 column positions of a 9×9 multiplication.  The
+    /// fold step at column `i ≥ 8` adds `v[i-8] · P4_29` to absorb the
+    /// previously-computed low column `v[i-8]` into the high columns,
+    /// exploiting `5 · 2^248 ≡ 1 (mod p)`.
+    ///
+    /// Output limbs satisfy `limbs[i] < 2^29` for `i < 8` and `limbs[8] < 2^20`
+    /// (so the result is in `[0, 2p)`).  Use [`Fp29::final_sub`] to
+    /// canonicalise to `[0, p)`.
+    pub(super) fn mul(&self, rhs: &Fp29) -> Fp29 {
+        let a = &self.limbs;
+        let b = &rhs.limbs;
+        let mut t: u64 = 0;
+        let mut v = [0u32; LIMBS_29];
+        let mut c = [0u32; LIMBS_29];
+
+        for i in 0..(2 * LIMBS_29 - 1) {
+            let j_lo = if i >= LIMBS_29 { i - LIMBS_29 + 1 } else { 0 };
+            let j_hi = i.min(LIMBS_29 - 1);
+            for j in j_lo..=j_hi {
+                t = t.wrapping_add((a[j] as u64).wrapping_mul(b[i - j] as u64));
+            }
+
+            if i >= LIMBS_29 - 1 {
+                let fold_idx = i - (LIMBS_29 - 1);
+                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P4_29 as u64));
+            }
+
+            let limb = (t as u32) & MASK_29;
+            if i < LIMBS_29 {
+                v[i] = limb;
+            } else {
+                c[i - LIMBS_29] = limb;
+            }
+            t >>= RADIX_29;
+        }
+
+        c[LIMBS_29 - 1] = t as u32;
+
+        Self { limbs: c }
+    }
+
+    /// Conditionally subtracts `p` to canonicalise an in-range result.
+    ///
+    /// Assumes `self < 2p` with each limb already `< 2^29`.  Returns the
+    /// representative in `[0, p)`.  Constant-time via
+    /// [`subtle::ConditionallySelectable`].
+    pub(super) fn final_sub(self) -> Self {
+        let mut diff = [0u32; LIMBS_29];
+        let mut borrow: u32 = 0;
+
+        for i in 0..LIMBS_29 {
+            let d = (self.limbs[i] as i64) - (P_LIMBS[i] as i64) - (borrow as i64);
+            diff[i] = (d as u32) & MASK_29;
+            borrow = ((d as u64) >> 63) as u32 & 1;
+        }
+
+        // borrow == 0 ⇒ subtraction succeeded (self ≥ p), use diff.
+        // borrow == 1 ⇒ self < p, keep self.
+        let take_diff = Choice::from((1 - borrow) as u8);
+        let mut out = [0u32; LIMBS_29];
+        for i in 0..LIMBS_29 {
+            out[i] = u32::conditional_select(&self.limbs[i], &diff[i], take_diff);
+        }
+
+        Self { limbs: out }
+    }
+
+    /// Exits Montgomery form: `mont → mont / R = canonical`.
+    ///
+    /// Multiplies by `1` in non-Montgomery form ([`ONE_RAW`]); the Montgomery
+    /// product is `mont · 1 · R⁻¹ = mont / R`.  Then canonicalises via
+    /// [`Self::final_sub`].
+    pub(super) fn reduce_montgomery(self) -> Self {
+        self.mul(&ONE_RAW).final_sub()
     }
 }
 
-impl From<Fp29> for super::super::Fp {
-    /// Converts canonical radix-29 form to radix-51 Montgomery form.
+impl From<Fp> for Fp29 {
+    /// Converts radix-51 Montgomery form to radix-29 Montgomery form.
     ///
-    /// Symmetric to [`From<super::super::Fp> for Fp29`]: emits the canonical
-    /// integer bytes, then runs [`super::super::Fp::from_bytes`] to enter
+    /// Routes through canonical bytes: [`Fp::to_bytes`] exits
+    /// the radix-51 Montgomery scaling, [`Fp29::from_bytes_le`] repacks the
+    /// integer value at radix-29, then multiplication by [`R2_29`] enters the
+    /// radix-29 Montgomery form (`canonical · R²_29 · R⁻¹ = canonical · R`).
+    /// Expensive (two Montgomery reductions); intended for test boundaries.
+    fn from(fp: Fp) -> Self {
+        Self::from_bytes_le(&fp.to_bytes()).mul(&R2_29)
+    }
+}
+
+impl From<Fp29> for Fp {
+    /// Converts radix-29 Montgomery form back to radix-51 Montgomery form.
+    ///
+    /// Symmetric to [`From<Fp> for Fp29`]: drops the radix-29
+    /// Montgomery scaling via [`Fp29::reduce_montgomery`], emits canonical
+    /// bytes, then runs [`Fp::from_bytes`] to enter the radix-51
     /// Montgomery form.
     fn from(fp29: Fp29) -> Self {
-        Self::from_bytes(&fp29.to_bytes_le())
+        Self::from_bytes(&fp29.reduce_montgomery().to_bytes_le())
     }
 }
 
