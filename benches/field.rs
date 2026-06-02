@@ -1,3 +1,5 @@
+#[cfg(target_arch = "aarch64")]
+use sqisign_selkie::fields::fp::arch::aarch64::{Fp29, Fp29x4};
 use sqisign_selkie::fields::{fp::Fp, fp2::Fp2};
 
 fn main() {
@@ -52,4 +54,72 @@ fn fp2_invert(bencher: divan::Bencher) {
 fn fp2_sqrt(bencher: divan::Bencher) {
     let a = Fp2::new(Fp::from_small(3), Fp::from_small(7)).square();
     bencher.bench(|| divan::black_box(&a).sqrt());
+}
+
+/// Four independent scalar `Fp::mul`s — the baseline the NEON path must beat.
+#[cfg(target_arch = "aarch64")]
+#[divan::bench]
+fn fp_mul_4_independent(bencher: divan::Bencher) {
+    let a = [
+        Fp::from_small(3),
+        Fp::from_small(7),
+        Fp::from_small(11),
+        Fp::from_small(13),
+    ];
+    let b = [
+        Fp::from_small(17),
+        Fp::from_small(19),
+        Fp::from_small(23),
+        Fp::from_small(29),
+    ];
+    bencher.bench(|| {
+        let aa = divan::black_box(&a);
+        let bb = divan::black_box(&b);
+        [aa[0] * bb[0], aa[1] * bb[1], aa[2] * bb[2], aa[3] * bb[3]]
+    });
+}
+
+/// One vectorised `Fp29x4::mul` — computes four independent products in one
+/// NEON-vectorised CIOS schoolbook.  Compare against `fp_mul_4_independent`.
+#[cfg(target_arch = "aarch64")]
+#[divan::bench]
+fn fp29x4_mul_neon(bencher: divan::Bencher) {
+    let a_fp = [
+        Fp::from_small(3),
+        Fp::from_small(7),
+        Fp::from_small(11),
+        Fp::from_small(13),
+    ];
+    let b_fp = [
+        Fp::from_small(17),
+        Fp::from_small(19),
+        Fp::from_small(23),
+        Fp::from_small(29),
+    ];
+    let a29 = [
+        Fp29::from(a_fp[0]),
+        Fp29::from(a_fp[1]),
+        Fp29::from(a_fp[2]),
+        Fp29::from(a_fp[3]),
+    ];
+    let b29 = [
+        Fp29::from(b_fp[0]),
+        Fp29::from(b_fp[1]),
+        Fp29::from(b_fp[2]),
+        Fp29::from(b_fp[3]),
+    ];
+    let a4 = Fp29x4::from_scalars(&a29);
+    let b4 = Fp29x4::from_scalars(&b29);
+    bencher.bench(|| divan::black_box(&a4).mul(divan::black_box(&b4)));
+}
+
+/// Standalone scalar `Fp29::mul` — for comparing radix-29 vs radix-51 cost
+/// at the single-product level, isolating the radix change from the NEON
+/// vectorisation factor.
+#[cfg(target_arch = "aarch64")]
+#[divan::bench]
+fn fp29_mul_scalar(bencher: divan::Bencher) {
+    let a = Fp29::from(Fp::from_small(17));
+    let b = Fp29::from(Fp::from_small(42));
+    bencher.bench(|| divan::black_box(&a).mul(divan::black_box(&b)));
 }

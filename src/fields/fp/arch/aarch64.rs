@@ -42,9 +42,12 @@
 //!
 //! [2026-394]: https://eprint.iacr.org/2026/394.pdf
 
-use core::arch::aarch64::{
-    uint32x4_t, vandq_u64, vcombine_u32, vdupq_n_u32, vdupq_n_u64, vget_low_u32, vld1q_u32,
-    vmlal_high_u32, vmlal_u32, vmovn_u64, vshrq_n_u64, vst1q_u32,
+use core::{
+    arch::aarch64::{
+        uint32x4_t, vandq_u64, vcombine_u32, vdupq_n_u32, vdupq_n_u64, vget_low_u32, vld1q_u32,
+        vmlal_high_u32, vmlal_u32, vmovn_u64, vshrq_n_u64, vst1q_u32,
+    },
+    ops::{Add, Sub},
 };
 
 use subtle::{Choice, ConditionallySelectable};
@@ -55,16 +58,16 @@ use super::super::Fp;
 mod tests;
 
 /// Bits per limb in the radix-29 representation.
-pub(super) const RADIX_29: u32 = 29;
+pub const RADIX_29: u32 = 29;
 
 /// Mask for a single radix-29 limb.
-pub(super) const MASK_29: u32 = (1u32 << RADIX_29) - 1;
+pub const MASK_29: u32 = (1u32 << RADIX_29) - 1;
 
 /// Number of limbs in the radix-29 representation.
 ///
 /// Nine limbs of 29 bits each cover 261 bits, with 13 bits of headroom
 /// above the 248-bit modulus.
-pub(super) const LIMBS_29: usize = 9;
+pub const LIMBS_29: usize = 9;
 
 /// Montgomery fold multiplier: `5 · 2^16`.
 ///
@@ -133,14 +136,14 @@ const ONE_RAW: Fp29 = Fp29 {
 /// implementation exists to anchor cross-impl tests against `Fp`; the NEON
 /// vectorised version replaces these method bodies in a follow-on commit.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Fp29 {
+pub struct Fp29 {
     /// Nine 29-bit limbs, little-endian.
-    pub(super) limbs: [u32; LIMBS_29],
+    pub limbs: [u32; LIMBS_29],
 }
 
 impl Fp29 {
     /// Additive identity, in normalised form.
-    pub(super) const ZERO: Self = Self {
+    pub const ZERO: Self = Self {
         limbs: [0; LIMBS_29],
     };
 
@@ -150,7 +153,7 @@ impl Fp29 {
     /// form: the limbs hold the canonical integer value, not `value · R mod p`.
     /// The input must encode a value less than `p`; out-of-range bits in
     /// `bytes[31]` simply flow into the high limb without canonicalisation.
-    pub(super) fn from_bytes_le(bytes: &[u8; 32]) -> Self {
+    pub fn from_bytes_le(bytes: &[u8; 32]) -> Self {
         let mut limbs = [0u32; LIMBS_29];
         let mut acc: u64 = 0;
         let mut bits: u32 = 0;
@@ -175,7 +178,7 @@ impl Fp29 {
     ///
     /// Each limb must be `< 2^29`; if the value is unsaturated the encoded
     /// bytes will overflow into adjacent positions.
-    pub(super) fn to_bytes_le(self) -> [u8; 32] {
+    pub fn to_bytes_le(self) -> [u8; 32] {
         let mut out = [0u8; 32];
         let mut acc: u64 = 0;
         let mut bits: u32 = 0;
@@ -208,7 +211,7 @@ impl Fp29 {
     /// Output limbs satisfy `limbs[i] < 2^29` for `i < 8` and `limbs[8] < 2^20`
     /// (so the result is in `[0, 2p)`).  Use [`Fp29::final_sub`] to
     /// canonicalise to `[0, p)`.
-    pub(super) fn mul(&self, rhs: &Fp29) -> Fp29 {
+    pub fn mul(&self, rhs: &Fp29) -> Fp29 {
         let a = &self.limbs;
         let b = &rhs.limbs;
         let mut t: u64 = 0;
@@ -241,65 +244,12 @@ impl Fp29 {
         Self { limbs: c }
     }
 
-    /// Modular addition, reduced to `[0, 2p)`.
-    ///
-    /// Adds limbwise, subtracts `2p` (via add-2-to-limb-0 / subtract-`2·P4_29`-
-    /// from-limb-8), propagates carries, then conditionally adds `2p` back if
-    /// the propagation detected a borrow.  Mirrors `Fp::add` structurally.
-    pub(super) fn add(self, rhs: Fp29) -> Fp29 {
-        let mut n = Self {
-            limbs: [
-                self.limbs[0] + rhs.limbs[0],
-                self.limbs[1] + rhs.limbs[1],
-                self.limbs[2] + rhs.limbs[2],
-                self.limbs[3] + rhs.limbs[3],
-                self.limbs[4] + rhs.limbs[4],
-                self.limbs[5] + rhs.limbs[5],
-                self.limbs[6] + rhs.limbs[6],
-                self.limbs[7] + rhs.limbs[7],
-                self.limbs[8] + rhs.limbs[8],
-            ],
-        };
-        n.limbs[0] = n.limbs[0].wrapping_add(2);
-        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_sub(2 * P4_29);
-        let carry = n.prop();
-        n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
-        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P4_29) & carry);
-        n.prop();
-        n
-    }
-
-    /// Modular subtraction, reduced to `[0, 2p)`.
-    ///
-    /// Limbwise wrapping-subtract; if the propagation detects a borrow,
-    /// adds `2p` back.  Mirrors `Fp::sub` structurally.
-    pub(super) fn sub(self, rhs: Fp29) -> Fp29 {
-        let mut n = Self {
-            limbs: [
-                self.limbs[0].wrapping_sub(rhs.limbs[0]),
-                self.limbs[1].wrapping_sub(rhs.limbs[1]),
-                self.limbs[2].wrapping_sub(rhs.limbs[2]),
-                self.limbs[3].wrapping_sub(rhs.limbs[3]),
-                self.limbs[4].wrapping_sub(rhs.limbs[4]),
-                self.limbs[5].wrapping_sub(rhs.limbs[5]),
-                self.limbs[6].wrapping_sub(rhs.limbs[6]),
-                self.limbs[7].wrapping_sub(rhs.limbs[7]),
-                self.limbs[8].wrapping_sub(rhs.limbs[8]),
-            ],
-        };
-        let carry = n.prop();
-        n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
-        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P4_29) & carry);
-        n.prop();
-        n
-    }
-
     /// Squares this element via [`Fp29::mul`].
     ///
     /// The optimised radix-29 square (symmetric cross-terms, `2 · a[i] · a[j]`)
     /// is deferred to the NEON-intrinsics commit, where the symmetry
     /// translates to fewer vectorised products.
-    pub(super) fn square(&self) -> Fp29 {
+    pub fn square(&self) -> Fp29 {
         self.mul(self)
     }
 
@@ -334,7 +284,7 @@ impl Fp29 {
     /// Assumes `self < 2p` with each limb already `< 2^29`.  Returns the
     /// representative in `[0, p)`.  Constant-time via
     /// [`subtle::ConditionallySelectable`].
-    pub(super) fn final_sub(self) -> Self {
+    pub fn final_sub(self) -> Self {
         let mut diff = [0u32; LIMBS_29];
         let mut borrow: u32 = 0;
 
@@ -360,7 +310,7 @@ impl Fp29 {
     /// Multiplies by `1` in non-Montgomery form ([`ONE_RAW`]); the Montgomery
     /// product is `mont · 1 · R⁻¹ = mont / R`.  Then canonicalises via
     /// [`Self::final_sub`].
-    pub(super) fn reduce_montgomery(self) -> Self {
+    pub fn reduce_montgomery(self) -> Self {
         self.mul(&ONE_RAW).final_sub()
     }
 }
@@ -409,17 +359,17 @@ impl From<Fp29> for Fp {
 ///
 /// [2026-394]: https://eprint.iacr.org/2026/394.pdf
 #[derive(Clone, Copy)]
-pub(super) struct Fp29x4 {
+pub struct Fp29x4 {
     /// Nine NEON 4-lane vectors.  Lane `j` of `limbs[i]` is the `i`-th radix-29
     /// limb of the `j`-th field element of the batch.
-    pub(super) limbs: [uint32x4_t; LIMBS_29],
+    pub limbs: [uint32x4_t; LIMBS_29],
 }
 
 impl Fp29x4 {
     /// Packs four scalar [`Fp29`] elements into the SoA layout via a
     /// per-limb gather: `limbs[i]` ends up holding
     /// `[elements[0].limbs[i], ..., elements[3].limbs[i]]`.
-    pub(super) fn from_scalars(elements: &[Fp29; 4]) -> Self {
+    pub fn from_scalars(elements: &[Fp29; 4]) -> Self {
         // SAFETY: vdupq_n_u32 and vld1q_u32 require the aarch64+neon target
         // feature, which is part of the aarch64 base ISA and therefore always
         // available where this `cfg(target_arch = "aarch64")` module compiles.
@@ -441,7 +391,7 @@ impl Fp29x4 {
 
     /// Unpacks the SoA layout back into four scalar [`Fp29`] elements.
     /// Inverse of [`Fp29x4::from_scalars`].
-    pub(super) fn to_scalars(self) -> [Fp29; 4] {
+    pub fn to_scalars(self) -> [Fp29; 4] {
         // SAFETY: see `from_scalars`.  The lane buffer is a stack-local
         // `[u32; 4]` properly aligned for the NEON store.
         let mut out = [Fp29::ZERO; 4];
@@ -467,7 +417,7 @@ impl Fp29x4 {
     ///
     /// Output lane bounds match the scalar [`Fp29::mul`]: each output limb is
     /// `< 2^29` for `i < 8` and `< 2^20` for `i = 8`.
-    pub(super) fn mul(&self, rhs: &Fp29x4) -> Fp29x4 {
+    pub fn mul(&self, rhs: &Fp29x4) -> Fp29x4 {
         let a = &self.limbs;
         let b = &rhs.limbs;
 
@@ -523,6 +473,67 @@ impl Fp29x4 {
 
             Fp29x4 { limbs: c }
         }
+    }
+}
+
+impl Add<Fp29> for Fp29 {
+    type Output = Fp29;
+
+    /// Modular addition, reduced to `[0, 2p)`.
+    ///
+    /// Adds limbwise, subtracts `2p` (via add-2-to-limb-0 / subtract-`2·P4_29`-
+    /// from-limb-8), propagates carries, then conditionally adds `2p` back if
+    /// the propagation detected a borrow.  Mirrors `Fp::add` structurally.
+    fn add(self, rhs: Fp29) -> Fp29 {
+        let mut n = Fp29 {
+            limbs: [
+                self.limbs[0] + rhs.limbs[0],
+                self.limbs[1] + rhs.limbs[1],
+                self.limbs[2] + rhs.limbs[2],
+                self.limbs[3] + rhs.limbs[3],
+                self.limbs[4] + rhs.limbs[4],
+                self.limbs[5] + rhs.limbs[5],
+                self.limbs[6] + rhs.limbs[6],
+                self.limbs[7] + rhs.limbs[7],
+                self.limbs[8] + rhs.limbs[8],
+            ],
+        };
+        n.limbs[0] = n.limbs[0].wrapping_add(2);
+        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_sub(2 * P4_29);
+        let carry = n.prop();
+        n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
+        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P4_29) & carry);
+        n.prop();
+        n
+    }
+}
+
+impl Sub<Fp29> for Fp29 {
+    type Output = Fp29;
+
+    /// Modular subtraction, reduced to `[0, 2p)`.
+    ///
+    /// Limbwise wrapping-subtract; if the propagation detects a borrow,
+    /// adds `2p` back.  Mirrors `Fp::sub` structurally.
+    fn sub(self, rhs: Fp29) -> Fp29 {
+        let mut n = Fp29 {
+            limbs: [
+                self.limbs[0].wrapping_sub(rhs.limbs[0]),
+                self.limbs[1].wrapping_sub(rhs.limbs[1]),
+                self.limbs[2].wrapping_sub(rhs.limbs[2]),
+                self.limbs[3].wrapping_sub(rhs.limbs[3]),
+                self.limbs[4].wrapping_sub(rhs.limbs[4]),
+                self.limbs[5].wrapping_sub(rhs.limbs[5]),
+                self.limbs[6].wrapping_sub(rhs.limbs[6]),
+                self.limbs[7].wrapping_sub(rhs.limbs[7]),
+                self.limbs[8].wrapping_sub(rhs.limbs[8]),
+            ],
+        };
+        let carry = n.prop();
+        n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
+        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P4_29) & carry);
+        n.prop();
+        n
     }
 }
 
