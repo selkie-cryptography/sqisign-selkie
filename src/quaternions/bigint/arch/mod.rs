@@ -6,8 +6,8 @@
 //! - `x86_64`: see file `arch/x86_64.rs`.  Future home for ADX (`_mulx_u64`,
 //!   `_addcarry_u64`, `_addcarryx_u64`) implementations of the `mag_mul` /
 //!   `mag_add` / `mag_sub` / Montgomery REDC primitives.
-//! - `aarch64`: see file `arch/aarch64.rs`.  Future home for NEON (`umulh` / `umull` +
-//!   carry chains) implementations of the same primitives.
+//! - `aarch64`: see file `arch/aarch64.rs`.  Future home for NEON (`umulh` /
+//!   `umull` + carry chains) implementations of the same primitives.
 //! - any other target: see file `arch/fallback.rs`.  Pure-Rust `u128`-based
 //!   implementations equivalent to the current scalar code.
 //!
