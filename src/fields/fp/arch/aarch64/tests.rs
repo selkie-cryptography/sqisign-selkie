@@ -125,8 +125,8 @@ proptest! {
 
     /// Vectorised `Fp29x4::mul` must agree lane-for-lane with four independent
     /// scalar `Fp29::mul` calls.  This is the gold-standard correctness check
-    /// for the NEON CIOS schoolbook: every NEON intrinsic and every column
-    /// fold must produce the exact same limbs the scalar code does.
+    /// for the NEON schoolbook: every NEON intrinsic and every column fold
+    /// must produce the exact same limbs the scalar code does.
     #[test]
     fn fp29x4_mul_matches_four_scalar_muls(
         a in arb_fp29_array4(),
@@ -139,6 +139,26 @@ proptest! {
         for (i, un) in unpacked.iter().enumerate() {
             let expected = a[i].mul(&b[i]);
             prop_assert_eq!(un.limbs, expected.limbs);
+        }
+    }
+
+    /// `Fp29x4::mul_karatsuba` must agree field-value-wise with the schoolbook
+    /// `Fp29x4::mul`.  Compared via byte representation: the two paths can
+    /// land at different in-`[0, 2p)` representatives that share the same
+    /// canonical bytes after Montgomery exit.
+    #[test]
+    fn fp29x4_mul_karatsuba_matches_schoolbook(
+        a in arb_fp29_array4(),
+        b in arb_fp29_array4(),
+    ) {
+        let a4 = Fp29x4::from_scalars(&a);
+        let b4 = Fp29x4::from_scalars(&b);
+        let schoolbook = a4.mul(&b4).to_scalars();
+        let karatsuba = a4.mul_karatsuba(&b4).to_scalars();
+        for (sb, kara) in schoolbook.iter().zip(karatsuba.iter()) {
+            let sb_bytes = Fp::from(*sb).to_bytes();
+            let kara_bytes = Fp::from(*kara).to_bytes();
+            prop_assert_eq!(sb_bytes, kara_bytes);
         }
     }
 }
