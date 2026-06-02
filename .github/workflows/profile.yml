@@ -61,7 +61,12 @@ jobs:
     # shard comfortably fits in 60 min under cache + branch simulation.
     timeout-minutes: 90
     env:
-      RUSTC_WRAPPER: sccache
+      # See gate (ci.yml) for the empty-RUSTC_WRAPPER rationale —
+      # dependabot / fork PRs don't receive repo secrets, so without
+      # this guard the sccache-action would skip installing the binary
+      # and `cargo metadata` (used by Install gungraun-runner below)
+      # would then exit 101 with `sccache: command not found`.
+      RUSTC_WRAPPER: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID != '' && 'sccache' || '' }}
       SCCACHE_BUCKET: selkie-ci-sccache
       SCCACHE_ENDPOINT: https://fly.storage.tigris.dev
       SCCACHE_REGION: auto
@@ -92,6 +97,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e  # v0.0.10
+        if: env.RUSTC_WRAPPER == 'sccache'
 
       # gungraun-runner refuses on lib/runner version skew; install the
       # version cargo actually resolved.
@@ -142,7 +148,7 @@ jobs:
             "${{ matrix.shard }}" gungraun-shard.tar.gz
 
       - name: sccache stats
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
         run: sccache --show-stats
 
   # Merges every shard's output into one combined report and posts
