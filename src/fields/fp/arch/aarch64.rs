@@ -44,9 +44,11 @@
 
 use core::{
     arch::aarch64::{
-        uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u32, vdupq_n_u32, vdupq_n_u64,
-        vget_low_u32, vld1q_u32, vmlal_high_u32, vmlal_u32, vmovn_high_u64, vmovn_u64, vshrq_n_u64,
-        vst1q_u32, vsubq_u64,
+        uint32x4_t, uint64x2_t, vaddq_s64, vaddq_u32, vaddq_u64, vandq_u32, vdupq_n_u32,
+        vdupq_n_u64, vget_high_s32, vget_low_s32, vget_low_u32, vld1q_u32, vmlal_high_u32,
+        vmlal_u32, vmovl_s32, vmovn_high_u64, vmovn_u64, vreinterpretq_s32_u32,
+        vreinterpretq_u32_s32, vreinterpretq_u64_s64, vshrq_n_s32, vshrq_n_s64, vshrq_n_u64,
+        vst1q_u32, vsubq_u32, vsubq_u64,
     },
     ops::{Add, Sub},
 };
@@ -341,14 +343,15 @@ impl From<Fp29> for Fp {
     }
 }
 
-/// Four [`Fp29`] elements packed into NEON 32-bit-lane SoA layout.
+/// Four [`Fp29`] elements packed into NEON 32-bit-lane Structure-of-Arrays
+/// (SoA) layout: the four elements are interleaved lane-wise so one
+/// `vmlal_u32` computes the same schoolbook column across all four products
+/// simultaneously.  Each of the nine `uint32x4_t` vectors holds the `i`-th
+/// limb of four independent field elements at lanes 0..3.
 ///
-/// Each of the nine `uint32x4_t` vectors holds the `i`-th limb of four
-/// independent field elements at lanes 0..3.  This is the data layout that
-/// lets a single `vmlal_u32` (multiply-accumulate widening to 64-bit lanes)
-/// compute the same schoolbook column for four products simultaneously,
-/// amortising the 81 `u32 * u32` scalar muls of one Fp29 product down to
-/// the ~20 NEON ops measured in [ePrint 2026/394][2026-394].
+/// Per [ePrint 2026/394][2026-394], this layout amortises the 81 `u32 * u32`
+/// scalar muls of one `Fp29` product down to ~20 NEON ops on Cortex-A76 /
+/// Neoverse N1 cores.
 ///
 /// # Safety
 ///
@@ -524,6 +527,57 @@ impl Fp29x4 {
         }
     }
 
+    /// Propagates carries across the nine limbs in vectorised SoA form.
+    /// Returns a per-lane mask: `0` if the cumulative sum at that lane was
+    /// non-negative, all-ones if negative (indicating an upstream borrow).
+    ///
+    /// Lane-parallel version of [`Fp29::prop`].  The `u32 -> i32 -> i64`
+    /// sign-extension cast chain becomes `vreinterpretq_s32_u32` followed by
+    /// `vmovl_s32` on each half of the lane vector; arithmetic right shift
+    /// (`vshrq_n_s64::<29>`) preserves the sign of the carry.
+    fn prop(&mut self) -> uint32x4_t {
+        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        unsafe {
+            let mask_u32 = vdupq_n_u32(MASK_29);
+
+            // Initialise carry from limb 0, then mask limb 0 to 29 bits.
+            let limb0_s32 = vreinterpretq_s32_u32(self.limbs[0]);
+            let mut carry_lo = vmovl_s32(vget_low_s32(limb0_s32));
+            let mut carry_hi = vmovl_s32(vget_high_s32(limb0_s32));
+            carry_lo = vshrq_n_s64::<29>(carry_lo);
+            carry_hi = vshrq_n_s64::<29>(carry_hi);
+            self.limbs[0] = vandq_u32(self.limbs[0], mask_u32);
+
+            // Propagate through limbs 1..8.
+            for i in 1..LIMBS_29 - 1 {
+                let limb_s32 = vreinterpretq_s32_u32(self.limbs[i]);
+                carry_lo = vaddq_s64(carry_lo, vmovl_s32(vget_low_s32(limb_s32)));
+                carry_hi = vaddq_s64(carry_hi, vmovl_s32(vget_high_s32(limb_s32)));
+
+                let carry_u_lo = vreinterpretq_u64_s64(carry_lo);
+                let carry_u_hi = vreinterpretq_u64_s64(carry_hi);
+                let pair_lo = vmovn_u64(carry_u_lo);
+                let combined = vmovn_high_u64(pair_lo, carry_u_hi);
+                self.limbs[i] = vandq_u32(combined, mask_u32);
+
+                carry_lo = vshrq_n_s64::<29>(carry_lo);
+                carry_hi = vshrq_n_s64::<29>(carry_hi);
+            }
+
+            // Fold final carry into the high limb (unmasked).
+            let carry_u_lo = vreinterpretq_u64_s64(carry_lo);
+            let carry_u_hi = vreinterpretq_u64_s64(carry_hi);
+            let pair_lo = vmovn_u64(carry_u_lo);
+            let carry_u32 = vmovn_high_u64(pair_lo, carry_u_hi);
+            self.limbs[LIMBS_29 - 1] = vaddq_u32(self.limbs[LIMBS_29 - 1], carry_u32);
+
+            // Sign mask from the top bit of limb 8: arithmetic right shift by
+            // 31 fills the lane with the sign bit.
+            let signed = vreinterpretq_s32_u32(self.limbs[LIMBS_29 - 1]);
+            vreinterpretq_u32_s32(vshrq_n_s32::<31>(signed))
+        }
+    }
+
     /// Plain 5x5 polynomial multiplication on NEON SoA layout, used by
     /// [`Fp29x4::mul`] for the three sub-products.
     ///
@@ -567,6 +621,76 @@ impl Fp29x4 {
                 }
             }
             out
+        }
+    }
+}
+
+impl Add<Fp29x4> for Fp29x4 {
+    type Output = Fp29x4;
+
+    /// Vectorised modular addition over four `Fp29` elements in parallel,
+    /// each result reduced to `[0, 2p)`.  Mirrors [`Fp29::add`] structurally
+    /// at the lane level: limbwise vector add, subtract `2p` via the
+    /// add-2-to-limb-0 / subtract-`2·P4_29`-from-limb-8 trick, propagate
+    /// carries, then conditionally add `2p` back per lane on borrow.
+    fn add(self, rhs: Fp29x4) -> Fp29x4 {
+        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        unsafe {
+            let mut n = Fp29x4 {
+                limbs: [
+                    vaddq_u32(self.limbs[0], rhs.limbs[0]),
+                    vaddq_u32(self.limbs[1], rhs.limbs[1]),
+                    vaddq_u32(self.limbs[2], rhs.limbs[2]),
+                    vaddq_u32(self.limbs[3], rhs.limbs[3]),
+                    vaddq_u32(self.limbs[4], rhs.limbs[4]),
+                    vaddq_u32(self.limbs[5], rhs.limbs[5]),
+                    vaddq_u32(self.limbs[6], rhs.limbs[6]),
+                    vaddq_u32(self.limbs[7], rhs.limbs[7]),
+                    vaddq_u32(self.limbs[8], rhs.limbs[8]),
+                ],
+            };
+            let two = vdupq_n_u32(2);
+            let two_p4 = vdupq_n_u32(2 * P4_29);
+            n.limbs[0] = vaddq_u32(n.limbs[0], two);
+            n.limbs[LIMBS_29 - 1] = vsubq_u32(n.limbs[LIMBS_29 - 1], two_p4);
+            let borrow = n.prop();
+            n.limbs[0] = vsubq_u32(n.limbs[0], vandq_u32(two, borrow));
+            n.limbs[LIMBS_29 - 1] = vaddq_u32(n.limbs[LIMBS_29 - 1], vandq_u32(two_p4, borrow));
+            n.prop();
+            n
+        }
+    }
+}
+
+impl Sub<Fp29x4> for Fp29x4 {
+    type Output = Fp29x4;
+
+    /// Vectorised modular subtraction over four `Fp29` elements in parallel,
+    /// each result reduced to `[0, 2p)`.  Lane-wise wrapping subtract, then
+    /// conditionally adds `2p` per lane on borrow.  Mirrors [`Fp29::sub`].
+    fn sub(self, rhs: Fp29x4) -> Fp29x4 {
+        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        unsafe {
+            let mut n = Fp29x4 {
+                limbs: [
+                    vsubq_u32(self.limbs[0], rhs.limbs[0]),
+                    vsubq_u32(self.limbs[1], rhs.limbs[1]),
+                    vsubq_u32(self.limbs[2], rhs.limbs[2]),
+                    vsubq_u32(self.limbs[3], rhs.limbs[3]),
+                    vsubq_u32(self.limbs[4], rhs.limbs[4]),
+                    vsubq_u32(self.limbs[5], rhs.limbs[5]),
+                    vsubq_u32(self.limbs[6], rhs.limbs[6]),
+                    vsubq_u32(self.limbs[7], rhs.limbs[7]),
+                    vsubq_u32(self.limbs[8], rhs.limbs[8]),
+                ],
+            };
+            let two = vdupq_n_u32(2);
+            let two_p4 = vdupq_n_u32(2 * P4_29);
+            let borrow = n.prop();
+            n.limbs[0] = vsubq_u32(n.limbs[0], vandq_u32(two, borrow));
+            n.limbs[LIMBS_29 - 1] = vaddq_u32(n.limbs[LIMBS_29 - 1], vandq_u32(two_p4, borrow));
+            n.prop();
+            n
         }
     }
 }

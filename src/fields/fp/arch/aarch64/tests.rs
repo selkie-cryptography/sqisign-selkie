@@ -141,6 +141,40 @@ proptest! {
             prop_assert_eq!(actual, expected);
         }
     }
+
+    /// `Fp29x4::add` must agree lane-for-lane with four independent
+    /// scalar `Fp29::add` calls.  Compared via canonical bytes.
+    #[test]
+    fn fp29x4_add_matches_four_scalar_adds(
+        a in arb_fp29_array4(),
+        b in arb_fp29_array4(),
+    ) {
+        let a4 = Fp29x4::from_scalars(&a);
+        let b4 = Fp29x4::from_scalars(&b);
+        let unpacked = (a4 + b4).to_scalars();
+        for (i, un) in unpacked.iter().enumerate() {
+            let actual = Fp::from(*un).to_bytes();
+            let expected = Fp::from(a[i] + b[i]).to_bytes();
+            prop_assert_eq!(actual, expected);
+        }
+    }
+
+    /// `Fp29x4::sub` must agree lane-for-lane with four independent
+    /// scalar `Fp29::sub` calls.  Compared via canonical bytes.
+    #[test]
+    fn fp29x4_sub_matches_four_scalar_subs(
+        a in arb_fp29_array4(),
+        b in arb_fp29_array4(),
+    ) {
+        let a4 = Fp29x4::from_scalars(&a);
+        let b4 = Fp29x4::from_scalars(&b);
+        let unpacked = (a4 - b4).to_scalars();
+        for (i, un) in unpacked.iter().enumerate() {
+            let actual = Fp::from(*un).to_bytes();
+            let expected = Fp::from(a[i] - b[i]).to_bytes();
+            prop_assert_eq!(actual, expected);
+        }
+    }
 }
 
 #[test]
