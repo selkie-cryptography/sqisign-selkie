@@ -122,6 +122,25 @@ proptest! {
             prop_assert_eq!(un.limbs, orig.limbs);
         }
     }
+
+    /// Vectorised `Fp29x4::mul` must agree lane-for-lane with four independent
+    /// scalar `Fp29::mul` calls.  This is the gold-standard correctness check
+    /// for the NEON CIOS schoolbook: every NEON intrinsic and every column
+    /// fold must produce the exact same limbs the scalar code does.
+    #[test]
+    fn fp29x4_mul_matches_four_scalar_muls(
+        a in arb_fp29_array4(),
+        b in arb_fp29_array4(),
+    ) {
+        let a4 = Fp29x4::from_scalars(&a);
+        let b4 = Fp29x4::from_scalars(&b);
+        let product4 = a4.mul(&b4);
+        let unpacked = product4.to_scalars();
+        for (i, un) in unpacked.iter().enumerate() {
+            let expected = a[i].mul(&b[i]);
+            prop_assert_eq!(un.limbs, expected.limbs);
+        }
+    }
 }
 
 #[test]

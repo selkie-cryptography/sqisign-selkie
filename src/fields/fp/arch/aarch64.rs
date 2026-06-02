@@ -42,7 +42,10 @@
 //!
 //! [2026-394]: https://eprint.iacr.org/2026/394.pdf
 
-use core::arch::aarch64::{uint32x4_t, vdupq_n_u32, vld1q_u32, vst1q_u32};
+use core::arch::aarch64::{
+    uint32x4_t, vandq_u64, vcombine_u32, vdupq_n_u32, vdupq_n_u64, vget_low_u32, vld1q_u32,
+    vmlal_high_u32, vmlal_u32, vmovn_u64, vshrq_n_u64, vst1q_u32,
+};
 
 use subtle::{Choice, ConditionallySelectable};
 
@@ -65,7 +68,7 @@ pub(super) const LIMBS_29: usize = 9;
 
 /// Montgomery fold multiplier: `5 · 2^16`.
 ///
-/// At the boundary where the schoolbook column index `i ≥ 8`, the CIOS
+/// At the boundary where the schoolbook column index `i ≥ 8`, the interleaved
 /// Montgomery reduction adds `v[i-8] · P4_29` to the accumulator.  This is
 /// equivalent (mod p) to adding `v[i-8] · 5 · 2^248` because `5 · 2^248 ≡ 1
 /// (mod p)`, and within limb 8 the offset is `248 − 8·29 = 16`.
@@ -197,11 +200,10 @@ impl Fp29 {
 
     /// Montgomery multiplication: returns `a · b · R⁻¹ mod p`.
     ///
-    /// Implements CIOS Montgomery reduction interleaved with schoolbook
-    /// product over the 17 column positions of a 9×9 multiplication.  The
-    /// fold step at column `i ≥ 8` adds `v[i-8] · P4_29` to absorb the
-    /// previously-computed low column `v[i-8]` into the high columns,
-    /// exploiting `5 · 2^248 ≡ 1 (mod p)`.
+    /// 9×9 schoolbook product with Montgomery reduction interleaved column-
+    /// by-column over the 17 output positions.  The fold step at column
+    /// `i ≥ 8` adds `v[i-8] · P4_29`, exploiting `5 · 2^248 ≡ 1 (mod p)`
+    /// to absorb the previously-computed low column into the high columns.
     ///
     /// Output limbs satisfy `limbs[i] < 2^29` for `i < 8` and `limbs[8] < 2^20`
     /// (so the result is in `[0, 2p)`).  Use [`Fp29::final_sub`] to
@@ -397,6 +399,14 @@ impl From<Fp29> for Fp {
 /// amortising the 81 `u32 * u32` scalar muls of one Fp29 product down to
 /// the ~20 NEON ops measured in [ePrint 2026/394][2026-394].
 ///
+/// # Safety
+///
+/// Public methods are safe.  Internal `unsafe` blocks wrap aarch64 NEON
+/// intrinsics, which are `unsafe fn` purely as a platform gate; NEON is
+/// part of the aarch64 base ISA, so `cfg(target_arch = "aarch64")` already
+/// satisfies `target_feature = "neon"` with no runtime detection.  Per-block
+/// `SAFETY:` comments cover data-flow obligations.
+///
 /// [2026-394]: https://eprint.iacr.org/2026/394.pdf
 #[derive(Clone, Copy)]
 pub(super) struct Fp29x4 {
@@ -443,6 +453,76 @@ impl Fp29x4 {
             }
         }
         out
+    }
+
+    /// Vectorised Montgomery multiplication: returns
+    /// `[a[0] * b[0] * R^-1, ..., a[3] * b[3] * R^-1]` packed in SoA form.
+    ///
+    /// Vectorised version of [`Fp29::mul`]: 17 schoolbook columns with the
+    /// Montgomery fold interleaved at `i >= 8`, accumulating four lane-
+    /// parallel partial products per column.  Two `uint64x2_t` accumulators
+    /// (`t_lo` for lanes 0..2, `t_hi` for lanes 2..4) hold the running totals;
+    /// `vmlal_u32` and `vmlal_high_u32` do the `u32 * u32 -> u64` multiply-
+    /// accumulate in a single instruction.
+    ///
+    /// Output lane bounds match the scalar [`Fp29::mul`]: each output limb is
+    /// `< 2^29` for `i < 8` and `< 2^20` for `i = 8`.
+    pub(super) fn mul(&self, rhs: &Fp29x4) -> Fp29x4 {
+        let a = &self.limbs;
+        let b = &rhs.limbs;
+
+        // SAFETY: every intrinsic below is part of the aarch64 NEON base ISA
+        // (`target_feature = "neon"` is always-on for `target_arch = "aarch64"`).
+        // All operate on register-width `uint32x4_t` / `uint64x2_t` values with
+        // no memory access beyond the input vectors, so there is no aliasing or
+        // alignment concern.  `vshrq_n_u64::<29>` is well-defined: 29 < 64.
+        unsafe {
+            let zero_u32 = vdupq_n_u32(0);
+            let zero_u64 = vdupq_n_u64(0);
+            let mask_u64 = vdupq_n_u64(MASK_29 as u64);
+            let p4_vec = vdupq_n_u32(P4_29);
+
+            let mut t_lo = zero_u64;
+            let mut t_hi = zero_u64;
+            let mut v = [zero_u32; LIMBS_29];
+            let mut c = [zero_u32; LIMBS_29];
+
+            for i in 0..(2 * LIMBS_29 - 1) {
+                let j_lo = if i >= LIMBS_29 { i - LIMBS_29 + 1 } else { 0 };
+                let j_hi = i.min(LIMBS_29 - 1);
+                for j in j_lo..=j_hi {
+                    let a_j = a[j];
+                    let b_k = b[i - j];
+                    t_lo = vmlal_u32(t_lo, vget_low_u32(a_j), vget_low_u32(b_k));
+                    t_hi = vmlal_high_u32(t_hi, a_j, b_k);
+                }
+
+                if i >= LIMBS_29 - 1 {
+                    let v_vec = v[i - (LIMBS_29 - 1)];
+                    t_lo = vmlal_u32(t_lo, vget_low_u32(v_vec), vget_low_u32(p4_vec));
+                    t_hi = vmlal_high_u32(t_hi, v_vec, p4_vec);
+                }
+
+                let limb_lo = vmovn_u64(vandq_u64(t_lo, mask_u64));
+                let limb_hi = vmovn_u64(vandq_u64(t_hi, mask_u64));
+                let limb = vcombine_u32(limb_lo, limb_hi);
+
+                if i < LIMBS_29 {
+                    v[i] = limb;
+                } else {
+                    c[i - LIMBS_29] = limb;
+                }
+
+                t_lo = vshrq_n_u64::<29>(t_lo);
+                t_hi = vshrq_n_u64::<29>(t_hi);
+            }
+
+            let final_lo = vmovn_u64(t_lo);
+            let final_hi = vmovn_u64(t_hi);
+            c[LIMBS_29 - 1] = vcombine_u32(final_lo, final_hi);
+
+            Fp29x4 { limbs: c }
+        }
     }
 }
 
