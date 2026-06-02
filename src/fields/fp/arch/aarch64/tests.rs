@@ -7,12 +7,24 @@
 
 use proptest::prelude::*;
 
-use super::{super::super::Fp, Fp29, LIMBS_29, MASK_29, RADIX_29};
+use super::{super::super::Fp, Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29};
 
 /// Builds an `Fp` from arbitrary 32-byte inputs, matching the convention used
 /// in the parent `Fp` test module.
 fn arb_fp() -> impl Strategy<Value = Fp> {
     any::<[u8; 32]>().prop_map(|b| Fp::from_bytes(&b))
+}
+
+/// Builds an `Fp29` element by routing arbitrary bytes through `Fp::from_bytes`
+/// and into the Montgomery radix-29 form, so the limbs satisfy the same bounds
+/// the arithmetic methods assume.
+fn arb_fp29() -> impl Strategy<Value = Fp29> {
+    arb_fp().prop_map(Fp29::from)
+}
+
+/// Builds a 4-tuple of independently-sampled [`Fp29`] elements for SoA tests.
+fn arb_fp29_array4() -> impl Strategy<Value = [Fp29; 4]> {
+    (arb_fp29(), arb_fp29(), arb_fp29(), arb_fp29()).prop_map(|(a, b, c, d)| [a, b, c, d])
 }
 
 /// Builds a byte string guaranteed to encode a value below `2^248 < p`,
@@ -96,6 +108,19 @@ proptest! {
         let sq_back = Fp::from(sq29);
         let expected = a.square();
         prop_assert_eq!(sq_back.to_bytes(), expected.to_bytes());
+    }
+
+    /// `Fp29x4` transpose is its own inverse: packing four scalar elements
+    /// into the NEON SoA layout and unpacking back must recover the inputs
+    /// limb-for-limb.  This is the correctness foundation every subsequent
+    /// vectorised arithmetic test relies on.
+    #[test]
+    fn fp29x4_transpose_round_trip(elements in arb_fp29_array4()) {
+        let packed = Fp29x4::from_scalars(&elements);
+        let unpacked = packed.to_scalars();
+        for (un, orig) in unpacked.iter().zip(elements.iter()) {
+            prop_assert_eq!(un.limbs, orig.limbs);
+        }
     }
 }
 
