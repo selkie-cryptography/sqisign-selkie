@@ -33,9 +33,9 @@
 //! `cfg(target_feature = "neon")` (always-on for `aarch64`).
 
 #[cfg(target_arch = "aarch64")]
-#[allow(dead_code)] // empty until NEON implementations land
-pub(super) mod aarch64;
+#[allow(dead_code)] // not yet routed into production Fp::mul
+pub mod aarch64;
 
 #[cfg(not(target_arch = "aarch64"))]
 #[allow(dead_code)] // empty until called from non-aarch64 builds
-pub(super) mod fallback;
+pub mod fallback;

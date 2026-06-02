@@ -15,7 +15,11 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
+#[cfg(not(feature = "expose-internals"))]
 mod arch;
+
+#[cfg(feature = "expose-internals")]
+pub mod arch;
 
 #[cfg(test)]
 mod tests;
