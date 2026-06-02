@@ -15,6 +15,8 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
+mod arch;
+
 #[cfg(test)]
 mod tests;
 

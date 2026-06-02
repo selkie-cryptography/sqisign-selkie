@@ -12,6 +12,7 @@
 use subtle::Choice;
 
 mod add;
+mod arch;
 mod bits;
 mod cmp;
 mod cornacchia;
