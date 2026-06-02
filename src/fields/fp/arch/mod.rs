@@ -3,15 +3,15 @@
 //! Skeleton module that re-exports the active backend.  The
 //! backend is selected at compile time by the target architecture:
 //!
-//! - `aarch64`: see file `arch/aarch64.rs`.  Future home for NEON vectorised `Fp`
-//!   arithmetic per De Feo, Jian, Wang, Yang (ePrint 2026/394): radix-29 packed
-//!   limbs in NEON 32-bit lanes, Karatsuba over `Fp²` already in place at the
-//!   higher level, lazy reduction across operation chains.  Measured win on
-//!   Apple M1: roughly 1.22× total signing speedup.
-//! - any other target: see file `arch/fallback.rs`.  Current scalar Rust radix-51
-//!   representation with interleaved schoolbook multiplication and Montgomery
-//!   reduction via the `P4 = 5·2^44` constant, exploiting `p = 5·2^248 − 1`'s
-//!   Montgomery-friendly structure.
+//! - `aarch64`: see file `arch/aarch64.rs`.  Future home for NEON vectorised
+//!   `Fp` arithmetic per De Feo, Jian, Wang, Yang (ePrint 2026/394): radix-29
+//!   packed limbs in NEON 32-bit lanes, Karatsuba over `Fp²` already in place
+//!   at the higher level, lazy reduction across operation chains.  Measured win
+//!   on Apple M1: roughly 1.22× total signing speedup.
+//! - any other target: see file `arch/fallback.rs`.  Current scalar Rust
+//!   radix-51 representation with interleaved schoolbook multiplication and
+//!   Montgomery reduction via the `P4 = 5·2^44` constant, exploiting `p =
+//!   5·2^248 − 1`'s Montgomery-friendly structure.
 //!
 //! # No x86_64-specific path
 //!
