@@ -222,7 +222,7 @@ jobs:
             --in-diff git.diff
 
       - name: sccache stats
-        if: always()
+        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
         run: sccache --show-stats
 
       - name: Verify mutants produced real outcomes
@@ -333,7 +333,7 @@ jobs:
             --minimum-test-timeout 180
 
       - name: sccache stats
-        if: always()
+        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
         run: sccache --show-stats
 
       # Ship the shard's outcomes.json to the Fly site rather than to

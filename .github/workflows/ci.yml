@@ -274,7 +274,7 @@ jobs:
       # source didn't change. Useful for diagnosing whether sccache
       # is doing what we think it's doing.
       - name: sccache stats
-        if: always()
+        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
         run: sccache --show-stats
 
       # Compile-check the `--no-default-features` variant on the same
