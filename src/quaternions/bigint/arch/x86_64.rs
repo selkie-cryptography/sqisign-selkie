@@ -2,8 +2,8 @@
 //!
 //! Future home for:
 //!
-//! - **ADX-based `mag_mul`** using [`core::arch::x86_64::_mulx_u64`] for `u64 ×
-//!   u64 → u128` without consuming the carry flag, plus
+//! - **ADX-based `mag_mul`** using [`core::arch::x86_64::_mulx_u64`] for `u64 *
+//!   u64 -> u128` without consuming the carry flag, plus
 //!   [`core::arch::x86_64::_addcarryx_u64`] / `_addcarry_u64` double-chain
 //!   accumulation for the schoolbook product.
 //! - **ADX-based Montgomery REDC** (`square_wide`, `reduce_wide`,
