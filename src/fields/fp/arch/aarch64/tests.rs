@@ -83,7 +83,7 @@ proptest! {
     /// agree with `Fp::add` after the canonical-bytes round-trip.
     #[test]
     fn fp29_add_matches_fp_add(a in arb_fp(), b in arb_fp()) {
-        let sum29 = Fp29::from(a).add(Fp29::from(b));
+        let sum29 = Fp29::from(a) + Fp29::from(b);
         let sum_back = Fp::from(sum29);
         let expected = &a + &b;
         prop_assert_eq!(sum_back.to_bytes(), expected.to_bytes());
@@ -93,7 +93,7 @@ proptest! {
     /// must agree with `Fp::sub`.
     #[test]
     fn fp29_sub_matches_fp_sub(a in arb_fp(), b in arb_fp()) {
-        let diff29 = Fp29::from(a).sub(Fp29::from(b));
+        let diff29 = Fp29::from(a) - Fp29::from(b);
         let diff_back = Fp::from(diff29);
         let expected = &a - &b;
         prop_assert_eq!(diff_back.to_bytes(), expected.to_bytes());
