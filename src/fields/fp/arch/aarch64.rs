@@ -44,8 +44,8 @@
 
 use core::{
     arch::aarch64::{
-        uint32x4_t, vandq_u64, vcombine_u32, vdupq_n_u32, vdupq_n_u64, vget_low_u32, vld1q_u32,
-        vmlal_high_u32, vmlal_u32, vmovn_u64, vshrq_n_u64, vst1q_u32,
+        uint32x4_t, vandq_u32, vdupq_n_u32, vdupq_n_u64, vget_low_u32, vld1q_u32, vmlal_high_u32,
+        vmlal_u32, vmovn_high_u64, vmovn_u64, vshrq_n_u64, vst1q_u32,
     },
     ops::{Add, Sub},
 };
@@ -429,7 +429,7 @@ impl Fp29x4 {
         unsafe {
             let zero_u32 = vdupq_n_u32(0);
             let zero_u64 = vdupq_n_u64(0);
-            let mask_u64 = vdupq_n_u64(MASK_29 as u64);
+            let mask_u32 = vdupq_n_u32(MASK_29);
             let p4_vec = vdupq_n_u32(P4_29);
 
             let mut t_lo = zero_u64;
@@ -453,9 +453,13 @@ impl Fp29x4 {
                     t_hi = vmlal_high_u32(t_hi, v_vec, p4_vec);
                 }
 
-                let limb_lo = vmovn_u64(vandq_u64(t_lo, mask_u64));
-                let limb_hi = vmovn_u64(vandq_u64(t_hi, mask_u64));
-                let limb = vcombine_u32(limb_lo, limb_hi);
+                // Extract limb in three instructions: narrow t_lo's low 32 bits,
+                // narrow t_hi into the upper half (fused), then mask to 29 bits in
+                // u32 space.  Replaces the prior 5-instruction (2x and + 2x narrow +
+                // combine) pattern.
+                let limb_low_pair = vmovn_u64(t_lo);
+                let limb_full = vmovn_high_u64(limb_low_pair, t_hi);
+                let limb = vandq_u32(limb_full, mask_u32);
 
                 if i < LIMBS_29 {
                     v[i] = limb;
@@ -467,9 +471,8 @@ impl Fp29x4 {
                 t_hi = vshrq_n_u64::<29>(t_hi);
             }
 
-            let final_lo = vmovn_u64(t_lo);
-            let final_hi = vmovn_u64(t_hi);
-            c[LIMBS_29 - 1] = vcombine_u32(final_lo, final_hi);
+            let final_low_pair = vmovn_u64(t_lo);
+            c[LIMBS_29 - 1] = vmovn_high_u64(final_low_pair, t_hi);
 
             Fp29x4 { limbs: c }
         }
