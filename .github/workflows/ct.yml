@@ -36,6 +36,16 @@ on:
   schedule:
     - cron: "0 7 * * *"   # daily 07:00 UTC; conditionally skipped — see `cron-gate`.
   workflow_dispatch:
+    inputs:
+      # Verify operates on public data (vk, sig, msg are all transmitted
+      # in the clear), so the dudect `verify` bench + ctgrind
+      # `verify_oracle_resistance` test track an *oracle-resistance*
+      # property rather than CT-on-secrets. Off by default — flip on
+      # for an on-demand observation run.
+      oracle:
+        description: 'Run verify oracle-resistance tests (dudect verify + ctgrind verify_oracle_resistance)'
+        type: boolean
+        default: false
 
 # Cancel a superseded run if a newer commit lands before the prior
 # CT run finishes — the latest signal is the only one that matters.
@@ -142,7 +152,11 @@ jobs:
       # DudeCT: runs continuously, timeout caps it.
       # The glob must skip the .d dep-info file that cargo leaves next
       # to the binary — find the sole executable instead.
+      # DUDECT_ORACLE flips on the `verify` bench (oracle-resistance,
+      # not CT-on-secrets); off by default.
       - name: Run DudeCT
+        env:
+          DUDECT_ORACLE: ${{ inputs.oracle && '1' || '' }}
         run: |
           bin=$(find ./target/release/deps -maxdepth 1 -name 'dudect-*' -executable -type f | head -1)
           timeout 120 "$bin" 2>&1 | tee dudect-output.txt || true
@@ -208,12 +222,17 @@ jobs:
     runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 120
     env:
-      # Enables the slow keygen/sign/verify CT tests in
+      # Enables the slow keygen/sign CT-on-secrets tests in
       # `tests/ctgrind.rs` (see `skip_unless_slow`). They each add a
       # multi-minute Valgrind run; the weekly cadence + 120 min
       # ceiling absorbs the cost. Unset → only the fast Fp / Fp2
       # tests run, same as a local `cargo test --test ctgrind`.
       CTGRIND_SLOW: "1"
+      # `verify_oracle_resistance` is gated separately — it's not
+      # a CT-on-secrets target (verify's inputs are all public per
+      # the spec). Off by default; flip on via workflow_dispatch
+      # `oracle: true` input for an observation run.
+      CTGRIND_ORACLE: ${{ inputs.oracle && '1' || '' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:

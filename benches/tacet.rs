@@ -200,11 +200,16 @@ fn main() {
         report("point_double", mname, &outcome);
     }
 
-    // TODO: Add keygen, sign, verify once they're fast enough for
-    // tacet's adaptive sampling (~seconds per invocation currently).
+    // TODO: Add keygen and sign once they're fast enough for tacet's
+    // adaptive sampling (~seconds per invocation currently).
     // keygen: Left = all-zero seed, Right = random seed
-    // sign: Left = all-zero message, Right = random message
-    // verify: Left = valid sig, Right = corrupted sig
+    // sign:   Left = all-zero message, Right = random message
+    //
+    // verify is intentionally NOT planned here: its inputs (vk, sig,
+    // msg) are all public per the spec, so CT-on-secrets isn't the
+    // property. The dudect `verify` bench measures an oracle-resistance
+    // property as a separate opt-in (`DUDECT_ORACLE=1`); tacet would
+    // duplicate that without testing anything required by the spec.
 
     println!("\ntacet analysis complete");
 }

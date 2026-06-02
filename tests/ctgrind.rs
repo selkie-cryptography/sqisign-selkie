@@ -157,6 +157,22 @@ fn skip_unless_slow(name: &str) -> bool {
     false
 }
 
+/// Returns `true` if the caller should skip — used to early-return
+/// from oracle-resistance tests when `CTGRIND_ORACLE` isn't set.
+///
+/// Verify operates on public data per the spec, so it isn't a CT-on-
+/// secrets target. Tests that taint attacker-controlled inputs to
+/// verify (signatures, hint bytes, etc.) are tracking a separate
+/// *oracle-resistance* property — measurable but not required, and
+/// not part of the default CI loop.
+fn skip_unless_oracle(name: &str) -> bool {
+    if std::env::var_os("CTGRIND_ORACLE").is_none() {
+        eprintln!("[ctgrind] skipping {name}; set CTGRIND_ORACLE=1 to enable");
+        return true;
+    }
+    false
+}
+
 /// Decodes the first KAT vector's seed (48 bytes hex → 48 bytes).
 fn kat0_seed() -> [u8; DRBG_SEED_LEN] {
     let hex_seed = KAT_VECTORS[0].0;
@@ -222,8 +238,8 @@ fn sign_secret_independent() {
 }
 
 #[test]
-fn verify_secret_independent() {
-    if skip_unless_slow("verify_secret_independent") {
+fn verify_oracle_resistance() {
+    if skip_unless_oracle("verify_oracle_resistance") {
         return;
     }
 
@@ -236,6 +252,10 @@ fn verify_secret_independent() {
     // any branch that depends on bits the attacker chose. Many such
     // branches are expected today (e.g. `n_bt` / `r_rsp` parsing) —
     // the value is tracking the count over time, not gating CI.
+    //
+    // Gated behind `CTGRIND_ORACLE` rather than `CTGRIND_SLOW` so it
+    // doesn't run in the default CT loop. Set the env var to opt in
+    // (workflow_dispatch or local).
     let seed = kat0_seed();
     let sk = SigningKey::generate_derand(&seed).expect("keygen on KAT 0 succeeds");
     let vk = sk.verifying_key();
