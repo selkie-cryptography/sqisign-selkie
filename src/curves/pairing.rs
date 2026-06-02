@@ -15,15 +15,15 @@ use core::ops::{Div, Mul};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::{
-    curves::{TorsionBasis, TorsionExponent, montgomery::ProjectiveXOnlyPoint, scalar::Scalar},
+    curves::{TorsionBasis, TorsionExponent, scalar::Scalar},
     fields::{fp::Fp, fp2::Fp2},
     quaternions::bigint::BigInt,
 };
 
 /// An element of μ_{2^e}, the group of 2^e-th roots of unity in F_{p²}*.
 ///
-/// Produced by the reduced Tate pairing ([`tate_pairing`]) and
-/// consumed by [`NormalizedDlog`](RootOfUnity::dlog) to solve
+/// Produced by the reduced Tate pairing ([`TorsionBasis::tate`])
+/// and consumed by [`NormalizedDlog`](RootOfUnity::dlog) to solve
 /// discrete logarithms in 2-power order subgroups.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct RootOfUnity(Fp2);
@@ -193,8 +193,10 @@ impl ConditionallySelectable for RootOfUnity {
 
 /// A cubical point: projective (X : Z) in F_{p²}.
 ///
-/// Same representation as [`ProjectiveXOnlyPoint`] but used in the
-/// cubical arithmetic context where the formulas differ.
+/// Same representation as
+/// [`ProjectiveXOnlyPoint`](crate::curves::montgomery::ProjectiveXOnlyPoint)
+/// but used in the cubical arithmetic context where the formulas
+/// differ.
 #[derive(Copy, Clone, Debug)]
 struct CubicalPoint {
     /// Projective `X` coordinate.
@@ -282,83 +284,73 @@ impl CubicalPoint {
     }
 }
 
-/// Computes the reduced Tate pairing t_{2^e}(P, Q).
-///
-/// Takes three projective x-only points P, Q, P+Q on the same curve
-/// and the torsion exponent e (where 2^e · P = O_E). Internally
-/// normalizes to affine x-coordinates for the cubical arithmetic.
-///
-/// Implements [Tate][Alg. 8.18] from the spec.
-///
-/// # Panics
-///
-/// Debug-asserts that all three points are on the same curve.
-///
-/// [Alg. 8.18]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.18
-pub(crate) fn tate_pairing(
-    p: &ProjectiveXOnlyPoint,
-    q: &ProjectiveXOnlyPoint,
-    pq: &ProjectiveXOnlyPoint,
-    e: TorsionExponent,
-) -> RootOfUnity {
-    let e = e.value();
-    debug_assert!(p.curve() == q.curve(), "P and Q must be on the same curve");
-    debug_assert!(
-        q.curve() == pq.curve(),
-        "Q and P+Q must be on the same curve"
-    );
-
-    let curve = p.curve();
-    let a = *curve.coefficient().as_fp2();
-    let two = Fp2::from_fp(Fp::from_small(2));
-    let four = Fp2::from_fp(Fp::from_small(4));
-    let a24 = &(&a + &two) * &four.invert();
-
-    // Normalize to affine x-coordinates for cubical arithmetic.
-    let x_p = p.to_affine_x();
-    let x_q = q.to_affine_x();
-    let x_pq = pq.to_affine_x();
-
-    // Step 1: (nP, nPQ) ← CubicalLadder(E, e-1, (x(P+Q),1), (x(P),1), x(Q))
-    let mut np = CubicalPoint::from_affine(*x_p.as_fp2());
-    let mut npq = CubicalPoint::from_affine(*x_pq.as_fp2());
-    let xq = x_q.as_fp2();
-    for _ in 0..(e - 1) {
-        npq = npq.differential_add(&np, xq);
-        np = np.double(&a24);
-    }
-
-    // Step 2: O ← CubicalTranslate(nP, nP)
-    let o = np.translate(&np);
-
-    // Step 3: Q' ← CubicalTranslate(nPQ, nP)
-    let q_prime = npq.translate(&np);
-
-    // Step 4: λ ← CubicalRatio(Q, Q') / CubicalRatio((1,0), O)
-    let q_tilde = CubicalPoint::from_affine(*xq);
-    let lambda = &q_tilde.ratio(&q_prime) * &CubicalPoint::infinity().ratio(&o).invert();
-
-    // Step 5: λ^((p²-1)/2^e)
-    //
-    // Factor: (p²-1)/2^e = (p-1) · (p+1)/2^e.
-    //
-    // λ^(p-1) = conj(λ)/λ  (Frobenius: x^p = conj(x) in Fp2).
-    let lambda_p_minus_1 = &lambda.conjugate() * &lambda.invert();
-
-    // λ^((p+1)/2^e): p+1 = 5·2^248, so (p+1)/2^e = 5·2^(248-e).
-    // Compute as λ^5 then square (248-e) times.
-    let l2 = lambda_p_minus_1.square();
-    let l4 = l2.square();
-    let l5 = &l4 * &lambda_p_minus_1;
-    let mut result = l5;
-    for _ in 0..248u32.saturating_sub(e) {
-        result = result.square();
-    }
-
-    RootOfUnity(result)
-}
-
 impl TorsionBasis {
+    /// Reduced Tate pairing t_{2^e}(P, Q) on this basis, using
+    /// `PmQ` as the cubical-ladder differential point.
+    ///
+    /// `e` is the torsion exponent (where 2^e · P = O_E). Internally
+    /// normalizes to affine x-coordinates for the cubical arithmetic.
+    ///
+    /// Implements [Tate][Alg. 8.18] from the spec.
+    ///
+    /// [Alg. 8.18]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.18
+    pub(crate) fn tate(&self, e: TorsionExponent) -> RootOfUnity {
+        let e = e.value();
+
+        let curve = self.P.curve();
+        let a = *curve.coefficient().as_fp2();
+        let two = Fp2::from_fp(Fp::from_small(2));
+        let four = Fp2::from_fp(Fp::from_small(4));
+        let a24 = &(&a + &two) * &four.invert();
+
+        // Normalize to affine x-coordinates for cubical arithmetic.
+        let x_p = self.P.to_affine_x();
+        let x_q = self.Q.to_affine_x();
+        let x_pmq = self.PmQ.to_affine_x();
+
+        // Step 1: (nP, nPQ) ← CubicalLadder(E, e-1, (x(P+Q),1), (x(P),1), x(Q))
+        //
+        // `x(P-Q)` works equivalently to `x(P+Q)` here: the cubical
+        // ladder's differential-add requirement is on x(npq - np) = x(Q),
+        // which holds whether npq starts at P+Q or P-Q (x is sign-symmetric).
+        let mut np = CubicalPoint::from_affine(*x_p.as_fp2());
+        let mut npq = CubicalPoint::from_affine(*x_pmq.as_fp2());
+        let xq = x_q.as_fp2();
+        for _ in 0..(e - 1) {
+            npq = npq.differential_add(&np, xq);
+            np = np.double(&a24);
+        }
+
+        // Step 2: O ← CubicalTranslate(nP, nP)
+        let o = np.translate(&np);
+
+        // Step 3: Q' ← CubicalTranslate(nPQ, nP)
+        let q_prime = npq.translate(&np);
+
+        // Step 4: λ ← CubicalRatio(Q, Q') / CubicalRatio((1,0), O)
+        let q_tilde = CubicalPoint::from_affine(*xq);
+        let lambda = &q_tilde.ratio(&q_prime) * &CubicalPoint::infinity().ratio(&o).invert();
+
+        // Step 5: λ^((p²-1)/2^e)
+        //
+        // Factor: (p²-1)/2^e = (p-1) · (p+1)/2^e.
+        //
+        // λ^(p-1) = conj(λ)/λ  (Frobenius: x^p = conj(x) in Fp2).
+        let lambda_p_minus_1 = &lambda.conjugate() * &lambda.invert();
+
+        // λ^((p+1)/2^e): p+1 = 5·2^248, so (p+1)/2^e = 5·2^(248-e).
+        // Compute as λ^5 then square (248-e) times.
+        let l2 = lambda_p_minus_1.square();
+        let l4 = l2.square();
+        let l5 = &l4 * &lambda_p_minus_1;
+        let mut result = l5;
+        for _ in 0..248u32.saturating_sub(e) {
+            result = result.square();
+        }
+
+        RootOfUnity(result)
+    }
+
     /// Five Tate cross-pairings of `self` (full-order canonical) and
     /// `reduced` (order 2^e), batched per the C reference's
     /// `tate_dlog_partial` (`ec/ref/lvlx/biextension.c:621`).
@@ -385,7 +377,7 @@ impl TorsionBasis {
     ///
     /// Used by [`ChangeOfBasisMatrix::from_bases`] to build
     /// `M_chl` / `M_sk` matrices that survive the dlog-precision
-    /// check; the symmetric reduced-input version of `tate_pairing`
+    /// check; the symmetric reduced-input version of [`Self::tate`]
     /// produces ord(ζ) = 2^(2e − TORSION_EVEN_POWER) on bases
     /// pre-doubled to order 2^e, which collapses any matrix at
     /// 2e ≤ TORSION_EVEN_POWER.
@@ -554,26 +546,29 @@ impl TorsionBasis {
     }
 }
 
-/// Computes the Weil pairing e_{2^e}(P, Q).
-///
-/// Defined as `e(P, Q) = T(P, Q) / T(Q, P)` where `T` is the
-/// reduced Tate pairing. Takes the same `(P, Q, P+Q)` triple as
-/// [`tate_pairing`].
-///
-/// Used in [`LeftIdeal::to_isogeny`] to disambiguate the two
-/// codomain components of the (2,2)-chain on `E_u × E_v`.
-///
-/// [`LeftIdeal::to_isogeny`]: crate::quaternions::lattice::LeftIdeal::to_isogeny
-pub(crate) fn weil_pairing(
-    p: &ProjectiveXOnlyPoint,
-    q: &ProjectiveXOnlyPoint,
-    pq: &ProjectiveXOnlyPoint,
-    e: TorsionExponent,
-) -> RootOfUnity {
-    let t_pq = tate_pairing(p, q, pq, e);
-    let t_qp = tate_pairing(q, p, pq, e);
-    let result = t_pq.as_fp2() * &t_qp.as_fp2().invert();
-    RootOfUnity(result)
+impl TorsionBasis {
+    /// Weil pairing e_{2^e}(P, Q) on this basis.
+    ///
+    /// Defined as `e(P, Q) = t(P, Q) / t(Q, P)` where `t` is the
+    /// reduced Tate pairing. The `PmQ` differential is sign-symmetric
+    /// in `(P, Q)` on the x-line, so the same basis serves both Tate
+    /// directions.
+    ///
+    /// Used in [`LeftIdeal::to_isogeny`] to disambiguate the two
+    /// codomain components of the (2,2)-chain on `E_u × E_v`.
+    ///
+    /// [`LeftIdeal::to_isogeny`]: crate::quaternions::lattice::LeftIdeal::to_isogeny
+    pub(crate) fn weil(&self, e: TorsionExponent) -> RootOfUnity {
+        let t_pq = self.tate(e);
+        let swapped = TorsionBasis {
+            P: self.Q,
+            PmQ: self.PmQ,
+            Q: self.P,
+        };
+        let t_qp = swapped.tate(e);
+        let result = t_pq.as_fp2() * &t_qp.as_fp2().invert();
+        RootOfUnity(result)
+    }
 }
 
 #[cfg(test)]
@@ -582,7 +577,7 @@ mod tests {
     use crate::{
         curves::{
             BasisHint, ChangeOfBasisMatrix, TorsionBasis,
-            montgomery::{Coefficient, Curve},
+            montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint},
         },
         deuring::precomputed::torsion_basis::ExtremalCurve,
         fields::fp2::Fp2,
@@ -606,7 +601,7 @@ mod tests {
         let basis = e0_basis();
         let e = TorsionExponent::FULL; // 248
 
-        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
+        let zeta = TorsionBasis::from_propagated(basis.P, basis.Q, basis.PmQ).tate(e);
 
         // ζ ≠ 1 (non-degenerate pairing on a basis).
         assert_ne!(
@@ -628,7 +623,7 @@ mod tests {
     fn tate_pairing_primitive_on_full_basis() {
         let basis = e0_basis();
         let e = TorsionExponent::FULL;
-        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
+        let zeta = TorsionBasis::from_propagated(basis.P, basis.Q, basis.PmQ).tate(e);
 
         let ord = (0..=e.value() + 4).find(|&k| zeta.square_n(k) == RootOfUnity::ONE);
         assert_eq!(ord, Some(e.value()), "ord(ζ) must equal 2^{}", e.value());
@@ -723,7 +718,7 @@ mod tests {
         assert_eq!(s2, delta, "s2 must equal δ = 4");
     }
 
-    /// Documents a known limitation of [`tate_pairing`]: its symmetric
+    /// Documents a known limitation of [`TorsionBasis::tate`]: its symmetric
     /// cubical-ladder formulation produces ord(ζ) =
     /// 2^(2·e − TORSION_EVEN_POWER) when both inputs are pre-reduced
     /// to order 2^e (rather than primitively used at the curve's
@@ -740,7 +735,7 @@ mod tests {
     /// cubical ladder to track the path-dependent `xq^k` factor that
     /// differential_add accumulates — an open task tracked separately.
     /// This test asserts the *current* (broken) behavior so a
-    /// downstream fix to [`tate_pairing`] flags as a regression.
+    /// downstream fix to [`TorsionBasis::tate`] flags as a regression.
     ///
     /// [`from_bases`]: crate::curves::ChangeOfBasisMatrix::from_bases
     #[test]
@@ -757,7 +752,7 @@ mod tests {
         let reduced = TorsionBasis::from_propagated(r, s, rs);
 
         let e = TorsionExponent::try_from(e_red).expect("128 is a valid TorsionExponent");
-        let zeta = tate_pairing(&reduced.P, &reduced.PmQ, &reduced.Q, e);
+        let zeta = TorsionBasis::from_propagated(reduced.P, reduced.Q, reduced.PmQ).tate(e);
         assert_ne!(zeta, RootOfUnity::ONE);
 
         let ord = (0..=e.value() + 4).find(|&k| zeta.square_n(k) == RootOfUnity::ONE);
@@ -765,7 +760,7 @@ mod tests {
         assert_eq!(
             ord,
             Some(expected),
-            "current symmetric tate_pairing on reduced bases gives \
+            "current symmetric TorsionBasis::tate on reduced bases gives \
              ord(ζ) = 2^(2·e − e_full) = 2^{expected}; if this assertion \
              fires, the symmetric path was fixed and `cross_pairings` may \
              no longer be necessary"
@@ -776,7 +771,7 @@ mod tests {
     fn dlog_round_trip_large() {
         let basis = e0_basis();
         let e = TorsionExponent::FULL;
-        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
+        let zeta = TorsionBasis::from_propagated(basis.P, basis.Q, basis.PmQ).tate(e);
 
         // dlog with full exponent: ζ^42 should round-trip.
         let zeta42 = zeta.pow(42);
@@ -796,7 +791,7 @@ mod tests {
     fn dlog_round_trip_above_u32() {
         let basis = e0_basis();
         let e = TorsionExponent::FULL; // 248
-        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
+        let zeta = TorsionBasis::from_propagated(basis.P, basis.Q, basis.PmQ).tate(e);
 
         // Pick a value with bits set above 2^32 so any `as u32` cast
         // would lose information.
@@ -829,7 +824,7 @@ mod tests {
 
         // Compute P+Q from (P, Q, P-Q): differential_add(P, Q, P-Q) = P + Q.
         let ppq = basis.P.differential_add(&basis.PmQ, &basis.Q);
-        let t_pq = tate_pairing(&basis.P, &basis.PmQ, &ppq, e);
+        let t_pq = TorsionBasis::from_propagated(basis.P, ppq, basis.PmQ).tate(e);
         let t_pq_squared = t_pq.square_n(1);
 
         let p2 = basis.P.double();
@@ -838,7 +833,7 @@ mod tests {
         let two_p_minus_q = basis.P.differential_add(&basis.Q, &basis.PmQ);
         let two_p_plus_q = p2.differential_add(&basis.PmQ, &two_p_minus_q);
 
-        let t_2p_q = tate_pairing(&p2, &basis.PmQ, &two_p_plus_q, e);
+        let t_2p_q = TorsionBasis::from_propagated(p2, two_p_plus_q, basis.PmQ).tate(e);
         assert_eq!(
             t_2p_q, t_pq_squared,
             "Tate bilinearity (P+Q form): T([2]P, Q, [2]P+Q) should equal T(P, Q, P+Q)^2"
@@ -855,14 +850,14 @@ mod tests {
         let basis = e0_basis();
         let e = TorsionExponent::FULL;
 
-        let t_pq = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
+        let t_pq = TorsionBasis::from_propagated(basis.P, basis.Q, basis.PmQ).tate(e);
         let t_pq_squared = t_pq.square_n(1);
 
         let p2 = basis.P.double();
         // [2]P - Q via differential_add(P, P-Q, Q).
         let two_p_minus_q = basis.P.differential_add(&basis.Q, &basis.PmQ);
 
-        let t_2p_q = tate_pairing(&p2, &basis.PmQ, &two_p_minus_q, e);
+        let t_2p_q = TorsionBasis::from_propagated(p2, two_p_minus_q, basis.PmQ).tate(e);
         assert_eq!(
             t_2p_q, t_pq_squared,
             "Tate bilinearity (P-Q form): T([2]P, Q, [2]P-Q) should equal T(P, Q, P-Q)^2"
@@ -883,8 +878,8 @@ mod tests {
         // P+Q for the third arg per `tate_pairing`'s convention.
         let ppq = basis.P.differential_add(&basis.PmQ, &basis.Q);
 
-        let t_pq = tate_pairing(&basis.P, &basis.PmQ, &ppq, e);
-        let t_qp = tate_pairing(&basis.PmQ, &basis.P, &ppq, e);
+        let t_pq = TorsionBasis::from_propagated(basis.P, ppq, basis.PmQ).tate(e);
+        let t_qp = TorsionBasis::from_propagated(basis.PmQ, ppq, basis.P).tate(e);
         let product = t_pq.as_fp2() * t_qp.as_fp2();
         assert_eq!(
             product,
@@ -901,8 +896,8 @@ mod tests {
 
         // Use P+Q form for Weil since Tate's bilinearity probably holds there.
         let ppq = basis.P.differential_add(&basis.PmQ, &basis.Q);
-        let w_pq = weil_pairing(&basis.P, &basis.PmQ, &ppq, e);
-        let w_qp = weil_pairing(&basis.PmQ, &basis.P, &ppq, e);
+        let w_pq = TorsionBasis::from_propagated(basis.P, ppq, basis.PmQ).weil(e);
+        let w_qp = TorsionBasis::from_propagated(basis.PmQ, ppq, basis.P).weil(e);
         let product = w_pq.as_fp2() * w_qp.as_fp2();
         assert_eq!(
             product,
@@ -917,7 +912,7 @@ mod tests {
 
         // Use the full-order pairing which is guaranteed primitive.
         let e = TorsionExponent::FULL; // 248
-        let zeta = tate_pairing(&basis.P, &basis.PmQ, &basis.Q, e);
+        let zeta = TorsionBasis::from_propagated(basis.P, basis.Q, basis.PmQ).tate(e);
         assert_ne!(zeta, RootOfUnity::ONE);
 
         // Use a small exponent for the dlog test by squaring down.

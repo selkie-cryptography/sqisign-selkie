@@ -747,10 +747,8 @@ impl<const N: usize> LeftIdeal<N> {
         let s_p = ProjectiveXOnlyPoint::from_affine_x(s_px, &s_curve);
         let s_q = ProjectiveXOnlyPoint::from_affine_x(s_qx, &s_curve);
         let s_pmq = ProjectiveXOnlyPoint::from_affine_x(s_pmq_x, &s_curve);
-        // Tate-based Weil pairing expects P+Q as third arg; compute
-        // it via differential addition from (P, Q, P-Q).
-        let s_ppq = s_p.differential_add(&s_q, &s_pmq);
-        let w_s = crate::curves::pairing::weil_pairing(&s_p, &s_q, &s_ppq, f);
+        let s_basis = TorsionBasis::from_propagated(s_p, s_pmq, s_q);
+        let w_s = s_basis.weil(f);
 
         // Expected: w_s^(d₁ · u² mod 2^f).
         let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
@@ -758,10 +756,10 @@ impl<const N: usize> LeftIdeal<N> {
         let exp_disamb = d1_big.ct_mul(&u_sq).ct_mod(&modulus);
         let expected = w_s.pow_scalar(&Scalar::from(exp_disamb));
 
-        // Compute Weil pairing on codomain.E1 side using propagated
-        // PmQ; convert to P+Q via differential addition.
-        let ppq_e1 = images[0].0.differential_add(&images[1].0, &images[2].0);
-        let w1 = crate::curves::pairing::weil_pairing(&images[0].0, &images[1].0, &ppq_e1, f);
+        // Compute Weil pairing on codomain.E1 side using the
+        // propagated (P, Q, P-Q) image triple.
+        let basis_e1 = TorsionBasis::from_propagated(images[0].0, images[2].0, images[1].0);
+        let w1 = basis_e1.weil(f);
 
         let matched_e1 = w1 == expected;
         let (e_i, p_chain, q_chain, pmq_chain) = if matched_e1 {

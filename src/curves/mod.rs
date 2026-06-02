@@ -953,7 +953,7 @@ impl ChangeOfBasisMatrix {
     /// `reduced` at order 2^e. Pre-reducing both bases to 2^e produces
     /// a non-primitive `ζ` and collapses the matrix to a sub-precision
     /// rank-1 form (regression test
-    /// `tate_pairing_primitive_on_reduced_basis`).
+    /// `tate_pairing_subprimitive_on_reduced_basis`).
     ///
     /// Returns `None` if either basis fails to lift to Jacobian
     /// coordinates (e.g. a recomputed `P − Q` whose sqrt branch is

@@ -40,7 +40,6 @@ use crate::{
     curves::{
         TorsionBasis, TorsionExponent,
         montgomery::{Curve, JacobianPoint as CurveJacobianPoint, ProjectiveXOnlyPoint},
-        pairing::weil_pairing,
     },
     fields::fp2::Fp2,
     surfaces::isogeny::{GluingKernel, SplittingKernel},
@@ -466,18 +465,20 @@ impl Kernel {
     ///
     /// [§2.4]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.4
     pub(crate) fn is_isotropic(&self, e_kernel: TorsionExponent) -> bool {
-        // P + Q on each component side, derived from the Jacobian
+        // P − Q on each component side, derived from the Jacobian
         // generators via differential addition.
-        let (ppq1, _) = self.P.0.x_add_sub(&self.Q.0);
-        let (ppq2, _) = self.P.1.x_add_sub(&self.Q.1);
+        let (_, pmq1) = self.P.0.x_add_sub(&self.Q.0);
+        let (_, pmq2) = self.P.1.x_add_sub(&self.Q.1);
 
         let p1 = ProjectiveXOnlyPoint::from(&self.P.0);
         let q1 = ProjectiveXOnlyPoint::from(&self.Q.0);
         let p2 = ProjectiveXOnlyPoint::from(&self.P.1);
         let q2 = ProjectiveXOnlyPoint::from(&self.Q.1);
 
-        let w1 = weil_pairing(&p1, &q1, &ppq1, e_kernel);
-        let w2 = weil_pairing(&p2, &q2, &ppq2, e_kernel);
+        let basis1 = TorsionBasis::from_propagated(p1, pmq1, q1);
+        let basis2 = TorsionBasis::from_propagated(p2, pmq2, q2);
+        let w1 = basis1.weil(e_kernel);
+        let w2 = basis2.weil(e_kernel);
         // Product polarization on E_1 × E_2: a strictly Lagrangian
         // kernel of order 2^e_kernel satisfies
         //   `e_{2^e_kernel}(P_1, Q_1) · e_{2^e_kernel}(P_2, Q_2) = 1`
