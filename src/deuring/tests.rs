@@ -421,7 +421,7 @@ fn action_matrix_scalar_three_alternate_orders() {
     }
 }
 
-/// Compare Montgomery ladder vs biladder for [3]*P.
+/// Compares Montgomery ladder vs biladder for [3]*P.
 #[test]
 fn ladder_vs_biladder_agree() {
     let curve = Curve::E0;
@@ -489,7 +489,7 @@ fn scalar_mul_kernel_splits() {
         .expect("test kernel must split as product");
 }
 
-/// Verify all 7 torsion bases: points on curve, correct order.
+/// Verifies all 7 torsion bases: points on curve, correct order.
 #[test]
 fn all_torsion_bases_on_curve() {
     use crate::curves::montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint};
@@ -524,7 +524,7 @@ fn all_torsion_bases_on_curve() {
     }
 }
 
-/// Verify the precomputed `P − Q` on each curve `E_t` is the
+/// Verifies the precomputed `P − Q` on each curve `E_t` is the
 /// x-coordinate of `P − Q` (or `P + Q` — the x-only basis admits a
 /// sign swap that the biladder tolerates) for SOME y-sign choice of
 /// `P` and `Q`. Curve 0 also gets a direct round-trip against

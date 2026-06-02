@@ -55,7 +55,7 @@ fn frexp(x: f64) -> (f64, i32) {
     (f64::from_bits(frac_bits), exp)
 }
 
-/// Compute `x * 2^exp`. Pure bit manipulation.
+/// Computes `x * 2^exp`. Pure bit manipulation.
 fn ldexp(x: f64, exp: i32) -> f64 {
     // Multiply by 2^exp via a float whose exponent IS exp.
     // Split into two steps to avoid overflow for large exp.
@@ -70,7 +70,7 @@ impl DoublePlusExponent {
     /// The zero `DoublePlusExponent` value.
     pub const ZERO: Self = Self { m: 0.0, e: 0 };
 
-    /// Convert from an `f64` (matches `dpe_set_d`).
+    /// Converts from an `f64` (matches `dpe_set_d`).
     pub fn from_f64(v: f64) -> Self {
         if v == 0.0 {
             return Self::ZERO;
@@ -82,7 +82,7 @@ impl DoublePlusExponent {
         }
     }
 
-    /// Convert from a [`BigInt<N>`], byte-for-byte matching mini-GMP's
+    /// Converts from a [`BigInt<N>`], byte-for-byte matching mini-GMP's
     /// `mini_mpz_get_d_2exp`
     /// (`the-sqisign/src/mini-gmp/mini-gmp-extra.c:41-65`), which is
     /// the function the C ref's `dpe_set_z` calls.
@@ -126,7 +126,7 @@ impl DoublePlusExponent {
         Self { m: signed, e: bits }
     }
 
-    /// Convert to a `BigInt<N>`, rounding to the nearest integer.
+    /// Converts to a `BigInt<N>`, rounding to the nearest integer.
     ///
     /// This is the equivalent of the C reference's `ibz_set_dpe`:
     /// it converts the DPE mantissa to an integer and shifts left
@@ -186,7 +186,7 @@ impl DoublePlusExponent {
 }
 
 impl<const N: usize> From<&BigInt<N>> for DoublePlusExponent {
-    /// Convert via [`DoublePlusExponent::from_bigint`] — bit-exact
+    /// Converts via [`DoublePlusExponent::from_bigint`] — bit-exact
     /// with mini-GMP's `mini_mpz_get_d_2exp`. Total conversion (no
     /// `TryFrom` needed) since every [`BigInt`] has a finite
     /// `DoublePlusExponent` representation.
@@ -197,7 +197,7 @@ impl<const N: usize> From<&BigInt<N>> for DoublePlusExponent {
 }
 
 impl<const N: usize> From<BigInt<N>> for DoublePlusExponent {
-    /// Convert by reference (the value is small and `Copy`, but
+    /// Converts by reference (the value is small and `Copy`, but
     /// `from_bigint`'s only access pattern is read-only).
     #[inline]
     fn from(v: BigInt<N>) -> Self {

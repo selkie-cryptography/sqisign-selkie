@@ -55,7 +55,7 @@ const _: () = assert!(
      intermediate masking must be added for this parameter set"
 );
 
-/// Compute HASH(pk ‖ j(E) ‖ msg).
+/// Computes HASH(pk ‖ j(E) ‖ msg).
 ///
 /// Hashes the verifying key, a j-invariant (of a commitment or
 /// challenge curve), and a message into a challenge `chl` of

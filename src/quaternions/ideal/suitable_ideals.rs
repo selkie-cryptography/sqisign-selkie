@@ -480,7 +480,7 @@ impl<const W: usize> NrdBasis<W> {
     }
 }
 
-/// Try to find coprime odd degrees and matching `u`, `v` from a
+/// Tries to find coprime odd degrees and matching `u`, `v` from a
 /// pair of short-vector candidates enumerated from potentially
 /// different extremal orders.
 ///

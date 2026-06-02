@@ -30,7 +30,7 @@ fn codomain_has_valid_j_invariant() {
     let _j = codomain.j_invariant();
 }
 
-/// Test that Isomorphism correctly maps points between two curves
+/// Tests that Isomorphism correctly maps points between two curves
 /// with the same j-invariant but different projective representations.
 ///
 /// Strategy: compute an isogeny from E₀ to get codomain E₁ with
@@ -71,7 +71,7 @@ fn isomorphism_preserves_affine_x() {
     );
 }
 
-/// Test isomorphism maps on-curve points to on-curve points.
+/// Tests isomorphism maps on-curve points to on-curve points.
 ///
 /// Uses a single 2-isogeny to produce a codomain with non-trivial
 /// (A:C), then isomorphizes to the affine normalization and verifies

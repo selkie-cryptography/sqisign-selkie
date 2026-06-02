@@ -45,7 +45,7 @@ use crate::{
 pub struct IsogenyDegree([u64; 4]);
 
 impl IsogenyDegree {
-    /// Construct from a positive odd limb array, or `None` if zero or even.
+    /// Constructs from a positive odd limb array, or `None` if zero or even.
     pub fn new_odd(limbs: [u64; 4]) -> Option<Self> {
         if limbs[0] & 1 == 0 {
             return None; // even or zero
@@ -69,7 +69,7 @@ impl IsogenyDegree {
         0
     }
 
-    /// Convert to a [`Scalar`] for elliptic curve point multiplication.
+    /// Converts to a [`Scalar`] for elliptic curve point multiplication.
     #[inline]
     pub fn to_scalar(self) -> Scalar {
         Scalar::from_limbs(self.0)
@@ -182,12 +182,12 @@ impl PartialOrd for IsogenyDegree {
 pub struct Kernel(ProjectiveXOnlyPoint);
 
 impl Kernel {
-    /// Construct from a generator point.
+    /// Constructs from a generator point.
     pub fn new(generator: ProjectiveXOnlyPoint) -> Kernel {
         Kernel(generator)
     }
 
-    /// Compute the 2^e-isogeny defined by this kernel and push
+    /// Computes the 2^e-isogeny defined by this kernel and pushes
     /// points through it.
     ///
     /// Uses a balanced strategy: a chain of ⌊e/2⌋ 4-isogenies
@@ -270,7 +270,7 @@ impl Kernel {
         (curve, pts)
     }
 
-    /// Compute a small 2^e-isogeny chain naively.
+    /// Computes a small 2^e-isogeny chain naively.
     ///
     /// For small exponents. Handles the singular kernel case P = (0 : 1)
     /// when `is_signing` is true.

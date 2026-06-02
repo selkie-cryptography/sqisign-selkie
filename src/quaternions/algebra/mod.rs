@@ -209,7 +209,7 @@ impl<const N: usize> Denominator<N> {
         &self.0
     }
 
-    /// Multiply two denominators. The result is always positive.
+    /// Multiplies two denominators. The result is always positive.
     pub fn mul(&self, other: &Self) -> Self {
         Self(self.0.ct_mul(&other.0))
     }
@@ -389,7 +389,7 @@ impl<const N: usize> Element<N> {
         (two_a, self.denom.0)
     }
 
-    /// Normalize: reduce gcd(a, b, c, d, r) to 1, ensure r > 0.
+    /// Normalizes: reduce gcd(a, b, c, d, r) to 1, ensure r > 0.
     pub fn normalize(&mut self) {
         let mut g = self.a.0.abs().gcd(&self.b.0.abs());
         g = g.gcd(&self.c.0.abs());
@@ -501,7 +501,7 @@ impl<const N: usize> Element<N> {
         BigInt::from_sign_and_limbs(0, limbs)
     }
 
-    /// Compute backtracking and normalize.
+    /// Computes backtracking and normalizes.
     ///
     /// Converts α from the {1, i, j, k} basis to the O₀ basis
     /// (1, i, (i+j)/2, (1+k)/2), finds the largest power of 2

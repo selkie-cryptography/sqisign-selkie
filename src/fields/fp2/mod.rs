@@ -57,17 +57,17 @@ impl Fp2 {
         b: Fp::ZERO,
     };
 
-    /// Construct an element from its real and imaginary parts.
+    /// Constructs an element from its real and imaginary parts.
     pub const fn new(a: Fp, b: Fp) -> Fp2 {
         Fp2 { a, b }
     }
 
-    /// Construct from a base field element (imaginary part is zero).
+    /// Constructs from a base field element (imaginary part is zero).
     pub const fn from_fp(a: Fp) -> Fp2 {
         Fp2 { a, b: Fp::ZERO }
     }
 
-    /// Square this element.
+    /// Squares this element.
     ///
     /// Uses the identity (a + bi)² = (a² − b²) + 2ab·i, optimized as:
     ///   real = (a + b)(a − b)
@@ -83,13 +83,13 @@ impl Fp2 {
         }
     }
 
-    /// Compute the norm: N(a + bi) = a² + b².
+    /// Computes the norm: N(a + bi) = a² + b².
     #[must_use]
     pub fn norm(&self) -> Fp {
         &self.a.square() + &self.b.square()
     }
 
-    /// Compute the conjugate: conj(a + bi) = a − bi.
+    /// Computes the conjugate: conj(a + bi) = a − bi.
     #[must_use]
     pub fn conjugate(&self) -> Fp2 {
         Fp2 {
@@ -98,7 +98,7 @@ impl Fp2 {
         }
     }
 
-    /// Compute the multiplicative inverse.
+    /// Computes the multiplicative inverse.
     ///
     /// (a + bi)⁻¹ = (a − bi) / (a² + b²)
     #[must_use]
@@ -110,7 +110,7 @@ impl Fp2 {
         }
     }
 
-    /// Test whether this element is a square in F_{p²}.
+    /// Tests whether this element is a square in F_{p²}.
     ///
     /// An element a ∈ F_{p²} is a square iff a^{p+1} is a square in F_p,
     /// since a^{p+1} = N(a) = a² + b².
@@ -118,12 +118,12 @@ impl Fp2 {
         self.norm().is_square() | self.ct_eq(&Fp2::ZERO)
     }
 
-    /// Compute the square root in F_{p²}.
+    /// Computes the square root in F_{p²}.
     ///
     /// Uses the algorithm from [SQIsign spec, §2.1.2, Algorithm 8.2].
     /// The result is only meaningful when `self.is_square()` is true.
     #[must_use]
-    /// Compute a canonical square root in F_{p²}.
+    /// Computes a canonical square root in F_{p²}.
     ///
     /// Given `a = a₀ + a₁·i`, returns the unique `r` such that `r² = a`
     /// and `r` is _even_: its real part is even (as an integer in
@@ -198,7 +198,7 @@ impl Fp2 {
         }
     }
 
-    /// Encode this element as 64 bytes (real part ‖ imaginary part).
+    /// Encodes this element as 64 bytes (real part ‖ imaginary part).
     pub fn to_bytes(self) -> [u8; FP2_ENCODED_BYTES] {
         let mut out = [0u8; FP2_ENCODED_BYTES];
         out[..FP_ENCODED_BYTES].copy_from_slice(&self.a.to_bytes());
@@ -206,7 +206,7 @@ impl Fp2 {
         out
     }
 
-    /// Decode 64 bytes into an F_{p²} element.
+    /// Decodes 64 bytes into an F_{p²} element.
     pub fn from_bytes(bytes: &[u8; FP2_ENCODED_BYTES]) -> Fp2 {
         let a = Fp::from_bytes(bytes[..FP_ENCODED_BYTES].try_into().expect("slice length"));
         let b = Fp::from_bytes(bytes[FP_ENCODED_BYTES..].try_into().expect("slice length"));
@@ -258,7 +258,7 @@ impl<'b> Mul<&'b Fp2> for &Fp2 {
     }
 }
 
-/// Multiply an F_{p²} element by a base field element.
+/// Multiplies an F_{p²} element by a base field element.
 impl<'b> Mul<&'b Fp> for &Fp2 {
     type Output = Fp2;
     fn mul(self, rhs: &'b Fp) -> Fp2 {

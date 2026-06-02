@@ -16,7 +16,7 @@ use super::{
 };
 
 impl<const N: usize> Matrix<N> {
-    /// Compute the column-style Hermite Normal Form of this matrix.
+    /// Computes the column-style Hermite Normal Form of this matrix.
     ///
     /// The result is an upper-triangular matrix with positive pivots,
     /// elements to the left of pivots are zero, and elements to the
@@ -849,7 +849,7 @@ impl<const N: usize> Matrix<N> {
 }
 
 impl<const N: usize> Matrix<N> {
-    /// Compute the column-style Hermite Normal Form from a set of
+    /// Computes the column-style Hermite Normal Form from a set of
     /// 4-element column vectors (generators).
     ///
     /// The input can have more than 4 columns (e.g., 8 columns when

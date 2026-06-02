@@ -40,7 +40,7 @@ const P4: u64 = 5u64 << 44;
 pub struct Fp(pub(crate) [u64; 5]);
 
 impl Fp {
-    /// Construct from raw radix-51 limbs (already in Montgomery form).
+    /// Constructs from raw radix-51 limbs (already in Montgomery form).
     ///
     /// This is a const constructor for embedding precomputed constants.
     /// The caller is responsible for ensuring the limbs represent a
@@ -112,19 +112,19 @@ impl Fp {
         0x00006FFFFFFFFFFF,
     ]);
 
-    /// Construct a field element from a small integer.
+    /// Constructs a field element from a small integer.
     pub fn from_small(x: u32) -> Fp {
         let mut a = Fp::ZERO;
         a.0[0] = x as u64;
         a.to_montgomery()
     }
 
-    /// Convert a field element in normal form to Montgomery form.
+    /// Converts a field element in normal form to Montgomery form.
     fn to_montgomery(self) -> Fp {
         &self * &R2
     }
 
-    /// Convert from Montgomery form back to normal (canonical) form.
+    /// Converts from Montgomery form back to normal (canonical) form.
     fn reduce_montgomery(self) -> Fp {
         let one = Fp([1, 0, 0, 0, 0]);
         let mut r = &self * &one;
@@ -132,7 +132,7 @@ impl Fp {
         r
     }
 
-    /// Encode this field element as 32 bytes, little-endian.
+    /// Encodes this field element as 32 bytes, little-endian.
     pub fn to_bytes(self) -> [u8; FP_ENCODED_BYTES] {
         let c = self.reduce_montgomery();
         let mut out = [0u8; 32];
@@ -159,7 +159,7 @@ impl Fp {
         out
     }
 
-    /// Decode 32 bytes (little-endian) into a field element.
+    /// Decodes 32 bytes (little-endian) into a field element.
     ///
     /// Returns the element in Montgomery form. The input must be a
     /// canonical encoding (i.e., the value must be less than p).
@@ -189,7 +189,7 @@ impl Fp {
         r
     }
 
-    /// Square this field element.
+    /// Squares this field element.
     #[must_use]
     pub fn square(&self) -> Fp {
         let a = &self.0;
@@ -250,7 +250,7 @@ impl Fp {
         Fp([c0, c1, c2, c3, t as u64])
     }
 
-    /// Square this element `n` times.
+    /// Squares this element `n` times.
     #[must_use]
     pub fn pow2k(&self, n: u32) -> Fp {
         let mut r = *self;
@@ -260,7 +260,7 @@ impl Fp {
         r
     }
 
-    /// Compute the pow_p3div4: self^((p-3)/4).
+    /// Computes the pow_p3div4: self^((p-3)/4).
     ///
     /// This is used to derive inversions, square roots, and Legendre symbols.
     /// The addition chain is taken from the C reference implementation.
@@ -301,7 +301,7 @@ impl Fp {
         &z * &t0
     }
 
-    /// Compute the multiplicative inverse: self^(p-2).
+    /// Computes the multiplicative inverse: self^(p-2).
     #[must_use]
     pub fn invert(&self) -> Fp {
         let t = self.pow_p3div4();
@@ -309,7 +309,7 @@ impl Fp {
         self * &t
     }
 
-    /// Test whether this element is a quadratic residue (square) in F_p.
+    /// Tests whether this element is a quadratic residue (square) in F_p.
     pub fn is_square(&self) -> Choice {
         let r = self.pow_p3div4();
         let r = r.square();
@@ -317,7 +317,7 @@ impl Fp {
         r.ct_eq(&Fp::ONE) | self.ct_eq(&Fp::ZERO)
     }
 
-    /// Compute the square root (when self is a QR).
+    /// Computes the square root (when self is a QR).
     ///
     /// The result is only meaningful when `self.is_square()` is true.
     #[must_use]

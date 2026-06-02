@@ -194,7 +194,7 @@ impl<const N: usize> BigInt<N> {
         (g, x_co, y_co)
     }
 
-    /// Halve a value known to be even. Sign preserved (no floor-vs-trunc
+    /// Halves a value known to be even. Sign preserved (no floor-vs-trunc
     /// issue since we only halve even values).
     #[inline]
     fn halve_even(a: &Self) -> Self {

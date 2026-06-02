@@ -36,7 +36,7 @@ pub(crate) struct SplittingKernel {
 }
 
 impl SplittingKernel {
-    /// Compute the splitting and push points through.
+    /// Computes the splitting and pushes points through.
     ///
     /// Returns the codomain product E₃ × E₄ and the images of `pts`
     /// converted back to Montgomery coordinates, or [`None`] if the
@@ -116,7 +116,7 @@ impl SplittingKernel {
     }
 }
 
-/// Sample a uniform index in `[0, 6)` for selecting one of the six
+/// Samples a uniform index in `[0, 6)` for selecting one of the six
 /// [`NORMALIZATION_TRANSFORMS`] matrices.
 ///
 /// Reads four bytes from `rng`, parses them as a little-endian
@@ -232,14 +232,14 @@ impl ThetaNullPoint {
     }
 }
 
-/// Test alias kept so diagnostic callers in `surfaces::mod` continue
+/// Tests alias kept so diagnostic callers in `surfaces::mod` continue
 /// to compile with the original spec name.
 #[cfg(test)]
 pub(crate) fn get_index_splitting_count(null: &ThetaNullPoint) -> u32 {
     null.splitting_index_count()
 }
 
-/// Find the splitting index such that U_{i,j}(0) = 0
+/// Finds the splitting index such that U_{i,j}(0) = 0
 /// (Algorithm 8.41).
 fn get_index_splitting(null: &ThetaNullPoint) -> SplittingIndex {
     let coords = [&null.a, &null.b, &null.c, &null.d];
@@ -272,7 +272,7 @@ fn get_index_splitting(null: &ThetaNullPoint) -> SplittingIndex {
 }
 
 impl From<&ThetaNullPoint> for GluingMatrix {
-    /// Compute `SplittingIsomorphism` (Algorithm 8.42).
+    /// Computes `SplittingIsomorphism` (Algorithm 8.42).
     ///
     /// Returns the 4×4 matrix `M` whose action on `null` recovers the
     /// product theta structure. Defined only when the input is a
@@ -413,7 +413,7 @@ impl From<&ThetaNullPoint> for EllipticProduct {
     }
 }
 
-/// Convert a theta point with product structure to Montgomery
+/// Converts a theta point with product structure to Montgomery
 /// coordinates on each component (Algorithm 8.45).
 pub(crate) fn theta_product_to_montgomery(
     P: &JacobianPoint,

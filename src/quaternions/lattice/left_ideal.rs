@@ -197,7 +197,7 @@ impl<const N: usize> LeftIdeal<N> {
         Some(())
     }
 
-    /// Compute the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
+    /// Computes the inverse ideal I⁻¹ = (1/nrd(I)) · Ī.
     ///
     /// Returns the conjugate lattice scaled by 1/nrd(I). Used for
     /// pushforward: `[J]_* I = J⁻¹(J ∩ I)`.
@@ -212,7 +212,7 @@ impl<const N: usize> LeftIdeal<N> {
         conj
     }
 
-    /// Compute the right order O_R(I) = (1/nrd(I)) · Ī · I.
+    /// Computes the right order O_R(I) = (1/nrd(I)) · Ī · I.
     ///
     /// The right order of a left ideal I is the set {α ∈ B : Iα ⊆ I}.
     /// For a left O-ideal, O_R(I) is a maximal order isomorphic to
@@ -253,7 +253,7 @@ impl<const N: usize> LeftIdeal<N> {
 
 // Methods requiring Element<4>::mul() / norm() (widen to BigInt<8>).
 impl<const N: usize> LeftIdeal<N> {
-    /// Create the left ideal I = O⟨α, N⟩ = Oα + ON.
+    /// Creates the left ideal I = O⟨α, N⟩ = Oα + ON.
     ///
     /// Uses [`Element::mul_direct`] at width `N`, which performs the
     /// quaternion multiplication without widening. This is correct
@@ -418,7 +418,7 @@ impl<const N: usize> LeftIdeal<N>
 where
     [u64; N]: Default,
 {
-    /// Replace this ideal with an equivalent one of prime norm.
+    /// Replaces this ideal with an equivalent one of prime norm.
     ///
     /// Samples random short elements α in the ideal's L2-reduced
     /// lattice until nrd(α) / N(I) is prime, then sets
@@ -709,7 +709,7 @@ where
         false
     }
 
-    /// Sample a uniform random integer in \[−m, m\] via rejection
+    /// Samples a uniform random integer in \[−m, m\] via rejection
     /// sampling, mirroring C ref's `ibz_rand_interval_minm_m`
     /// byte-for-byte (`intbig.c:475-552`).
     ///
