@@ -42,6 +42,8 @@
 //!
 //! [2026-394]: https://eprint.iacr.org/2026/394.pdf
 
+use core::arch::aarch64::{uint32x4_t, vdupq_n_u32, vld1q_u32, vst1q_u32};
+
 use subtle::{Choice, ConditionallySelectable};
 
 use super::super::Fp;
@@ -383,6 +385,64 @@ impl From<Fp29> for Fp {
     /// Montgomery form.
     fn from(fp29: Fp29) -> Self {
         Self::from_bytes(&fp29.reduce_montgomery().to_bytes_le())
+    }
+}
+
+/// Four [`Fp29`] elements packed into NEON 32-bit-lane SoA layout.
+///
+/// Each of the nine `uint32x4_t` vectors holds the `i`-th limb of four
+/// independent field elements at lanes 0..3.  This is the data layout that
+/// lets a single `vmlal_u32` (multiply-accumulate widening to 64-bit lanes)
+/// compute the same schoolbook column for four products simultaneously,
+/// amortising the 81 `u32 * u32` scalar muls of one Fp29 product down to
+/// the ~20 NEON ops measured in [ePrint 2026/394][2026-394].
+///
+/// [2026-394]: https://eprint.iacr.org/2026/394.pdf
+#[derive(Clone, Copy)]
+pub(super) struct Fp29x4 {
+    /// Nine NEON 4-lane vectors.  Lane `j` of `limbs[i]` is the `i`-th radix-29
+    /// limb of the `j`-th field element of the batch.
+    pub(super) limbs: [uint32x4_t; LIMBS_29],
+}
+
+impl Fp29x4 {
+    /// Packs four scalar [`Fp29`] elements into the SoA layout via a
+    /// per-limb gather: `limbs[i]` ends up holding
+    /// `[elements[0].limbs[i], ..., elements[3].limbs[i]]`.
+    pub(super) fn from_scalars(elements: &[Fp29; 4]) -> Self {
+        // SAFETY: vdupq_n_u32 and vld1q_u32 require the aarch64+neon target
+        // feature, which is part of the aarch64 base ISA and therefore always
+        // available where this `cfg(target_arch = "aarch64")` module compiles.
+        // The lane buffer is a stack-local `[u32; 4]` whose pointer is
+        // guaranteed properly aligned for the NEON load.
+        let zero = unsafe { vdupq_n_u32(0) };
+        let mut limbs = [zero; LIMBS_29];
+        for (i, slot) in limbs.iter_mut().enumerate() {
+            let lane = [
+                elements[0].limbs[i],
+                elements[1].limbs[i],
+                elements[2].limbs[i],
+                elements[3].limbs[i],
+            ];
+            *slot = unsafe { vld1q_u32(lane.as_ptr()) };
+        }
+        Self { limbs }
+    }
+
+    /// Unpacks the SoA layout back into four scalar [`Fp29`] elements.
+    /// Inverse of [`Fp29x4::from_scalars`].
+    pub(super) fn to_scalars(self) -> [Fp29; 4] {
+        // SAFETY: see `from_scalars`.  The lane buffer is a stack-local
+        // `[u32; 4]` properly aligned for the NEON store.
+        let mut out = [Fp29::ZERO; 4];
+        let mut lane = [0u32; 4];
+        for (i, &limb) in self.limbs.iter().enumerate() {
+            unsafe { vst1q_u32(lane.as_mut_ptr(), limb) };
+            for (j, &v) in lane.iter().enumerate() {
+                out[j].limbs[i] = v;
+            }
+        }
+        out
     }
 }
 
