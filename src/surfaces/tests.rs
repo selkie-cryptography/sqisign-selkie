@@ -393,6 +393,11 @@ fn selkie_t2_vs_cref_k28_p1_projective_eq_kat0() {
 /// once, copy the output into `src/deuring/precomputed.rs` to fix the
 /// E0 basis used by FDI keygen/sign so it matches the basis the
 /// precomputed action matrices were calibrated against.
+///
+/// Gated to the portable backend: the radix-51 `[u64; 5]` Mont layout is
+/// what `precomputed.rs` embeds, and `Fp29`'s radix-29 layout doesn't fit
+/// the format string here.  Run under default features to refresh.
+#[cfg(not(sqisign_selkie_arch = "neon"))]
 #[test]
 fn print_e0_basis_even_limbs() {
     let p_x = fp2_from_dump_hex(
@@ -417,6 +422,10 @@ fn print_e0_basis_even_limbs() {
 
 /// Prints Montgomery-form limbs for `1/2 mod p`, needed for E0's
 /// normalized doubling constant `A24 = (A + 2C)/(4C) = 1/2`.
+///
+/// Gated to the portable backend: the printed `[u64; 5]` Mont limbs
+/// match the format `precomputed.rs` embeds.
+#[cfg(not(sqisign_selkie_arch = "neon"))]
 #[test]
 fn print_one_half_limbs() {
     use crate::fields::fp::Fp;
@@ -427,6 +436,10 @@ fn print_one_half_limbs() {
 
 /// Prints Montgomery-form limbs for `-1 mod p`, needed for the
 /// `NORMALIZATION_TRANSFORMS` matrices in the splitter.
+///
+/// Gated to the portable backend: same rationale as
+/// [`print_one_half_limbs`].
+#[cfg(not(sqisign_selkie_arch = "neon"))]
 #[test]
 fn print_minus_one_limbs() {
     use crate::fields::fp::Fp;
