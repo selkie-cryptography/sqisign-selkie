@@ -13,6 +13,8 @@
 //! sqisign-selkie does not target it.  AVX2 over radix-26 (52-bit pairs)
 //! is the realistic x86_64 vectorised-Fp target.
 
-#[cfg(target_feature = "avx2")]
-#[allow(dead_code)] // module is a stub until the AVX2 Fp lands
+// The `target_feature = "avx2"` file-level gate goes back once the AVX2
+// intrinsics land in this module; current scaffolding is pure scalar
+// const-fn and bit packing, so it compiles on any x86_64 target.
+#[allow(dead_code)] // dispatcher activation gated on cfg(sqisign_selkie_arch = "avx2")
 pub mod avx2;
