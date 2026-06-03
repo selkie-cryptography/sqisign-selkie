@@ -51,10 +51,10 @@ use core::{
         vshrq_n_s32, vshrq_n_s64, vshrq_n_u32, vshrq_n_u64, vst1q_u32, vsubq_s32, vsubq_u32,
         vsubq_u64,
     },
-    ops::{Add, Sub},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-use subtle::{Choice, ConditionallySelectable};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 use super::super::super::Fp;
 
@@ -110,8 +110,8 @@ const R2_29: Fp29 = Fp29 {
     ],
 };
 
-/// `1` in non-Montgomery form, used to exit Montgomery form via
-/// [`Fp29::mul`]: `mont · 1 · R⁻¹ = mont / R = canonical`.
+/// `1` in non-Montgomery form, used to exit Montgomery form via the `Mul`
+/// trait impl: `mont · 1 · R⁻¹ = mont / R = canonical`.
 const ONE_RAW: Fp29 = Fp29 {
     limbs: [1, 0, 0, 0, 0, 0, 0, 0, 0],
 };
@@ -121,12 +121,12 @@ const ONE_RAW: Fp29 = Fp29 {
 /// Parallel representation to [`Fp`]'s radix-51 layout,
 /// laid out for NEON 32-bit-lane packing.  Limbs are little-endian:
 /// `limbs[0]` is the least significant 29 bits.  The stored value is
-/// `value · R_29 mod p` where `R_29 = 2^261`; multiplication is
-/// Montgomery-style ([`Fp29::mul`] returns `a · b · R⁻¹`).
+/// `value · R_29 mod p` where `R_29 = 2^261`; multiplication via the
+/// `Mul` impl returns `a · b · R⁻¹`.
 ///
 /// # Invariants
 ///
-/// - After [`Fp29::mul`] or [`From<Fp>`], `limbs[i] < 2^29` for `i < 8` and
+/// - After the `Mul` impl or [`From<Fp>`], `limbs[i] < 2^29` for `i < 8` and
 ///   `limbs[8] < 2^20` (sub-`2p` bound).
 /// - [`Fp29::from_bytes_le`] / [`Fp29::to_bytes_le`] operate on canonical
 ///   (non-Montgomery) limbs; they're the byte boundary, before/after the
@@ -195,7 +195,7 @@ impl Fp29 {
         };
         canonical.limbs[0] = x & MASK_29;
         canonical.limbs[1] = x >> RADIX_29;
-        canonical.mul(&R2_29)
+        &canonical * &R2_29
     }
 
     /// Decodes 32 bytes (little-endian) into a normalised radix-29 element.
@@ -252,56 +252,13 @@ impl Fp29 {
         out
     }
 
-    /// Montgomery multiplication: returns `a · b · R⁻¹ mod p`.
+    /// Squares this element via the [`Mul`] impl.
     ///
-    /// 9×9 schoolbook product with Montgomery reduction interleaved column-
-    /// by-column over the 17 output positions.  The fold step at column
-    /// `i ≥ 8` adds `v[i-8] · P4_29`, exploiting `5 · 2^248 ≡ 1 (mod p)`
-    /// to absorb the previously-computed low column into the high columns.
-    ///
-    /// Output limbs satisfy `limbs[i] < 2^29` for `i < 8` and `limbs[8] < 2^20`
-    /// (so the result is in `[0, 2p)`).  Use [`Fp29::final_sub`] to
-    /// canonicalise to `[0, p)`.
-    pub fn mul(&self, rhs: &Fp29) -> Fp29 {
-        let a = &self.limbs;
-        let b = &rhs.limbs;
-        let mut t: u64 = 0;
-        let mut v = [0u32; LIMBS_29];
-        let mut c = [0u32; LIMBS_29];
-
-        for i in 0..(2 * LIMBS_29 - 1) {
-            let j_lo = if i >= LIMBS_29 { i - LIMBS_29 + 1 } else { 0 };
-            let j_hi = i.min(LIMBS_29 - 1);
-            for j in j_lo..=j_hi {
-                t = t.wrapping_add((a[j] as u64).wrapping_mul(b[i - j] as u64));
-            }
-
-            if i >= LIMBS_29 - 1 {
-                let fold_idx = i - (LIMBS_29 - 1);
-                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P4_29 as u64));
-            }
-
-            let limb = (t as u32) & MASK_29;
-            if i < LIMBS_29 {
-                v[i] = limb;
-            } else {
-                c[i - LIMBS_29] = limb;
-            }
-            t >>= RADIX_29;
-        }
-
-        c[LIMBS_29 - 1] = t as u32;
-
-        Self { limbs: c }
-    }
-
-    /// Squares this element via [`Fp29::mul`].
-    ///
-    /// The optimised radix-29 square (symmetric cross-terms, `2 · a[i] · a[j]`)
+    /// The optimized radix-29 square (symmetric cross-terms, `2 · a[i] · a[j]`)
     /// is deferred to the NEON-intrinsics commit, where the symmetry
     /// translates to fewer vectorised products.
     pub fn square(&self) -> Fp29 {
-        self.mul(self)
+        self * self
     }
 
     /// Propagates carries through the limbs, returning a sign mask:
@@ -358,11 +315,105 @@ impl Fp29 {
 
     /// Exits Montgomery form: `mont -> mont / R = canonical`.
     ///
-    /// Multiplies by `1` in non-Montgomery form ([`ONE_RAW`]); the Montgomery
+    /// Multiplies by `1` in non-Montgomery form (`ONE_RAW`); the Montgomery
     /// product is `mont · 1 · R⁻¹ = mont / R`.  Then canonicalises via
     /// [`Self::final_sub`].
     pub fn reduce_montgomery(self) -> Self {
-        self.mul(&ONE_RAW).final_sub()
+        (&self * &ONE_RAW).final_sub()
+    }
+
+    /// Decodes canonical 32-byte little-endian into a Montgomery-form `Fp29`.
+    ///
+    /// Mirrors [`Fp::from_bytes`] at the API level: unpacks the bytes as a
+    /// canonical integer, then enters this backend's Montgomery form via
+    /// multiplication by `R2_29`.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        &Fp29::from_bytes_le(bytes) * &R2_29
+    }
+
+    /// Encodes a Montgomery-form `Fp29` as canonical 32-byte little-endian.
+    ///
+    /// Mirrors [`Fp::to_bytes`]: exits Montgomery form via
+    /// [`Self::reduce_montgomery`], then packs the canonical limbs into 32
+    /// bytes.
+    pub fn to_bytes(self) -> [u8; 32] {
+        self.reduce_montgomery().to_bytes_le()
+    }
+
+    /// Squares this element `n` times.  Mirrors [`Fp::pow2k`].
+    #[must_use]
+    pub fn pow2k(&self, n: u32) -> Self {
+        let mut r = *self;
+        for _ in 0..n {
+            r = r.square();
+        }
+        r
+    }
+
+    /// Computes `self^((p-3)/4)`.  Same addition chain as [`Fp::pow_p3div4`];
+    /// the prime is identical so the chain transfers unchanged, just running
+    /// over this backend's Montgomery-form multiplication.
+    #[must_use]
+    pub(crate) fn pow_p3div4(&self) -> Self {
+        let x = *self;
+        let z = x.square();
+        let t0 = &x * &z;
+        let z = t0.square();
+        let z = &x * &z;
+        let t1 = z.square();
+        let t3 = t1.square();
+        let t2 = t3.square();
+        let t4 = t2.pow2k(3);
+        let t2 = &t2 * &t4;
+        let t4 = t2.pow2k(6);
+        let t2 = &t2 * &t4;
+        let t4 = t2.pow2k(2);
+        let t3 = &t3 * &t4;
+        let t3 = t3.pow2k(13);
+        let t2 = &t2 * &t3;
+        let t3 = t2.pow2k(27);
+        let t2 = &t2 * &t3;
+        let z = &z * &t2;
+        let t2 = z.pow2k(4);
+        let t1 = &t1 * &t2;
+        let t0 = &t0 * &t1;
+        let t1 = &t1 * &t0;
+        let t0 = &t1 * &t0;
+        let t2 = &t0 * &t1;
+        let t0 = &t0 * &t2;
+        let t1 = &t1 * &t0;
+        let t1 = t1.pow2k(63);
+        let t1 = &t0 * &t1;
+        let t1 = t1.pow2k(64);
+        let t0 = &t0 * &t1;
+        let t0 = t0.pow2k(57);
+        &z * &t0
+    }
+
+    /// Computes the multiplicative inverse: `self^(p-2)`.  Mirrors
+    /// [`Fp::invert`].
+    #[must_use]
+    pub fn invert(&self) -> Self {
+        let t = self.pow_p3div4();
+        let t = t.pow2k(2);
+        self * &t
+    }
+
+    /// Tests whether this element is a quadratic residue in F_p.
+    /// Mirrors [`Fp::is_square`].
+    pub fn is_square(&self) -> Choice {
+        let r = self.pow_p3div4();
+        let r = r.square();
+        let r = &r * self;
+        r.ct_eq(&Fp29::ONE) | self.ct_eq(&Fp29::ZERO)
+    }
+
+    /// Computes the square root (when `self` is a QR).  Mirrors [`Fp::sqrt`];
+    /// result meaningful only when [`Self::is_square`] is true.
+    #[must_use]
+    pub fn sqrt(&self) -> Self {
+        let y = self.pow_p3div4();
+        &y * self
     }
 }
 
@@ -371,11 +422,11 @@ impl From<Fp> for Fp29 {
     ///
     /// Routes through canonical bytes: [`Fp::to_bytes`] exits
     /// the radix-51 Montgomery scaling, [`Fp29::from_bytes_le`] repacks the
-    /// integer value at radix-29, then multiplication by [`R2_29`] enters the
+    /// integer value at radix-29, then multiplication by `R2_29` enters the
     /// radix-29 Montgomery form (`canonical · R²_29 · R⁻¹ = canonical · R`).
     /// Expensive (two Montgomery reductions); intended for test boundaries.
     fn from(fp: Fp) -> Self {
-        Self::from_bytes_le(&fp.to_bytes()).mul(&R2_29)
+        &Self::from_bytes_le(&fp.to_bytes()) * &R2_29
     }
 }
 
@@ -954,6 +1005,148 @@ impl Sub<Fp29> for Fp29 {
         n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P4_29) & carry);
         n.prop();
         n
+    }
+}
+
+impl<'b> Mul<&'b Fp29> for &Fp29 {
+    type Output = Fp29;
+
+    /// Montgomery multiplication: returns `a · b · R⁻¹ mod p`.
+    ///
+    /// 9×9 schoolbook product with Montgomery reduction interleaved column-
+    /// by-column over the 17 output positions.  The fold step at column
+    /// `i ≥ 8` adds `v[i-8] · P4_29`, exploiting `5 · 2^248 ≡ 1 (mod p)`
+    /// to absorb the previously-computed low column into the high columns.
+    ///
+    /// Output limbs satisfy `limbs[i] < 2^29` for `i < 8` and `limbs[8] < 2^20`
+    /// (so the result is in `[0, 2p)`).  Use [`Fp29::final_sub`] to
+    /// canonicalise to `[0, p)`.
+    fn mul(self, rhs: &'b Fp29) -> Fp29 {
+        let a = &self.limbs;
+        let b = &rhs.limbs;
+        let mut t: u64 = 0;
+        let mut v = [0u32; LIMBS_29];
+        let mut c = [0u32; LIMBS_29];
+
+        for i in 0..(2 * LIMBS_29 - 1) {
+            let j_lo = if i >= LIMBS_29 { i - LIMBS_29 + 1 } else { 0 };
+            let j_hi = i.min(LIMBS_29 - 1);
+            for j in j_lo..=j_hi {
+                t = t.wrapping_add((a[j] as u64).wrapping_mul(b[i - j] as u64));
+            }
+
+            if i >= LIMBS_29 - 1 {
+                let fold_idx = i - (LIMBS_29 - 1);
+                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P4_29 as u64));
+            }
+
+            let limb = (t as u32) & MASK_29;
+            if i < LIMBS_29 {
+                v[i] = limb;
+            } else {
+                c[i - LIMBS_29] = limb;
+            }
+            t >>= RADIX_29;
+        }
+
+        c[LIMBS_29 - 1] = t as u32;
+
+        Fp29 { limbs: c }
+    }
+}
+
+impl Mul<Fp29> for Fp29 {
+    type Output = Fp29;
+    fn mul(self, rhs: Fp29) -> Fp29 {
+        &self * &rhs
+    }
+}
+
+impl<'b> Add<&'b Fp29> for &Fp29 {
+    type Output = Fp29;
+    fn add(self, rhs: &'b Fp29) -> Fp29 {
+        *self + *rhs
+    }
+}
+
+impl<'b> Sub<&'b Fp29> for &Fp29 {
+    type Output = Fp29;
+    fn sub(self, rhs: &'b Fp29) -> Fp29 {
+        *self - *rhs
+    }
+}
+
+impl Neg for &Fp29 {
+    type Output = Fp29;
+    fn neg(self) -> Fp29 {
+        Fp29::ZERO - *self
+    }
+}
+
+impl Neg for Fp29 {
+    type Output = Fp29;
+    fn neg(self) -> Fp29 {
+        -&self
+    }
+}
+
+impl AddAssign<&Fp29> for Fp29 {
+    fn add_assign(&mut self, rhs: &Fp29) {
+        *self = *self + *rhs;
+    }
+}
+
+impl AddAssign for Fp29 {
+    fn add_assign(&mut self, rhs: Fp29) {
+        *self = *self + rhs;
+    }
+}
+
+impl SubAssign<&Fp29> for Fp29 {
+    fn sub_assign(&mut self, rhs: &Fp29) {
+        *self = *self - *rhs;
+    }
+}
+
+impl SubAssign for Fp29 {
+    fn sub_assign(&mut self, rhs: Fp29) {
+        *self = *self - rhs;
+    }
+}
+
+impl MulAssign<&Fp29> for Fp29 {
+    fn mul_assign(&mut self, rhs: &Fp29) {
+        *self = &*self * rhs;
+    }
+}
+
+impl MulAssign for Fp29 {
+    fn mul_assign(&mut self, rhs: Fp29) {
+        *self = &*self * &rhs;
+    }
+}
+
+impl ConstantTimeEq for Fp29 {
+    fn ct_eq(&self, other: &Fp29) -> Choice {
+        self.to_bytes().ct_eq(&other.to_bytes())
+    }
+}
+
+impl ConditionallySelectable for Fp29 {
+    fn conditional_select(a: &Fp29, b: &Fp29, choice: Choice) -> Fp29 {
+        let mut limbs = [0u32; LIMBS_29];
+        for (i, slot) in limbs.iter_mut().enumerate() {
+            *slot = u32::conditional_select(&a.limbs[i], &b.limbs[i], choice);
+        }
+        Fp29 { limbs }
+    }
+}
+
+impl Eq for Fp29 {}
+
+impl PartialEq for Fp29 {
+    fn eq(&self, other: &Fp29) -> bool {
+        self.ct_eq(other).into()
     }
 }
 
