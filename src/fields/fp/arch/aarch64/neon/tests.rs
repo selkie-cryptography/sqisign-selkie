@@ -7,7 +7,7 @@
 
 use proptest::prelude::*;
 
-use super::{super::super::Fp, Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29};
+use super::{super::super::super::Fp, Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29};
 
 /// Builds an `Fp` from arbitrary 32-byte inputs, matching the convention used
 /// in the parent `Fp` test module.
