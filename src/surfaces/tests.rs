@@ -397,7 +397,7 @@ fn selkie_t2_vs_cref_k28_p1_projective_eq_kat0() {
 /// Gated to the portable backend: the radix-51 `[u64; 5]` Mont layout is
 /// what `precomputed.rs` embeds, and `Fp29`'s radix-29 layout doesn't fit
 /// the format string here.  Run under default features to refresh.
-#[cfg(not(sqisign_selkie_arch = "neon"))]
+#[cfg(not(any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2")))]
 #[test]
 fn print_e0_basis_even_limbs() {
     let p_x = fp2_from_dump_hex(
@@ -425,7 +425,7 @@ fn print_e0_basis_even_limbs() {
 ///
 /// Gated to the portable backend: the printed `[u64; 5]` Mont limbs
 /// match the format `precomputed.rs` embeds.
-#[cfg(not(sqisign_selkie_arch = "neon"))]
+#[cfg(not(any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2")))]
 #[test]
 fn print_one_half_limbs() {
     use crate::fields::fp::Fp;
@@ -439,7 +439,7 @@ fn print_one_half_limbs() {
 ///
 /// Gated to the portable backend: same rationale as
 /// [`print_one_half_limbs`].
-#[cfg(not(sqisign_selkie_arch = "neon"))]
+#[cfg(not(any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2")))]
 #[test]
 fn print_minus_one_limbs() {
     use crate::fields::fp::Fp;
