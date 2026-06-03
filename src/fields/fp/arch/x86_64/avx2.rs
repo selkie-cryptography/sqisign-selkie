@@ -1145,13 +1145,77 @@ impl Fp26x4 {
 
     /// Squares the four packed elements lane-wise.
     ///
-    /// Currently delegates to [`Fp26x4::mul`]; an optimised radix-26
-    /// symmetric square (one square + 10 cross-term doubles per 5x5
-    /// sub-product, replacing the 25 generic products of the schoolbook
-    /// 5x5) lands alongside the Karatsuba mul commit, where the
-    /// symmetry translates directly to fewer `_mm256_mul_epu32` ops.
+    /// Symmetric-cross-term schoolbook over `_mm256_mul_epu32`: for
+    /// `a = self`, column `k` of `a*a` accumulates `Σ a[j] * a[k-j]`
+    /// over the valid `j` range.  Pairs `(j, k-j)` with `j < k-j` are
+    /// distinct off-diagonal products: each `a[j] * a[k-j]` appears
+    /// twice in the asymmetric schoolbook (once for `(j, k-j)` and
+    /// once for `(k-j, j)`), so the symmetric form computes the
+    /// product once and doubles it via `_mm256_slli_epi64::<1>`.
+    /// Diagonal pairs `j = k-j` (only when `k` is even) contribute
+    /// once.  Montgomery interleaving is identical to
+    /// [`Fp26x4::mul`].
+    ///
+    /// Multiply count: 55 `_mm256_mul_epu32` calls vs the 100 of the
+    /// asymmetric schoolbook (`a * a` going through `mul`).  The
+    /// doubling adds a cheap shift per off-diagonal column.  A
+    /// follow-up Karatsuba decomposition can squeeze the constant
+    /// further.
     pub fn square(&self) -> Fp26x4 {
-        self.mul(self)
+        // SAFETY: register-width AVX2 ops; the type's cfg(target_feature
+        // = "avx2") gate makes the intrinsics unconditionally callable.
+        unsafe {
+            let a = &self.limbs;
+
+            let zero = _mm256_setzero_si256();
+            let mask_26 = _mm256_set1_epi64x(MASK_26 as i64);
+            let p4 = _mm256_set1_epi64x(P4_26 as i64);
+
+            let mut t = zero;
+            let mut v = [zero; LIMBS_26];
+            let mut c = [zero; LIMBS_26];
+
+            for i in 0..2 * LIMBS_26 - 1 {
+                let j_lo = if i >= LIMBS_26 { i - LIMBS_26 + 1 } else { 0 };
+                let j_hi = i.min(LIMBS_26 - 1);
+                // Pair-iteration upper bound: j <= k-j means j <= i/2.
+                // Even `i` contributes the diagonal `a[i/2] * a[i/2]`;
+                // odd `i` has no diagonal.
+                let pair_hi = (i / 2).min(j_hi);
+
+                for j in j_lo..=pair_hi {
+                    let other = i - j;
+                    let prod = _mm256_mul_epu32(a[j], a[other]);
+
+                    if j == other {
+                        t = _mm256_add_epi64(t, prod);
+                    } else {
+                        let doubled = _mm256_slli_epi64::<1>(prod);
+                        t = _mm256_add_epi64(t, doubled);
+                    }
+                }
+
+                if i >= LIMBS_26 - 1 {
+                    let fold_idx = i - (LIMBS_26 - 1);
+                    let fold_prod = _mm256_mul_epu32(v[fold_idx], p4);
+                    t = _mm256_add_epi64(t, fold_prod);
+                }
+
+                let limb = _mm256_and_si256(t, mask_26);
+
+                if i < LIMBS_26 {
+                    v[i] = limb;
+                } else {
+                    c[i - LIMBS_26] = limb;
+                }
+
+                t = _mm256_srli_epi64::<{ RADIX_26 as i32 }>(t);
+            }
+
+            c[LIMBS_26 - 1] = t;
+
+            Self { limbs: c }
+        }
     }
 }
 
