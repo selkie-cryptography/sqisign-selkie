@@ -202,5 +202,5 @@ fn fp29x4_square_neon(bencher: divan::Bencher) {
 fn fp29_mul_scalar(bencher: divan::Bencher) {
     let a = Fp29::from(Fp::from_small(17));
     let b = Fp29::from(Fp::from_small(42));
-    bencher.bench(|| divan::black_box(&a).mul(divan::black_box(&b)));
+    bencher.bench(|| divan::black_box(&a) * divan::black_box(&b));
 }
