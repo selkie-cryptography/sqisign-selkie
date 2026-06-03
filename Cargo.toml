@@ -142,6 +142,10 @@ name = "cross_kat_verify"
 required-features = ["expose-internals"]
 
 [[test]]
+name = "bigint_fault_simulation"
+required-features = ["expose-internals"]
+
+[[test]]
 name = "fp2_fault_simulation"
 required-features = ["expose-internals"]
 
@@ -156,6 +160,14 @@ required-features = ["expose-internals"]
 # `expose-internals` feature because it reads `keys::kat_data`.
 [[example]]
 name = "seed-fuzz-corpus"
+required-features = ["expose-internals"]
+
+# Regenerates `tests/vectors/bigint_fault_simulation.json` from the
+# boundary-input recipes embedded in the example source. Reads
+# `BigInt<4>` through `expose-internals` for the in-generator
+# self-check against production arithmetic.
+[[example]]
+name = "bigint-fault-vectors-gen"
 required-features = ["expose-internals"]
 
 # Regenerates `tests/vectors/fp2_fault_simulation.json` from the
