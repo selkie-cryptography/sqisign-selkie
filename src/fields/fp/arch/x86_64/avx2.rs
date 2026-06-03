@@ -44,9 +44,10 @@
 
 #[cfg(target_feature = "avx2")]
 use core::arch::x86_64::{
-    __m256i, _mm256_and_si256, _mm256_blendv_epi8, _mm256_cmpgt_epi64, _mm256_loadu_si256,
-    _mm256_mul_epu32, _mm256_set1_epi32, _mm256_set1_epi64x, _mm256_setzero_si256,
-    _mm256_srli_epi64, _mm256_storeu_si256, _mm256_sub_epi64,
+    __m256i, _mm256_add_epi64, _mm256_and_si256, _mm256_blendv_epi8, _mm256_cmpgt_epi64,
+    _mm256_loadu_si256, _mm256_mul_epu32, _mm256_or_si256, _mm256_set1_epi32, _mm256_set1_epi64x,
+    _mm256_setzero_si256, _mm256_slli_epi64, _mm256_srli_epi64, _mm256_storeu_si256,
+    _mm256_sub_epi64,
 };
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -932,6 +933,140 @@ impl Fp26x4 {
             }
 
             Self { limbs: out }
+        }
+    }
+
+    /// Vectorised carry propagation across the 10 limbs per lane.
+    /// Returns a per-lane mask: all-1s if the cumulative value
+    /// underflowed (interpreted as i64 lanes had the high bit set
+    /// at the end), all-0s otherwise.
+    ///
+    /// Mirrors [`Fp26::prop`]'s sign-aware carry chain, but AVX2 has
+    /// no `_mm256_srai_epi64`: each per-limb shift sign-extends
+    /// manually via `_mm256_cmpgt_epi64` (detect sign) +
+    /// `_mm256_srli_epi64` (logical body) +
+    /// `_mm256_slli_epi64(_, 64 - 26) | _` (sign fill).
+    ///
+    /// # Safety
+    ///
+    /// Caller must satisfy AVX2 (the type is `cfg(target_feature =
+    /// "avx2")`).
+    unsafe fn prop(&mut self) -> __m256i {
+        let zero = _mm256_setzero_si256();
+        let mask_26 = _mm256_set1_epi64x(MASK_26 as i64);
+
+        // arith-shift-right by RADIX_26 on lane 0.
+        let val = self.limbs[0];
+        let neg_mask = _mm256_cmpgt_epi64(zero, val);
+        let logical = _mm256_srli_epi64::<{ RADIX_26 as i32 }>(val);
+        let sign_fill = _mm256_slli_epi64::<{ 64 - RADIX_26 as i32 }>(neg_mask);
+        let mut carry = _mm256_or_si256(logical, sign_fill);
+
+        self.limbs[0] = _mm256_and_si256(self.limbs[0], mask_26);
+
+        for i in 1..LIMBS_26 - 1 {
+            let v = _mm256_add_epi64(carry, self.limbs[i]);
+            self.limbs[i] = _mm256_and_si256(v, mask_26);
+
+            let neg_mask = _mm256_cmpgt_epi64(zero, v);
+            let logical = _mm256_srli_epi64::<{ RADIX_26 as i32 }>(v);
+            let sign_fill = _mm256_slli_epi64::<{ 64 - RADIX_26 as i32 }>(neg_mask);
+            carry = _mm256_or_si256(logical, sign_fill);
+        }
+
+        self.limbs[LIMBS_26 - 1] = _mm256_add_epi64(self.limbs[LIMBS_26 - 1], carry);
+
+        // Per-lane sign mask: scalar Fp26::prop uses bit 31 of limb 9
+        // (a u32).  For Fp26x4's u64 lanes, the same bit position
+        // indicates "borrow occurred upstream" — extract bit 31 and
+        // negate to all-0s / all-1s per lane.
+        let bit_31 = _mm256_srli_epi64::<31>(self.limbs[LIMBS_26 - 1]);
+        let bit_31_isolated = _mm256_and_si256(bit_31, _mm256_set1_epi64x(1));
+
+        _mm256_sub_epi64(zero, bit_31_isolated)
+    }
+}
+
+#[cfg(target_feature = "avx2")]
+impl Add<Fp26x4> for Fp26x4 {
+    type Output = Fp26x4;
+
+    /// Vectorised modular addition over four `Fp26` elements per lane,
+    /// each result reduced to `[0, 2p)`.  Lane-wise add, then subtract
+    /// `2p` (add 2 to limb 0, subtract `2 * P4_26` from limb 9),
+    /// propagate carries, conditionally add `2p` back per lane on
+    /// borrow.  Mirrors [`Fp26::add`] structurally.
+    fn add(self, rhs: Fp26x4) -> Fp26x4 {
+        // SAFETY: register-width AVX2 ops; type-level cfg gate covers.
+        unsafe {
+            let mut n = Fp26x4 {
+                limbs: [
+                    _mm256_add_epi64(self.limbs[0], rhs.limbs[0]),
+                    _mm256_add_epi64(self.limbs[1], rhs.limbs[1]),
+                    _mm256_add_epi64(self.limbs[2], rhs.limbs[2]),
+                    _mm256_add_epi64(self.limbs[3], rhs.limbs[3]),
+                    _mm256_add_epi64(self.limbs[4], rhs.limbs[4]),
+                    _mm256_add_epi64(self.limbs[5], rhs.limbs[5]),
+                    _mm256_add_epi64(self.limbs[6], rhs.limbs[6]),
+                    _mm256_add_epi64(self.limbs[7], rhs.limbs[7]),
+                    _mm256_add_epi64(self.limbs[8], rhs.limbs[8]),
+                    _mm256_add_epi64(self.limbs[9], rhs.limbs[9]),
+                ],
+            };
+
+            let two = _mm256_set1_epi64x(2);
+            let two_p4 = _mm256_set1_epi64x((2 * P4_26) as i64);
+
+            n.limbs[0] = _mm256_add_epi64(n.limbs[0], two);
+            n.limbs[LIMBS_26 - 1] = _mm256_sub_epi64(n.limbs[LIMBS_26 - 1], two_p4);
+
+            let borrow = n.prop();
+            n.limbs[0] = _mm256_sub_epi64(n.limbs[0], _mm256_and_si256(two, borrow));
+            n.limbs[LIMBS_26 - 1] =
+                _mm256_add_epi64(n.limbs[LIMBS_26 - 1], _mm256_and_si256(two_p4, borrow));
+            n.prop();
+
+            n
+        }
+    }
+}
+
+#[cfg(target_feature = "avx2")]
+impl Sub<Fp26x4> for Fp26x4 {
+    type Output = Fp26x4;
+
+    /// Vectorised modular subtraction over four `Fp26` elements per
+    /// lane, each result reduced to `[0, 2p)`.  Lane-wise wrapping-sub;
+    /// if the per-lane prop detects a borrow, adds `2p` back per lane.
+    /// Mirrors [`Fp26::sub`] structurally.
+    fn sub(self, rhs: Fp26x4) -> Fp26x4 {
+        // SAFETY: register-width AVX2 ops; type-level cfg gate covers.
+        unsafe {
+            let mut n = Fp26x4 {
+                limbs: [
+                    _mm256_sub_epi64(self.limbs[0], rhs.limbs[0]),
+                    _mm256_sub_epi64(self.limbs[1], rhs.limbs[1]),
+                    _mm256_sub_epi64(self.limbs[2], rhs.limbs[2]),
+                    _mm256_sub_epi64(self.limbs[3], rhs.limbs[3]),
+                    _mm256_sub_epi64(self.limbs[4], rhs.limbs[4]),
+                    _mm256_sub_epi64(self.limbs[5], rhs.limbs[5]),
+                    _mm256_sub_epi64(self.limbs[6], rhs.limbs[6]),
+                    _mm256_sub_epi64(self.limbs[7], rhs.limbs[7]),
+                    _mm256_sub_epi64(self.limbs[8], rhs.limbs[8]),
+                    _mm256_sub_epi64(self.limbs[9], rhs.limbs[9]),
+                ],
+            };
+
+            let two = _mm256_set1_epi64x(2);
+            let two_p4 = _mm256_set1_epi64x((2 * P4_26) as i64);
+
+            let borrow = n.prop();
+            n.limbs[0] = _mm256_sub_epi64(n.limbs[0], _mm256_and_si256(two, borrow));
+            n.limbs[LIMBS_26 - 1] =
+                _mm256_add_epi64(n.limbs[LIMBS_26 - 1], _mm256_and_si256(two_p4, borrow));
+            n.prop();
+
+            n
         }
     }
 }
