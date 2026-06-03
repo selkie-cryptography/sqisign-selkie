@@ -95,7 +95,7 @@ const P4_29: u32 = 5 << 16;
 
 /// `p` in radix-29 form.
 ///
-/// Used by [`Fp29::final_sub`] to subtract the modulus from an unreduced
+/// Used by `Fp29::final_sub` to subtract the modulus from an unreduced
 /// result.  Computed from `p = 5 · 2^248 − 1`:
 /// limbs 0..7 are `2^29 − 1`, limb 8 is `0x4FFFF`.
 const P_LIMBS: [u32; LIMBS_29] = [
@@ -364,7 +364,7 @@ impl Fp29 {
     /// `0` if the final accumulator was non-negative, `0xFFFFFFFF` if it
     /// was negative (indicating a borrow occurred upstream).
     ///
-    /// Mirrors [`Fp::prop`]: arithmetic right-shift on an `i64` carry
+    /// Mirrors `Fp::prop`: arithmetic right-shift on an `i64` carry
     /// preserves the sign, and the high bit of `limbs[LIMBS_29 - 1]` after
     /// the final wrapping add encodes whether the cumulative value
     /// overflowed (borrowed).
@@ -790,7 +790,7 @@ impl Fp29x4 {
     ///
     /// Assumes `self < 2p` per lane with each limb already `< 2^29`.
     /// Returns the representative in `[0, p)` per lane.  Lane-parallel
-    /// version of [`Fp29::final_sub`].  Constant-time per lane via
+    /// version of `Fp29::final_sub`.  Constant-time per lane via
     /// `vbslq_u32` (NEON bit-select).
     pub fn final_sub(self) -> Fp29x4 {
         // SAFETY: register-width NEON ops; covered by the type-level Safety note.
@@ -831,7 +831,7 @@ impl Fp29x4 {
     /// Returns a per-lane mask: `0` if the cumulative sum at that lane was
     /// non-negative, all-ones if negative (indicating an upstream borrow).
     ///
-    /// Lane-parallel version of [`Fp29::prop`].  The `u32 -> i32 -> i64`
+    /// Lane-parallel version of `Fp29::prop`.  The `u32 -> i32 -> i64`
     /// sign-extension cast chain becomes `vreinterpretq_s32_u32` followed by
     /// `vmovl_s32` on each half of the lane vector; arithmetic right shift
     /// (`vshrq_n_s64::<29>`) preserves the sign of the carry.
@@ -1125,7 +1125,7 @@ impl<'b> Mul<&'b Fp29> for &Fp29 {
     /// to absorb the previously-computed low column into the high columns.
     ///
     /// Output limbs satisfy `limbs[i] < 2^29` for `i < 8` and `limbs[8] < 2^20`
-    /// (so the result is in `[0, 2p)`).  Use [`Fp29::final_sub`] to
+    /// (so the result is in `[0, 2p)`).  Use `Fp29::final_sub` to
     /// canonicalise to `[0, p)`.
     fn mul(self, rhs: &'b Fp29) -> Fp29 {
         let a = &self.limbs;

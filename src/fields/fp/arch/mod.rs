@@ -3,7 +3,7 @@
 //! Each subdirectory holds one or more complete `Fp` implementations
 //! specialised for a target CPU architecture and instruction set:
 //!
-//! - [`aarch64::neon`] — radix-29 `Fp` backed by `Fp29` / `Fp29x4` NEON
+//! - `aarch64::neon` — radix-29 `Fp` backed by `Fp29` / `Fp29x4` NEON
 //!   primitives.  Active on aarch64 hosts that are not wider-scalar-pipe Apple
 //!   Silicon (M2 and later), where the build script sets
 //!   `cfg(sqisign_selkie_arch = "neon")`.  Currently only the primitives land
