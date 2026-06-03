@@ -28,6 +28,8 @@
 //! libcrux, rust-openssl, curve25519-dalek).  AVX2 over a radix-26
 //! layout is the realistic x86_64 vectorised-Fp target.
 
+pub mod portable;
+
 #[cfg(target_arch = "aarch64")]
 #[allow(dead_code)] // not yet routed; activation needs persistent Fp29 storage
 pub mod aarch64;
