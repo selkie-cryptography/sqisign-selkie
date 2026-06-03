@@ -1,7 +1,7 @@
-//! x86_64 AVX2 backend for [`Fp`] arithmetic.
+//! x86_64 AVX2 backend for `Fp` arithmetic.
 //!
 //! Future home of the AVX2-vectorised `Fp` implementation analogous to
-//! [`crate::fields::fp::arch::aarch64::neon`]. Targets Haswell-and-later
+//! `crate::fields::fp::arch::aarch64::neon`. Targets Haswell-and-later
 //! Intel and Zen-and-later AMD CPUs (AVX2 is base ISA from 2013 on
 //! Intel, 2017 on AMD).
 //!
@@ -82,7 +82,7 @@ const P4_26: u32 = 5 << 14;
 
 /// `p` in radix-26 form.
 ///
-/// Used by [`Fp26::final_sub`] (future) to subtract the modulus from an
+/// Used by `Fp26::final_sub` (future) to subtract the modulus from an
 /// unreduced result. Computed from `p = 5 * 2^248 - 1`: limbs 0..8 are
 /// `2^26 - 1`, limb 9 holds the top 14 bits.
 const P_LIMBS_26: [u32; LIMBS_26] = [
@@ -272,7 +272,7 @@ impl Fp26 {
 
     /// Const-fn Montgomery multiplication on radix-26 limbs.
     ///
-    /// Identical CIOS structure to [`super::super::aarch64::neon::Fp29`]'s
+    /// Identical CIOS structure to `super::super::aarch64::neon::Fp29`'s
     /// const Mont mul, retuned for radix-26 / 10 limbs / `P4_26 = 5 * 2^14`.
     /// Used by [`Self::from_limbs`] to enter Fp26 Montgomery form at compile
     /// time from the portable backend's Montgomery limbs. A SIMD-vectorised
@@ -690,11 +690,11 @@ impl<'b> Mul<&'b Fp26> for &Fp26 {
     ///
     /// Output limbs satisfy `limbs[i] < 2^26` for `i < 9` and
     /// `limbs[9] < 2^17` (so the result is in `[0, 2p)`). Use
-    /// [`Fp26::final_sub`] to canonicalise to `[0, p)`.
+    /// `Fp26::final_sub` to canonicalise to `[0, p)`.
     ///
-    /// Dispatches to [`Fp26::mont_mul_avx2`] (operand-scanning CIOS over
+    /// Dispatches to `Fp26::mont_mul_avx2` (operand-scanning CIOS over
     /// `_mm256_mul_epu32`) when `cfg(target_feature = "avx2")` is set,
-    /// else falls back to [`Fp26::mont_mul_const`] (outer-product
+    /// else falls back to `Fp26::mont_mul_const` (outer-product
     /// CIOS, const-fn so the constants stay `pub const`).
     fn mul(self, rhs: &'b Fp26) -> Fp26 {
         #[cfg(target_feature = "avx2")]
@@ -813,7 +813,7 @@ impl PartialEq for Fp26 {
 /// Montgomery multiplication accumulator native room for the
 /// `u32 * u32 -> u64` partial products without widening shuffles.
 ///
-/// Parallel to [`crate::fields::fp::arch::aarch64::neon::Fp29x4`]'s
+/// Parallel to `crate::fields::fp::arch::aarch64::neon::Fp29x4`'s
 /// NEON SoA layout but at AVX2's 256-bit register width and radix-26.
 /// The eventual `mul` / `add` / `sub` / `square` methods land in
 /// follow-up commits; this commit ships the layout + transpose
@@ -885,7 +885,7 @@ impl Fp26x4 {
     /// Assumes each lane is `< 2p` with each limb already `< 2^26`.
     /// Returns the representative in `[0, p)` per lane.  Constant-time
     /// via `_mm256_blendv_epi8`-driven lane select.  Mirrors
-    /// [`Fp26::final_sub`].
+    /// `Fp26::final_sub`.
     ///
     /// AVX2 has no `_mm256_srai_epi64`, so borrow tracking goes through
     /// `_mm256_cmpgt_epi64` (per-lane all-0s / all-1s mask) instead of
@@ -1077,7 +1077,7 @@ impl Fp26x4 {
     /// `[a[0] * b[0] * R^-1, ..., a[3] * b[3] * R^-1]` packed in SoA form.
     ///
     /// 10x10 schoolbook outer-product CIOS, identical algorithm to
-    /// [`Fp26::mont_mul_const`] but lane-parallel over 4 independent
+    /// `Fp26::mont_mul_const` but lane-parallel over 4 independent
     /// `Fp26` products via `_mm256_mul_epu32` (VPMULUDQ: u32 * u32 -> u64
     /// across 4 lanes).
     ///
