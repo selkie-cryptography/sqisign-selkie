@@ -44,8 +44,9 @@
 
 #[cfg(target_feature = "avx2")]
 use core::arch::x86_64::{
-    __m256i, _mm256_loadu_si256, _mm256_mul_epu32, _mm256_set1_epi32, _mm256_setzero_si256,
-    _mm256_srli_epi64, _mm256_storeu_si256,
+    __m256i, _mm256_and_si256, _mm256_blendv_epi8, _mm256_cmpgt_epi64, _mm256_loadu_si256,
+    _mm256_mul_epu32, _mm256_set1_epi32, _mm256_set1_epi64x, _mm256_setzero_si256,
+    _mm256_srli_epi64, _mm256_storeu_si256, _mm256_sub_epi64,
 };
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -876,6 +877,62 @@ impl Fp26x4 {
         }
 
         out
+    }
+
+    /// Conditionally subtracts `p` per lane to canonicalise.
+    ///
+    /// Assumes each lane is `< 2p` with each limb already `< 2^26`.
+    /// Returns the representative in `[0, p)` per lane.  Constant-time
+    /// via `_mm256_blendv_epi8`-driven lane select.  Mirrors
+    /// [`Fp26::final_sub`].
+    ///
+    /// AVX2 has no `_mm256_srai_epi64`, so borrow tracking goes through
+    /// `_mm256_cmpgt_epi64` (per-lane all-0s / all-1s mask) instead of
+    /// the i64-arithmetic-shift trick that the NEON `Fp29x4::prop` uses.
+    pub fn final_sub(self) -> Self {
+        // SAFETY: register-width AVX2 ops; the type's
+        // cfg(target_feature = "avx2") gate makes these always available
+        // where Fp26x4 compiles.
+        unsafe {
+            let mask_26 = _mm256_set1_epi64x(MASK_26 as i64);
+            let zero = _mm256_setzero_si256();
+            let one = _mm256_set1_epi64x(1);
+
+            let mut diff = [zero; LIMBS_26];
+            let mut borrow = zero;
+
+            for (i, &limb_i) in self.limbs.iter().enumerate() {
+                // d = limb_i - p[i] - borrow.
+                let p_i = _mm256_set1_epi64x(P_LIMBS_26[i] as i64);
+                let d = _mm256_sub_epi64(limb_i, p_i);
+                let d = _mm256_sub_epi64(d, borrow);
+
+                // diff[i] = d & MASK_26 (low 26 bits per lane).
+                diff[i] = _mm256_and_si256(d, mask_26);
+
+                // borrow_next = (d as i64 < 0) per lane.  _mm256_cmpgt_epi64
+                // returns all-1s per lane where 0 > d (i.e. d's high bit is
+                // set as i64).  Mask down to 0/1 per lane for the next sub.
+                let neg_mask = _mm256_cmpgt_epi64(zero, d);
+                borrow = _mm256_and_si256(neg_mask, one);
+            }
+
+            // After all 10 limbs, `borrow` per lane is 1 iff self < p
+            // (subtraction underflowed).  Build a per-lane mask that's
+            // all-1s where we should keep `self` (borrow == 1), all-0s
+            // where we should use `diff` (borrow == 0).
+            let take_self = _mm256_cmpgt_epi64(borrow, zero);
+
+            let mut out = [zero; LIMBS_26];
+
+            for (i, slot) in out.iter_mut().enumerate() {
+                // blendv: per-byte, mask high bit picks second operand.
+                // Lane-wide all-1s/all-0s makes this a clean lane select.
+                *slot = _mm256_blendv_epi8(diff[i], self.limbs[i], take_self);
+            }
+
+            Self { limbs: out }
+        }
     }
 }
 
