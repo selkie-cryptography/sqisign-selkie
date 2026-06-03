@@ -192,6 +192,24 @@ proptest! {
             prop_assert_eq!(un.limbs, orig.limbs);
         }
     }
+
+    /// `Fp26x4::final_sub` must agree lane-for-lane (limb-exact) with
+    /// four independent scalar [`Fp26::final_sub`] calls.  The
+    /// canonical representative in `[0, p)` is unique, so direct limb
+    /// equality holds (not just canonical-byte equality).
+    #[cfg(target_feature = "avx2")]
+    #[test]
+    fn fp26x4_final_sub_matches_four_scalar_final_subs(
+        a in arb_fp(), b in arb_fp(), c in arb_fp(), d in arb_fp(),
+    ) {
+        let elements = [into_fp26(a), into_fp26(b), into_fp26(c), into_fp26(d)];
+        let packed = Fp26x4::from_scalars(&elements);
+        let after = packed.final_sub().to_scalars();
+
+        for (un, orig) in after.iter().zip(elements.iter()) {
+            prop_assert_eq!(un.limbs, orig.final_sub().limbs);
+        }
+    }
 }
 
 #[test]
