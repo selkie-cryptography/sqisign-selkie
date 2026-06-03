@@ -8,7 +8,10 @@
 use proptest::prelude::*;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-use super::{super::super::super::Fp, Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29};
+use super::{
+    super::super::{super::Fp, portable::Fp as PortableFp},
+    Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29,
+};
 
 /// Builds an `Fp` from arbitrary 32-byte inputs, matching the convention used
 /// in the parent `Fp` test module.
@@ -289,6 +292,33 @@ proptest! {
         prop_assert_eq!(Fp::from(pick_b).to_bytes(), b.to_bytes());
         prop_assert_eq!(Fp::from(pick_a).to_bytes(), a.to_bytes());
     }
+
+    /// `Fp29::from_limbs(portable_mont)` must encode the same field element
+    /// as the originating value.  Inputs are drawn through the portable
+    /// backend's `Fp` (which exposes radix-51 Montgomery limbs as `.0`) and
+    /// compared canonical-byte-wise against the [`Fp29::from_limbs`] result.
+    #[test]
+    fn fp29_from_limbs_matches_portable_mont_limbs(bytes in any::<[u8; 32]>().prop_map(|mut b| { b[31] = 0; b })) {
+        let portable = PortableFp::from_bytes(&bytes);
+        let fp29 = Fp29::from_limbs(portable.0);
+        prop_assert_eq!(fp29.to_bytes(), portable.to_bytes());
+    }
+}
+
+/// `Fp29::from_limbs` lands on `Fp29::ZERO` when handed the portable
+/// backend's `Fp::ZERO` limbs.
+#[test]
+fn fp29_from_limbs_zero_lands_at_fp29_zero() {
+    let fp29 = Fp29::from_limbs(PortableFp::ZERO.0);
+    assert_eq!(fp29.to_bytes(), PortableFp::ZERO.to_bytes());
+}
+
+/// `Fp29::from_limbs` lands on `Fp29::ONE` when handed the portable
+/// backend's `Fp::ONE` limbs.
+#[test]
+fn fp29_from_limbs_one_lands_at_fp29_one() {
+    let fp29 = Fp29::from_limbs(PortableFp::ONE.0);
+    assert_eq!(fp29.to_bytes(), PortableFp::ONE.to_bytes());
 }
 
 #[test]
