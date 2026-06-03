@@ -58,10 +58,7 @@ pub const FP_ENCODED_BYTES: usize = 32;
 // portable backend's radix-51 Montgomery limbs and const-converts.
 #[cfg(sqisign_selkie_arch = "neon")]
 pub use arch::aarch64::neon::Fp29 as Fp;
+#[cfg(not(any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2")))]
+pub use arch::portable::Fp;
 #[cfg(sqisign_selkie_arch = "avx2")]
 pub use arch::x86_64::avx2::Fp26 as Fp;
-#[cfg(not(any(
-    sqisign_selkie_arch = "neon",
-    sqisign_selkie_arch = "avx2"
-)))]
-pub use arch::portable::Fp;
