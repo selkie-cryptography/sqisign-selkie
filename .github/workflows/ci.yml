@@ -251,22 +251,20 @@ jobs:
           # the parser's self-test fixture (see kat-report.rs's
           # `#[cfg(test)] mod tests`).
           tool: cargo-nextest@0.9.133
-      - run: cargo nextest run --cargo-profile release-checked
-      # Preserve the gate run's JUnit before the next nextest
-      # invocation overwrites `target/nextest/default/junit.xml`.
-      # kat-report.rs reads this preserved copy below so kat.json
-      # reflects the full lib + wycheproof suite, not the narrow
-      # 5-binary `expose-internals` re-run.
+      # Run the full lib + integration test suite under
+      # `expose-internals` so every test in `tests/` participates,
+      # including the ones gated on private-module access (oracles,
+      # boundary KATs, fault-simulation vectors). The marker feature
+      # is empty (just `#[cfg(any(test, feature = "expose-internals"))]`
+      # gates exposing private modules), so lib tests cost the same
+      # as a default-features run. `alloc_budget`, `zeroize`, and
+      # `ctgrind` are also gated but have dedicated jobs in
+      # `audit.yml` and stay scoped there.
+      - run: cargo nextest run --features expose-internals --cargo-profile release-checked
+      # Snapshot the JUnit under a stable filename so kat-report.rs
+      # has a canonical input regardless of any future re-runs.
       - name: Preserve gate JUnit for kat-report
         run: cp target/nextest/default/junit.xml target/nextest/default/junit-gate.xml
-      # Tests in `tests/` that consume `keys::kat_data::KAT_VECTORS`
-      # (api_properties, bit_flip_sweep, malleability,
-      # semantic_boundaries) are gated on `expose-internals` and
-      # silently skipped above. Re-run scoped to just those four so we
-      # don't pay the full lib-test suite again on a different feature
-      # flag. `alloc_budget`, `zeroize`, and `ctgrind` are also gated
-      # but have dedicated jobs in `audit.yml`.
-      - run: cargo nextest run --features expose-internals --cargo-profile release-checked --test api_properties --test bit_flip_sweep --test cross_kat_verify --test malleability --test semantic_boundaries
       - run: cargo test --doc
 
       # Print the cache hit rate. First run on a fresh bucket: all
