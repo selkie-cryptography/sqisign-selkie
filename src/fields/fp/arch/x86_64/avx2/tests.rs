@@ -126,6 +126,52 @@ proptest! {
         prop_assert_eq!(pick_b.to_bytes(), b.to_bytes());
         prop_assert_eq!(pick_a.to_bytes(), a.to_bytes());
     }
+
+    /// `Fp26::from_small` agrees with `Fp::from_small` for every `u32`,
+    /// including values larger than `2^26` that need the limb-1 spill.
+    #[test]
+    fn fp26_from_small_matches_fp_from_small(x in any::<u32>()) {
+        let actual = Fp26::from_small(x).to_bytes();
+        let expected = PortableFp::from_small(x).to_bytes();
+        prop_assert_eq!(actual, expected);
+    }
+
+    /// `Fp26::pow2k` agrees with `Fp::pow2k` for `n` up to a small bound.
+    #[test]
+    fn fp26_pow2k_matches_fp_pow2k(a in arb_fp(), n in 0u32..16) {
+        let actual = into_fp26(a).pow2k(n).to_bytes();
+        let expected = a.pow2k(n).to_bytes();
+        prop_assert_eq!(actual, expected);
+    }
+
+    /// `Fp26::invert` agrees with `Fp::invert`. Zero is excluded —
+    /// invert(0) is undefined in both backends.
+    #[test]
+    fn fp26_invert_matches_fp_invert(a in arb_fp()) {
+        prop_assume!(a.to_bytes() != PortableFp::ZERO.to_bytes());
+        let actual = into_fp26(a).invert().to_bytes();
+        let expected = a.invert().to_bytes();
+        prop_assert_eq!(actual, expected);
+    }
+
+    /// `Fp26::is_square` agrees with `Fp::is_square` on the boolean outcome.
+    #[test]
+    fn fp26_is_square_matches_fp_is_square(a in arb_fp()) {
+        let actual: bool = into_fp26(a).is_square().into();
+        let expected: bool = a.is_square().into();
+        prop_assert_eq!(actual, expected);
+    }
+
+    /// `Fp26::sqrt` agrees with `Fp::sqrt` for quadratic residues. Both
+    /// backends return `+/- r`; compare via the square to dodge the sign
+    /// ambiguity.
+    #[test]
+    fn fp26_sqrt_squares_to_input_when_qr(a in arb_fp()) {
+        prop_assume!(bool::from(a.is_square()));
+        let root26 = into_fp26(a).sqrt();
+        let recovered = root26.square().to_bytes();
+        prop_assert_eq!(recovered, a.to_bytes());
+    }
 }
 
 #[test]
