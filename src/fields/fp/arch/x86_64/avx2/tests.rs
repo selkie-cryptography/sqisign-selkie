@@ -251,6 +251,31 @@ proptest! {
             prop_assert_eq!(un.to_bytes(), (lhs[i] - rhs[i]).to_bytes());
         }
     }
+
+    /// `Fp26x4::mul` must agree lane-for-lane with four independent
+    /// scalar [`Fp26`] muls.  Canonical-byte equality (the `[0, 2p)`
+    /// output convention permits two distinct in-range representatives
+    /// for the same field element).
+    ///
+    /// Gold-standard correctness check for the AVX2 schoolbook CIOS:
+    /// any off-by-one in column indexing, lane-parallel accumulation,
+    /// or Montgomery fold lands as a mismatch here.
+    #[cfg(target_feature = "avx2")]
+    #[test]
+    fn fp26x4_mul_matches_four_scalar_muls(
+        a in arb_fp(), b in arb_fp(), c in arb_fp(), d in arb_fp(),
+        e in arb_fp(), f in arb_fp(), g in arb_fp(), h in arb_fp(),
+    ) {
+        let lhs = [into_fp26(a), into_fp26(b), into_fp26(c), into_fp26(d)];
+        let rhs = [into_fp26(e), into_fp26(f), into_fp26(g), into_fp26(h)];
+        let lhs_packed = Fp26x4::from_scalars(&lhs);
+        let rhs_packed = Fp26x4::from_scalars(&rhs);
+        let products = lhs_packed.mul(&rhs_packed).to_scalars();
+
+        for (i, un) in products.iter().enumerate() {
+            prop_assert_eq!(un.to_bytes(), (&lhs[i] * &rhs[i]).to_bytes());
+        }
+    }
 }
 
 #[test]
