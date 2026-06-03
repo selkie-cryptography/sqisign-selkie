@@ -44,7 +44,6 @@ mod tests;
 pub use isomorphism::Isomorphism;
 pub use jacobian::JacobianPoint;
 pub use point::ProjectiveXOnlyPoint;
-pub(crate) use point::differential_add_and_double;
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::fields::{fp::Fp, fp2::Fp2};

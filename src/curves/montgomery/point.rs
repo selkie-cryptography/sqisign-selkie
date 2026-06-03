@@ -301,7 +301,7 @@ impl ProjectiveXOnlyPoint {
             let swap = Choice::from((bit ^ prev_bit) & 1);
             prev_bit = bit;
             ProjectiveXOnlyPoint::conditional_swap(&mut r0, &mut r1, swap);
-            differential_add_and_double(&mut r0, &mut r1, self);
+            (r0, r1) = r0.differential_double_add(&r1, self);
         }
         // Final swap
         let swap = Choice::from(prev_bit & 1);
@@ -326,7 +326,7 @@ impl ProjectiveXOnlyPoint {
         for cur_bit in n.bits_be(Scalar::BITS) {
             let swap: u8 = (prev_bit ^ cur_bit) as u8;
             ProjectiveXOnlyPoint::conditional_swap(&mut x0, &mut x1, swap.into());
-            differential_add_and_double(&mut x0, &mut x1, self);
+            (x0, x1) = x0.differential_double_add(&x1, self);
             prev_bit = cur_bit;
         }
         ProjectiveXOnlyPoint::conditional_swap(&mut x0, &mut x1, Choice::from(prev_bit as u8));
@@ -334,40 +334,45 @@ impl ProjectiveXOnlyPoint {
     }
 }
 
-/// Simultaneous doubling and differential addition.
-///
-/// Sets P ← \[2\]P and Q ← P + Q, given the difference P − Q.
-///
-/// See [§8.2], Algorithm 8.5 (`xDBLADD`).
-///
-/// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
-#[rustfmt::skip]
-pub(crate) fn differential_add_and_double(
-    P: &mut ProjectiveXOnlyPoint,
-    Q: &mut ProjectiveXOnlyPoint,
-    PmQ: &ProjectiveXOnlyPoint,
-) {
-    let sum_P  = &P.X + &P.Z;
-    let diff_P = &P.X - &P.Z;
+impl ProjectiveXOnlyPoint {
+    /// Computes `([2]self, self + other)`, given `self − other`.
+    ///
+    /// The combined doubling + differential addition ladder-step
+    /// primitive used by [`Self::scalar_mul`] and other Montgomery
+    /// ladders.
+    ///
+    /// Implements [`xDBLADD`][Alg. 8.5] from the spec.
+    ///
+    /// [Alg. 8.5]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.5
+    #[must_use]
+    #[rustfmt::skip]
+    pub fn differential_double_add(
+        &self,
+        other: &ProjectiveXOnlyPoint,
+        difference: &ProjectiveXOnlyPoint,
+    ) -> (ProjectiveXOnlyPoint, ProjectiveXOnlyPoint) {
+        let sum_P  = &self.X + &self.Z;
+        let diff_P = &self.X - &self.Z;
 
-    // xDBL
-    let t0     = sum_P.square();
-    let t1     = diff_P.square();
-    let t2     = &t0 - &t1;
-    let t1_c24 = &t1 * &P.curve.doubling.C24;
-    let dbl_X  = &t0 * &t1_c24;
-    let dbl_Z  = &t2 * &(&(&t2 * &P.curve.doubling.A24) + &t1_c24);
+        // xDBL
+        let t0     = sum_P.square();
+        let t1     = diff_P.square();
+        let t2     = &t0 - &t1;
+        let t1_c24 = &t1 * &self.curve.doubling.C24;
+        let dbl_X  = &t0 * &t1_c24;
+        let dbl_Z  = &t2 * &(&(&t2 * &self.curve.doubling.A24) + &t1_c24);
 
-    // xADD
-    let u     = &sum_P * &(&Q.X - &Q.Z);
-    let v     = &diff_P * &(&Q.X + &Q.Z);
-    let add_X = &PmQ.Z * &(&u + &v).square();
-    let add_Z = &PmQ.X * &(&u - &v).square();
+        // xADD
+        let u     = &sum_P * &(&other.X - &other.Z);
+        let v     = &diff_P * &(&other.X + &other.Z);
+        let add_X = &difference.Z * &(&u + &v).square();
+        let add_Z = &difference.X * &(&u - &v).square();
 
-    P.X = dbl_X;
-    P.Z = dbl_Z;
-    Q.X = add_X;
-    Q.Z = add_Z;
+        (
+            ProjectiveXOnlyPoint { X: dbl_X, Z: dbl_Z, curve: self.curve },
+            ProjectiveXOnlyPoint { X: add_X, Z: add_Z, curve: self.curve },
+        )
+    }
 }
 
 /// Scalar multiplication `[n]P`. Constant-time in the scalar value.

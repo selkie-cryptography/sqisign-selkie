@@ -55,12 +55,14 @@ const _: () = assert!(
      intermediate masking must be added for this parameter set"
 );
 
-/// Computes HASH(pk ‖ j(E) ‖ msg).
+/// Computes `HASH(pk ‖ j(E) ‖ msg)` — the SQIsign challenge hash
+/// (Algorithm 4.2, line 10).
 ///
-/// Hashes the verifying key, a j-invariant (of a commitment or
-/// challenge curve), and a message into a challenge `chl` of
-/// [`E_CHL`] = 122 bits (returned as [`CHALLENGE_BYTES`] = 16 bytes
-/// with upper bits masked to zero).
+/// Returns [`CHALLENGE_BYTES`] = 16 bytes with the upper bits beyond
+/// [`E_CHL`] = 122 masked to zero. The method-form entry point is
+/// [`Challenge::derive_from_j`](crate::keys::Challenge::derive_from_j),
+/// which wraps the returned bytes into a `Challenge` via
+/// `From<[u8; CHALLENGE_BYTES]>`.
 ///
 /// All inputs are public — this function does not need to be
 /// constant-time in the input values.

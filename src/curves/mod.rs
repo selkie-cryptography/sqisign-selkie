@@ -36,9 +36,7 @@ use subtle::ConditionallySelectable;
 mod tests;
 
 use crate::{
-    curves::montgomery::{
-        AffineX, Curve, JacobianPoint, ProjectiveXOnlyPoint, differential_add_and_double,
-    },
+    curves::montgomery::{AffineX, Curve, JacobianPoint, ProjectiveXOnlyPoint},
     deuring::precomputed::ENDOMORPHISM_MATRICES,
     fields::{fp::Fp, fp2::Fp2},
     params::TORSION_EVEN_POWER,
@@ -495,7 +493,7 @@ impl TorsionBasis {
                 // C ref: cswap when bit == 0
                 let mask = subtle::Choice::from(bit ^ 1);
                 ProjectiveXOnlyPoint::conditional_swap(&mut x1, &mut x2, mask);
-                differential_add_and_double(&mut x0, &mut x1, &x2);
+                (x0, x1) = x0.differential_double_add(&x1, &x2);
                 ProjectiveXOnlyPoint::conditional_swap(&mut x1, &mut x2, mask);
             }
         }
