@@ -1,11 +1,12 @@
 //! Cross-implementation tests for the radix-29 [`Fp29`] mirror.
 //!
 //! Until the NEON arithmetic methods land, the only externally observable
-//! behaviour of `Fp29` is its byte layout and its round-trip with [`Fp`].
+//! behavior of `Fp29` is its byte layout and its round-trip with [`Fp`].
 //! These tests pin both, and `fp29_mul_matches_fp_mul` proves the scalar
 //! radix-29 Montgomery multiplication is byte-equivalent to `Fp::mul`.
 
 use proptest::prelude::*;
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 use super::{super::super::super::Fp, Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29};
 
@@ -73,7 +74,7 @@ proptest! {
     fn fp29_mul_matches_fp_mul(a in arb_fp(), b in arb_fp()) {
         let a29 = Fp29::from(a);
         let b29 = Fp29::from(b);
-        let product29 = a29.mul(&b29);
+        let product29 = &a29 * &b29;
         let product_back = Fp::from(product29);
         let expected = &a * &b;
         prop_assert_eq!(product_back.to_bytes(), expected.to_bytes());
@@ -100,7 +101,7 @@ proptest! {
     }
 
     /// Cross-impl squaring: currently delegates to `mul(self, self)`, so the
-    /// test mainly pins the boundary; an optimised symmetric square lands
+    /// test mainly pins the boundary; an optimized symmetric square lands
     /// alongside the NEON intrinsic commit.
     #[test]
     fn fp29_square_matches_fp_square(a in arb_fp()) {
@@ -137,7 +138,7 @@ proptest! {
         let unpacked = a4.mul(&b4).to_scalars();
         for (i, un) in unpacked.iter().enumerate() {
             let actual = Fp::from(*un).to_bytes();
-            let expected = Fp::from(a[i].mul(&b[i])).to_bytes();
+            let expected = Fp::from(&a[i] * &b[i]).to_bytes();
             prop_assert_eq!(actual, expected);
         }
     }
@@ -200,6 +201,93 @@ proptest! {
             let expected = Fp::from(a[i].square()).to_bytes();
             prop_assert_eq!(actual, expected);
         }
+    }
+
+    /// `Fp29::from_bytes` agrees with `Fp::from_bytes` for canonical inputs:
+    /// both must enter Montgomery form at the same field value, then re-emit
+    /// the same bytes after [`Fp29::to_bytes`].
+    #[test]
+    fn fp29_from_bytes_matches_fp_from_bytes(canonical in arb_canonical_bytes()) {
+        let fp = Fp::from_bytes(&canonical);
+        let fp29 = Fp29::from_bytes(&canonical);
+        prop_assert_eq!(fp.to_bytes(), fp29.to_bytes());
+    }
+
+    /// `Fp29::to_bytes` round-trips through `Fp29::from_bytes` on any input
+    /// already representable in `Fp` (so `Fp::from_bytes` is the identity
+    /// generator).
+    #[test]
+    fn fp29_to_bytes_round_trips(fp in arb_fp()) {
+        let bytes = fp.to_bytes();
+        let fp29 = Fp29::from_bytes(&bytes);
+        prop_assert_eq!(fp29.to_bytes(), bytes);
+    }
+
+    /// `Fp29::pow2k` agrees with `Fp::pow2k` for `n` up to a small bound
+    /// (kept tight so the proptest runs in seconds).
+    #[test]
+    fn fp29_pow2k_matches_fp_pow2k(a in arb_fp(), n in 0u32..16) {
+        let actual = Fp::from(Fp29::from(a).pow2k(n)).to_bytes();
+        let expected = a.pow2k(n).to_bytes();
+        prop_assert_eq!(actual, expected);
+    }
+
+    /// `Fp29::invert` agrees with `Fp::invert`.  Zero is excluded — invert(0)
+    /// is undefined in both backends.
+    #[test]
+    fn fp29_invert_matches_fp_invert(a in arb_fp()) {
+        prop_assume!(a.to_bytes() != Fp::ZERO.to_bytes());
+        let actual = Fp::from(Fp29::from(a).invert()).to_bytes();
+        let expected = a.invert().to_bytes();
+        prop_assert_eq!(actual, expected);
+    }
+
+    /// `Fp29::is_square` agrees with `Fp::is_square` on the boolean outcome.
+    #[test]
+    fn fp29_is_square_matches_fp_is_square(a in arb_fp()) {
+        let actual: bool = Fp29::from(a).is_square().into();
+        let expected: bool = a.is_square().into();
+        prop_assert_eq!(actual, expected);
+    }
+
+    /// `Fp29::sqrt` agrees with `Fp::sqrt` on canonical bytes when the input
+    /// is a quadratic residue.  Both backends return `±r`; compare via the
+    /// square to dodge the sign ambiguity.
+    #[test]
+    fn fp29_sqrt_squares_to_input_when_qr(a in arb_fp()) {
+        prop_assume!(bool::from(a.is_square()));
+        let root29 = Fp29::from(a).sqrt();
+        let recovered = Fp::from(root29.square()).to_bytes();
+        prop_assert_eq!(recovered, a.to_bytes());
+    }
+
+    /// `-Fp29::from(a)` agrees with `-a` in `Fp`.
+    #[test]
+    fn fp29_neg_matches_fp_neg(a in arb_fp()) {
+        let actual = Fp::from(-Fp29::from(a)).to_bytes();
+        let expected = (-a).to_bytes();
+        prop_assert_eq!(actual, expected);
+    }
+
+    /// `ConstantTimeEq` on `Fp29` returns `1` iff the canonical bytes match.
+    #[test]
+    fn fp29_ct_eq_matches_byte_equality(a in arb_fp(), b in arb_fp()) {
+        let a29 = Fp29::from(a);
+        let b29 = Fp29::from(b);
+        let ct: bool = a29.ct_eq(&b29).into();
+        prop_assert_eq!(ct, a.to_bytes() == b.to_bytes());
+    }
+
+    /// `ConditionallySelectable::conditional_select` picks `b` on `Choice(1)`
+    /// and `a` on `Choice(0)`, matching the contract `Fp` implements.
+    #[test]
+    fn fp29_conditional_select_picks_branch(a in arb_fp(), b in arb_fp()) {
+        let a29 = Fp29::from(a);
+        let b29 = Fp29::from(b);
+        let pick_b = Fp29::conditional_select(&a29, &b29, Choice::from(1));
+        let pick_a = Fp29::conditional_select(&a29, &b29, Choice::from(0));
+        prop_assert_eq!(Fp::from(pick_b).to_bytes(), b.to_bytes());
+        prop_assert_eq!(Fp::from(pick_a).to_bytes(), a.to_bytes());
     }
 }
 
