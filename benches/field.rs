@@ -1,5 +1,9 @@
 #[cfg(target_arch = "aarch64")]
 use sqisign_selkie::fields::fp::arch::aarch64::neon::{Fp29, Fp29x4};
+#[cfg(target_arch = "x86_64")]
+use sqisign_selkie::fields::fp::arch::x86_64::avx2::Fp26;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+use sqisign_selkie::fields::fp::arch::x86_64::avx2::Fp26x4;
 use sqisign_selkie::fields::{fp::Fp, fp2::Fp2};
 
 fn main() {
@@ -185,4 +189,98 @@ fn fp29_mul_scalar(bencher: divan::Bencher) {
     let a = Fp29::from_small(17);
     let b = Fp29::from_small(42);
     bencher.bench(|| divan::black_box(&a) * divan::black_box(&b));
+}
+
+/// Four independent scalar `Fp::mul`s — the x86_64 baseline the AVX2
+/// Fp26x4 path must beat.
+#[cfg(target_arch = "x86_64")]
+#[divan::bench]
+fn fp_mul_4_independent_x86_64(bencher: divan::Bencher) {
+    let a = [
+        Fp::from_small(3),
+        Fp::from_small(7),
+        Fp::from_small(11),
+        Fp::from_small(13),
+    ];
+    let b = [
+        Fp::from_small(17),
+        Fp::from_small(19),
+        Fp::from_small(23),
+        Fp::from_small(29),
+    ];
+    bencher.bench(|| {
+        let aa = divan::black_box(&a);
+        let bb = divan::black_box(&b);
+        [aa[0] * bb[0], aa[1] * bb[1], aa[2] * bb[2], aa[3] * bb[3]]
+    });
+}
+
+/// Four independent scalar `Fp::square` calls — x86_64 baseline.
+#[cfg(target_arch = "x86_64")]
+#[divan::bench]
+fn fp_square_4_independent_x86_64(bencher: divan::Bencher) {
+    let a = [
+        Fp::from_small(3),
+        Fp::from_small(7),
+        Fp::from_small(11),
+        Fp::from_small(13),
+    ];
+    bencher.bench(|| {
+        let aa = divan::black_box(&a);
+        [
+            aa[0].square(),
+            aa[1].square(),
+            aa[2].square(),
+            aa[3].square(),
+        ]
+    });
+}
+
+/// Standalone scalar `Fp26::mul` — for comparing radix-26 vs radix-51
+/// cost at the single-product level, isolating the radix change from
+/// the AVX2 vectorisation factor.
+#[cfg(target_arch = "x86_64")]
+#[divan::bench]
+fn fp26_mul_scalar(bencher: divan::Bencher) {
+    let a = Fp26::from_small(17);
+    let b = Fp26::from_small(42);
+    bencher.bench(|| divan::black_box(&a) * divan::black_box(&b));
+}
+
+/// One vectorised `Fp26x4::mul` — four independent Montgomery products
+/// in one AVX2 schoolbook CIOS.  Compare against
+/// `fp_mul_4_independent_x86_64` for the scalar-vs-AVX2 crossover.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[divan::bench]
+fn fp26x4_mul_avx2(bencher: divan::Bencher) {
+    let a26 = [
+        Fp26::from_small(3),
+        Fp26::from_small(7),
+        Fp26::from_small(11),
+        Fp26::from_small(13),
+    ];
+    let b26 = [
+        Fp26::from_small(17),
+        Fp26::from_small(19),
+        Fp26::from_small(23),
+        Fp26::from_small(29),
+    ];
+    let a4 = Fp26x4::from_scalars(&a26);
+    let b4 = Fp26x4::from_scalars(&b26);
+    bencher.bench(|| divan::black_box(&a4).mul(divan::black_box(&b4)));
+}
+
+/// Vectorised `Fp26x4::square` — currently delegates to `mul`, baseline
+/// for the future symmetric-cross-term optimisation.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[divan::bench]
+fn fp26x4_square_avx2(bencher: divan::Bencher) {
+    let a26 = [
+        Fp26::from_small(3),
+        Fp26::from_small(7),
+        Fp26::from_small(11),
+        Fp26::from_small(13),
+    ];
+    let a4 = Fp26x4::from_scalars(&a26);
+    bencher.bench(|| divan::black_box(&a4).square());
 }
