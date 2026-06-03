@@ -45,6 +45,14 @@ additional_cargo_test_args = [
 timeout_multiplier = 3
 minimum_test_timeout = 60
 
+# Build timeout: cap each mutant's per-build wall at 3x the baseline.
+# cargo-mutants 27's expanded mutation set occasionally produces
+# pathological inputs (const-mutations in `src/params.rs:28:43` were
+# observed stuck at 880s build wall during run 26863783967), which
+# would otherwise eat the shard budget. 3x baseline (~3-5 min cap in
+# practice) kills these without affecting legitimate longer builds.
+build_timeout_multiplier = 3
+
 # --- Exclusions ---
 #
 # Keep this list minimal.  A surviving mutant is a signal, not noise.
