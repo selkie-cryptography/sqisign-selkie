@@ -263,11 +263,7 @@ jobs:
   # completion (success or failure), or on manual dispatch. Each shard
   # runs on a `perf-8x` box and fans its mutant slice out across cores
   # with `-j 6` (see the run step), leaving headroom for each mutant's
-  # nextest harness. The ×8 shard count is kept as-is: perf-8x makes
-  # each shard faster but the slice-per-shard granularity still bounds
-  # tail latency on the slow sign-KAT mutants, so collapsing shards
-  # isn't a trivial win — revisit once we have steady-state per-shard
-  # wall-times under the parallel runner.
+  # nextest harness.
   full:
     name: Full shard ${{ matrix.shard }}
     runs-on: [self-hosted, fly, linux, perf-8x]
@@ -294,12 +290,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
-    # All 8 shards share the same Tigris-backed sccache bucket;
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    # All 16 shards share the same Tigris-backed sccache bucket;
     # cargo-mutants' identical baseline build hits cross-shard on
     # arrival, and the upstream dep graph stays warm across runs.
-    # Replaces the previous shared-key Swatinem step, which had to
-    # serialize a target/ tarball restore + save per shard.
+    # 16 (up from 8) was sized to cargo-mutants 27's expanded
+    # mutation set: 1968 mutants / 16 = ~123 mutants per shard fits
+    # the 180 min budget at ~80s/mutant median with `-j 6` parallel.
     env:
       # See gate (ci.yml) for the empty-RUSTC_WRAPPER rationale.
       RUSTC_WRAPPER: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID != '' && 'sccache' || '' }}
@@ -325,10 +322,10 @@ jobs:
       # each mutant's nextest harness; `--minimum-test-timeout 180`
       # widens the 60s floor so contention between the six concurrent
       # suites isn't misread as a timeout kill.
-      - name: Run cargo-mutants (shard ${{ matrix.shard }}/8)
+      - name: Run cargo-mutants (shard ${{ matrix.shard }}/16)
         continue-on-error: true
         run: |
-          cargo mutants --shard ${{ matrix.shard }}/8 -vV \
+          cargo mutants --shard ${{ matrix.shard }}/16 -vV \
             -j 6 \
             --minimum-test-timeout 180
 
