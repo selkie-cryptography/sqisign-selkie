@@ -38,8 +38,10 @@ Signing and key generation are \textbf{not yet constant-time.}  The
 entire quaternion arithmetic layer---lattice reduction (L2/LLL), Hermite
 Normal Form, Cornacchia/\textsc{RepresentInteger}, and
 \textsc{IdealToIsogeny}---is variable-time on secret-derived data.
-Every such code path is annotated with \texttt{TODO(ct)} citing the
-Algorithm~4.2 line that makes the input secret-derived.
+Each identified variable-time code path on a secret-derived input
+carries a \texttt{TODO(ct)} marker citing the Algorithm~4.2 line that
+makes the input secret-derived; the marker set is the in-tree
+inventory of work the CT pass must close.
 
 Field arithmetic (\S\ref{sec:arch}), curve operations, and
 verification are constant-time or operate on purely public data.
@@ -49,11 +51,14 @@ End-to-end interoperability against the C reference is complete
 workstream, and \S\ref{sec:post-baseline} logs each landed and
 tried-rejected step.
 
-\subsection{Findings from the constant-time audit pass}
+\subsection{Leaks beyond the tagged set}
 
-A focused audit of the deuring layer and the underlying bigint
-arithmetic surfaced two undocumented CT leaks on the sign-side
-secret path.
+The \texttt{TODO(ct)} inventory above captures the quaternion-layer
+paths the implementer already knew were variable-time.  A focused
+audit of the deuring layer and the underlying bigint arithmetic
+surfaced three additional findings the inventory had missed: two
+undocumented CT leaks on the sign-side secret path, plus one
+adjacent correctness violation.
 
 \paragraph{\texttt{BigInt::two\_adic\_val} variable-time leak.}
 The function is documented as constant-time and is called on
