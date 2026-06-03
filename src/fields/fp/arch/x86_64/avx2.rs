@@ -42,7 +42,15 @@
 //! follow-up commits. The arch dispatcher's cfg-avx2 arm doesn't
 //! activate until those land.
 
-use subtle::ConditionallySelectable;
+use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+
+/// `1` in non-Montgomery form, used to exit Montgomery form via the `Mul`
+/// trait impl: `mont * 1 * R^-1 = mont / R = canonical`.
+const ONE_RAW: Fp26 = Fp26 {
+    limbs: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+};
 
 /// Bits per limb in the radix-26 representation.
 pub const RADIX_26: u32 = 26;
@@ -299,10 +307,269 @@ impl Fp26 {
         c[LIMBS_26 - 1] = t as u32;
         c
     }
+
+    /// Squares this element via the [`Mul`] impl.
+    ///
+    /// A symmetric-cross-term optimization (which uses fewer u32 * u32
+    /// products) lands alongside the AVX2 intrinsics commit, where the
+    /// savings translate to fewer `VPMULUDQ` ops.
+    pub fn square(&self) -> Self {
+        self * self
+    }
+
+    /// Propagates carries through the limbs, returning a sign mask:
+    /// `0` if the final accumulator was non-negative, `0xFFFFFFFF` if it
+    /// was negative (indicating a borrow occurred upstream).
+    ///
+    /// Mirrors `super::super::aarch64::neon::Fp29::prop`: arithmetic
+    /// right-shift on an `i64` carry preserves the sign, and the high bit
+    /// of `limbs[LIMBS_26 - 1]` after the final wrapping add encodes
+    /// whether the cumulative value overflowed (borrowed).
+    ///
+    /// The cast chain `u32 -> i32 -> i64` is load-bearing: `u32 -> i64`
+    /// zero-extends and would lose the borrow sign, while `u32 -> i32`
+    /// preserves bits (same width) and `i32 -> i64` then sign-extends.
+    fn prop(&mut self) -> u32 {
+        let mut carry = (self.limbs[0] as i32) as i64;
+        carry >>= RADIX_26;
+        self.limbs[0] &= MASK_26;
+
+        for i in 1..LIMBS_26 - 1 {
+            carry += (self.limbs[i] as i32) as i64;
+            self.limbs[i] = (carry as u32) & MASK_26;
+            carry >>= RADIX_26;
+        }
+
+        self.limbs[LIMBS_26 - 1] = self.limbs[LIMBS_26 - 1].wrapping_add(carry as u32);
+
+        let sign = (self.limbs[LIMBS_26 - 1] >> 1) >> 30;
+        sign.wrapping_neg()
+    }
+
+    /// Conditionally subtracts `p` to canonicalise an in-range result.
+    ///
+    /// Assumes `self < 2p` with each limb already `< 2^26`. Returns the
+    /// representative in `[0, p)`. Constant-time via
+    /// [`subtle::ConditionallySelectable`].
+    pub fn final_sub(self) -> Self {
+        let mut diff = [0u32; LIMBS_26];
+        let mut borrow: u32 = 0;
+
+        for i in 0..LIMBS_26 {
+            let d = (self.limbs[i] as i64) - (P_LIMBS_26[i] as i64) - (borrow as i64);
+            diff[i] = (d as u32) & MASK_26;
+            borrow = ((d as u64) >> 63) as u32 & 1;
+        }
+
+        // borrow == 0: subtraction succeeded (self >= p), use diff.
+        // borrow == 1: self < p, keep self.
+        let take_diff = Choice::from((1 - borrow) as u8);
+        let mut out = [0u32; LIMBS_26];
+
+        for i in 0..LIMBS_26 {
+            out[i] = u32::conditional_select(&self.limbs[i], &diff[i], take_diff);
+        }
+
+        Self { limbs: out }
+    }
+
+    /// Exits Montgomery form: `mont -> mont / R = canonical`.
+    ///
+    /// Multiplies by `1` in non-Montgomery form ([`ONE_RAW`]); the Montgomery
+    /// product is `mont * 1 * R^-1 = mont / R`. Then canonicalises via
+    /// [`Self::final_sub`].
+    pub fn reduce_montgomery(self) -> Self {
+        (&self * &ONE_RAW).final_sub()
+    }
+
+    /// Decodes canonical 32-byte little-endian into a Montgomery-form `Fp26`.
+    ///
+    /// Mirrors `Fp::from_bytes` at the API level: unpacks the bytes as a
+    /// canonical integer, then enters this backend's Montgomery form via
+    /// multiplication by [`R2_26`].
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        &Self::from_bytes_le(bytes) * &R2_26
+    }
+
+    /// Encodes a Montgomery-form `Fp26` as canonical 32-byte little-endian.
+    ///
+    /// Mirrors `Fp::to_bytes`: exits Montgomery form via
+    /// [`Self::reduce_montgomery`], then packs the canonical limbs into 32
+    /// bytes.
+    pub fn to_bytes(self) -> [u8; 32] {
+        self.reduce_montgomery().to_bytes_le()
+    }
+}
+
+impl Add<Fp26> for Fp26 {
+    type Output = Fp26;
+
+    /// Modular addition, reduced to `[0, 2p)`.
+    ///
+    /// Adds limbwise, subtracts `2p` (via add-2-to-limb-0 / subtract-`2 *
+    /// P4_26`-from-limb-9), propagates carries, then conditionally adds `2p`
+    /// back if the propagation detected a borrow. Mirrors `Fp::add`
+    /// structurally.
+    fn add(self, rhs: Fp26) -> Fp26 {
+        let mut n = Fp26 {
+            limbs: [
+                self.limbs[0] + rhs.limbs[0],
+                self.limbs[1] + rhs.limbs[1],
+                self.limbs[2] + rhs.limbs[2],
+                self.limbs[3] + rhs.limbs[3],
+                self.limbs[4] + rhs.limbs[4],
+                self.limbs[5] + rhs.limbs[5],
+                self.limbs[6] + rhs.limbs[6],
+                self.limbs[7] + rhs.limbs[7],
+                self.limbs[8] + rhs.limbs[8],
+                self.limbs[9] + rhs.limbs[9],
+            ],
+        };
+        n.limbs[0] = n.limbs[0].wrapping_add(2);
+        n.limbs[LIMBS_26 - 1] = n.limbs[LIMBS_26 - 1].wrapping_sub(2 * P4_26);
+
+        let carry = n.prop();
+        n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
+        n.limbs[LIMBS_26 - 1] = n.limbs[LIMBS_26 - 1].wrapping_add((2 * P4_26) & carry);
+        n.prop();
+
+        n
+    }
+}
+
+impl Sub<Fp26> for Fp26 {
+    type Output = Fp26;
+
+    /// Modular subtraction, reduced to `[0, 2p)`.
+    ///
+    /// Limbwise wrapping-subtract; if the propagation detects a borrow,
+    /// adds `2p` back. Mirrors `Fp::sub` structurally.
+    fn sub(self, rhs: Fp26) -> Fp26 {
+        let mut n = Fp26 {
+            limbs: [
+                self.limbs[0].wrapping_sub(rhs.limbs[0]),
+                self.limbs[1].wrapping_sub(rhs.limbs[1]),
+                self.limbs[2].wrapping_sub(rhs.limbs[2]),
+                self.limbs[3].wrapping_sub(rhs.limbs[3]),
+                self.limbs[4].wrapping_sub(rhs.limbs[4]),
+                self.limbs[5].wrapping_sub(rhs.limbs[5]),
+                self.limbs[6].wrapping_sub(rhs.limbs[6]),
+                self.limbs[7].wrapping_sub(rhs.limbs[7]),
+                self.limbs[8].wrapping_sub(rhs.limbs[8]),
+                self.limbs[9].wrapping_sub(rhs.limbs[9]),
+            ],
+        };
+
+        let carry = n.prop();
+        n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
+        n.limbs[LIMBS_26 - 1] = n.limbs[LIMBS_26 - 1].wrapping_add((2 * P4_26) & carry);
+        n.prop();
+
+        n
+    }
+}
+
+impl<'b> Mul<&'b Fp26> for &Fp26 {
+    type Output = Fp26;
+
+    /// Montgomery multiplication: returns `a * b * R^-1 mod p`.
+    ///
+    /// 10x10 schoolbook product with Montgomery reduction interleaved column-
+    /// by-column over the 19 output positions. The fold step at column
+    /// `i >= 9` adds `v[i-9] * P4_26`, exploiting `5 * 2^248 == 1 (mod p)`
+    /// to absorb the previously-computed low column into the high columns.
+    ///
+    /// Output limbs satisfy `limbs[i] < 2^26` for `i < 9` and
+    /// `limbs[9] < 2^17` (so the result is in `[0, 2p)`). Use
+    /// [`Fp26::final_sub`] to canonicalise to `[0, p)`. Algorithm is
+    /// identical to [`Fp26::mont_mul_const`]; this is the runtime variant
+    /// (the const fn version exists to keep `from_limbs` const-evaluable).
+    fn mul(self, rhs: &'b Fp26) -> Fp26 {
+        Fp26 {
+            limbs: Fp26::mont_mul_const(self.limbs, rhs.limbs),
+        }
+    }
+}
+
+impl Mul<Fp26> for Fp26 {
+    type Output = Fp26;
+    fn mul(self, rhs: Fp26) -> Fp26 {
+        &self * &rhs
+    }
+}
+
+impl<'b> Add<&'b Fp26> for &Fp26 {
+    type Output = Fp26;
+    fn add(self, rhs: &'b Fp26) -> Fp26 {
+        *self + *rhs
+    }
+}
+
+impl<'b> Sub<&'b Fp26> for &Fp26 {
+    type Output = Fp26;
+    fn sub(self, rhs: &'b Fp26) -> Fp26 {
+        *self - *rhs
+    }
+}
+
+impl Neg for &Fp26 {
+    type Output = Fp26;
+    fn neg(self) -> Fp26 {
+        Fp26::ZERO - *self
+    }
+}
+
+impl Neg for Fp26 {
+    type Output = Fp26;
+    fn neg(self) -> Fp26 {
+        -&self
+    }
+}
+
+impl AddAssign<&Fp26> for Fp26 {
+    fn add_assign(&mut self, rhs: &Fp26) {
+        *self = *self + *rhs;
+    }
+}
+
+impl AddAssign for Fp26 {
+    fn add_assign(&mut self, rhs: Fp26) {
+        *self = *self + rhs;
+    }
+}
+
+impl SubAssign<&Fp26> for Fp26 {
+    fn sub_assign(&mut self, rhs: &Fp26) {
+        *self = *self - *rhs;
+    }
+}
+
+impl SubAssign for Fp26 {
+    fn sub_assign(&mut self, rhs: Fp26) {
+        *self = *self - rhs;
+    }
+}
+
+impl MulAssign<&Fp26> for Fp26 {
+    fn mul_assign(&mut self, rhs: &Fp26) {
+        *self = &*self * rhs;
+    }
+}
+
+impl MulAssign for Fp26 {
+    fn mul_assign(&mut self, rhs: Fp26) {
+        *self = &*self * &rhs;
+    }
+}
+
+impl ConstantTimeEq for Fp26 {
+    fn ct_eq(&self, other: &Fp26) -> Choice {
+        self.to_bytes().ct_eq(&other.to_bytes())
+    }
 }
 
 impl ConditionallySelectable for Fp26 {
-    fn conditional_select(a: &Fp26, b: &Fp26, choice: subtle::Choice) -> Fp26 {
+    fn conditional_select(a: &Fp26, b: &Fp26, choice: Choice) -> Fp26 {
         let mut limbs = [0u32; LIMBS_26];
 
         for (i, slot) in limbs.iter_mut().enumerate() {
@@ -312,6 +579,21 @@ impl ConditionallySelectable for Fp26 {
         Fp26 { limbs }
     }
 }
+
+impl Eq for Fp26 {}
+
+impl PartialEq for Fp26 {
+    fn eq(&self, other: &Fp26) -> bool {
+        self.ct_eq(other).into()
+    }
+}
+
+// Cross-impl test submodule is gated on cfg(not(sqisign_selkie_arch =
+// "avx2")) for the same reason neon's is: under cfg-avx2 `Fp = Fp26` and
+// the cross-bridge tests become tautological. Tests fire on x86_64 hosts
+// under default features.
+#[cfg(all(test, not(sqisign_selkie_arch = "avx2")))]
+mod tests;
 
 // Compile-time correctness checks: from_limbs must agree with the portable
 // backend's Mont layout for the canonical small constants. These run in
