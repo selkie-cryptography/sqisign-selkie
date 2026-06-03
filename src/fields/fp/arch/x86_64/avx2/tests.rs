@@ -10,6 +10,8 @@
 use proptest::prelude::*;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
+#[cfg(target_feature = "avx2")]
+use super::Fp26x4;
 use super::{super::super::portable::Fp as PortableFp, Fp26, LIMBS_26, MASK_26, RADIX_26};
 
 /// Builds a [`PortableFp`] from arbitrary 32-byte inputs.  The portable
@@ -171,6 +173,24 @@ proptest! {
         let root26 = into_fp26(a).sqrt();
         let recovered = root26.square().to_bytes();
         prop_assert_eq!(recovered, a.to_bytes());
+    }
+
+    /// `Fp26x4` transpose is its own inverse: packing four scalar
+    /// elements into the AVX2 SoA layout and unpacking back must
+    /// recover the inputs limb-for-limb.  Foundation for every
+    /// subsequent vectorised arithmetic test.
+    #[cfg(target_feature = "avx2")]
+    #[test]
+    fn fp26x4_transpose_round_trip(
+        a in arb_fp(), b in arb_fp(), c in arb_fp(), d in arb_fp(),
+    ) {
+        let elements = [into_fp26(a), into_fp26(b), into_fp26(c), into_fp26(d)];
+        let packed = Fp26x4::from_scalars(&elements);
+        let unpacked = packed.to_scalars();
+
+        for (un, orig) in unpacked.iter().zip(elements.iter()) {
+            prop_assert_eq!(un.limbs, orig.limbs);
+        }
     }
 }
 
