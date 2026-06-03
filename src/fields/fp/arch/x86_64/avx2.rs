@@ -1071,6 +1071,79 @@ impl Sub<Fp26x4> for Fp26x4 {
     }
 }
 
+#[cfg(target_feature = "avx2")]
+impl Fp26x4 {
+    /// Vectorised Montgomery multiplication: returns
+    /// `[a[0] * b[0] * R^-1, ..., a[3] * b[3] * R^-1]` packed in SoA form.
+    ///
+    /// 10x10 schoolbook outer-product CIOS, identical algorithm to
+    /// [`Fp26::mont_mul_const`] but lane-parallel over 4 independent
+    /// `Fp26` products via `_mm256_mul_epu32` (VPMULUDQ: u32 * u32 -> u64
+    /// across 4 lanes).
+    ///
+    /// 19 column iterations.  Each column accumulates the partial
+    /// products `a[j] * b[i-j]` for `j` in the valid range, plus (when
+    /// `i >= 9`) the Montgomery fold term `v[i-9] * P4_26`.  The low
+    /// 26 bits of the running u64 lane become the column's output
+    /// limb; the high bits carry to the next column via
+    /// `_mm256_srli_epi64::<26>`.
+    ///
+    /// Output limbs satisfy `limbs[i] < 2^26` per lane for `i < 9` and
+    /// `limbs[9] < 2^20` per lane (result in `[0, 2p)`).  Use
+    /// [`Fp26x4::final_sub`] to canonicalise.
+    ///
+    /// A Karatsuba 5+5 decomposition (3 sub-products of 5x5 + assembly)
+    /// is the natural performance optimisation; it lands in a follow-up
+    /// commit.  The schoolbook here is the correctness baseline.
+    pub fn mul(&self, rhs: &Fp26x4) -> Fp26x4 {
+        // SAFETY: register-width AVX2 ops; the type's
+        // cfg(target_feature = "avx2") gate makes the intrinsics
+        // unconditionally callable here.
+        unsafe {
+            let a = &self.limbs;
+            let b = &rhs.limbs;
+
+            let zero = _mm256_setzero_si256();
+            let mask_26 = _mm256_set1_epi64x(MASK_26 as i64);
+            let p4 = _mm256_set1_epi64x(P4_26 as i64);
+
+            let mut t = zero;
+            let mut v = [zero; LIMBS_26];
+            let mut c = [zero; LIMBS_26];
+
+            for i in 0..2 * LIMBS_26 - 1 {
+                let j_lo = if i >= LIMBS_26 { i - LIMBS_26 + 1 } else { 0 };
+                let j_hi = i.min(LIMBS_26 - 1);
+
+                for j in j_lo..=j_hi {
+                    let prod = _mm256_mul_epu32(a[j], b[i - j]);
+                    t = _mm256_add_epi64(t, prod);
+                }
+
+                if i >= LIMBS_26 - 1 {
+                    let fold_idx = i - (LIMBS_26 - 1);
+                    let fold_prod = _mm256_mul_epu32(v[fold_idx], p4);
+                    t = _mm256_add_epi64(t, fold_prod);
+                }
+
+                let limb = _mm256_and_si256(t, mask_26);
+
+                if i < LIMBS_26 {
+                    v[i] = limb;
+                } else {
+                    c[i - LIMBS_26] = limb;
+                }
+
+                t = _mm256_srli_epi64::<{ RADIX_26 as i32 }>(t);
+            }
+
+            c[LIMBS_26 - 1] = t;
+
+            Self { limbs: c }
+        }
+    }
+}
+
 // Cross-impl test submodule is gated on cfg(not(sqisign_selkie_arch =
 // "avx2")) for the same reason neon's is: under cfg-avx2 `Fp = Fp26` and
 // the cross-bridge tests become tautological. Tests fire on x86_64 hosts
