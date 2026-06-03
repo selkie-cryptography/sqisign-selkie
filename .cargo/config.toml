@@ -6,11 +6,14 @@
 #   - Local Linux dev: `apt-get install mold` (Ubuntu 22.04+) or
 #     `dnf install mold` (Fedora 37+).
 #
-# macOS and Windows targets are unaffected — only the
-# `x86_64-unknown-linux-gnu` target table sets the flag. gcc 12+ /
-# clang 12+ understands `-fuse-ld=mold` natively, so no linker
-# driver override is needed (Ubuntu 24.04 ships gcc 13).
+# macOS and Windows targets are unaffected — only the two Linux
+# target tables set the flag. gcc 12+ / clang 12+ understands
+# `-fuse-ld=mold` natively, so no linker driver override is needed
+# (Ubuntu 24.04 ships gcc 13).
 [target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [env]
