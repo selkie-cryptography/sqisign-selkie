@@ -108,7 +108,7 @@ impl SplittingKernel {
             .map(|p| {
                 // Apply M to point, then convert to Montgomery.
                 let mp = M.apply_point(p);
-                theta_product_to_montgomery(&mp, &product_null, &product)
+                mp.to_montgomery_on_product(&product_null, &product)
             })
             .collect();
 
@@ -230,13 +230,6 @@ impl ThetaNullPoint {
         }
         count
     }
-}
-
-/// Tests alias kept so diagnostic callers in `surfaces::mod` continue
-/// to compile with the original spec name.
-#[cfg(test)]
-pub(crate) fn get_index_splitting_count(null: &ThetaNullPoint) -> u32 {
-    null.splitting_index_count()
 }
 
 /// Finds the splitting index such that U_{i,j}(0) = 0
@@ -413,26 +406,33 @@ impl From<&ThetaNullPoint> for EllipticProduct {
     }
 }
 
-/// Converts a theta point with product structure to Montgomery
-/// coordinates on each component (Algorithm 8.45).
-pub(crate) fn theta_product_to_montgomery(
-    P: &JacobianPoint,
-    null: &ThetaNullPoint,
-    product: &EllipticProduct,
-) -> ProductPoint {
-    let (a, b, c, _d) = (&null.a, &null.b, &null.c, &null.d);
-    let (x, y, z, _w) = (&P.X, &P.Y, &P.Z, &P.W);
+impl JacobianPoint {
+    /// Converts this theta point with product structure to Montgomery
+    /// coordinates on each component.
+    ///
+    /// Implements [`ThetaProductPointToMontgomery`][Alg. 8.45] from
+    /// the spec.
+    ///
+    /// [Alg. 8.45]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.45
+    pub(crate) fn to_montgomery_on_product(
+        &self,
+        null: &ThetaNullPoint,
+        product: &EllipticProduct,
+    ) -> ProductPoint {
+        let (a, b, c, _d) = (&null.a, &null.b, &null.c, &null.d);
+        let (x, y, z, _w) = (&self.X, &self.Y, &self.Z, &self.W);
 
-    // Algorithm 8.45:
-    // X₁ = a·z + c·x,  Z₁ = a·z − c·x
-    // X₂ = a·y + b·x,  Z₂ = a·y − b·x
-    let X1 = &(a * z) + &(c * x);
-    let Z1 = &(a * z) - &(c * x);
-    let X2 = &(a * y) + &(b * x);
-    let Z2 = &(a * y) - &(b * x);
+        // Algorithm 8.45:
+        // X₁ = a·z + c·x,  Z₁ = a·z − c·x
+        // X₂ = a·y + b·x,  Z₂ = a·y − b·x
+        let X1 = &(a * z) + &(c * x);
+        let Z1 = &(a * z) - &(c * x);
+        let X2 = &(a * y) + &(b * x);
+        let Z2 = &(a * y) - &(b * x);
 
-    (
-        ProjectiveXOnlyPoint::from_XZ(X1, Z1, &product.E1),
-        ProjectiveXOnlyPoint::from_XZ(X2, Z2, &product.E2),
-    )
+        (
+            ProjectiveXOnlyPoint::from_XZ(X1, Z1, &product.E1),
+            ProjectiveXOnlyPoint::from_XZ(X2, Z2, &product.E2),
+        )
+    }
 }

@@ -65,15 +65,24 @@ const _: () = assert!(HINT_OFFSET + 2 == SIGNATURE_BYTES);
 pub struct Challenge(Scalar);
 
 impl Challenge {
-    /// Derives the challenge via Fiat-Shamir: hash the verifying key,
-    /// commitment curve, and message.
+    /// Derives the challenge via Fiat-Shamir from the verifying key,
+    /// a commitment-curve `E_com`, and a message.
     ///
     /// `chl ← HASH(pk ∥ j(E_com) ∥ msg)` ([Alg. 4.2][Alg. 4.2], line 10).
     ///
     /// [Alg. 4.2]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.4.2
     pub(crate) fn derive(pk: &VerifyingKey, e_com: &Curve, msg: &[u8]) -> Self {
-        let j_com = e_com.j_invariant();
-        crate::hash::hash(pk, &j_com, msg).into()
+        Self::derive_from_j(pk, &e_com.j_invariant(), msg)
+    }
+
+    /// Derives the challenge from a precomputed j-invariant, the
+    /// verifying key, and a message.
+    ///
+    /// Lower-level variant of [`Self::derive`] for call sites that
+    /// already hold `j(E_com)` (verify recomputes it from the
+    /// recovered challenge curve).
+    pub(crate) fn derive_from_j(pk: &VerifyingKey, j: &Fp2, msg: &[u8]) -> Self {
+        crate::hash::hash(pk, j, msg).into()
     }
 
     /// Computes the challenge isogeny on `basis_pk`, then maps

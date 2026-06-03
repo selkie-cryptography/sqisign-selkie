@@ -30,7 +30,7 @@ fn splitting_synthetic_product() {
         &b1 * &b2, // (1,1) component
     );
 
-    let count = isogeny::get_index_splitting_count(&null);
+    let count = null.splitting_index_count();
     assert_eq!(
         count, 1,
         "product null point should have exactly 1 zero U index"
@@ -89,12 +89,12 @@ fn gluing_codomain_manual_check() {
 
     // The dual should have delta = 0 (from hs1.W = 0 invariant).
     let null = &data.codomain.null;
-    let _count = isogeny::get_index_splitting_count(null);
+    let _count = null.splitting_index_count();
 
     // Check the dual form: (alpha, beta, gamma, 0).
     let dual_null =
         ThetaNullPoint::new(data.dual.alpha, data.dual.beta, data.dual.gamma, Fp2::ZERO);
-    let _dual_count = isogeny::get_index_splitting_count(&dual_null);
+    let _dual_count = dual_null.splitting_index_count();
 }
 
 /// `EllipticProduct::from(&null)` (Algorithm 8.44) on a synthetic product null
@@ -185,7 +185,7 @@ fn theta_product_to_montgomery_matches_formula() {
     // storage only — the formula's output values do not depend on them.
     let product = EllipticProduct::new(Curve::E0, Curve::E0);
 
-    let (out1, out2) = isogeny::theta_product_to_montgomery(&pt, &null, &product);
+    let (out1, out2) = pt.to_montgomery_on_product(&null, &product);
 
     let (a, b, c, _d) = (&null.a, &null.b, &null.c, &null.d);
     let exp_X1 = &(a * &z) + &(c * &x);

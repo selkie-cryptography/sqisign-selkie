@@ -35,8 +35,6 @@ pub(crate) mod step;
 
 pub(crate) use gluing::GluingKernel;
 pub(crate) use splitting::SplittingKernel;
-#[cfg(test)]
-pub(crate) use splitting::{get_index_splitting_count, theta_product_to_montgomery};
 pub(crate) use step::{
     EightTorsionStepKernel, FourTorsionStepKernel, StepIsogeny, TwoTorsionStepKernel,
 };
