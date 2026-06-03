@@ -33,17 +33,16 @@ additional_cargo_test_args = [
     "-E", "not test(/sign_kat_derand_/) | test(/sign_kat_derand_(00[0-4]|020|053|056|079|094|095)/)",
 ]
 
-# Timeout: 3x baseline with a floor of 60s.
+# Timeout: 2x baseline with a floor of 60s.
 #
-# 5x was the original value; pulled back to 3x after a full run showed
-# a long tail of timeout-inducing mutations (e.g. infinite loops
-# introduced by mutating a divisor / shift) eating ~13 min each at
-# 5×159s baseline = 795s. 3×159s = 477s caps the wasted-on-broken-
-# mutant time at ~8 min, freeing shard budget for real outcomes.
-# Trade: legitimately-slow-but-correct tests may now false-positive
-# as TIMEOUT outcomes. The 60s floor still guards against fast
-# baselines clamping the cap absurdly low.
-timeout_multiplier = 3
+# Pulled from 3x to 2x after cargo-mutants 27's 4.4x mutation-set
+# expansion made the test-phase tail the dominant shard-budget cost
+# (shard 0 on bbbaaf3 spent ~70 min with zero outcomes mid-run before
+# the workflow timeout). 2x baseline caps slow mutations harder so the
+# tail doesn't stall the shard. Trade: legitimately-slow-but-correct
+# tests now false-positive as TIMEOUT more often. The 60s floor still
+# guards against fast baselines clamping the cap absurdly low.
+timeout_multiplier = 2
 minimum_test_timeout = 60
 
 # Build timeout: cap each mutant's per-build wall at 3x the baseline.
