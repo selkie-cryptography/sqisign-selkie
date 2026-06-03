@@ -21,12 +21,16 @@ test_tool = "nextest"
 # the release build is slower per-mutant but the resulting tests run
 # fast enough that the net wall time drops substantially.
 #
-# The `sign_kat_derand_*` class is included: the sign-side gluing /
-# split_aux / even_response paths only reach the test suite through
-# the full keygen+sign+verify flow, and excluding them lets mutations
-# in `JacobianPoint::double`, `enumerate_hypercube`, and similar sign-
-# only sites survive with no other test to catch them.
-additional_cargo_test_args = ["--cargo-profile", "release-checked"]
+# Sign-KAT subset: KATs 000-004 (simple `n_bt = r_rsp = 0` path) plus
+# 020/053/056/079/094/095 (cross-order `suitable_ideals` path) cover
+# the sign-side mutation classes — `JacobianPoint::double`,
+# `enumerate_hypercube`, `split_aux`, `even_response` — within the
+# 180 min shard budget. The other 89 KATs share an `(n_bt, r_rsp)`
+# signature with one of these 11.
+additional_cargo_test_args = [
+    "--cargo-profile", "release-checked",
+    "-E", "not test(/sign_kat_derand_/) | test(/sign_kat_derand_(00[0-4]|020|053|056|079|094|095)/)",
+]
 
 # Timeout: 3x baseline with a floor of 60s.
 #
