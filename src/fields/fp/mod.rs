@@ -50,15 +50,25 @@ mod tests;
 pub const FP_ENCODED_BYTES: usize = 32;
 
 // `Fp` re-export: backend selected at compile time from the cfg
-// `build.rs` emits.  The `"neon"` arm aliases the radix-29 `Fp29`
-// scalar as `Fp`; the `"avx2"` arm aliases the radix-26 `Fp26` scalar.
+// `build.rs` emits.
+//
+// `"neon"` (aarch64) aliases the radix-29 `Fp29` scalar as `Fp` on CPUs
+// where the NEON path wins (Cortex-A76 / Neoverse N1 / Apple M1; M2+
+// Apple Silicon excluded by `build.rs`'s known-loss list).
+//
+// There is no cfg-avx2 dispatcher arm.  The AVX2 `Fp26` single-Fp Mont
+// mul measured 4.6x slower than portable radix-51 + MULX/BMI2 (PR #223
+// e58050c), so `Fp` is unconditionally `arch::portable::Fp` on x86_64.
+// cfg-avx2 IS still emitted by `build.rs` on AVX2 builds — downstream
+// code (`Fp26x4` SoA call-site lifts, AVX2-only benches, future
+// batched-mul work) reads it without swapping the scalar Fp backend.
+//
 // The precomputed-constant tables in `params.rs` and
-// `deuring/precomputed.rs` are signature-compatible across all three
-// backends because each non-portable `Fp::from_limbs` accepts the
-// portable backend's radix-51 Montgomery limbs and const-converts.
+// `deuring/precomputed.rs` are signature-compatible across the
+// backends because each non-portable `Fp::from_limbs` (Fp29, Fp26)
+// accepts the portable backend's radix-51 Montgomery limbs and
+// const-converts.
 #[cfg(sqisign_selkie_arch = "neon")]
 pub use arch::aarch64::neon::Fp29 as Fp;
-#[cfg(not(any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2")))]
+#[cfg(not(sqisign_selkie_arch = "neon"))]
 pub use arch::portable::Fp;
-#[cfg(sqisign_selkie_arch = "avx2")]
-pub use arch::x86_64::avx2::Fp26 as Fp;

@@ -247,13 +247,28 @@ impl Neg for &Fp2 {
 impl<'b> Mul<&'b Fp2> for &Fp2 {
     type Output = Fp2;
 
-    /// Karatsuba multiplication: 3M + 5A instead of 4M + 2A.
+    /// Fp² Montgomery multiplication via Longa's fused sum-of-products.
+    ///
+    /// For `c = (a0 + a1·i)(b0 + b1·i) = (a0·b0 − a1·b1) + (a0·b1 + a1·b0)·i`,
+    /// computes each coefficient with one fused
+    /// [`Fp::sum_of_products`] (resp. [`Fp::difference_of_products`])
+    /// — one Montgomery reduction per coefficient, two total.
+    ///
+    /// This is the SQIsign spec's
+    /// [`OptimizedPartialFp2Mul`][spec] (Algorithm 8.1) lifted from
+    /// the 64-bit Intel optimised path into the dispatched `Fp` API, so
+    /// every backend benefits.  Trades the asymmetric Karatsuba 3-mul
+    /// shape (3M + 5A + 3 reductions) for the symmetric Algorithm 8.1
+    /// shape (2 fused mul-pairs + 2 reductions).  Longa shows the fused
+    /// form wins on BLS12-381 (ePrint 2022/367); whether it wins at
+    /// SQIsign's n=5 radix-51 layout is empirical and measured by the
+    /// `fp2_mul` bench.
+    ///
+    /// [spec]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.1
     fn mul(self, rhs: &'b Fp2) -> Fp2 {
-        let ac = &self.a * &rhs.a;
-        let bd = &self.b * &rhs.b;
         Fp2 {
-            a: &ac - &bd,
-            b: &(&(&self.a + &self.b) * &(&rhs.a + &rhs.b)) - &(&ac + &bd),
+            a: Fp::difference_of_products(&self.a, &rhs.a, &self.b, &rhs.b),
+            b: Fp::sum_of_products(&self.a, &rhs.b, &self.b, &rhs.a),
         }
     }
 }
