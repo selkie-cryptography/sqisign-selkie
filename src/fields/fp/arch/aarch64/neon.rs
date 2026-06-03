@@ -56,9 +56,21 @@ use core::{
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
+// `Fp` is the other backend's scalar; only needed for the cross-impl
+// `From<Fp> for Fp29` / `From<Fp29> for Fp` boundary that exists when the
+// dispatcher selects portable.  Under cfg-neon `Fp = Fp29` and the
+// conversions collapse to identity, making the import unused.
+#[cfg(not(sqisign_selkie_arch = "neon"))]
 use super::super::super::Fp;
 
-#[cfg(test)]
+// The test submodule is cross-impl: every test bridges `Fp29 <-> Fp` via the
+// explicit `From` impls.  Under cfg-neon `Fp = Fp29` and those bridges
+// collapse to identity (the `From<T> for T` auto-impl), turning every cross-
+// impl assertion into a tautology that clippy correctly flags as
+// `useless_conversion`.  The production paths under cfg-neon are exercised
+// by the rest of the crate's test suite running against the dispatched
+// backend, so gating this submodule out is correct.
+#[cfg(all(test, not(sqisign_selkie_arch = "neon")))]
 mod tests;
 
 /// Bits per limb in the radix-29 representation.
@@ -196,6 +208,93 @@ impl Fp29 {
         canonical.limbs[0] = x & MASK_29;
         canonical.limbs[1] = x >> RADIX_29;
         &canonical * &R2_29
+    }
+
+    /// Constructs from radix-51 portable-Montgomery limbs.
+    ///
+    /// Signature-compatible with the portable backend's `Fp::from_limbs`, so
+    /// the crate's precomputed-constant tables (`params.rs`,
+    /// `deuring/precomputed.rs`, `curves/montgomery`) embed identically under
+    /// either backend selection.  The input limbs encode the field element in
+    /// radix-51 Montgomery form (`value · 2^255 mod p`); this constructor
+    /// repacks them at radix-29 and Montgomery-multiplies by the const
+    /// `K = 2^267 mod p`, landing the value in this backend's
+    /// `value · 2^261 mod p` form: `(value · 2^255) · 2^267 · 2^(-261) = value
+    /// · 2^261`.
+    ///
+    /// `const fn` so the constants stay `pub const`.
+    pub const fn from_limbs(portable_mont: [u64; 5]) -> Self {
+        // K = 2^267 mod p, packed at radix-29 LE; precomputed via
+        // `python3 -c 'p=5*2**248-1; print(pow(2,267,p))'`.
+        const K: [u32; LIMBS_29] = [0x19999, 0, 0, 0, 0, 0, 0, 0, 0x30000];
+
+        let radix29 = Self::repack_51_to_29(portable_mont);
+        Self {
+            limbs: Self::mont_mul_const(radix29, K),
+        }
+    }
+
+    /// Repacks a 5-limb radix-51 little-endian value as 9-limb radix-29 LE.
+    ///
+    /// Pure bit redistribution: the integer value is unchanged.  Input fits in
+    /// 255 bits (5 × 51); output uses 261 bits (9 × 29), so the top 6 bits of
+    /// `out[8]` are always zero.
+    const fn repack_51_to_29(src: [u64; 5]) -> [u32; LIMBS_29] {
+        let mut out = [0u32; LIMBS_29];
+        let mut acc: u128 = 0;
+        let mut bits: u32 = 0;
+        let mut src_idx = 0;
+        let mut i = 0;
+        while i < LIMBS_29 {
+            while bits < RADIX_29 && src_idx < 5 {
+                acc |= (src[src_idx] as u128) << bits;
+                bits += 51;
+                src_idx += 1;
+            }
+            out[i] = (acc as u32) & MASK_29;
+            acc >>= RADIX_29;
+            bits = bits.saturating_sub(RADIX_29);
+            i += 1;
+        }
+        out
+    }
+
+    /// Const-fn Montgomery multiplication on radix-29 limbs.
+    ///
+    /// Identical algorithm to the `Mul` trait impl, restated with `while`
+    /// loops so it compiles as a `const fn` (the trait method takes `&self`
+    /// references and won't lift to const eval).  Used by [`Self::from_limbs`]
+    /// to enter Fp29 Montgomery form at compile time from the portable
+    /// backend's Montgomery limbs.
+    const fn mont_mul_const(a: [u32; LIMBS_29], b: [u32; LIMBS_29]) -> [u32; LIMBS_29] {
+        let mut t: u64 = 0;
+        let mut v = [0u32; LIMBS_29];
+        let mut c = [0u32; LIMBS_29];
+
+        let mut i = 0;
+        while i < 2 * LIMBS_29 - 1 {
+            let j_lo = if i >= LIMBS_29 { i - LIMBS_29 + 1 } else { 0 };
+            let j_hi = if i < LIMBS_29 - 1 { i } else { LIMBS_29 - 1 };
+            let mut j = j_lo;
+            while j <= j_hi {
+                t = t.wrapping_add((a[j] as u64).wrapping_mul(b[i - j] as u64));
+                j += 1;
+            }
+            if i >= LIMBS_29 - 1 {
+                let fold_idx = i - (LIMBS_29 - 1);
+                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P4_29 as u64));
+            }
+            let limb = (t as u32) & MASK_29;
+            if i < LIMBS_29 {
+                v[i] = limb;
+            } else {
+                c[i - LIMBS_29] = limb;
+            }
+            t >>= RADIX_29;
+            i += 1;
+        }
+        c[LIMBS_29 - 1] = t as u32;
+        c
     }
 
     /// Decodes 32 bytes (little-endian) into a normalised radix-29 element.
@@ -417,6 +516,12 @@ impl Fp29 {
     }
 }
 
+// The `Fp <-> Fp29` cross-backend conversions exist for the test boundary
+// and for callers that need to bridge between the two scalar layouts.  When
+// `Fp = Fp29` (the cfg-neon dispatcher selection), both directions collapse
+// to identity and `impl<T> From<T> for T` in `core` already provides them;
+// the explicit impls below would conflict.
+#[cfg(not(sqisign_selkie_arch = "neon"))]
 impl From<Fp> for Fp29 {
     /// Converts radix-51 Montgomery form to radix-29 Montgomery form.
     ///
@@ -430,6 +535,7 @@ impl From<Fp> for Fp29 {
     }
 }
 
+#[cfg(not(sqisign_selkie_arch = "neon"))]
 impl From<Fp29> for Fp {
     /// Converts radix-29 Montgomery form back to radix-51 Montgomery form.
     ///
