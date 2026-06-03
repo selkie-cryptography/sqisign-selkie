@@ -146,6 +146,10 @@ name = "bigint_fault_simulation"
 required-features = ["expose-internals"]
 
 [[test]]
+name = "fp_fault_simulation"
+required-features = ["expose-internals"]
+
+[[test]]
 name = "fp2_fault_simulation"
 required-features = ["expose-internals"]
 
@@ -168,6 +172,14 @@ required-features = ["expose-internals"]
 # self-check against production arithmetic.
 [[example]]
 name = "bigint-fault-vectors-gen"
+required-features = ["expose-internals"]
+
+# Regenerates `tests/vectors/fp_fault_simulation.json` from the
+# boundary-input recipes embedded in the example source. Reads
+# `Fp` through `expose-internals` for the in-generator self-check
+# against production arithmetic.
+[[example]]
+name = "fp-fault-vectors-gen"
 required-features = ["expose-internals"]
 
 # Regenerates `tests/vectors/fp2_fault_simulation.json` from the
