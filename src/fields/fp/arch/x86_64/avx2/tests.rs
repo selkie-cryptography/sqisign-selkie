@@ -276,6 +276,24 @@ proptest! {
             prop_assert_eq!(un.to_bytes(), (&lhs[i] * &rhs[i]).to_bytes());
         }
     }
+
+    /// `Fp26x4::square` must agree lane-for-lane with four independent
+    /// scalar [`Fp26::square`] calls.  Currently a thin
+    /// `mul(self, self)` wrapper, so this primarily pins the boundary;
+    /// the symmetric-cross-term optimisation lands later.
+    #[cfg(target_feature = "avx2")]
+    #[test]
+    fn fp26x4_square_matches_four_scalar_squares(
+        a in arb_fp(), b in arb_fp(), c in arb_fp(), d in arb_fp(),
+    ) {
+        let elements = [into_fp26(a), into_fp26(b), into_fp26(c), into_fp26(d)];
+        let packed = Fp26x4::from_scalars(&elements);
+        let squares = packed.square().to_scalars();
+
+        for (i, un) in squares.iter().enumerate() {
+            prop_assert_eq!(un.to_bytes(), elements[i].square().to_bytes());
+        }
+    }
 }
 
 #[test]
