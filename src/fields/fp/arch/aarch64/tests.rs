@@ -175,6 +175,19 @@ proptest! {
             prop_assert_eq!(actual, expected);
         }
     }
+
+    /// `Fp29x4::final_sub` must agree lane-for-lane (limb-exact) with four
+    /// independent scalar `Fp29::final_sub` calls.  The canonical
+    /// representative in `[0, p)` is unique, so direct limb equality holds.
+    #[test]
+    fn fp29x4_final_sub_matches_four_scalar_final_subs(a in arb_fp29_array4()) {
+        let a4 = Fp29x4::from_scalars(&a);
+        let unpacked = a4.final_sub().to_scalars();
+        for (i, un) in unpacked.iter().enumerate() {
+            let expected = a[i].final_sub();
+            prop_assert_eq!(un.limbs, expected.limbs);
+        }
+    }
 }
 
 #[test]

@@ -44,11 +44,11 @@
 
 use core::{
     arch::aarch64::{
-        uint32x4_t, uint64x2_t, vaddq_s64, vaddq_u32, vaddq_u64, vandq_u32, vdupq_n_u32,
+        uint32x4_t, uint64x2_t, vaddq_s64, vaddq_u32, vaddq_u64, vandq_u32, vbslq_u32, vdupq_n_u32,
         vdupq_n_u64, vget_high_s32, vget_low_s32, vget_low_u32, vld1q_u32, vmlal_high_u32,
         vmlal_u32, vmovl_s32, vmovn_high_u64, vmovn_u64, vreinterpretq_s32_u32,
-        vreinterpretq_u32_s32, vreinterpretq_u64_s64, vshrq_n_s32, vshrq_n_s64, vshrq_n_u64,
-        vst1q_u32, vsubq_u32, vsubq_u64,
+        vreinterpretq_u32_s32, vreinterpretq_u64_s64, vshrq_n_s32, vshrq_n_s64, vshrq_n_u32,
+        vshrq_n_u64, vst1q_u32, vsubq_s32, vsubq_u32, vsubq_u64,
     },
     ops::{Add, Sub},
 };
@@ -522,6 +522,48 @@ impl Fp29x4 {
             let final_carry_hi = vshrq_n_u64::<29>(full[16].1);
             let final_pair = vmovn_u64(final_carry_lo);
             out[LIMBS_29 - 1] = vmovn_high_u64(final_pair, final_carry_hi);
+
+            Fp29x4 { limbs: out }
+        }
+    }
+
+    /// Conditionally subtracts `p` from each lane to canonicalise an
+    /// in-range result.
+    ///
+    /// Assumes `self < 2p` per lane with each limb already `< 2^29`.
+    /// Returns the representative in `[0, p)` per lane.  Lane-parallel
+    /// version of [`Fp29::final_sub`].  Constant-time per lane via
+    /// `vbslq_u32` (NEON bit-select).
+    pub fn final_sub(self) -> Fp29x4 {
+        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        unsafe {
+            let mask_u32 = vdupq_n_u32(MASK_29);
+            let zero_u32 = vdupq_n_u32(0);
+            let one_u32 = vdupq_n_u32(1);
+            let mut diff = [zero_u32; LIMBS_29];
+            let mut borrow = zero_u32;
+
+            for i in 0..LIMBS_29 {
+                let p_vec = vdupq_n_u32(P_LIMBS[i]);
+                // d_signed = self.limbs[i] - P_LIMBS[i] - borrow, per lane.
+                let self_s = vreinterpretq_s32_u32(self.limbs[i]);
+                let p_s = vreinterpretq_s32_u32(p_vec);
+                let borrow_s = vreinterpretq_s32_u32(borrow);
+                let d_signed = vsubq_s32(vsubq_s32(self_s, p_s), borrow_s);
+                let d_u = vreinterpretq_u32_s32(d_signed);
+                diff[i] = vandq_u32(d_u, mask_u32);
+                // New borrow = top bit of d as 0/1.
+                borrow = vshrq_n_u32::<31>(d_u);
+            }
+
+            // take_diff per lane: 0xFFFFFFFF if borrow == 0 (use diff),
+            // 0 if borrow == 1 (use self).  `borrow - 1` gives this directly.
+            let take_diff = vsubq_u32(borrow, one_u32);
+
+            let mut out = [zero_u32; LIMBS_29];
+            for i in 0..LIMBS_29 {
+                out[i] = vbslq_u32(take_diff, diff[i], self.limbs[i]);
+            }
 
             Fp29x4 { limbs: out }
         }
