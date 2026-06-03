@@ -188,6 +188,19 @@ proptest! {
             prop_assert_eq!(un.limbs, expected.limbs);
         }
     }
+
+    /// `Fp29x4::square` must agree field-value-wise with four independent
+    /// scalar `Fp29::square` calls.  Compared via canonical bytes.
+    #[test]
+    fn fp29x4_square_matches_four_scalar_squares(a in arb_fp29_array4()) {
+        let a4 = Fp29x4::from_scalars(&a);
+        let unpacked = a4.square().to_scalars();
+        for (i, un) in unpacked.iter().enumerate() {
+            let actual = Fp::from(*un).to_bytes();
+            let expected = Fp::from(a[i].square()).to_bytes();
+            prop_assert_eq!(actual, expected);
+        }
+    }
 }
 
 #[test]
