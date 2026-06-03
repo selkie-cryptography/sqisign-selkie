@@ -150,6 +150,50 @@ fn fp29x4_mul_neon(bencher: divan::Bencher) {
     bencher.bench(|| divan::black_box(&a4).mul(divan::black_box(&b4)));
 }
 
+/// Four independent scalar `Fp::square` calls — the baseline for the
+/// vectorised square path.
+#[cfg(target_arch = "aarch64")]
+#[divan::bench]
+fn fp_square_4_independent(bencher: divan::Bencher) {
+    let a = [
+        Fp::from_small(3),
+        Fp::from_small(7),
+        Fp::from_small(11),
+        Fp::from_small(13),
+    ];
+    bencher.bench(|| {
+        let aa = divan::black_box(&a);
+        [
+            aa[0].square(),
+            aa[1].square(),
+            aa[2].square(),
+            aa[3].square(),
+        ]
+    });
+}
+
+/// Vectorised `Fp29x4::square` — Karatsuba structure with symmetric
+/// sub-squares; cross-terms doubled via `vshlq_n_u64::<1>` rather than
+/// the two `vmlal_u32` calls a straight mul would do.
+#[cfg(target_arch = "aarch64")]
+#[divan::bench]
+fn fp29x4_square_neon(bencher: divan::Bencher) {
+    let a_fp = [
+        Fp::from_small(3),
+        Fp::from_small(7),
+        Fp::from_small(11),
+        Fp::from_small(13),
+    ];
+    let a29 = [
+        Fp29::from(a_fp[0]),
+        Fp29::from(a_fp[1]),
+        Fp29::from(a_fp[2]),
+        Fp29::from(a_fp[3]),
+    ];
+    let a4 = Fp29x4::from_scalars(&a29);
+    bencher.bench(|| divan::black_box(&a4).square());
+}
+
 /// Standalone scalar `Fp29::mul` — for comparing radix-29 vs radix-51 cost
 /// at the single-product level, isolating the radix change from the NEON
 /// vectorisation factor.
