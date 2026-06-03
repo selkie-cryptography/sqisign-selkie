@@ -1,5 +1,5 @@
 #[cfg(target_arch = "aarch64")]
-use sqisign_selkie::fields::fp::arch::aarch64::{Fp29, Fp29x4};
+use sqisign_selkie::fields::fp::arch::aarch64::neon::{Fp29, Fp29x4};
 use sqisign_selkie::fields::{fp::Fp, fp2::Fp2};
 
 fn main() {
