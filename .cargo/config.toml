@@ -1,33 +1,37 @@
-# `x86_64-unknown-linux-gnu` target tunings. Applies to Fly self-
-# hosted runners (perf-2x / perf-8x) and Linux dev machines.
-# macOS / Windows / other Linux arches are unaffected.
+# Linux target tunings. Applies to Fly self-hosted runners
+# (perf-2x / perf-8x) and Linux dev machines, across both x86_64
+# and aarch64.  macOS / Windows are unaffected.
 #
 # `link-arg=-fuse-ld=mold` — use mold instead of the system ld.
 # ~5× faster than `ld`, ~2× faster than `lld`; cuts cargo link
-# time noticeably on every build. Requires `mold` on PATH:
+# time noticeably on every build.  Set on both Linux target tables.
+# Requires `mold` on PATH:
 #   - Fly runner image: baked into `infra/runners/Dockerfile.base`.
 #   - Local Linux dev: `apt-get install mold` (Ubuntu 22.04+) or
 #     `dnf install mold` (Fedora 37+).
 # gcc 12+ / clang 12+ understands `-fuse-ld=mold` natively, so no
 # linker driver override is needed (Ubuntu 24.04 ships gcc 13).
 #
-# `target-cpu=x86-64-v3` — Haswell-and-newer baseline (2013+).
-# Enables AVX2 + BMI1/BMI2 + F16C + FMA + MOVBE + LZCNT/POPCNT
-# in CARGO_CFG_TARGET_FEATURE, which is how build.rs (on the
-# `arch-*` branches) decides whether to emit the
+# `target-cpu=x86-64-v3` (x86_64 only) — Haswell-and-newer baseline
+# (2013+).  Enables AVX2 + BMI1/BMI2 + F16C + FMA + MOVBE +
+# LZCNT/POPCNT in CARGO_CFG_TARGET_FEATURE, which is how build.rs
+# (on the `arch-*` branches) decides whether to emit the
 # `sqisign_selkie_arch = "avx2"` cfg and whether to register the
-# `fp26x4_mul_avx2` / `fp26x4_square_avx2` benches. Without
-# this, the build is baseline `x86_64-v1` (sse, sse2, fxsr) and
-# the AVX2 code paths compile out silently — even on Fly runners
-# whose CPUs are Sapphire Rapids / Granite Rapids and support
-# everything up to AVX-512-IFMA52. v3 is the safe rung: covers
-# all production Fly machines and excludes only pre-2013 Intel /
-# pre-2015 AMD CPUs we don't deploy to.
+# `fp26x4_mul_avx2` / `fp26x4_square_avx2` benches.  Without this,
+# the build is baseline `x86_64-v1` (sse, sse2, fxsr) and the AVX2
+# code paths compile out silently — even on Fly runners whose CPUs
+# are Sapphire Rapids / Granite Rapids and support everything up
+# to AVX-512-IFMA52.  v3 is the safe rung: covers all production
+# Fly machines and excludes only pre-2013 Intel / pre-2015 AMD CPUs
+# we don't deploy to.
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
     "-C", "link-arg=-fuse-ld=mold",
     "-C", "target-cpu=x86-64-v3",
 ]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [env]
 # Tests run signing on width-60 BigInts (480 bytes each); debug-mode
