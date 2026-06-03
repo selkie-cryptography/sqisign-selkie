@@ -37,6 +37,19 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Build benches for the `x86_64-v3` microarchitecture baseline (Haswell+
+  # Intel / Zen+ AMD): enables AVX, AVX2, BMI1/BMI2, F16C, FMA, LZCNT,
+  # MOVBE, OSXSAVE.  Required for the AVX2 `Fp26` dispatcher arm to
+  # activate (build.rs reads `CARGO_CFG_TARGET_FEATURE` for `avx2` and
+  # emits `cfg(sqisign_selkie_arch = "avx2")`), and for the
+  # `cfg(target_feature = "avx2")`-gated `Fp26x4` SoA benches to land.
+  # Without this, the default x86_64 target feature set excludes AVX2 and
+  # the whole AVX2 backend compiles out — bench numbers reflect portable
+  # radix-51 Fp, not the AVX2 paths we want to measure.
+  #
+  # BMI2's MULX also helps the portable scalar Mont mul, so this gives a
+  # fair "best-AVX2 vs best-scalar" comparison on the perf-2x Fly runner.
+  RUSTFLAGS: "-C target-cpu=x86-64-v3"
 
 jobs:
   benchmark:
