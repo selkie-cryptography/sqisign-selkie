@@ -154,10 +154,49 @@ pub struct Fp29 {
 }
 
 impl Fp29 {
-    /// Additive identity, in normalised form.
+    /// Additive identity (zero), in radix-29 Montgomery form.
     pub const ZERO: Self = Self {
         limbs: [0; LIMBS_29],
     };
+
+    /// Multiplicative identity in radix-29 Montgomery form: `1 · R_29 mod p`,
+    /// precomputed via `python -c 'pow(2, 261, 5*2**248 - 1)'` then packed
+    /// into 9 × 29-bit limbs.
+    pub const ONE: Self = Self {
+        limbs: [0x666, 0, 0, 0, 0, 0, 0, 0, 0x20000],
+    };
+
+    /// Two in radix-29 Montgomery form: `2 · R_29 mod p`.
+    pub const TWO: Self = Self {
+        limbs: [0xCCC, 0, 0, 0, 0, 0, 0, 0, 0x40000],
+    };
+
+    /// Four in radix-29 Montgomery form: `4 · R_29 mod p`.
+    pub const FOUR: Self = Self {
+        limbs: [0x1999, 0, 0, 0, 0, 0, 0, 0, 0x30000],
+    };
+
+    /// `-1 mod p` in radix-29 Montgomery form: `(p - 1) · R_29 mod p`.
+    pub const MINUS_ONE: Self = Self {
+        limbs: [
+            0x1FFFF999, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF,
+            0x1FFFFFFF, 0x2FFFF,
+        ],
+    };
+
+    /// Constructs a field element from a small integer.
+    ///
+    /// Mirrors [`super::super::super::Fp::from_small`]: places the canonical
+    /// integer value in the low limbs and enters Montgomery form via the
+    /// precomputed `R²_29` constant.
+    pub fn from_small(x: u32) -> Self {
+        let mut canonical = Self {
+            limbs: [0; LIMBS_29],
+        };
+        canonical.limbs[0] = x & MASK_29;
+        canonical.limbs[1] = x >> RADIX_29;
+        canonical.mul(&R2_29)
+    }
 
     /// Decodes 32 bytes (little-endian) into a normalised radix-29 element.
     ///
