@@ -46,9 +46,10 @@ use core::{
     arch::aarch64::{
         uint32x4_t, uint64x2_t, vaddq_s64, vaddq_u32, vaddq_u64, vandq_u32, vbslq_u32, vdupq_n_u32,
         vdupq_n_u64, vget_high_s32, vget_low_s32, vget_low_u32, vld1q_u32, vmlal_high_u32,
-        vmlal_u32, vmovl_s32, vmovn_high_u64, vmovn_u64, vreinterpretq_s32_u32,
-        vreinterpretq_u32_s32, vreinterpretq_u64_s64, vshrq_n_s32, vshrq_n_s64, vshrq_n_u32,
-        vshrq_n_u64, vst1q_u32, vsubq_s32, vsubq_u32, vsubq_u64,
+        vmlal_u32, vmovl_s32, vmovn_high_u64, vmovn_u64, vmull_high_u32, vmull_u32,
+        vreinterpretq_s32_u32, vreinterpretq_u32_s32, vreinterpretq_u64_s64, vshlq_n_u64,
+        vshrq_n_s32, vshrq_n_s64, vshrq_n_u32, vshrq_n_u64, vst1q_u32, vsubq_s32, vsubq_u32,
+        vsubq_u64,
     },
     ops::{Add, Sub},
 };
@@ -440,11 +441,6 @@ impl Fp29x4 {
         // SAFETY: register-width NEON ops; covered by the type-level Safety
         // note.  Lane buffer ranges are within `LIMBS_29 = 9`.
         unsafe {
-            let zero_u32 = vdupq_n_u32(0);
-            let zero_u64 = vdupq_n_u64(0);
-            let mask_u32 = vdupq_n_u32(MASK_29);
-            let p4_vec = vdupq_n_u32(P4_29);
-
             let a_lo = [a[0], a[1], a[2], a[3], a[4]];
             let b_lo = [b[0], b[1], b[2], b[3], b[4]];
             let a_hi = [a[5], a[6], a[7], a[8]];
@@ -471,60 +467,118 @@ impl Fp29x4 {
             let p1 = Self::polynomial_4x4(&a_hi, &b_hi);
             let q = Self::polynomial_5x5(&a_sum, &b_sum);
 
-            // mid[i] = q[i] - p0[i] - p1[i] (p1 zero-padded above index 6).
-            // No underflow by Karatsuba algebra: q >= p0 + p1.
-            let mut mid: [(uint64x2_t, uint64x2_t); 9] = [(zero_u64, zero_u64); 9];
-            for i in 0..9 {
-                let (p1_lo, p1_hi) = if i < 7 { p1[i] } else { (zero_u64, zero_u64) };
-                mid[i].0 = vsubq_u64(vsubq_u64(q[i].0, p0[i].0), p1_lo);
-                mid[i].1 = vsubq_u64(vsubq_u64(q[i].1, p0[i].1), p1_hi);
-            }
-
-            // 17-column polynomial: P0 at offset 0, mid at offset 5, P1 at offset 10.
-            let mut full: [(uint64x2_t, uint64x2_t); 17] = [(zero_u64, zero_u64); 17];
-            full[..9].copy_from_slice(&p0);
-            for i in 0..9 {
-                full[5 + i].0 = vaddq_u64(full[5 + i].0, mid[i].0);
-                full[5 + i].1 = vaddq_u64(full[5 + i].1, mid[i].1);
-            }
-            for i in 0..7 {
-                full[10 + i].0 = vaddq_u64(full[10 + i].0, p1[i].0);
-                full[10 + i].1 = vaddq_u64(full[10 + i].1, p1[i].1);
-            }
-
-            // Montgomery-reduce the 17-column polynomial: for i in 0..9 extract
-            // v[i] = low 29 bits and fold v[i] * P4_29 into column i+8; for
-            // i in 9..17 extract output limbs c[0..7].  Then c[8] = the carry
-            // out of column 16 (mirrors the schoolbook's post-loop `c[8] = t`).
-            let mut out = [zero_u32; LIMBS_29];
-            for i in 0..17 {
-                let limb_pair = vmovn_u64(full[i].0);
-                let limb_full = vmovn_high_u64(limb_pair, full[i].1);
-                let v = vandq_u32(limb_full, mask_u32);
-
-                if i < 9 {
-                    full[i + 8].0 = vmlal_u32(full[i + 8].0, vget_low_u32(v), vget_low_u32(p4_vec));
-                    full[i + 8].1 = vmlal_high_u32(full[i + 8].1, v, p4_vec);
-                }
-
-                if i + 1 < 17 {
-                    full[i + 1].0 = vaddq_u64(full[i + 1].0, vshrq_n_u64::<29>(full[i].0));
-                    full[i + 1].1 = vaddq_u64(full[i + 1].1, vshrq_n_u64::<29>(full[i].1));
-                }
-
-                if (9..17).contains(&i) {
-                    out[i - 9] = v;
-                }
-            }
-
-            // c[8]: the carry that would have propagated to column 17.
-            let final_carry_lo = vshrq_n_u64::<29>(full[16].0);
-            let final_carry_hi = vshrq_n_u64::<29>(full[16].1);
-            let final_pair = vmovn_u64(final_carry_lo);
-            out[LIMBS_29 - 1] = vmovn_high_u64(final_pair, final_carry_hi);
-
-            Fp29x4 { limbs: out }
+            Self::karatsuba_assemble_and_reduce(p0, p1, q)
         }
+    }
+
+    /// Vectorised Montgomery squaring: returns
+    /// `[a[0]^2 * R^-1, ..., a[3]^2 * R^-1]` in SoA form.
+    ///
+    /// Karatsuba structure identical to [`Fp29x4::mul`], with the three sub-
+    /// products replaced by symmetric squares (`polynomial_5x5_square` /
+    /// `polynomial_4x4_square`).  Each cross-term `a[i] * a[j]` (`i != j`)
+    /// is computed once via `vmull_u32` and doubled with `vshlq_n_u64::<1>`
+    /// rather than the two `vmlal_u32` calls a straight mul would do; the
+    /// diagonal terms `a[i]^2` accumulate via the standard `vmlal_u32` path.
+    ///
+    /// 40 sub-product muls (15 + 10 + 15) + 9 Montgomery folds against
+    /// `mul`'s 66 + 9 = 75.  Predicted ~32 ns on M4 vs `mul`'s 43.7 ns.
+    pub fn square(&self) -> Fp29x4 {
+        let a = &self.limbs;
+
+        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        unsafe {
+            let a_lo = [a[0], a[1], a[2], a[3], a[4]];
+            let a_hi = [a[5], a[6], a[7], a[8]];
+            let a_sum = [
+                vaddq_u32(a_lo[0], a_hi[0]),
+                vaddq_u32(a_lo[1], a_hi[1]),
+                vaddq_u32(a_lo[2], a_hi[2]),
+                vaddq_u32(a_lo[3], a_hi[3]),
+                a_lo[4],
+            ];
+
+            let p0 = Self::polynomial_5x5_square(&a_lo);
+            let p1 = Self::polynomial_4x4_square(&a_hi);
+            let q = Self::polynomial_5x5_square(&a_sum);
+
+            Self::karatsuba_assemble_and_reduce(p0, p1, q)
+        }
+    }
+
+    /// Karatsuba assembly: `mid = q - p0 - p1`, polynomial layout
+    /// `full = p0 + mid * x^5 + p1 * x^10` over 17 columns, followed by
+    /// Montgomery reduction.  Shared between [`Fp29x4::mul`] and
+    /// [`Fp29x4::square`].
+    ///
+    /// # Safety
+    ///
+    /// Caller must already be in an `unsafe` block — this function uses NEON
+    /// intrinsics throughout.
+    #[inline(always)]
+    unsafe fn karatsuba_assemble_and_reduce(
+        p0: [(uint64x2_t, uint64x2_t); 9],
+        p1: [(uint64x2_t, uint64x2_t); 7],
+        q: [(uint64x2_t, uint64x2_t); 9],
+    ) -> Fp29x4 {
+        let zero_u32 = vdupq_n_u32(0);
+        let zero_u64 = vdupq_n_u64(0);
+        let mask_u32 = vdupq_n_u32(MASK_29);
+        let p4_vec = vdupq_n_u32(P4_29);
+
+        // mid[i] = q[i] - p0[i] - p1[i] (p1 zero-padded above index 6).
+        // No underflow by Karatsuba algebra: q >= p0 + p1.
+        let mut mid: [(uint64x2_t, uint64x2_t); 9] = [(zero_u64, zero_u64); 9];
+        for i in 0..9 {
+            let (p1_lo, p1_hi) = if i < 7 { p1[i] } else { (zero_u64, zero_u64) };
+            mid[i].0 = vsubq_u64(vsubq_u64(q[i].0, p0[i].0), p1_lo);
+            mid[i].1 = vsubq_u64(vsubq_u64(q[i].1, p0[i].1), p1_hi);
+        }
+
+        // 17-column polynomial: P0 at offset 0, mid at offset 5, P1 at offset 10.
+        let mut full: [(uint64x2_t, uint64x2_t); 17] = [(zero_u64, zero_u64); 17];
+        full[..9].copy_from_slice(&p0);
+        for i in 0..9 {
+            full[5 + i].0 = vaddq_u64(full[5 + i].0, mid[i].0);
+            full[5 + i].1 = vaddq_u64(full[5 + i].1, mid[i].1);
+        }
+        for i in 0..7 {
+            full[10 + i].0 = vaddq_u64(full[10 + i].0, p1[i].0);
+            full[10 + i].1 = vaddq_u64(full[10 + i].1, p1[i].1);
+        }
+
+        // Montgomery-reduce the 17-column polynomial: for i in 0..9 extract
+        // v[i] = low 29 bits and fold v[i] * P4_29 into column i+8; for
+        // i in 9..17 extract output limbs c[0..7].  Then c[8] = the carry
+        // out of column 16 (mirrors the schoolbook's post-loop `c[8] = t`).
+        let mut out = [zero_u32; LIMBS_29];
+        for i in 0..17 {
+            let limb_pair = vmovn_u64(full[i].0);
+            let limb_full = vmovn_high_u64(limb_pair, full[i].1);
+            let v = vandq_u32(limb_full, mask_u32);
+
+            if i < 9 {
+                full[i + 8].0 = vmlal_u32(full[i + 8].0, vget_low_u32(v), vget_low_u32(p4_vec));
+                full[i + 8].1 = vmlal_high_u32(full[i + 8].1, v, p4_vec);
+            }
+
+            if i + 1 < 17 {
+                full[i + 1].0 = vaddq_u64(full[i + 1].0, vshrq_n_u64::<29>(full[i].0));
+                full[i + 1].1 = vaddq_u64(full[i + 1].1, vshrq_n_u64::<29>(full[i].1));
+            }
+
+            if (9..17).contains(&i) {
+                out[i - 9] = v;
+            }
+        }
+
+        // c[8]: the carry that would have propagated to column 17.
+        let final_carry_lo = vshrq_n_u64::<29>(full[16].0);
+        let final_carry_hi = vshrq_n_u64::<29>(full[16].1);
+        let final_pair = vmovn_u64(final_carry_lo);
+        out[LIMBS_29 - 1] = vmovn_high_u64(final_pair, final_carry_hi);
+
+        Fp29x4 { limbs: out }
     }
 
     /// Conditionally subtracts `p` from each lane to canonicalise an
@@ -640,6 +694,64 @@ impl Fp29x4 {
                     let col = i + j;
                     out[col].0 = vmlal_u32(out[col].0, vget_low_u32(a_i), vget_low_u32(b_j));
                     out[col].1 = vmlal_high_u32(out[col].1, a_i, b_j);
+                }
+            }
+            out
+        }
+    }
+
+    /// Symmetric 5x5 squaring on NEON SoA layout.  Used by [`Fp29x4::square`]
+    /// for the `P0 = a_lo^2` and `Q = a_sum^2` sub-products.
+    ///
+    /// Diagonals `a[i]^2` accumulate via `vmlal_u32`; each cross-term
+    /// `a[i] * a[j]` (`i < j`) is computed once via `vmull_u32` /
+    /// `vmull_high_u32`, doubled with `vshlq_n_u64::<1>`, and added to the
+    /// column accumulator.  15 unique mul-pairs against the plain 5x5's 25.
+    #[inline]
+    fn polynomial_5x5_square(a: &[uint32x4_t; 5]) -> [(uint64x2_t, uint64x2_t); 9] {
+        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        unsafe {
+            let zero = vdupq_n_u64(0);
+            let mut out: [(uint64x2_t, uint64x2_t); 9] = [(zero, zero); 9];
+            for (i, &a_i) in a.iter().enumerate() {
+                for (j, &a_j) in a.iter().enumerate().skip(i) {
+                    let col = i + j;
+                    if i == j {
+                        out[col].0 = vmlal_u32(out[col].0, vget_low_u32(a_i), vget_low_u32(a_i));
+                        out[col].1 = vmlal_high_u32(out[col].1, a_i, a_i);
+                    } else {
+                        let prod_lo = vmull_u32(vget_low_u32(a_i), vget_low_u32(a_j));
+                        let prod_hi = vmull_high_u32(a_i, a_j);
+                        out[col].0 = vaddq_u64(out[col].0, vshlq_n_u64::<1>(prod_lo));
+                        out[col].1 = vaddq_u64(out[col].1, vshlq_n_u64::<1>(prod_hi));
+                    }
+                }
+            }
+            out
+        }
+    }
+
+    /// Symmetric 4x4 squaring on NEON SoA layout.  Used by [`Fp29x4::square`]
+    /// for the `P1 = a_hi^2` sub-product.  10 unique mul-pairs against
+    /// the plain 4x4's 16.
+    #[inline]
+    fn polynomial_4x4_square(a: &[uint32x4_t; 4]) -> [(uint64x2_t, uint64x2_t); 7] {
+        // SAFETY: see [`Fp29x4::polynomial_5x5_square`].
+        unsafe {
+            let zero = vdupq_n_u64(0);
+            let mut out: [(uint64x2_t, uint64x2_t); 7] = [(zero, zero); 7];
+            for (i, &a_i) in a.iter().enumerate() {
+                for (j, &a_j) in a.iter().enumerate().skip(i) {
+                    let col = i + j;
+                    if i == j {
+                        out[col].0 = vmlal_u32(out[col].0, vget_low_u32(a_i), vget_low_u32(a_i));
+                        out[col].1 = vmlal_high_u32(out[col].1, a_i, a_i);
+                    } else {
+                        let prod_lo = vmull_u32(vget_low_u32(a_i), vget_low_u32(a_j));
+                        let prod_hi = vmull_high_u32(a_i, a_j);
+                        out[col].0 = vaddq_u64(out[col].0, vshlq_n_u64::<1>(prod_lo));
+                        out[col].1 = vaddq_u64(out[col].1, vshlq_n_u64::<1>(prod_hi));
+                    }
                 }
             }
             out
