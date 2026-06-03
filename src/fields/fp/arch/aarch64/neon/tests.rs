@@ -211,6 +211,41 @@ fn zero_round_trips() {
 }
 
 #[test]
+fn fp29_one_matches_fp_one() {
+    assert_eq!(Fp::from(Fp29::ONE).to_bytes(), Fp::ONE.to_bytes());
+}
+
+#[test]
+fn fp29_two_matches_fp_two() {
+    assert_eq!(Fp::from(Fp29::TWO).to_bytes(), Fp::TWO.to_bytes());
+}
+
+#[test]
+fn fp29_four_matches_fp_four() {
+    assert_eq!(Fp::from(Fp29::FOUR).to_bytes(), Fp::FOUR.to_bytes());
+}
+
+#[test]
+fn fp29_minus_one_matches_fp_minus_one() {
+    assert_eq!(
+        Fp::from(Fp29::MINUS_ONE).to_bytes(),
+        Fp::MINUS_ONE.to_bytes()
+    );
+}
+
+proptest! {
+    /// `Fp29::from_small` must agree with `Fp::from_small` for every `u32`,
+    /// including values larger than `2^29` that require the limb-1 spill.
+    #[test]
+    fn fp29_from_small_matches_fp_from_small(x in any::<u32>()) {
+        let fp29 = Fp29::from_small(x);
+        let actual = Fp::from(fp29).to_bytes();
+        let expected = Fp::from_small(x).to_bytes();
+        prop_assert_eq!(actual, expected);
+    }
+}
+
+#[test]
 fn one_round_trips() {
     let fp29 = Fp29::from(Fp::ONE);
     let fp_back = Fp::from(fp29);
