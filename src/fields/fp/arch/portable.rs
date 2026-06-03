@@ -565,3 +565,134 @@ impl PartialEq for Fp {
         self.ct_eq(other).into()
     }
 }
+
+impl Fp {
+    /// Returns `a1·b1 + a2·b2 mod p` with a single reduction.
+    ///
+    /// Fuses both products into one radix-2^51 column accumulator and folds
+    /// the `P4 = 5*2^44` reduction in once (Longa's sum-of-products,
+    /// [ePrint 2022/367][longa]) — cheaper than two separate multiplies,
+    /// which would each carry their own reduction.
+    ///
+    /// # Implementation
+    ///
+    /// The widest column (k = 4) sums at most `2*5 = 10` partial products,
+    /// each `< (2^51)^2 = 2^102`, plus a reduction term `< 2^51*P4 < 2^97`
+    /// and a carry `< 2^55`, so the `u128` accumulator stays under `2^107.5`.
+    ///
+    /// [longa]: https://eprint.iacr.org/2022/367.pdf
+    #[must_use]
+    #[rustfmt::skip]
+    pub fn sum_of_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
+        debug_assert!(a1.0.iter().all(|&x| x <= MASK), "a1 limb exceeds MASK");
+        debug_assert!(b1.0.iter().all(|&x| x <= MASK), "b1 limb exceeds MASK");
+        debug_assert!(a2.0.iter().all(|&x| x <= MASK), "a2 limb exceeds MASK");
+        debug_assert!(b2.0.iter().all(|&x| x <= MASK), "b2 limb exceeds MASK");
+        let (a, b) = (&a1.0, &b1.0);
+        let (c, d) = (&a2.0, &b2.0);
+        let mut t: u128 = 0;
+
+        // Column 0: a[0]*b[0] + c[0]*d[0]
+        t += (a[0] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[0] as u128);
+        let v0 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 1
+        t += (a[0] as u128) * (b[1] as u128);
+        t += (a[1] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[1] as u128);
+        t += (c[1] as u128) * (d[0] as u128);
+        let v1 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 2
+        t += (a[0] as u128) * (b[2] as u128);
+        t += (a[1] as u128) * (b[1] as u128);
+        t += (a[2] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[2] as u128);
+        t += (c[1] as u128) * (d[1] as u128);
+        t += (c[2] as u128) * (d[0] as u128);
+        let v2 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 3
+        t += (a[0] as u128) * (b[3] as u128);
+        t += (a[1] as u128) * (b[2] as u128);
+        t += (a[2] as u128) * (b[1] as u128);
+        t += (a[3] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[3] as u128);
+        t += (c[1] as u128) * (d[2] as u128);
+        t += (c[2] as u128) * (d[1] as u128);
+        t += (c[3] as u128) * (d[0] as u128);
+        let v3 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 4 (start reduction: fold v0 * P4)
+        t += (a[0] as u128) * (b[4] as u128);
+        t += (a[1] as u128) * (b[3] as u128);
+        t += (a[2] as u128) * (b[2] as u128);
+        t += (a[3] as u128) * (b[1] as u128);
+        t += (a[4] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[4] as u128);
+        t += (c[1] as u128) * (d[3] as u128);
+        t += (c[2] as u128) * (d[2] as u128);
+        t += (c[3] as u128) * (d[1] as u128);
+        t += (c[4] as u128) * (d[0] as u128);
+        t += (v0 as u128) * (P4 as u128);
+        let v4 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 5 (reduce v1)
+        t += (a[1] as u128) * (b[4] as u128);
+        t += (a[2] as u128) * (b[3] as u128);
+        t += (a[3] as u128) * (b[2] as u128);
+        t += (a[4] as u128) * (b[1] as u128);
+        t += (c[1] as u128) * (d[4] as u128);
+        t += (c[2] as u128) * (d[3] as u128);
+        t += (c[3] as u128) * (d[2] as u128);
+        t += (c[4] as u128) * (d[1] as u128);
+        t += (v1 as u128) * (P4 as u128);
+        let c0 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 6 (reduce v2)
+        t += (a[2] as u128) * (b[4] as u128);
+        t += (a[3] as u128) * (b[3] as u128);
+        t += (a[4] as u128) * (b[2] as u128);
+        t += (c[2] as u128) * (d[4] as u128);
+        t += (c[3] as u128) * (d[3] as u128);
+        t += (c[4] as u128) * (d[2] as u128);
+        t += (v2 as u128) * (P4 as u128);
+        let c1 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 7 (reduce v3)
+        t += (a[3] as u128) * (b[4] as u128);
+        t += (a[4] as u128) * (b[3] as u128);
+        t += (c[3] as u128) * (d[4] as u128);
+        t += (c[4] as u128) * (d[3] as u128);
+        t += (v3 as u128) * (P4 as u128);
+        let c2 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 8 (reduce v4)
+        t += (a[4] as u128) * (b[4] as u128);
+        t += (c[4] as u128) * (d[4] as u128);
+        t += (v4 as u128) * (P4 as u128);
+        let c3 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        Fp([c0, c1, c2, c3, t as u64])
+    }
+
+    /// Returns `a1·b1 − a2·b2 mod p` with a single reduction.
+    ///
+    /// Negates `b2` (one limb-wise pass) and defers to
+    /// [`Fp::sum_of_products`].
+    #[must_use]
+    pub fn difference_of_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
+        let neg_b2 = -b2;
+        Fp::sum_of_products(a1, b1, a2, &neg_b2)
+    }
+}

@@ -1256,6 +1256,28 @@ impl PartialEq for Fp29 {
     }
 }
 
+impl Fp29 {
+    /// Returns `a1 * b1 + a2 * b2 mod p`.
+    ///
+    /// Backend-portable baseline: two separate Montgomery multiplications
+    /// and one addition.  A radix-29 fused-column variant (analog of the
+    /// portable backend's Longa sum-of-products, ePrint 2022/367) is a
+    /// future optimisation; for now this delegates so the surface matches
+    /// `arch::portable::Fp::sum_of_products` and stack-side `Fp²` callers
+    /// compile across the dispatcher.
+    #[must_use]
+    pub fn sum_of_products(a1: &Fp29, b1: &Fp29, a2: &Fp29, b2: &Fp29) -> Fp29 {
+        &(a1 * b1) + &(a2 * b2)
+    }
+
+    /// Returns `a1 * b1 - a2 * b2 mod p`.  Backend-portable baseline; see
+    /// [`Fp29::sum_of_products`] for the optimisation note.
+    #[must_use]
+    pub fn difference_of_products(a1: &Fp29, b1: &Fp29, a2: &Fp29, b2: &Fp29) -> Fp29 {
+        &(a1 * b1) - &(a2 * b2)
+    }
+}
+
 const _: () = {
     assert!(MASK_29 == (1u32 << RADIX_29) - 1);
     assert!(RADIX_29 as usize * LIMBS_29 >= 248);

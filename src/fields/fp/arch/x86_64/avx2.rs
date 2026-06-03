@@ -804,6 +804,28 @@ impl PartialEq for Fp26 {
     }
 }
 
+impl Fp26 {
+    /// Returns `a1 * b1 + a2 * b2 mod p`.
+    ///
+    /// Backend-portable baseline: two separate Montgomery multiplications
+    /// and one addition.  A radix-26 fused-column variant (analog of the
+    /// portable backend's Longa sum-of-products, ePrint 2022/367) is a
+    /// future optimisation; for now this delegates so the surface matches
+    /// `arch::portable::Fp::sum_of_products` and stack-side `Fp²` callers
+    /// compile across the dispatcher.
+    #[must_use]
+    pub fn sum_of_products(a1: &Fp26, b1: &Fp26, a2: &Fp26, b2: &Fp26) -> Fp26 {
+        &(a1 * b1) + &(a2 * b2)
+    }
+
+    /// Returns `a1 * b1 - a2 * b2 mod p`.  Backend-portable baseline; see
+    /// [`Fp26::sum_of_products`] for the optimisation note.
+    #[must_use]
+    pub fn difference_of_products(a1: &Fp26, b1: &Fp26, a2: &Fp26, b2: &Fp26) -> Fp26 {
+        &(a1 * b1) - &(a2 * b2)
+    }
+}
+
 /// Four [`Fp26`] elements packed into AVX2 Structure-of-Arrays (SoA)
 /// layout: the four elements are interleaved lane-wise so one
 /// `_mm256_mul_epu32` computes the same schoolbook column across all
