@@ -14,7 +14,6 @@ use crate::{
         montgomery::{Coefficient, Curve},
     },
     fields::fp2::Fp2,
-    hash,
     keys::{Challenge, Signature, SignatureError, VERIFYING_KEY_BYTES},
     params::{E_RSP, TORSION_EVEN_POWER},
     surfaces,
@@ -245,8 +244,8 @@ impl VerifyingKey {
             }
 
             let j = curve_chl.j_invariant();
-            let chl_prime = hash::hash(self, &j, msg);
-            return if sig.chl == Challenge::from(chl_prime) {
+            let chl_prime = Challenge::derive_from_j(self, &j, msg);
+            return if sig.chl == chl_prime {
                 Ok(())
             } else {
                 Err(SignatureError::VerificationFailed)
@@ -298,9 +297,9 @@ impl VerifyingKey {
 
         // Lines 29–30: recompute challenge.
         let j_com = codomain.E1.j_invariant();
-        let chl_prime = hash::hash(self, &j_com, msg);
+        let chl_prime = Challenge::derive_from_j(self, &j_com, msg);
 
-        if sig.chl == Challenge::from(chl_prime) {
+        if sig.chl == chl_prime {
             Ok(())
         } else {
             Err(SignatureError::VerificationFailed)
