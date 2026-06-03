@@ -399,6 +399,104 @@ impl Fp26 {
     pub fn to_bytes(self) -> [u8; 32] {
         self.reduce_montgomery().to_bytes_le()
     }
+
+    /// Constructs a field element from a small integer.
+    ///
+    /// Mirrors `Fp::from_small`: places the canonical integer value in the
+    /// low limbs (radix-26 splits a `u32` across `limbs[0]` and `limbs[1]`)
+    /// and enters Montgomery form via the precomputed [`R2_26`] constant.
+    pub fn from_small(x: u32) -> Self {
+        let mut canonical = Self {
+            limbs: [0; LIMBS_26],
+        };
+        canonical.limbs[0] = x & MASK_26;
+        canonical.limbs[1] = x >> RADIX_26;
+
+        &canonical * &R2_26
+    }
+
+    /// Squares this element `n` times. Mirrors `Fp::pow2k`.
+    #[must_use]
+    pub fn pow2k(&self, n: u32) -> Self {
+        let mut r = *self;
+
+        for _ in 0..n {
+            r = r.square();
+        }
+
+        r
+    }
+
+    /// Computes `self^((p-3)/4)`. Same addition chain as `Fp::pow_p3div4`;
+    /// the prime is identical across backends so the chain transfers
+    /// unchanged, just running over this backend's Montgomery-form
+    /// multiplication.
+    #[must_use]
+    pub(crate) fn pow_p3div4(&self) -> Self {
+        let x = *self;
+        let z = x.square();
+        let t0 = &x * &z;
+        let z = t0.square();
+        let z = &x * &z;
+        let t1 = z.square();
+        let t3 = t1.square();
+        let t2 = t3.square();
+        let t4 = t2.pow2k(3);
+        let t2 = &t2 * &t4;
+        let t4 = t2.pow2k(6);
+        let t2 = &t2 * &t4;
+        let t4 = t2.pow2k(2);
+        let t3 = &t3 * &t4;
+        let t3 = t3.pow2k(13);
+        let t2 = &t2 * &t3;
+        let t3 = t2.pow2k(27);
+        let t2 = &t2 * &t3;
+        let z = &z * &t2;
+        let t2 = z.pow2k(4);
+        let t1 = &t1 * &t2;
+        let t0 = &t0 * &t1;
+        let t1 = &t1 * &t0;
+        let t0 = &t1 * &t0;
+        let t2 = &t0 * &t1;
+        let t0 = &t0 * &t2;
+        let t1 = &t1 * &t0;
+        let t1 = t1.pow2k(63);
+        let t1 = &t0 * &t1;
+        let t1 = t1.pow2k(64);
+        let t0 = &t0 * &t1;
+        let t0 = t0.pow2k(57);
+
+        &z * &t0
+    }
+
+    /// Computes the multiplicative inverse: `self^(p-2)`. Mirrors
+    /// `Fp::invert`.
+    #[must_use]
+    pub fn invert(&self) -> Self {
+        let t = self.pow_p3div4();
+        let t = t.pow2k(2);
+
+        self * &t
+    }
+
+    /// Tests whether this element is a quadratic residue in F_p.
+    /// Mirrors `Fp::is_square`.
+    pub fn is_square(&self) -> Choice {
+        let r = self.pow_p3div4();
+        let r = r.square();
+        let r = &r * self;
+
+        r.ct_eq(&Fp26::ONE) | self.ct_eq(&Fp26::ZERO)
+    }
+
+    /// Computes the square root (when `self` is a QR). Mirrors `Fp::sqrt`;
+    /// result meaningful only when [`Self::is_square`] is true.
+    #[must_use]
+    pub fn sqrt(&self) -> Self {
+        let y = self.pow_p3div4();
+
+        &y * self
+    }
 }
 
 impl Add<Fp26> for Fp26 {
