@@ -1142,6 +1142,17 @@ impl Fp26x4 {
             Self { limbs: c }
         }
     }
+
+    /// Squares the four packed elements lane-wise.
+    ///
+    /// Currently delegates to [`Fp26x4::mul`]; an optimised radix-26
+    /// symmetric square (one square + 10 cross-term doubles per 5x5
+    /// sub-product, replacing the 25 generic products of the schoolbook
+    /// 5x5) lands alongside the Karatsuba mul commit, where the
+    /// symmetry translates directly to fewer `_mm256_mul_epu32` ops.
+    pub fn square(&self) -> Fp26x4 {
+        self.mul(self)
+    }
 }
 
 // Cross-impl test submodule is gated on cfg(not(sqisign_selkie_arch =
