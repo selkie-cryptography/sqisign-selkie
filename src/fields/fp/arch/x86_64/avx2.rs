@@ -44,8 +44,8 @@
 
 #[cfg(target_feature = "avx2")]
 use core::arch::x86_64::{
-    __m256i, _mm256_loadu_si256, _mm256_mul_epu32, _mm256_set1_epi32, _mm256_srli_epi64,
-    _mm256_storeu_si256,
+    __m256i, _mm256_loadu_si256, _mm256_mul_epu32, _mm256_set1_epi32, _mm256_setzero_si256,
+    _mm256_srli_epi64, _mm256_storeu_si256,
 };
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -799,6 +799,83 @@ impl Eq for Fp26 {}
 impl PartialEq for Fp26 {
     fn eq(&self, other: &Fp26) -> bool {
         self.ct_eq(other).into()
+    }
+}
+
+/// Four [`Fp26`] elements packed into AVX2 Structure-of-Arrays (SoA)
+/// layout: the four elements are interleaved lane-wise so one
+/// `_mm256_mul_epu32` computes the same schoolbook column across all
+/// four products simultaneously.  Each of the ten `__m256i` vectors
+/// holds the `i`-th radix-26 limb of four independent field elements
+/// at u64 lanes 0..3.  Using u64 lanes (rather than u32) gives the
+/// Montgomery multiplication accumulator native room for the
+/// `u32 * u32 -> u64` partial products without widening shuffles.
+///
+/// Parallel to [`crate::fields::fp::arch::aarch64::neon::Fp29x4`]'s
+/// NEON SoA layout but at AVX2's 256-bit register width and radix-26.
+/// The eventual `mul` / `add` / `sub` / `square` methods land in
+/// follow-up commits; this commit ships the layout + transpose
+/// primitives.
+///
+/// # Safety
+///
+/// Public methods are safe.  Internal `unsafe` blocks wrap x86_64
+/// AVX2 intrinsics; the type is gated on `cfg(target_feature = "avx2")`
+/// so the intrinsics never enter non-AVX2 builds.
+#[cfg(target_feature = "avx2")]
+#[derive(Clone, Copy)]
+pub struct Fp26x4 {
+    /// Ten AVX2 4-lane u64 vectors.  Lane `j` of `limbs[i]` is the
+    /// `i`-th radix-26 limb of element `j` (zero-extended to u64).
+    pub limbs: [__m256i; LIMBS_26],
+}
+
+#[cfg(target_feature = "avx2")]
+impl Fp26x4 {
+    /// Packs four scalar [`Fp26`] elements into the SoA layout via a
+    /// per-limb gather: `limbs[i]` ends up holding
+    /// `[elements[0].limbs[i], ..., elements[3].limbs[i]]` (each u32
+    /// limb zero-extended to a u64 lane).
+    pub fn from_scalars(elements: &[Fp26; 4]) -> Self {
+        // SAFETY: AVX2 intrinsics are unconditionally callable here
+        // because the type is gated on cfg(target_feature = "avx2").
+        // The lane buffer is a stack-local `[u64; 4]` whose pointer is
+        // properly aligned for the AVX2 256-bit load.
+        let zero = unsafe { _mm256_setzero_si256() };
+        let mut limbs = [zero; LIMBS_26];
+
+        for (i, slot) in limbs.iter_mut().enumerate() {
+            let lane: [u64; 4] = [
+                elements[0].limbs[i] as u64,
+                elements[1].limbs[i] as u64,
+                elements[2].limbs[i] as u64,
+                elements[3].limbs[i] as u64,
+            ];
+            *slot = unsafe { _mm256_loadu_si256(lane.as_ptr() as *const __m256i) };
+        }
+
+        Self { limbs }
+    }
+
+    /// Unpacks the SoA layout back into four scalar [`Fp26`] elements.
+    /// Inverse of [`Fp26x4::from_scalars`].
+    pub fn to_scalars(self) -> [Fp26; 4] {
+        // SAFETY: see `from_scalars`.  The lane buffer is a stack-local
+        // `[u64; 4]` properly aligned for the AVX2 256-bit store.  Each
+        // lane is < 2^26 by Fp26 invariant, so the u64 -> u32 narrowing
+        // is lossless.
+        let mut out = [Fp26::ZERO; 4];
+        let mut lane = [0u64; 4];
+
+        for (i, &limb) in self.limbs.iter().enumerate() {
+            unsafe { _mm256_storeu_si256(lane.as_mut_ptr() as *mut __m256i, limb) };
+
+            for (j, &v) in lane.iter().enumerate() {
+                out[j].limbs[i] = v as u32;
+            }
+        }
+
+        out
     }
 }
 
