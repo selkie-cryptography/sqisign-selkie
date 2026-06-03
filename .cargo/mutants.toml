@@ -28,6 +28,7 @@ test_tool = "nextest"
 # 180 min shard budget. The other 89 KATs share an `(n_bt, r_rsp)`
 # signature with one of these 11.
 additional_cargo_test_args = [
+    "--features", "expose-internals",
     "--cargo-profile", "release-checked",
     "-E", "not test(/sign_kat_derand_/) | test(/sign_kat_derand_(00[0-4]|020|053|056|079|094|095)/)",
 ]
