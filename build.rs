@@ -28,11 +28,20 @@
 //! ## `"avx2"` (x86_64)
 //!
 //! - **Set** on `target_arch = "x86_64"` when `CARGO_CFG_TARGET_FEATURE`
-//!   contains `avx2`.  AVX2 is not part of base x86_64; users opt in via
+//!   contains `avx2`.  AVX2 isn't part of base x86_64; users opt in via
 //!   `RUSTFLAGS="-C target-cpu=..."` or `-C target-feature=+avx2`.
 //!
-//! The `arch::x86_64::avx2` backend doesn't exist yet — this hook is
-//! infrastructure that lights up when the AVX2 `Fp` lands.
+//! - **Does NOT swap the `Fp` dispatcher.**  The single-Fp `Fp26` Mont mul
+//!   measured 4.6x slower than portable radix-51 + MULX/BMI2 on Fly `perf-2x`
+//!   x86_64-v3 (PR #223 e58050c).  `crate::fields::fp::mod` therefore aliases
+//!   `Fp = arch::portable::Fp` unconditionally on x86_64; the cfg-avx2 has no
+//!   `pub use` arm.
+//!
+//! - **Purpose** of the cfg today: downstream conditional compilation that
+//!   benefits from AVX2 hardware *without* swapping the scalar Fp backend —
+//!   `Fp26x4` SoA call-site lifts (5.7x batched mul win measured), bench
+//!   registration for AVX2-only entries (`fp26x4_mul_avx2`,
+//!   `fp26x4_square_avx2`), and future batched-mul work.
 
 fn main() {
     let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
@@ -74,6 +83,26 @@ fn detect_aarch64_neon(target_os: &str, target_cpu: &str) {
 fn detect_x86_64_avx2(target_features: &str) {
     // `CARGO_CFG_TARGET_FEATURE` is a comma-separated list of enabled
     // target features (e.g. "fxsr,sse,sse2,sse3,ssse3,avx,avx2,...").
+    //
+    // Unlike cfg-neon, cfg-avx2 does NOT swap the dispatched `Fp` type
+    // (`fp/mod.rs` has no cfg-avx2 `pub use` arm — see the module-doc
+    // comment above for the measurement rationale).  The cfg gets
+    // emitted so downstream code can conditionally compile AVX2-only
+    // paths that benefit from the hardware *without* changing the
+    // scalar Fp backend:
+    //
+    // - `Fp26x4` SoA call-site lifts (Karatsuba Fp2 3-mul, multi-scalar mul, etc).
+    //   The SoA mul is the production AVX2 surface — 4 muls in 83.5 ns vs 474.7 ns
+    //   for 4 independent scalar Fp51 muls = 5.7x batched speedup.  Call-site
+    //   integration is pending architectural work, mirroring NEON's `Fp29x4`
+    //   dormant-library status.
+    //
+    // - AVX2-only benches in `benches/field.rs` (`fp26x4_mul_avx2`,
+    //   `fp26x4_square_avx2`) register only on cfg-avx2.
+    //
+    // If Fp26 ever wins at the single-Fp level (fused sum_of_products
+    // at radix-26 + Karatsuba mont_mul_const + maybe AVX-512-IFMA52),
+    // restore the cfg-avx2 dispatcher arm in `fp/mod.rs`.
     let has_avx2 = target_features.split(',').any(|f| f == "avx2");
     if has_avx2 {
         println!("cargo::rustc-cfg=sqisign_selkie_arch=\"avx2\"");

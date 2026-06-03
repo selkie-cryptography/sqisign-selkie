@@ -45,7 +45,7 @@
 #[cfg(target_feature = "avx2")]
 use core::arch::x86_64::{
     __m256i, _mm256_add_epi64, _mm256_and_si256, _mm256_blendv_epi8, _mm256_cmpgt_epi64,
-    _mm256_loadu_si256, _mm256_mul_epu32, _mm256_or_si256, _mm256_set1_epi32, _mm256_set1_epi64x,
+    _mm256_loadu_si256, _mm256_mul_epu32, _mm256_or_si256, _mm256_set1_epi64x,
     _mm256_setzero_si256, _mm256_slli_epi64, _mm256_srli_epi64, _mm256_storeu_si256,
     _mm256_sub_epi64,
 };
@@ -313,110 +313,6 @@ impl Fp26 {
 
         c[LIMBS_26 - 1] = t as u32;
         c
-    }
-
-    /// AVX2-accelerated Montgomery multiplication.
-    ///
-    /// Operand-scanning CIOS: 10 outer iterations, each doing
-    /// `t += a * b[j]` (10 vectorized multiplies) then a Montgomery
-    /// reduction step that zeros the low limb. Uses `_mm256_mul_epu32`
-    /// (VPMULUDQ: 4-lane `u32 * u32 -> u64`) twice per j-iter to cover
-    /// limbs 0-7, plus two scalar multiplies for limbs 8-9.
-    ///
-    /// The Montgomery reduction exploits `p = 5 * 2^248 - 1`:
-    /// `p ≡ -1 (mod 2^26)`, so the multiplier `m` that zeros `t[0]` is
-    /// just `m = t[0] & MASK_26`. Adding `m * p` to `t` is equivalent
-    /// to subtracting `m` from `t[0]` (zeroing the low limb) and
-    /// adding `m * 5 * 2^14 = m * P4_26` at limb 9 (where bit 248
-    /// lands in radix-26).
-    ///
-    /// # Safety
-    ///
-    /// Requires AVX2 (gated via `#[target_feature(enable = "avx2")]`).
-    /// The `cfg(target_feature = "avx2")` on the import makes calling
-    /// this fn from non-AVX2 builds a compile error.
-    #[cfg(target_feature = "avx2")]
-    #[target_feature(enable = "avx2")]
-    unsafe fn mont_mul_avx2(a: [u32; LIMBS_26], b: [u32; LIMBS_26]) -> [u32; LIMBS_26] {
-        // 11-limb u64 accumulator: 10 for the partial product running
-        // total + 1 high slot for inter-iter carry.
-        let mut t = [0u64; LIMBS_26 + 1];
-
-        // Pack a's limbs 0..8 into one AVX2 register.  Limbs 8-9 are
-        // handled scalar (only 2 lanes; vectorizing isn't worth the
-        // overhead of a partially-populated second register).
-        let a_lo: __m256i = _mm256_loadu_si256(a.as_ptr() as *const __m256i);
-
-        for &bj_u32 in b.iter() {
-            // Broadcast b[j] into all 8 u32 lanes of an AVX2 register.
-            let bj_bcast: __m256i = _mm256_set1_epi32(bj_u32 as i32);
-
-            // Even-indexed lanes (0, 2, 4, 6 of u32x8 view).
-            // `_mm256_mul_epu32` reads the low 32 bits of each u64 lane,
-            // producing 4 u64 products.
-            let prod_even: __m256i = _mm256_mul_epu32(a_lo, bj_bcast);
-
-            // Odd-indexed lanes: shift each u64 lane right by 32 so the
-            // odd u32s land in the low 32 bits, then multiply.
-            let a_lo_odd: __m256i = _mm256_srli_epi64::<32>(a_lo);
-            let prod_odd: __m256i = _mm256_mul_epu32(a_lo_odd, bj_bcast);
-
-            // Extract to scalar buffers and accumulate column-wise.
-            let mut buf_even = [0u64; 4];
-            let mut buf_odd = [0u64; 4];
-            _mm256_storeu_si256(buf_even.as_mut_ptr() as *mut __m256i, prod_even);
-            _mm256_storeu_si256(buf_odd.as_mut_ptr() as *mut __m256i, prod_odd);
-            t[0] += buf_even[0];
-            t[1] += buf_odd[0];
-            t[2] += buf_even[1];
-            t[3] += buf_odd[1];
-            t[4] += buf_even[2];
-            t[5] += buf_odd[2];
-            t[6] += buf_even[3];
-            t[7] += buf_odd[3];
-
-            // Limbs 8-9: scalar.  Only 2 lanes; an AVX2 path here would
-            // cost a load + 2 muls + extract for the same 2 products.
-            let bj = bj_u32 as u64;
-            t[8] += a[8] as u64 * bj;
-            t[9] += a[9] as u64 * bj;
-
-            // Montgomery reduce: zero t[0]'s low 26 bits.
-            // m = t[0] mod 2^26 (since p ≡ -1 mod 2^26, this is the
-            // unique multiplier that clears t[0]'s low limb).
-            let m = t[0] & MASK_26 as u64;
-
-            // t + m * p effect: t[0] -= m (zeroing low limb);
-            // t[9] += m * P4_26 (the 5 * 2^248 part lands at limb 9).
-            t[0] -= m;
-            t[9] += m * P4_26 as u64;
-
-            // Shift t down by one limb.  After Mont step, t[0]'s low
-            // 26 bits are zero; its high bits carry into the new t[0]
-            // after the shift.
-            let carry = t[0] >> RADIX_26;
-
-            for k in 0..LIMBS_26 {
-                t[k] = t[k + 1];
-            }
-            t[LIMBS_26] = 0;
-            t[0] += carry;
-        }
-
-        // Propagate carries across t[0..10] and pack into u32 limbs.
-        // For valid Mont inputs (< 2p), the result is < 2p < 2^252, so
-        // the residual carry past limb 9 is zero by construction; the
-        // tests catch any silent overflow.
-        let mut out = [0u32; LIMBS_26];
-        let mut carry: u64 = 0;
-
-        for k in 0..LIMBS_26 {
-            let v = t[k] + carry;
-            out[k] = (v & MASK_26 as u64) as u32;
-            carry = v >> RADIX_26;
-        }
-
-        out
     }
 
     /// Squares this element via the [`Mul`] impl.
@@ -692,15 +588,15 @@ impl<'b> Mul<&'b Fp26> for &Fp26 {
     /// `limbs[9] < 2^17` (so the result is in `[0, 2p)`). Use
     /// `Fp26::final_sub` to canonicalise to `[0, p)`.
     ///
-    /// Dispatches to `Fp26::mont_mul_avx2` (operand-scanning CIOS over
-    /// `_mm256_mul_epu32`) when `cfg(target_feature = "avx2")` is set,
-    /// else falls back to `Fp26::mont_mul_const` (outer-product
-    /// CIOS, const-fn so the constants stay `pub const`).
+    /// Delegates to `Fp26::mont_mul_const` (outer-product CIOS,
+    /// const-fn so the constants stay `pub const`).  An earlier AVX2
+    /// single-Fp operand-scanning variant (`mont_mul_avx2` via
+    /// `_mm256_mul_epu32`) was measured 4.6x slower than the portable
+    /// radix-51 + MULX path on Fly perf-2x x86_64-v3 (PR #223
+    /// e58050c) and dropped 2026-06-03 — see `build.rs::detect_x86_64_avx2`
+    /// for the structural reasoning.  `Fp26x4` SoA AVX2 paths are
+    /// the production AVX2 surface; this single-Fp body stays scalar.
     fn mul(self, rhs: &'b Fp26) -> Fp26 {
-        #[cfg(target_feature = "avx2")]
-        let limbs = unsafe { Fp26::mont_mul_avx2(self.limbs, rhs.limbs) };
-
-        #[cfg(not(target_feature = "avx2"))]
         let limbs = Fp26::mont_mul_const(self.limbs, rhs.limbs);
 
         Fp26 { limbs }
@@ -801,6 +697,29 @@ impl Eq for Fp26 {}
 impl PartialEq for Fp26 {
     fn eq(&self, other: &Fp26) -> bool {
         self.ct_eq(other).into()
+    }
+}
+
+impl Fp26 {
+    /// Returns `a1 * b1 + a2 * b2 mod p`.
+    ///
+    /// Backend-portable baseline: two separate Montgomery multiplications
+    /// and one addition.  A radix-26 fused-column variant (analog of the
+    /// portable backend's Longa sum-of-products, ePrint 2022/367) would
+    /// trade more partial products for one fewer reduction; whether that
+    /// pays off at radix-26's 10 limbs needs measurement.  Defaulting to
+    /// the delegate keeps the surface matched to
+    /// `arch::portable::Fp::sum_of_products`.
+    #[must_use]
+    pub fn sum_of_products(a1: &Fp26, b1: &Fp26, a2: &Fp26, b2: &Fp26) -> Fp26 {
+        &(a1 * b1) + &(a2 * b2)
+    }
+
+    /// Returns `a1 * b1 - a2 * b2 mod p`.  Backend-portable baseline; see
+    /// [`Fp26::sum_of_products`] for the optimisation note.
+    #[must_use]
+    pub fn difference_of_products(a1: &Fp26, b1: &Fp26, a2: &Fp26, b2: &Fp26) -> Fp26 {
+        &(a1 * b1) - &(a2 * b2)
     }
 }
 
