@@ -15,7 +15,26 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-#[cfg(not(feature = "expose-internals"))]
+// `arch` visibility tracks two orthogonal axes:
+//
+//   - `expose-internals` feature → fully `pub` (for benches and external
+//     differential-test crates that need to reach `Fp29` / `Fp29x4`).
+//   - `sqisign_selkie_arch = "neon" | "avx2"` cfg (set by `build.rs` when the
+//     corresponding vectorised `Fp` backend is expected to win) → `pub(crate)`
+//     so higher-level callers inside this crate can opt in without requiring
+//     the feature.
+//   - Otherwise → private, since the alternate-radix layouts are implementation
+//     detail and nothing currently routes through them.
+#[cfg(all(
+    not(feature = "expose-internals"),
+    any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2")
+))]
+pub(crate) mod arch;
+
+#[cfg(all(
+    not(feature = "expose-internals"),
+    not(any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2"))
+))]
 mod arch;
 
 #[cfg(feature = "expose-internals")]
