@@ -1,0 +1,210 @@
+{
+  "algorithm": "SQIsign_248_BigInt4",
+  "schema": "bigint_fault_simulation_schema.json",
+  "generatorVersion": "sqisign-selkie-0.0.1",
+  "numberOfTests": 20,
+  "header": [
+    "Boundary-input vectors for BigInt<4> arithmetic (sign+magnitude over [u64; 4]).",
+    "Each vector targets a sign+magnitude representation fault: carry across the",
+    "4-limb fenceposts, sign-cancellation canonicalization (no negative zero),",
+    "sub sign flip, mul wraparound mod 2^256, sign mix on mul.",
+    "All operations are mod 2^(N*64); the reference computes in unbounded",
+    "precision and truncates at encode time.",
+    "Methodology: vector-forge skill, references/fault-simulation.md.",
+    "Encoding: 33 LE bytes per BigInt = 1 sign byte (0 = non-negative, 1 = negative)",
+    "followed by 32 magnitude bytes LE. Zero canonicalizes to sign = 0."
+  ],
+  "notes": {
+    "FaultSimulation": {
+      "bugType": "FUNCTIONALITY",
+      "description": "Boundary input crafted to detect a specific carry, sign-canonicalization, or wraparound fault in BigInt<4>'s sign+magnitude arithmetic. Any conformant impl must produce the byte-equal expected output."
+    }
+  },
+  "testGroups": [
+    {
+      "type": "BigInt4Arithmetic",
+      "tests": [
+        {
+          "tcId": 1,
+          "comment": "(2^64 - 1) + 1 = 2^64 — carry limb 0 -> limb 1",
+          "a": "00ffffffffffffffff000000000000000000000000000000000000000000000000",
+          "b": "000100000000000000000000000000000000000000000000000000000000000000",
+          "op": "add",
+          "expected": "000000000000000000010000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 2,
+          "comment": "(2^128 - 1) + 1 = 2^128 — carry limbs 0..1 -> limb 2",
+          "a": "00ffffffffffffffffffffffffffffffff00000000000000000000000000000000",
+          "b": "000100000000000000000000000000000000000000000000000000000000000000",
+          "op": "add",
+          "expected": "000000000000000000000000000000000001000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 3,
+          "comment": "(2^192 - 1) + 1 = 2^192 — carry limbs 0..2 -> limb 3",
+          "a": "00ffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000",
+          "b": "000100000000000000000000000000000000000000000000000000000000000000",
+          "op": "add",
+          "expected": "000000000000000000000000000000000000000000000000000100000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 4,
+          "comment": "(2^256 - 1) + 1 = 0 — full wrap mod 2^256, canonical-zero sign",
+          "a": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "b": "000100000000000000000000000000000000000000000000000000000000000000",
+          "op": "add",
+          "expected": "000000000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 5,
+          "comment": "2^255 + 2^255 = 0 mod 2^256 — top-bit overflow wraps to canonical zero",
+          "a": "000000000000000000000000000000000000000000000000000000000000000080",
+          "b": "000000000000000000000000000000000000000000000000000000000000000080",
+          "op": "add",
+          "expected": "000000000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 6,
+          "comment": "5 + (-5) = 0 — sign cancellation must canonicalize zero (sign=0)",
+          "a": "000500000000000000000000000000000000000000000000000000000000000000",
+          "b": "010500000000000000000000000000000000000000000000000000000000000000",
+          "op": "add",
+          "expected": "000000000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 7,
+          "comment": "5 + (-3) = 2 — mixed sign, positive result",
+          "a": "000500000000000000000000000000000000000000000000000000000000000000",
+          "b": "010300000000000000000000000000000000000000000000000000000000000000",
+          "op": "add",
+          "expected": "000200000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 8,
+          "comment": "-5 + -7 = -12 — both negative",
+          "a": "010500000000000000000000000000000000000000000000000000000000000000",
+          "b": "010700000000000000000000000000000000000000000000000000000000000000",
+          "op": "add",
+          "expected": "010c00000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 9,
+          "comment": "0 - 1 = -1 — sub from zero flips sign",
+          "a": "000000000000000000000000000000000000000000000000000000000000000000",
+          "b": "000100000000000000000000000000000000000000000000000000000000000000",
+          "op": "sub",
+          "expected": "010100000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 10,
+          "comment": "5 - 7 = -2 — magnitude difference, sign flips negative",
+          "a": "000500000000000000000000000000000000000000000000000000000000000000",
+          "b": "000700000000000000000000000000000000000000000000000000000000000000",
+          "op": "sub",
+          "expected": "010200000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 11,
+          "comment": "(2^256 - 1) - 1 = 2^256 - 2 — borrow propagates through limbs",
+          "a": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "b": "000100000000000000000000000000000000000000000000000000000000000000",
+          "op": "sub",
+          "expected": "00feffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 12,
+          "comment": "0 - (2^256 - 1) = -(2^256 - 1) — full underflow into negative-max",
+          "a": "000000000000000000000000000000000000000000000000000000000000000000",
+          "b": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "op": "sub",
+          "expected": "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 13,
+          "comment": "-(0) = 0 — neg of zero must remain sign=0 (no negative zero)",
+          "a": "000000000000000000000000000000000000000000000000000000000000000000",
+          "b": "000000000000000000000000000000000000000000000000000000000000000000",
+          "op": "neg",
+          "expected": "000000000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 14,
+          "comment": "-(-5) = 5 — double negation",
+          "a": "010500000000000000000000000000000000000000000000000000000000000000",
+          "b": "000000000000000000000000000000000000000000000000000000000000000000",
+          "op": "neg",
+          "expected": "000500000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 15,
+          "comment": "-(2^256 - 1) = -(2^256 - 1) — neg at canonical-max magnitude",
+          "a": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "b": "000000000000000000000000000000000000000000000000000000000000000000",
+          "op": "neg",
+          "expected": "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 16,
+          "comment": "2^32 * 2^32 = 2^64 — output crosses limb 0 -> limb 1 boundary",
+          "a": "000000000001000000000000000000000000000000000000000000000000000000",
+          "b": "000000000001000000000000000000000000000000000000000000000000000000",
+          "op": "mul",
+          "expected": "000000000000000000010000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 17,
+          "comment": "2^128 * 2^128 = 0 mod 2^256 — wraparound on conceptual 2^256",
+          "a": "000000000000000000000000000000000001000000000000000000000000000000",
+          "b": "000000000000000000000000000000000001000000000000000000000000000000",
+          "op": "mul",
+          "expected": "000000000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 18,
+          "comment": "(2^256 - 1)^2 = 1 mod 2^256 — full schoolbook stress",
+          "a": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "b": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "op": "mul",
+          "expected": "000100000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 19,
+          "comment": "(-5) * 3 = -15 — sign-mix produces negative result",
+          "a": "010500000000000000000000000000000000000000000000000000000000000000",
+          "b": "000300000000000000000000000000000000000000000000000000000000000000",
+          "op": "mul",
+          "expected": "010f00000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        },
+        {
+          "tcId": 20,
+          "comment": "(-5) * (-5) = 25 — both negative cancel to positive",
+          "a": "010500000000000000000000000000000000000000000000000000000000000000",
+          "b": "010500000000000000000000000000000000000000000000000000000000000000",
+          "op": "mul",
+          "expected": "001900000000000000000000000000000000000000000000000000000000000000",
+          "flags": ["FaultSimulation"]
+        }
+      ]
+    }
+  ]
+}
