@@ -251,7 +251,7 @@ impl<'b> Mul<&'b Fp2> for &Fp2 {
     ///
     /// For `c = (a0 + a1·i)(b0 + b1·i) = (a0·b0 − a1·b1) + (a0·b1 + a1·b0)·i`,
     /// computes each coefficient with one fused
-    /// [`Fp::sum_of_products`] (resp. [`Fp::difference_of_products`])
+    /// `Fp::sum_of_products` (resp. `Fp::difference_of_products`)
     /// — one Montgomery reduction per coefficient, two total.
     ///
     /// This is the SQIsign spec's
