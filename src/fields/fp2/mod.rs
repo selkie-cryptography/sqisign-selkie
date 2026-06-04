@@ -83,6 +83,45 @@ impl Fp2 {
         }
     }
 
+    /// Returns `a*b + c*d` in F_{p²} with two fused Montgomery reductions.
+    ///
+    /// Each Fp² coefficient is one t=4 fused
+    /// [`Fp::sum_of_products_4`] over the four base-field products that
+    /// make it up — total two Mont reductions, vs four reductions for
+    /// two independent `Fp²::mul` operations followed by an add (each
+    /// `mul` is itself an Algorithm 8.1 t=2 fused pair).
+    ///
+    /// Expands the imaginary unit identity `i² = -1`:
+    /// `a*b + c*d = (a0·b0 − a1·b1 + c0·d0 − c1·d1)
+    ///             + (a0·b1 + a1·b0 + c0·d1 + c1·d0)·i`
+    /// where `a = a0 + a1·i`, etc.  The real coefficient's two
+    /// subtractions are handled by pre-negating `b.b` and `d.b` (one
+    /// limb-wise pass each) before the fused call.
+    #[must_use]
+    pub fn sum_of_products(a: &Fp2, b: &Fp2, c: &Fp2, d: &Fp2) -> Fp2 {
+        let neg_b_im = -&b.b;
+        let neg_d_im = -&d.b;
+        Fp2 {
+            a: Fp::sum_of_products_4([
+                (&a.a, &b.a),
+                (&a.b, &neg_b_im),
+                (&c.a, &d.a),
+                (&c.b, &neg_d_im),
+            ]),
+            b: Fp::sum_of_products_4([(&a.a, &b.b), (&a.b, &b.a), (&c.a, &d.b), (&c.b, &d.a)]),
+        }
+    }
+
+    /// Returns `a*b - c*d` in F_{p²} with two fused Montgomery reductions.
+    ///
+    /// Negates `d` (two limb-wise passes) and defers to
+    /// [`Fp2::sum_of_products`], since `a*b - c*d = a*b + c*(-d)`.
+    #[must_use]
+    pub fn difference_of_products(a: &Fp2, b: &Fp2, c: &Fp2, d: &Fp2) -> Fp2 {
+        let neg_d = -d;
+        Fp2::sum_of_products(a, b, c, &neg_d)
+    }
+
     /// Computes the norm: N(a + bi) = a² + b².
     #[must_use]
     pub fn norm(&self) -> Fp {

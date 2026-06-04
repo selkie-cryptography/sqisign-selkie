@@ -700,4 +700,196 @@ impl Fp {
         let neg_b2 = -b2;
         Fp::sum_of_products(a1, b1, a2, &neg_b2)
     }
+
+    /// Returns `a1·b1 + a2·b2 + a3·b3 + a4·b4 mod p` with a single
+    /// Montgomery reduction.
+    ///
+    /// The t=4 extension of [`Fp::sum_of_products`] — four products
+    /// share one fused-column accumulator and one `P4` reduction pass.
+    /// Used by `Fp2::sum_of_products` to compute each coefficient of
+    /// an `a·b + c·d` Fp² expression with one reduction.
+    ///
+    /// # Implementation
+    ///
+    /// Column 4 (widest) sums at most `4 * 5 = 20` partial products,
+    /// each `< (2^51)^2 = 2^102`, plus a reduction term `< 2^51·P4 < 2^98`
+    /// and an incoming carry `< 2^55.5`, so the `u128` accumulator stays
+    /// under `2^106.5` — comfortably within `2^128`.
+    #[must_use]
+    #[rustfmt::skip]
+    pub fn sum_of_products_4(pairs: [(&Fp, &Fp); 4]) -> Fp {
+        let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
+        debug_assert!(a1.0.iter().all(|&x| x <= MASK), "a1 limb exceeds MASK");
+        debug_assert!(b1.0.iter().all(|&x| x <= MASK), "b1 limb exceeds MASK");
+        debug_assert!(a2.0.iter().all(|&x| x <= MASK), "a2 limb exceeds MASK");
+        debug_assert!(b2.0.iter().all(|&x| x <= MASK), "b2 limb exceeds MASK");
+        debug_assert!(a3.0.iter().all(|&x| x <= MASK), "a3 limb exceeds MASK");
+        debug_assert!(b3.0.iter().all(|&x| x <= MASK), "b3 limb exceeds MASK");
+        debug_assert!(a4.0.iter().all(|&x| x <= MASK), "a4 limb exceeds MASK");
+        debug_assert!(b4.0.iter().all(|&x| x <= MASK), "b4 limb exceeds MASK");
+        let (a, b) = (&a1.0, &b1.0);
+        let (c, d) = (&a2.0, &b2.0);
+        let (e, f) = (&a3.0, &b3.0);
+        let (g, h) = (&a4.0, &b4.0);
+        let mut t: u128 = 0;
+
+        // Column 0
+        t += (a[0] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[0] as u128);
+        t += (e[0] as u128) * (f[0] as u128);
+        t += (g[0] as u128) * (h[0] as u128);
+        let v0 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 1
+        t += (a[0] as u128) * (b[1] as u128);
+        t += (a[1] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[1] as u128);
+        t += (c[1] as u128) * (d[0] as u128);
+        t += (e[0] as u128) * (f[1] as u128);
+        t += (e[1] as u128) * (f[0] as u128);
+        t += (g[0] as u128) * (h[1] as u128);
+        t += (g[1] as u128) * (h[0] as u128);
+        let v1 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 2
+        t += (a[0] as u128) * (b[2] as u128);
+        t += (a[1] as u128) * (b[1] as u128);
+        t += (a[2] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[2] as u128);
+        t += (c[1] as u128) * (d[1] as u128);
+        t += (c[2] as u128) * (d[0] as u128);
+        t += (e[0] as u128) * (f[2] as u128);
+        t += (e[1] as u128) * (f[1] as u128);
+        t += (e[2] as u128) * (f[0] as u128);
+        t += (g[0] as u128) * (h[2] as u128);
+        t += (g[1] as u128) * (h[1] as u128);
+        t += (g[2] as u128) * (h[0] as u128);
+        let v2 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 3
+        t += (a[0] as u128) * (b[3] as u128);
+        t += (a[1] as u128) * (b[2] as u128);
+        t += (a[2] as u128) * (b[1] as u128);
+        t += (a[3] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[3] as u128);
+        t += (c[1] as u128) * (d[2] as u128);
+        t += (c[2] as u128) * (d[1] as u128);
+        t += (c[3] as u128) * (d[0] as u128);
+        t += (e[0] as u128) * (f[3] as u128);
+        t += (e[1] as u128) * (f[2] as u128);
+        t += (e[2] as u128) * (f[1] as u128);
+        t += (e[3] as u128) * (f[0] as u128);
+        t += (g[0] as u128) * (h[3] as u128);
+        t += (g[1] as u128) * (h[2] as u128);
+        t += (g[2] as u128) * (h[1] as u128);
+        t += (g[3] as u128) * (h[0] as u128);
+        let v3 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 4 (start reduction: fold v0 * P4)
+        t += (a[0] as u128) * (b[4] as u128);
+        t += (a[1] as u128) * (b[3] as u128);
+        t += (a[2] as u128) * (b[2] as u128);
+        t += (a[3] as u128) * (b[1] as u128);
+        t += (a[4] as u128) * (b[0] as u128);
+        t += (c[0] as u128) * (d[4] as u128);
+        t += (c[1] as u128) * (d[3] as u128);
+        t += (c[2] as u128) * (d[2] as u128);
+        t += (c[3] as u128) * (d[1] as u128);
+        t += (c[4] as u128) * (d[0] as u128);
+        t += (e[0] as u128) * (f[4] as u128);
+        t += (e[1] as u128) * (f[3] as u128);
+        t += (e[2] as u128) * (f[2] as u128);
+        t += (e[3] as u128) * (f[1] as u128);
+        t += (e[4] as u128) * (f[0] as u128);
+        t += (g[0] as u128) * (h[4] as u128);
+        t += (g[1] as u128) * (h[3] as u128);
+        t += (g[2] as u128) * (h[2] as u128);
+        t += (g[3] as u128) * (h[1] as u128);
+        t += (g[4] as u128) * (h[0] as u128);
+        t += (v0 as u128) * (P4 as u128);
+        let v4 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 5 (reduce v1)
+        t += (a[1] as u128) * (b[4] as u128);
+        t += (a[2] as u128) * (b[3] as u128);
+        t += (a[3] as u128) * (b[2] as u128);
+        t += (a[4] as u128) * (b[1] as u128);
+        t += (c[1] as u128) * (d[4] as u128);
+        t += (c[2] as u128) * (d[3] as u128);
+        t += (c[3] as u128) * (d[2] as u128);
+        t += (c[4] as u128) * (d[1] as u128);
+        t += (e[1] as u128) * (f[4] as u128);
+        t += (e[2] as u128) * (f[3] as u128);
+        t += (e[3] as u128) * (f[2] as u128);
+        t += (e[4] as u128) * (f[1] as u128);
+        t += (g[1] as u128) * (h[4] as u128);
+        t += (g[2] as u128) * (h[3] as u128);
+        t += (g[3] as u128) * (h[2] as u128);
+        t += (g[4] as u128) * (h[1] as u128);
+        t += (v1 as u128) * (P4 as u128);
+        let c0 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 6 (reduce v2)
+        t += (a[2] as u128) * (b[4] as u128);
+        t += (a[3] as u128) * (b[3] as u128);
+        t += (a[4] as u128) * (b[2] as u128);
+        t += (c[2] as u128) * (d[4] as u128);
+        t += (c[3] as u128) * (d[3] as u128);
+        t += (c[4] as u128) * (d[2] as u128);
+        t += (e[2] as u128) * (f[4] as u128);
+        t += (e[3] as u128) * (f[3] as u128);
+        t += (e[4] as u128) * (f[2] as u128);
+        t += (g[2] as u128) * (h[4] as u128);
+        t += (g[3] as u128) * (h[3] as u128);
+        t += (g[4] as u128) * (h[2] as u128);
+        t += (v2 as u128) * (P4 as u128);
+        let c1 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 7 (reduce v3)
+        t += (a[3] as u128) * (b[4] as u128);
+        t += (a[4] as u128) * (b[3] as u128);
+        t += (c[3] as u128) * (d[4] as u128);
+        t += (c[4] as u128) * (d[3] as u128);
+        t += (e[3] as u128) * (f[4] as u128);
+        t += (e[4] as u128) * (f[3] as u128);
+        t += (g[3] as u128) * (h[4] as u128);
+        t += (g[4] as u128) * (h[3] as u128);
+        t += (v3 as u128) * (P4 as u128);
+        let c2 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        // Column 8 (reduce v4)
+        t += (a[4] as u128) * (b[4] as u128);
+        t += (c[4] as u128) * (d[4] as u128);
+        t += (e[4] as u128) * (f[4] as u128);
+        t += (g[4] as u128) * (h[4] as u128);
+        t += (v4 as u128) * (P4 as u128);
+        let c3 = (t as u64) & MASK;
+        t >>= RADIX;
+
+        Fp([c0, c1, c2, c3, t as u64])
+    }
+
+    /// Returns the t=4 sum-of-products with the last pair subtracted,
+    /// `pairs[0]·pairs[1] + pairs[2] - pairs[3]` (each ·), with a single
+    /// Montgomery reduction.
+    ///
+    /// Negates the last pair's `b` and defers to
+    /// [`Fp::sum_of_products_4`].  More complex sign patterns (e.g. the
+    /// Fp²-Karatsuba real coefficient `a0·b0 − a1·b1 + c0·d0 − c1·d1`,
+    /// which has two negations) are expressed by the caller pre-negating
+    /// individual pair entries — each costs one limb-wise pass.
+    #[must_use]
+    pub fn difference_of_products_4(pairs: [(&Fp, &Fp); 4]) -> Fp {
+        let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
+        let neg_b4 = -b4;
+        Fp::sum_of_products_4([(a1, b1), (a2, b2), (a3, b3), (a4, &neg_b4)])
+    }
 }

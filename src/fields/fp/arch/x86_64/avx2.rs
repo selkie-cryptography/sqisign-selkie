@@ -721,6 +721,31 @@ impl Fp26 {
     pub fn difference_of_products(a1: &Fp26, b1: &Fp26, a2: &Fp26, b2: &Fp26) -> Fp26 {
         &(a1 * b1) - &(a2 * b2)
     }
+
+    /// Returns the sum of four base-field products `pairs[i].0 * pairs[i].1`.
+    ///
+    /// Backend-portable baseline: four separate Montgomery multiplications
+    /// and three additions.  Surface parity with
+    /// [`arch::portable::Fp::sum_of_products_4`][p], whose Longa-fused
+    /// implementation saves three reductions vs the four-mul path.
+    /// A radix-26 fused variant is future work.
+    ///
+    /// [p]: crate::fields::fp::arch::portable::Fp::sum_of_products_4
+    #[must_use]
+    pub fn sum_of_products_4(pairs: [(&Fp26, &Fp26); 4]) -> Fp26 {
+        let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
+        &(&(&(a1 * b1) + &(a2 * b2)) + &(a3 * b3)) + &(a4 * b4)
+    }
+
+    /// Returns the t=4 sum-of-products with the last pair subtracted.
+    ///
+    /// Backend-portable baseline; see [`Fp26::sum_of_products_4`] for
+    /// the optimisation note.
+    #[must_use]
+    pub fn difference_of_products_4(pairs: [(&Fp26, &Fp26); 4]) -> Fp26 {
+        let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
+        &(&(&(a1 * b1) + &(a2 * b2)) + &(a3 * b3)) - &(a4 * b4)
+    }
 }
 
 /// Four [`Fp26`] elements packed into AVX2 Structure-of-Arrays (SoA)

@@ -182,4 +182,52 @@ proptest! {
             prop_assert!(!bool::from(neg_a.is_square()));
         }
     }
+
+    #[test]
+    fn prop_fp_sum_of_products_matches_naive(
+        a1 in arb_fp(), b1 in arb_fp(),
+        a2 in arb_fp(), b2 in arb_fp(),
+    ) {
+        let fused = Fp::sum_of_products(&a1, &b1, &a2, &b2);
+        let naive = &(&a1 * &b1) + &(&a2 * &b2);
+        prop_assert_eq!(fused, naive);
+    }
+
+    #[test]
+    fn prop_fp_difference_of_products_matches_naive(
+        a1 in arb_fp(), b1 in arb_fp(),
+        a2 in arb_fp(), b2 in arb_fp(),
+    ) {
+        let fused = Fp::difference_of_products(&a1, &b1, &a2, &b2);
+        let naive = &(&a1 * &b1) - &(&a2 * &b2);
+        prop_assert_eq!(fused, naive);
+    }
+
+    #[test]
+    fn prop_fp_sum_of_products_4_matches_naive(
+        a1 in arb_fp(), b1 in arb_fp(),
+        a2 in arb_fp(), b2 in arb_fp(),
+        a3 in arb_fp(), b3 in arb_fp(),
+        a4 in arb_fp(), b4 in arb_fp(),
+    ) {
+        let fused = Fp::sum_of_products_4([
+            (&a1, &b1), (&a2, &b2), (&a3, &b3), (&a4, &b4),
+        ]);
+        let naive = &(&(&(&a1 * &b1) + &(&a2 * &b2)) + &(&a3 * &b3)) + &(&a4 * &b4);
+        prop_assert_eq!(fused, naive);
+    }
+
+    #[test]
+    fn prop_fp_difference_of_products_4_matches_naive(
+        a1 in arb_fp(), b1 in arb_fp(),
+        a2 in arb_fp(), b2 in arb_fp(),
+        a3 in arb_fp(), b3 in arb_fp(),
+        a4 in arb_fp(), b4 in arb_fp(),
+    ) {
+        let fused = Fp::difference_of_products_4([
+            (&a1, &b1), (&a2, &b2), (&a3, &b3), (&a4, &b4),
+        ]);
+        let naive = &(&(&(&a1 * &b1) + &(&a2 * &b2)) + &(&a3 * &b3)) - &(&a4 * &b4);
+        prop_assert_eq!(fused, naive);
+    }
 }

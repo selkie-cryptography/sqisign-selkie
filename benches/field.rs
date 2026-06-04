@@ -42,6 +42,62 @@ fn fp2_mul(bencher: divan::Bencher) {
     bencher.bench(|| divan::black_box(a) * divan::black_box(b));
 }
 
+/// Baseline pair: two independent `Fp²::mul` calls feeding an add.
+/// Pairs with [`fp2_sum_of_products`] to measure the fused-reduction
+/// win at the Fp² level (`a*b + c*d` = 2 Fp² muls + 1 add = 4 reductions,
+/// vs the t=4 fused path's 2 reductions).
+#[divan::bench]
+fn fp2_mul_pair_then_add(bencher: divan::Bencher) {
+    let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
+    let b = Fp2::new(Fp::from_small(11), Fp::from_small(13));
+    let c = Fp2::new(Fp::from_small(17), Fp::from_small(19));
+    let d = Fp2::new(Fp::from_small(23), Fp::from_small(29));
+    bencher.bench(|| {
+        (divan::black_box(&a) * divan::black_box(&b))
+            + (divan::black_box(&c) * divan::black_box(&d))
+    });
+}
+
+/// `Fp²::sum_of_products(a, b, c, d) = a*b + c*d` via the t=4 fused
+/// Fp call.  Compare against [`fp2_mul_pair_then_add`].
+#[divan::bench]
+fn fp2_sum_of_products(bencher: divan::Bencher) {
+    let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
+    let b = Fp2::new(Fp::from_small(11), Fp::from_small(13));
+    let c = Fp2::new(Fp::from_small(17), Fp::from_small(19));
+    let d = Fp2::new(Fp::from_small(23), Fp::from_small(29));
+    bencher.bench(|| {
+        Fp2::sum_of_products(
+            divan::black_box(&a),
+            divan::black_box(&b),
+            divan::black_box(&c),
+            divan::black_box(&d),
+        )
+    });
+}
+
+/// `Fp::sum_of_products_4` direct measurement — four fused Fp products,
+/// one Mont reduction.
+#[divan::bench]
+fn fp_sum_of_products_4(bencher: divan::Bencher) {
+    let a = Fp::from_small(3);
+    let b = Fp::from_small(7);
+    let c = Fp::from_small(11);
+    let d = Fp::from_small(13);
+    let e = Fp::from_small(17);
+    let f = Fp::from_small(19);
+    let g = Fp::from_small(23);
+    let h = Fp::from_small(29);
+    bencher.bench(|| {
+        Fp::sum_of_products_4([
+            (divan::black_box(&a), divan::black_box(&b)),
+            (divan::black_box(&c), divan::black_box(&d)),
+            (divan::black_box(&e), divan::black_box(&f)),
+            (divan::black_box(&g), divan::black_box(&h)),
+        ])
+    });
+}
+
 #[divan::bench]
 fn fp2_square(bencher: divan::Bencher) {
     let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
