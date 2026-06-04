@@ -23,7 +23,15 @@ runs:
       shell: bash
       run: |
         site=https://sqisign-selkie-ci.fly.dev
-        curl -sf "$site/${{ inputs.kind }}/latest.json" -o /tmp/ci-baseline.json \
+        # Retry on transient errors (408/429/5xx via default --retry,
+        # plus connection-refused).  Legitimate 404 (no baseline yet
+        # for this kind) still falls through to the `{}` fallback,
+        # which `ci-report.rs` renders as a current-only report.
+        # Without retries, a single network blip at fetch time
+        # produces a spurious "No baseline on `main` yet" comment
+        # even when the dashboard has data.
+        fetch=(curl -sf --retry 3 --retry-delay 2 --retry-connrefused --max-time 30)
+        "${fetch[@]}" "$site/${{ inputs.kind }}/latest.json" -o /tmp/ci-baseline.json \
           || echo '{}' > /tmp/ci-baseline.json
         # For instructions, also pull alloc/stack PR-sha + main-latest so the
         # report can surface PR-vs-main resource deltas (perf-metrics jobs
@@ -31,9 +39,9 @@ runs:
         extra=()
         if [ "${{ inputs.kind }}" = "instructions" ]; then
           for k in alloc stack; do
-            curl -sf "$site/$k/${{ github.sha }}.json" -o "/tmp/$k-pr.json" \
+            "${fetch[@]}" "$site/$k/${{ github.sha }}.json" -o "/tmp/$k-pr.json" \
               || echo '{}' > "/tmp/$k-pr.json"
-            curl -sf "$site/$k/latest.json" -o "/tmp/$k-latest.json" \
+            "${fetch[@]}" "$site/$k/latest.json" -o "/tmp/$k-latest.json" \
               || echo '{}' > "/tmp/$k-latest.json"
             extra+=("/tmp/$k-pr.json" "/tmp/$k-latest.json")
           done
