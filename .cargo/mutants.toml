@@ -14,6 +14,13 @@
 # nextest as default test tool. CI workflows assume this.
 test_tool = "nextest"
 
+# Build profile for cargo-mutants's internal cargo invocations.
+# Pairs with the `[profile.mutants]` block in Cargo.toml, which
+# inherits release-checked but drops debuginfo. Per
+# https://mutants.rs/performance.html, build time dominates per-
+# mutant cost and `debug = "none"` is the easiest single-knob win.
+profile = "mutants"
+
 # `--cargo-profile release-checked` builds and runs each mutant under
 # the release-optimization profile with `debug-assertions` and
 # `overflow-checks` retained (Cargo.toml). cargo-mutants compiles a
@@ -29,7 +36,7 @@ test_tool = "nextest"
 # signature with one of these 11.
 additional_cargo_test_args = [
     "--features", "expose-internals",
-    "--cargo-profile", "release-checked",
+    "--cargo-profile", "mutants",
     "-E", "not test(/sign_kat_derand_/) | test(/sign_kat_derand_(00[0-4]|020|053|056|079|094|095)/)",
 ]
 

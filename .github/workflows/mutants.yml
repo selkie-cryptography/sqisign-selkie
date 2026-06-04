@@ -266,10 +266,12 @@ jobs:
 
   # Full sharded sweep. Fires on push-to-main or scheduled-nightly CI
   # completion (success or failure), or on manual dispatch. Each shard
-  # runs on a `perf-8x` box and fans its mutant slice out across cores
-  # with `-j 8` (see the run step), saturating all 8 cores under the
-  # contention model where each mutant's nextest harness shares CPU
-  # with the others.
+  # runs on a `perf-8x` box at `-j 3` — per
+  # https://mutants.rs/parallelism.html, `cargo build` and `cargo test`
+  # already parallelize aggressively internally, so layering high
+  # cargo-mutants `-j` on top of that thrashes. The upstream guidance
+  # is `-j 2` or `-j 3` for non-mega machines; we picked the higher
+  # end to fit the 8-core box.
   full:
     name: Full shard ${{ matrix.shard }}
     runs-on: [self-hosted, fly, linux, perf-8x]
@@ -288,7 +290,8 @@ jobs:
     # tail mutations (infinite loops, slow lib tests under
     # contention) that the `timeout_multiplier = 2` cap in
     # `.cargo/mutants.toml` shortens to ~5 min worst-case. With 32
-    # shards (~62 mutants/shard) under `-j 8` parallelism, the median
+    # shards (~62 mutants/shard) under `-j 3` parallelism and the
+    # `mutants` profile (no debuginfo) + Mold linker, the median
     # mutant lands in ~30-60s and the tail fits inside the budget.
     timeout-minutes: 180
     strategy:
@@ -302,9 +305,13 @@ jobs:
     # All 32 shards share the same Tigris-backed sccache bucket;
     # cargo-mutants' identical baseline build hits cross-shard on
     # arrival, and the upstream dep graph stays warm across runs.
-    # 32 (up from 16) was sized to cargo-mutants 27's expanded
-    # mutation set: 1968 mutants / 32 = ~62 mutants per shard fits
-    # the 180 min budget at ~30-60s median under `-j 8`.
+    # 32 shards sized to cargo-mutants 27's mutation set on this
+    # tree: ~15700 mutants total / 32 = ~490 mutants per shard.
+    # Fits the 180 min budget only with the full perf stack: `-j 3`
+    # parallelism, the `mutants` profile (no debuginfo), Mold linker,
+    # and `--baseline=skip` (saves ~5 min × 32 shards of redundant
+    # baseline rebuild — the gate already validated the unmutated
+    # tree before this workflow_run fires).
     env:
       # See gate (ci.yml) for the empty-RUSTC_WRAPPER rationale.
       RUSTC_WRAPPER: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID != '' && 'sccache' || '' }}
@@ -323,17 +330,29 @@ jobs:
         if: env.RUSTC_WRAPPER == 'sccache'
       - uses: taiki-e/install-action@213ccc1a076163c093f914550b94feb90fab916d
         with:
-          tool: cargo-mutants,cargo-nextest
-      # `--test-tool nextest` and `--cargo-profile release-checked`
-      # come from `.cargo/mutants.toml`. `-j 8` saturates the perf-8x
-      # box; `--minimum-test-timeout 180` widens the 60s floor so
-      # contention between the concurrent suites isn't misread as a
-      # timeout kill.
+          tool: cargo-mutants,cargo-nextest,mold
+      # `--test-tool nextest`, `profile = "mutants"`, and
+      # `--cargo-profile mutants` all come from `.cargo/mutants.toml`;
+      # the `mutants` profile inherits release-checked but drops
+      # debug = "line-tables-only" entirely for a faster build (per
+      # https://mutants.rs/performance.html).
+      #
+      # `-j 3` per upstream guidance — cargo + rustc already
+      # parallelize internally, so higher `-j` here just contends.
+      # `--baseline=skip` since the gate already validated the
+      # unmutated tree; rerunning baseline per shard is ~5 min of
+      # waste × 32 shards. `--minimum-test-timeout 180` widens the
+      # 60s floor so contention isn't misread as a timeout kill.
+      # `RUSTFLAGS` routes the linker to mold — typically a 20%
+      # build-phase speedup.
       - name: Run cargo-mutants (shard ${{ matrix.shard }}/32)
         continue-on-error: true
+        env:
+          RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
         run: |
           cargo mutants --shard ${{ matrix.shard }}/32 -vV \
-            -j 8 \
+            -j 3 \
+            --baseline=skip \
             --minimum-test-timeout 180
 
       - name: sccache stats
