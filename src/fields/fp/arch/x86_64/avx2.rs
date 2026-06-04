@@ -746,6 +746,23 @@ impl Fp26 {
         let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
         &(&(&(a1 * b1) + &(a2 * b2)) + &(a3 * b3)) - &(a4 * b4)
     }
+
+    /// Returns the sum of six base-field products.  Backend-portable
+    /// baseline; see [`Fp26::sum_of_4_products`] for the optimisation
+    /// note.
+    #[must_use]
+    pub fn sum_of_6_products(pairs: [(&Fp26, &Fp26); 6]) -> Fp26 {
+        let [(a1, b1), (a2, b2), (a3, b3), (a4, b4), (a5, b5), (a6, b6)] = pairs;
+        &(&(&(&(&(a1 * b1) + &(a2 * b2)) + &(a3 * b3)) + &(a4 * b4)) + &(a5 * b5)) + &(a6 * b6)
+    }
+
+    /// Returns the t=6 sum-of-products with the last pair subtracted.
+    /// Backend-portable baseline; see [`Fp26::sum_of_4_products`].
+    #[must_use]
+    pub fn difference_of_6_products(pairs: [(&Fp26, &Fp26); 6]) -> Fp26 {
+        let [(a1, b1), (a2, b2), (a3, b3), (a4, b4), (a5, b5), (a6, b6)] = pairs;
+        &(&(&(&(&(a1 * b1) + &(a2 * b2)) + &(a3 * b3)) + &(a4 * b4)) + &(a5 * b5)) - &(a6 * b6)
+    }
 }
 
 /// Four [`Fp26`] elements packed into AVX2 Structure-of-Arrays (SoA)

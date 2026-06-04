@@ -76,6 +76,100 @@ fn fp2_sum_of_2_products(bencher: divan::Bencher) {
     });
 }
 
+/// `Fp::sum_of_6_products` direct measurement — six fused Fp products,
+/// one Mont reduction.
+#[divan::bench]
+fn fp_sum_of_6_products(bencher: divan::Bencher) {
+    let a = Fp::from_small(3);
+    let b = Fp::from_small(7);
+    let c = Fp::from_small(11);
+    let d = Fp::from_small(13);
+    let e = Fp::from_small(17);
+    let f = Fp::from_small(19);
+    let g = Fp::from_small(23);
+    let h = Fp::from_small(29);
+    let i = Fp::from_small(31);
+    let j = Fp::from_small(37);
+    let k = Fp::from_small(41);
+    let l = Fp::from_small(43);
+    bencher.bench(|| {
+        Fp::sum_of_6_products([
+            (divan::black_box(&a), divan::black_box(&b)),
+            (divan::black_box(&c), divan::black_box(&d)),
+            (divan::black_box(&e), divan::black_box(&f)),
+            (divan::black_box(&g), divan::black_box(&h)),
+            (divan::black_box(&i), divan::black_box(&j)),
+            (divan::black_box(&k), divan::black_box(&l)),
+        ])
+    });
+}
+
+/// Naive baseline for t=6: six independent `Fp::mul`s and five adds.
+#[divan::bench]
+fn fp_six_muls_naive(bencher: divan::Bencher) {
+    let a = Fp::from_small(3);
+    let b = Fp::from_small(7);
+    let c = Fp::from_small(11);
+    let d = Fp::from_small(13);
+    let e = Fp::from_small(17);
+    let f = Fp::from_small(19);
+    let g = Fp::from_small(23);
+    let h = Fp::from_small(29);
+    let i = Fp::from_small(31);
+    let j = Fp::from_small(37);
+    let k = Fp::from_small(41);
+    let l = Fp::from_small(43);
+    bencher.bench(|| {
+        let p0 = divan::black_box(&a) * divan::black_box(&b);
+        let p1 = divan::black_box(&c) * divan::black_box(&d);
+        let p2 = divan::black_box(&e) * divan::black_box(&f);
+        let p3 = divan::black_box(&g) * divan::black_box(&h);
+        let p4 = divan::black_box(&i) * divan::black_box(&j);
+        let p5 = divan::black_box(&k) * divan::black_box(&l);
+        p0 + p1 + p2 + p3 + p4 + p5
+    });
+}
+
+/// `Fp²::sum_of_3_products(a, b, c, d, e, f) = a*b + c*d + e*f` via the
+/// t=6 fused Fp call.  Pair with [`fp2_three_muls_naive`] to measure
+/// the 4 saved reductions per call.
+#[divan::bench]
+fn fp2_sum_of_3_products(bencher: divan::Bencher) {
+    let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
+    let b = Fp2::new(Fp::from_small(11), Fp::from_small(13));
+    let c = Fp2::new(Fp::from_small(17), Fp::from_small(19));
+    let d = Fp2::new(Fp::from_small(23), Fp::from_small(29));
+    let e = Fp2::new(Fp::from_small(31), Fp::from_small(37));
+    let f = Fp2::new(Fp::from_small(41), Fp::from_small(43));
+    bencher.bench(|| {
+        Fp2::sum_of_3_products(
+            divan::black_box(&a),
+            divan::black_box(&b),
+            divan::black_box(&c),
+            divan::black_box(&d),
+            divan::black_box(&e),
+            divan::black_box(&f),
+        )
+    });
+}
+
+/// Naive baseline: three independent `Fp²::mul`s feeding two adds.
+#[divan::bench]
+fn fp2_three_muls_naive(bencher: divan::Bencher) {
+    let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
+    let b = Fp2::new(Fp::from_small(11), Fp::from_small(13));
+    let c = Fp2::new(Fp::from_small(17), Fp::from_small(19));
+    let d = Fp2::new(Fp::from_small(23), Fp::from_small(29));
+    let e = Fp2::new(Fp::from_small(31), Fp::from_small(37));
+    let f = Fp2::new(Fp::from_small(41), Fp::from_small(43));
+    bencher.bench(|| {
+        let p0 = divan::black_box(&a) * divan::black_box(&b);
+        let p1 = divan::black_box(&c) * divan::black_box(&d);
+        let p2 = divan::black_box(&e) * divan::black_box(&f);
+        p0 + p1 + p2
+    });
+}
+
 /// `Fp::sum_of_4_products` direct measurement — four fused Fp products,
 /// one Mont reduction.
 #[divan::bench]

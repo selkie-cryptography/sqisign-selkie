@@ -230,4 +230,40 @@ proptest! {
         let naive = &(&(&(&a1 * &b1) + &(&a2 * &b2)) + &(&a3 * &b3)) - &(&a4 * &b4);
         prop_assert_eq!(fused, naive);
     }
+
+    #[test]
+    fn prop_fp_sum_of_6_products_matches_naive(
+        a1 in arb_fp(), b1 in arb_fp(),
+        a2 in arb_fp(), b2 in arb_fp(),
+        a3 in arb_fp(), b3 in arb_fp(),
+        a4 in arb_fp(), b4 in arb_fp(),
+        a5 in arb_fp(), b5 in arb_fp(),
+        a6 in arb_fp(), b6 in arb_fp(),
+    ) {
+        let fused = Fp::sum_of_6_products([
+            (&a1, &b1), (&a2, &b2), (&a3, &b3),
+            (&a4, &b4), (&a5, &b5), (&a6, &b6),
+        ]);
+        let naive = &(&(&(&(&(&a1 * &b1) + &(&a2 * &b2)) + &(&a3 * &b3))
+            + &(&a4 * &b4)) + &(&a5 * &b5)) + &(&a6 * &b6);
+        prop_assert_eq!(fused, naive);
+    }
+
+    #[test]
+    fn prop_fp_difference_of_6_products_matches_naive(
+        a1 in arb_fp(), b1 in arb_fp(),
+        a2 in arb_fp(), b2 in arb_fp(),
+        a3 in arb_fp(), b3 in arb_fp(),
+        a4 in arb_fp(), b4 in arb_fp(),
+        a5 in arb_fp(), b5 in arb_fp(),
+        a6 in arb_fp(), b6 in arb_fp(),
+    ) {
+        let fused = Fp::difference_of_6_products([
+            (&a1, &b1), (&a2, &b2), (&a3, &b3),
+            (&a4, &b4), (&a5, &b5), (&a6, &b6),
+        ]);
+        let naive = &(&(&(&(&(&a1 * &b1) + &(&a2 * &b2)) + &(&a3 * &b3))
+            + &(&a4 * &b4)) + &(&a5 * &b5)) - &(&a6 * &b6);
+        prop_assert_eq!(fused, naive);
+    }
 }

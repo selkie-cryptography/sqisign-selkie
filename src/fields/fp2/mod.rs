@@ -122,6 +122,53 @@ impl Fp2 {
         Fp2::sum_of_2_products(a, b, c, &neg_d)
     }
 
+    /// Returns `a*b + c*d + e*f` in F_{p²} with two fused Montgomery
+    /// reductions.
+    ///
+    /// Each Fp² coefficient is one t=6 fused [`Fp::sum_of_6_products`]
+    /// — total two Mont reductions, vs six reductions for three
+    /// independent `Fp²::mul` operations followed by two adds.  The
+    /// real coefficient's three subtractions are handled by
+    /// pre-negating `b.b`, `d.b`, and `f.b` (one limb-wise pass each)
+    /// before the fused call.
+    ///
+    /// Lift target for the `N00..N03` entries of the gluing
+    /// `theta_change_of_basis` 4×4 matrix (`gg + hh + tt`).
+    #[must_use]
+    pub fn sum_of_3_products(a: &Fp2, b: &Fp2, c: &Fp2, d: &Fp2, e: &Fp2, f: &Fp2) -> Fp2 {
+        let neg_b_im = -&b.b;
+        let neg_d_im = -&d.b;
+        let neg_f_im = -&f.b;
+        Fp2 {
+            a: Fp::sum_of_6_products([
+                (&a.a, &b.a),
+                (&a.b, &neg_b_im),
+                (&c.a, &d.a),
+                (&c.b, &neg_d_im),
+                (&e.a, &f.a),
+                (&e.b, &neg_f_im),
+            ]),
+            b: Fp::sum_of_6_products([
+                (&a.a, &b.b),
+                (&a.b, &b.a),
+                (&c.a, &d.b),
+                (&c.b, &d.a),
+                (&e.a, &f.b),
+                (&e.b, &f.a),
+            ]),
+        }
+    }
+
+    /// Returns `a*b + c*d - e*f` in F_{p²}.
+    ///
+    /// Negates `f` (two limb-wise passes) and defers to
+    /// [`Fp2::sum_of_3_products`].
+    #[must_use]
+    pub fn difference_of_3_products(a: &Fp2, b: &Fp2, c: &Fp2, d: &Fp2, e: &Fp2, f: &Fp2) -> Fp2 {
+        let neg_f = -f;
+        Fp2::sum_of_3_products(a, b, c, d, e, &neg_f)
+    }
+
     /// Computes the norm: N(a + bi) = a² + b².
     #[must_use]
     pub fn norm(&self) -> Fp {

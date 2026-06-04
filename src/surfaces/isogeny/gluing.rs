@@ -394,28 +394,13 @@ fn theta_change_of_basis(
     let t3 = Fp2::sum_of_2_products(&Gp[0][0], &Hp[0][0], &Gp[0][1], &Hp[1][0]);
     let t4 = Fp2::sum_of_2_products(&Gp[1][0], &Hp[0][0], &Gp[1][1], &Hp[1][0]);
 
-    // Lines 8–23: build the 4×4 matrix N.
-    let one = Fp2::ONE;
-
-    let gg00 = &G[0][0] * &Gp[0][0];
-    let hh00 = &H[0][0] * &Hp[0][0];
-    let t1t3 = &t1 * &t3;
-    let N00 = &(&(&gg00 + &hh00) + &t1t3) + &one;
-
-    let gg01 = &G[0][0] * &Gp[1][0];
-    let hh01 = &H[0][0] * &Hp[1][0];
-    let t1t4 = &t1 * &t4;
-    let N01 = &(&gg01 + &hh01) + &t1t4;
-
-    let gg10 = &G[1][0] * &Gp[0][0];
-    let hh10 = &H[1][0] * &Hp[0][0];
-    let t2t3 = &t2 * &t3;
-    let N02 = &(&gg10 + &hh10) + &t2t3;
-
-    let gg11 = &G[1][0] * &Gp[1][0];
-    let hh11 = &H[1][0] * &Hp[1][0];
-    let t2t4 = &t2 * &t4;
-    let N03 = &(&gg11 + &hh11) + &t2t4;
+    // Lines 8–23: build the 4×4 matrix N.  Row 0 is four t=3 fused
+    // sums of Fp² products (`gg + hh + tt`); N00 adds the constant 1.
+    let N00 =
+        &Fp2::sum_of_3_products(&G[0][0], &Gp[0][0], &H[0][0], &Hp[0][0], &t1, &t3) + &Fp2::ONE;
+    let N01 = Fp2::sum_of_3_products(&G[0][0], &Gp[1][0], &H[0][0], &Hp[1][0], &t1, &t4);
+    let N02 = Fp2::sum_of_3_products(&G[1][0], &Gp[0][0], &H[1][0], &Hp[0][0], &t2, &t3);
+    let N03 = Fp2::sum_of_3_products(&G[1][0], &Gp[1][0], &H[1][0], &Hp[1][0], &t2, &t4);
 
     // Rows 1–3 reference N₀,ⱼ from row 0.  Each entry is a fused t=4.
     let N10 = Fp2::sum_of_2_products(&Hp[0][0], &N00, &Hp[0][1], &N01);
