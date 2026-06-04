@@ -212,3 +212,14 @@ debug-assertions = true
 overflow-checks = true
 debug = "line-tables-only"
 incremental = true
+
+# Build profile for cargo-mutants. Inherits release-checked so we
+# keep debug-assertions + overflow-checks (catching invariant
+# violations during mutation testing) but drops debuginfo generation
+# entirely. Per https://mutants.rs/performance.html, build time
+# dominates the per-mutant cost, and turning off debug symbols is
+# the easiest single-knob win. Selected via
+# `--cargo-profile mutants` in `.cargo/mutants.toml`.
+[profile.mutants]
+inherits = "release-checked"
+debug = "none"
