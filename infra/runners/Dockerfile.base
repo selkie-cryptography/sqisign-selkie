@@ -104,9 +104,45 @@ RUN apt-get update \
       texlive-plain-generic \
       texlive-science \
       unzip \
-      valgrind \
       zstd \
   && rm -rf /var/lib/apt/lists/*
+
+# Valgrind 3.25.1 from source.
+#
+# Ubuntu 24.04 noble ships valgrind 3.22, whose callgrind tool
+# SIGILLs on a subset of AVX2 instructions emitted by the
+# `arch-*` Fp backends (Fp26x4 SoA mul, etc.) — observed on
+# `arch-neon-fp` PR #223 / run 26955705658 / job 79532223818
+# during `gungraun (sign)`: "Error running 'callgrind':
+# Terminated by a signal '4'". Upstream 3.23+ widens AVX2
+# coverage; 3.25.1 is the current stable.
+#
+# Built from source (no `--with-mpicc=no` since we don't link
+# MPI) into `/usr/local/{bin,lib,...}` — overrides any
+# system-package valgrind that other packages might pull in
+# transitively, since `/usr/local` precedes `/usr/bin` on the
+# default PATH.
+#
+# Tarball sha256 from upstream sourceware mirror (computed
+# locally at branch time, verify before bumping):
+#   61deb8d0727b45c268efdc1b3b6c9e679cd97cbf5ee4b28d1dead7c8b7a271af  valgrind-3.25.1.tar.bz2
+#
+# ~16 MB tarball + a 64-bit build adds ~5 min to image build
+# wall-clock and ~80 MB to the final image (well under the 8 GB
+# unpack ceiling).
+ARG VALGRIND_VERSION=3.25.1
+ARG VALGRIND_SHA256=61deb8d0727b45c268efdc1b3b6c9e679cd97cbf5ee4b28d1dead7c8b7a271af
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+      "https://sourceware.org/pub/valgrind/valgrind-${VALGRIND_VERSION}.tar.bz2" \
+      -o /tmp/valgrind.tar.bz2 \
+  && echo "${VALGRIND_SHA256}  /tmp/valgrind.tar.bz2" | sha256sum -c - \
+  && tar -xjf /tmp/valgrind.tar.bz2 -C /tmp \
+  && cd /tmp/valgrind-${VALGRIND_VERSION} \
+  && ./configure --prefix=/usr/local \
+  && make -j"$(nproc)" \
+  && make install \
+  && cd / \
+  && rm -rf /tmp/valgrind.tar.bz2 /tmp/valgrind-${VALGRIND_VERSION}
 
 # Pre-install `gungraun-runner` so `profile.yml`'s `Install
 # gungraun-runner` step becomes a fast no-op (~1 s "package already
