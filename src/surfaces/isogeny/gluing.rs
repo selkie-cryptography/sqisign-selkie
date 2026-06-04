@@ -200,10 +200,20 @@ impl GluingKernel {
         // uses cross-component products: u₁·w₂ (not u₁·w₁) and
         // v₁·w₂ (not v₁·w₁). Component 1 = (u₁,v₁,w₁) from curve 1,
         // component 2 = (u₂,v₂,w₂) from curve 2.
-        let U = (&(&u1 * &u2) + &(&v1 * &v2), &u1 * &w2, &w1 * &u2, &w1 * &w2);
+        let U = (
+            Fp2::sum_of_2_products(&u1, &u2, &v1, &v2),
+            &u1 * &w2,
+            &w1 * &u2,
+            &w1 * &w2,
+        );
 
         // 7. V ← (v₁·u₂ + u₁·v₂, v₁·w₂, w₁·v₂, 0)
-        let V = (&(&v1 * &u2) + &(&u1 * &v2), &v1 * &w2, &w1 * &v2, Fp2::ZERO);
+        let V = (
+            Fp2::sum_of_2_products(&v1, &u2, &u1, &v2),
+            &v1 * &w2,
+            &w1 * &v2,
+            Fp2::ZERO,
+        );
 
         // 8–9. U ← N · U,  V ← N · V
         let U = &data.N * &U;

@@ -194,9 +194,10 @@ impl JacobianPoint {
         let t6 = &t4 * &t5; // (z1·z2)³·y1·y2
         let v = &t6 + &t6; // 2·(z1·z2)³·y1·y2
 
-        let t4_sq = t4.square();
-        let t5_sq = t5.square();
-        let sum_y2 = &t4_sq + &t5_sq;
+        // Fuse `t4² + t5²` into one Fp²-level sum-of-products (2 Mont
+        // reductions vs 4 for two separate squares plus an add).  t4_sq
+        // and t5_sq aren't used elsewhere.
+        let sum_y2 = Fp2::sum_of_2_products(&t4, &t4, &t5, &t5);
         let sum_x = &t2 + &t3;
         let lambda = &t2 - &t3;
         let lambda_sq = lambda.square();
