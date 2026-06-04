@@ -260,8 +260,8 @@ impl CubicalPoint {
         let b = &self.X - &self.Z;
         let c = &other.X + &other.Z;
         let d = &other.X - &other.Z;
-        let x2 = (&a * &d + &b * &c).square();
-        let z2 = (&a * &d - &b * &c).square();
+        let x2 = Fp2::sum_of_2_products(&a, &d, &b, &c).square();
+        let z2 = Fp2::difference_of_2_products(&a, &d, &b, &c).square();
         // Spec line 7: X_2 ← X_2 / x(P-Q). See doc comment above for
         // why we cannot move the factor onto Z_2 instead.
         let x2 = &x2 * &x_diff.invert();
@@ -270,8 +270,8 @@ impl CubicalPoint {
 
     /// Cubical translation by a 2-torsion point ([§8.3.2], Algorithm 8.16).
     fn translate(&self, t: &Self) -> Self {
-        let x = &(&t.X * &self.X) - &(&t.Z * &self.Z);
-        let z = &(&t.Z * &self.X) - &(&t.X * &self.Z);
+        let x = Fp2::difference_of_2_products(&t.X, &self.X, &t.Z, &self.Z);
+        let z = Fp2::difference_of_2_products(&t.Z, &self.X, &t.X, &self.Z);
         let z = if t.Z == Fp2::ZERO { -&z } else { z };
         let x = if t.X == Fp2::ZERO { -&x } else { x };
         Self { X: x, Z: z }

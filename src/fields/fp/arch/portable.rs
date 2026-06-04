@@ -587,7 +587,7 @@ impl Fp {
     /// [spec]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.1
     #[must_use]
     #[rustfmt::skip]
-    pub fn sum_of_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
+    pub fn sum_of_2_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
         debug_assert!(a1.0.iter().all(|&x| x <= MASK), "a1 limb exceeds MASK");
         debug_assert!(b1.0.iter().all(|&x| x <= MASK), "b1 limb exceeds MASK");
         debug_assert!(a2.0.iter().all(|&x| x <= MASK), "a2 limb exceeds MASK");
@@ -693,20 +693,20 @@ impl Fp {
     /// Returns `a1·b1 − a2·b2 mod p` with a single Montgomery reduction.
     ///
     /// Negates `b2` (one limb-wise pass) and defers to
-    /// [`Fp::sum_of_products`].  Used by `Fp²::mul` to compute
+    /// [`Fp::sum_of_2_products`].  Used by `Fp²::mul` to compute
     /// `c0 = a0·b0 − a1·b1` per spec Algorithm 8.1.
     #[must_use]
-    pub fn difference_of_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
+    pub fn difference_of_2_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
         let neg_b2 = -b2;
-        Fp::sum_of_products(a1, b1, a2, &neg_b2)
+        Fp::sum_of_2_products(a1, b1, a2, &neg_b2)
     }
 
     /// Returns `a1·b1 + a2·b2 + a3·b3 + a4·b4 mod p` with a single
     /// Montgomery reduction.
     ///
-    /// The t=4 extension of [`Fp::sum_of_products`] — four products
+    /// The t=4 extension of [`Fp::sum_of_2_products`] — four products
     /// share one fused-column accumulator and one `P4` reduction pass.
-    /// Used by `Fp2::sum_of_products` to compute each coefficient of
+    /// Used by `Fp2::sum_of_2_products` to compute each coefficient of
     /// an `a·b + c·d` Fp² expression with one reduction.
     ///
     /// # Implementation
@@ -717,7 +717,7 @@ impl Fp {
     /// under `2^106.5` — comfortably within `2^128`.
     #[must_use]
     #[rustfmt::skip]
-    pub fn sum_of_products_4(pairs: [(&Fp, &Fp); 4]) -> Fp {
+    pub fn sum_of_4_products(pairs: [(&Fp, &Fp); 4]) -> Fp {
         let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
         debug_assert!(a1.0.iter().all(|&x| x <= MASK), "a1 limb exceeds MASK");
         debug_assert!(b1.0.iter().all(|&x| x <= MASK), "b1 limb exceeds MASK");
@@ -882,14 +882,14 @@ impl Fp {
     /// Montgomery reduction.
     ///
     /// Negates the last pair's `b` and defers to
-    /// [`Fp::sum_of_products_4`].  More complex sign patterns (e.g. the
+    /// [`Fp::sum_of_4_products`].  More complex sign patterns (e.g. the
     /// Fp²-Karatsuba real coefficient `a0·b0 − a1·b1 + c0·d0 − c1·d1`,
     /// which has two negations) are expressed by the caller pre-negating
     /// individual pair entries — each costs one limb-wise pass.
     #[must_use]
-    pub fn difference_of_products_4(pairs: [(&Fp, &Fp); 4]) -> Fp {
+    pub fn difference_of_4_products(pairs: [(&Fp, &Fp); 4]) -> Fp {
         let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
         let neg_b4 = -b4;
-        Fp::sum_of_products_4([(a1, b1), (a2, b2), (a3, b3), (a4, &neg_b4)])
+        Fp::sum_of_4_products([(a1, b1), (a2, b2), (a3, b3), (a4, &neg_b4)])
     }
 }

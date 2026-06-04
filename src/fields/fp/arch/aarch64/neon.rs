@@ -1265,16 +1265,16 @@ impl Fp29 {
     /// trade more partial products for one fewer reduction; whether that
     /// pays off at radix-29's 9 limbs needs measurement.  Defaulting to
     /// the delegate keeps the surface matched to
-    /// `arch::portable::Fp::sum_of_products`.
+    /// `arch::portable::Fp::sum_of_2_products`.
     #[must_use]
-    pub fn sum_of_products(a1: &Fp29, b1: &Fp29, a2: &Fp29, b2: &Fp29) -> Fp29 {
+    pub fn sum_of_2_products(a1: &Fp29, b1: &Fp29, a2: &Fp29, b2: &Fp29) -> Fp29 {
         &(a1 * b1) + &(a2 * b2)
     }
 
     /// Returns `a1 * b1 - a2 * b2 mod p`.  Backend-portable baseline; see
-    /// [`Fp29::sum_of_products`] for the optimisation note.
+    /// [`Fp29::sum_of_2_products`] for the optimisation note.
     #[must_use]
-    pub fn difference_of_products(a1: &Fp29, b1: &Fp29, a2: &Fp29, b2: &Fp29) -> Fp29 {
+    pub fn difference_of_2_products(a1: &Fp29, b1: &Fp29, a2: &Fp29, b2: &Fp29) -> Fp29 {
         &(a1 * b1) - &(a2 * b2)
     }
 
@@ -1282,23 +1282,23 @@ impl Fp29 {
     ///
     /// Backend-portable baseline: four separate Montgomery multiplications
     /// and three additions.  Surface parity with
-    /// [`arch::portable::Fp::sum_of_products_4`][p], whose Longa-fused
+    /// [`arch::portable::Fp::sum_of_4_products`][p], whose Longa-fused
     /// implementation saves three reductions vs the four-mul path.
     /// A radix-29 fused variant is future work.
     ///
-    /// [p]: crate::fields::fp::arch::portable::Fp::sum_of_products_4
+    /// [p]: crate::fields::fp::arch::portable::Fp::sum_of_4_products
     #[must_use]
-    pub fn sum_of_products_4(pairs: [(&Fp29, &Fp29); 4]) -> Fp29 {
+    pub fn sum_of_4_products(pairs: [(&Fp29, &Fp29); 4]) -> Fp29 {
         let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
         &(&(&(a1 * b1) + &(a2 * b2)) + &(a3 * b3)) + &(a4 * b4)
     }
 
     /// Returns the t=4 sum-of-products with the last pair subtracted.
     ///
-    /// Backend-portable baseline; see [`Fp29::sum_of_products_4`] for
+    /// Backend-portable baseline; see [`Fp29::sum_of_4_products`] for
     /// the optimisation note.
     #[must_use]
-    pub fn difference_of_products_4(pairs: [(&Fp29, &Fp29); 4]) -> Fp29 {
+    pub fn difference_of_4_products(pairs: [(&Fp29, &Fp29); 4]) -> Fp29 {
         let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
         &(&(&(a1 * b1) + &(a2 * b2)) + &(a3 * b3)) - &(a4 * b4)
     }

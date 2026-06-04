@@ -387,11 +387,12 @@ fn theta_change_of_basis(
     let H = translation_finish(&d_H, &invs[4], &invs[5]);
     let Hp = translation_finish(&d_Hp, &invs[6], &invs[7]);
 
-    // Lines 4–7: intermediate products.
-    let t1 = &G[0][0] * &H[0][0] + &G[0][1] * &H[1][0];
-    let t2 = &G[1][0] * &H[0][0] + &G[1][1] * &H[1][0];
-    let t3 = &Gp[0][0] * &Hp[0][0] + &Gp[0][1] * &Hp[1][0];
-    let t4 = &Gp[1][0] * &Hp[0][0] + &Gp[1][1] * &Hp[1][0];
+    // Lines 4–7: intermediate products, each a fused t=4 Fp²
+    // sum-of-products (2 Mont reductions instead of 4 per row).
+    let t1 = Fp2::sum_of_2_products(&G[0][0], &H[0][0], &G[0][1], &H[1][0]);
+    let t2 = Fp2::sum_of_2_products(&G[1][0], &H[0][0], &G[1][1], &H[1][0]);
+    let t3 = Fp2::sum_of_2_products(&Gp[0][0], &Hp[0][0], &Gp[0][1], &Hp[1][0]);
+    let t4 = Fp2::sum_of_2_products(&Gp[1][0], &Hp[0][0], &Gp[1][1], &Hp[1][0]);
 
     // Lines 8–23: build the 4×4 matrix N.
     let one = Fp2::ONE;
@@ -416,21 +417,21 @@ fn theta_change_of_basis(
     let t2t4 = &t2 * &t4;
     let N03 = &(&gg11 + &hh11) + &t2t4;
 
-    // Rows 1–3 reference N₀,ⱼ from row 0.
-    let N10 = &(&Hp[0][0] * &N00) + &(&Hp[0][1] * &N01);
-    let N11 = &(&Hp[1][0] * &N00) + &(&Hp[1][1] * &N01);
-    let N12 = &(&Hp[0][0] * &N02) + &(&Hp[0][1] * &N03);
-    let N13 = &(&Hp[1][0] * &N02) + &(&Hp[1][1] * &N03);
+    // Rows 1–3 reference N₀,ⱼ from row 0.  Each entry is a fused t=4.
+    let N10 = Fp2::sum_of_2_products(&Hp[0][0], &N00, &Hp[0][1], &N01);
+    let N11 = Fp2::sum_of_2_products(&Hp[1][0], &N00, &Hp[1][1], &N01);
+    let N12 = Fp2::sum_of_2_products(&Hp[0][0], &N02, &Hp[0][1], &N03);
+    let N13 = Fp2::sum_of_2_products(&Hp[1][0], &N02, &Hp[1][1], &N03);
 
-    let N20 = &(&G[0][0] * &N00) + &(&G[0][1] * &N02);
-    let N21 = &(&G[0][0] * &N01) + &(&G[0][1] * &N03);
-    let N22 = &(&G[1][0] * &N00) + &(&G[1][1] * &N02);
-    let N23 = &(&G[1][0] * &N01) + &(&G[1][1] * &N03);
+    let N20 = Fp2::sum_of_2_products(&G[0][0], &N00, &G[0][1], &N02);
+    let N21 = Fp2::sum_of_2_products(&G[0][0], &N01, &G[0][1], &N03);
+    let N22 = Fp2::sum_of_2_products(&G[1][0], &N00, &G[1][1], &N02);
+    let N23 = Fp2::sum_of_2_products(&G[1][0], &N01, &G[1][1], &N03);
 
-    let N30 = &(&G[0][0] * &N10) + &(&G[0][1] * &N12);
-    let N31 = &(&G[0][0] * &N11) + &(&G[0][1] * &N13);
-    let N32 = &(&G[1][0] * &N10) + &(&G[1][1] * &N12);
-    let N33 = &(&G[1][0] * &N11) + &(&G[1][1] * &N13);
+    let N30 = Fp2::sum_of_2_products(&G[0][0], &N10, &G[0][1], &N12);
+    let N31 = Fp2::sum_of_2_products(&G[0][0], &N11, &G[0][1], &N13);
+    let N32 = Fp2::sum_of_2_products(&G[1][0], &N10, &G[1][1], &N12);
+    let N33 = Fp2::sum_of_2_products(&G[1][0], &N11, &G[1][1], &N13);
 
     GluingMatrix([
         [N00, N01, N02, N03],

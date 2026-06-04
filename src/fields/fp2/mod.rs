@@ -86,7 +86,7 @@ impl Fp2 {
     /// Returns `a*b + c*d` in F_{p²} with two fused Montgomery reductions.
     ///
     /// Each Fp² coefficient is one t=4 fused
-    /// [`Fp::sum_of_products_4`] over the four base-field products that
+    /// [`Fp::sum_of_4_products`] over the four base-field products that
     /// make it up — total two Mont reductions, vs four reductions for
     /// two independent `Fp²::mul` operations followed by an add (each
     /// `mul` is itself an Algorithm 8.1 t=2 fused pair).
@@ -98,28 +98,28 @@ impl Fp2 {
     /// subtractions are handled by pre-negating `b.b` and `d.b` (one
     /// limb-wise pass each) before the fused call.
     #[must_use]
-    pub fn sum_of_products(a: &Fp2, b: &Fp2, c: &Fp2, d: &Fp2) -> Fp2 {
+    pub fn sum_of_2_products(a: &Fp2, b: &Fp2, c: &Fp2, d: &Fp2) -> Fp2 {
         let neg_b_im = -&b.b;
         let neg_d_im = -&d.b;
         Fp2 {
-            a: Fp::sum_of_products_4([
+            a: Fp::sum_of_4_products([
                 (&a.a, &b.a),
                 (&a.b, &neg_b_im),
                 (&c.a, &d.a),
                 (&c.b, &neg_d_im),
             ]),
-            b: Fp::sum_of_products_4([(&a.a, &b.b), (&a.b, &b.a), (&c.a, &d.b), (&c.b, &d.a)]),
+            b: Fp::sum_of_4_products([(&a.a, &b.b), (&a.b, &b.a), (&c.a, &d.b), (&c.b, &d.a)]),
         }
     }
 
     /// Returns `a*b - c*d` in F_{p²} with two fused Montgomery reductions.
     ///
     /// Negates `d` (two limb-wise passes) and defers to
-    /// [`Fp2::sum_of_products`], since `a*b - c*d = a*b + c*(-d)`.
+    /// [`Fp2::sum_of_2_products`], since `a*b - c*d = a*b + c*(-d)`.
     #[must_use]
-    pub fn difference_of_products(a: &Fp2, b: &Fp2, c: &Fp2, d: &Fp2) -> Fp2 {
+    pub fn difference_of_2_products(a: &Fp2, b: &Fp2, c: &Fp2, d: &Fp2) -> Fp2 {
         let neg_d = -d;
-        Fp2::sum_of_products(a, b, c, &neg_d)
+        Fp2::sum_of_2_products(a, b, c, &neg_d)
     }
 
     /// Computes the norm: N(a + bi) = a² + b².
@@ -290,7 +290,7 @@ impl<'b> Mul<&'b Fp2> for &Fp2 {
     ///
     /// For `c = (a0 + a1·i)(b0 + b1·i) = (a0·b0 − a1·b1) + (a0·b1 + a1·b0)·i`,
     /// computes each coefficient with one fused
-    /// `Fp::sum_of_products` (resp. `Fp::difference_of_products`)
+    /// `Fp::sum_of_2_products` (resp. `Fp::difference_of_2_products`)
     /// — one Montgomery reduction per coefficient, two total.
     ///
     /// This is the SQIsign spec's
@@ -306,8 +306,8 @@ impl<'b> Mul<&'b Fp2> for &Fp2 {
     /// [spec]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.1
     fn mul(self, rhs: &'b Fp2) -> Fp2 {
         Fp2 {
-            a: Fp::difference_of_products(&self.a, &rhs.a, &self.b, &rhs.b),
-            b: Fp::sum_of_products(&self.a, &rhs.b, &self.b, &rhs.a),
+            a: Fp::difference_of_2_products(&self.a, &rhs.a, &self.b, &rhs.b),
+            b: Fp::sum_of_2_products(&self.a, &rhs.b, &self.b, &rhs.a),
         }
     }
 }
