@@ -291,8 +291,8 @@ jobs:
     # contention) that the `timeout_multiplier = 2` cap in
     # `.cargo/mutants.toml` shortens to ~5 min worst-case. With 32
     # shards (~62 mutants/shard) under `-j 3` parallelism and the
-    # `mutants` profile (no debuginfo) + Mold linker, the median
-    # mutant lands in ~30-60s and the tail fits inside the budget.
+    # `mutants` profile (no debuginfo), the median mutant lands in
+    # ~30-60s and the tail fits inside the budget.
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -307,11 +307,12 @@ jobs:
     # arrival, and the upstream dep graph stays warm across runs.
     # 32 shards sized to cargo-mutants 27's mutation set on this
     # tree: ~15700 mutants total / 32 = ~490 mutants per shard.
-    # Fits the 180 min budget only with the full perf stack: `-j 3`
-    # parallelism, the `mutants` profile (no debuginfo), Mold linker,
-    # and `--baseline=skip` (saves ~5 min × 32 shards of redundant
+    # Fits the 180 min budget with the full perf stack: `-j 3`
+    # parallelism, the `mutants` profile (no debuginfo), and
+    # `--baseline=skip` (saves ~5 min × 32 shards of redundant
     # baseline rebuild — the gate already validated the unmutated
-    # tree before this workflow_run fires).
+    # tree before this workflow_run fires). Mold linker is already
+    # in effect via `.cargo/config.toml` + the baked runner image.
     env:
       # See gate (ci.yml) for the empty-RUSTC_WRAPPER rationale.
       RUSTC_WRAPPER: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID != '' && 'sccache' || '' }}
@@ -330,7 +331,7 @@ jobs:
         if: env.RUSTC_WRAPPER == 'sccache'
       - uses: taiki-e/install-action@213ccc1a076163c093f914550b94feb90fab916d
         with:
-          tool: cargo-mutants,cargo-nextest,mold
+          tool: cargo-mutants,cargo-nextest
       # `--test-tool nextest`, `profile = "mutants"`, and
       # `--cargo-profile mutants` all come from `.cargo/mutants.toml`;
       # the `mutants` profile inherits release-checked but drops
@@ -343,12 +344,9 @@ jobs:
       # unmutated tree; rerunning baseline per shard is ~5 min of
       # waste × 32 shards. `--minimum-test-timeout 180` widens the
       # 60s floor so contention isn't misread as a timeout kill.
-      # `RUSTFLAGS` routes the linker to mold — typically a 20%
-      # build-phase speedup.
+      # Mold linker is on for free via `.cargo/config.toml`.
       - name: Run cargo-mutants (shard ${{ matrix.shard }}/32)
         continue-on-error: true
-        env:
-          RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
         run: |
           cargo mutants --shard ${{ matrix.shard }}/32 -vV \
             -j 3 \
