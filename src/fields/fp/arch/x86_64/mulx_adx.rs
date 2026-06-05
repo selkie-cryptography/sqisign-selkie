@@ -18,14 +18,22 @@
 //!
 //! # Contents
 //!
-//! Today: storage + named constants + `from_limbs([u64; 5])` bridge.
-//! Subsequent commits add From-bytes / to-bytes / Add / Sub / Neg /
-//! ConditionallySelectable (pure Rust), then the asm leaves
-//! (`fp_mul`, `fp_sqr`, `fp2_mul_c0`, `fp2_mul_c1`).
+//! Today: storage, named constants, `from_limbs([u64; 5])`
+//! cross-backend const-bridge, `ConditionallySelectable`, and
+//! modular `Add` / `Sub` / `Neg` in pure Rust.  Subsequent commits
+//! add the asm leaves (`fp_mul`, `fp_sqr`, `fp2_mul_c0`,
+//! `fp2_mul_c1`) and the higher-level ops layered over them
+//! (`square`, `invert`, `sqrt`, `pow`, `sum_of_2_products`,
+//! `difference_of_2_products`).  Montgomery-form byte conversions
+//! (`From<[u8; 32]>` / `to_bytes`) land alongside the asm since they
+//! depend on Montgomery reduce.
 
 #![allow(dead_code)] // dispatcher activation lands in a later commit.
 
-use core::fmt;
+use core::{
+    fmt,
+    ops::{Add, AddAssign, Neg, Sub, SubAssign},
+};
 
 use subtle::{Choice, ConditionallySelectable};
 
@@ -186,6 +194,39 @@ impl Fp64 {
 
         Self([r0, r1, r2, r3])
     }
+
+    /// Reduce `self` from `[0, 2p)` to `[0, p)` by conditionally
+    /// subtracting `p`.
+    ///
+    /// Speculatively subtracts `p` and uses the final borrow to
+    /// select: borrow set means `self < p` (keep `self` unchanged),
+    /// borrow clear means `self >= p` (use the subtracted form).
+    /// Branch-free via [`ConditionallySelectable`].
+    fn final_sub_p(self) -> Self {
+        let p = Self::P.0;
+        let (d0, b0) = self.0[0].borrowing_sub(p[0], false);
+        let (d1, b1) = self.0[1].borrowing_sub(p[1], b0);
+        let (d2, b2) = self.0[2].borrowing_sub(p[2], b1);
+        let (d3, b3) = self.0[3].borrowing_sub(p[3], b2);
+        let subbed = Self([d0, d1, d2, d3]);
+        // `b3 = true` iff `self < p`; in that case keep `self`.
+        Self::conditional_select(&subbed, &self, Choice::from(b3 as u8))
+    }
+
+    /// Conditionally add `p` to `self`.
+    ///
+    /// Returns `self + p (mod 2^256)` if `cond` is true, else `self`
+    /// unchanged.  Used by `Sub` to add `p` back when the raw
+    /// subtraction underflowed.
+    fn cond_add_p(self, cond: Choice) -> Self {
+        let p = Self::P.0;
+        let (a0, c0) = self.0[0].carrying_add(p[0], false);
+        let (a1, c1) = self.0[1].carrying_add(p[1], c0);
+        let (a2, c2) = self.0[2].carrying_add(p[2], c1);
+        let (a3, _c3) = self.0[3].carrying_add(p[3], c2);
+        let added = Self([a0, a1, a2, a3]);
+        Self::conditional_select(&self, &added, cond)
+    }
 }
 
 impl fmt::Debug for Fp64 {
@@ -204,5 +245,103 @@ impl ConditionallySelectable for Fp64 {
             u64::conditional_select(&a.0[2], &b.0[2], choice),
             u64::conditional_select(&a.0[3], &b.0[3], choice),
         ])
+    }
+}
+
+impl<'b> Add<&'b Fp64> for &Fp64 {
+    type Output = Fp64;
+
+    /// Modular addition.  Inputs in `[0, p)`; output in `[0, p)`.
+    ///
+    /// Sum of two canonical values fits in 4 limbs without bit-256
+    /// overflow (`2p < 2^253`); a single conditional subtract of `p`
+    /// canonicalizes.
+    fn add(self, rhs: &'b Fp64) -> Fp64 {
+        let (r0, c0) = self.0[0].carrying_add(rhs.0[0], false);
+        let (r1, c1) = self.0[1].carrying_add(rhs.0[1], c0);
+        let (r2, c2) = self.0[2].carrying_add(rhs.0[2], c1);
+        let (r3, _c3) = self.0[3].carrying_add(rhs.0[3], c2);
+        Fp64([r0, r1, r2, r3]).final_sub_p()
+    }
+}
+
+impl<'b> Sub<&'b Fp64> for &Fp64 {
+    type Output = Fp64;
+
+    /// Modular subtraction.  Inputs in `[0, p)`; output in `[0, p)`.
+    ///
+    /// Subtract limb-wise; a final borrow means the raw difference
+    /// underflowed (`self < rhs`), in which case [`Fp64::cond_add_p`]
+    /// adds `p` back to canonicalize.
+    fn sub(self, rhs: &'b Fp64) -> Fp64 {
+        let (r0, b0) = self.0[0].borrowing_sub(rhs.0[0], false);
+        let (r1, b1) = self.0[1].borrowing_sub(rhs.0[1], b0);
+        let (r2, b2) = self.0[2].borrowing_sub(rhs.0[2], b1);
+        let (r3, b3) = self.0[3].borrowing_sub(rhs.0[3], b2);
+        Fp64([r0, r1, r2, r3]).cond_add_p(Choice::from(b3 as u8))
+    }
+}
+
+impl Neg for &Fp64 {
+    type Output = Fp64;
+
+    /// Modular negation: `p - self mod p`.
+    ///
+    /// Computes `p - self`; for `self == 0` the raw result is `p` and
+    /// [`Fp64::final_sub_p`] reduces it to `0`.
+    fn neg(self) -> Fp64 {
+        let p = Fp64::P.0;
+        let (d0, b0) = p[0].borrowing_sub(self.0[0], false);
+        let (d1, b1) = p[1].borrowing_sub(self.0[1], b0);
+        let (d2, b2) = p[2].borrowing_sub(self.0[2], b1);
+        let (d3, _b3) = p[3].borrowing_sub(self.0[3], b2);
+        Fp64([d0, d1, d2, d3]).final_sub_p()
+    }
+}
+
+// Convenience: owned variants delegate to reference impls.
+
+impl Add<Fp64> for Fp64 {
+    type Output = Fp64;
+    fn add(self, rhs: Fp64) -> Fp64 {
+        &self + &rhs
+    }
+}
+
+impl Sub<Fp64> for Fp64 {
+    type Output = Fp64;
+    fn sub(self, rhs: Fp64) -> Fp64 {
+        &self - &rhs
+    }
+}
+
+impl Neg for Fp64 {
+    type Output = Fp64;
+    fn neg(self) -> Fp64 {
+        -&self
+    }
+}
+
+impl AddAssign<&Fp64> for Fp64 {
+    fn add_assign(&mut self, rhs: &Fp64) {
+        *self = &*self + rhs;
+    }
+}
+
+impl SubAssign<&Fp64> for Fp64 {
+    fn sub_assign(&mut self, rhs: &Fp64) {
+        *self = &*self - rhs;
+    }
+}
+
+impl AddAssign for Fp64 {
+    fn add_assign(&mut self, rhs: Fp64) {
+        *self += &rhs;
+    }
+}
+
+impl SubAssign for Fp64 {
+    fn sub_assign(&mut self, rhs: Fp64) {
+        *self -= &rhs;
     }
 }
