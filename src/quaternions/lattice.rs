@@ -837,26 +837,25 @@ impl<const N: usize> Lattice<N> {
     ///
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
     pub fn product(&self, other: &Self) -> HnfLattice<N> {
-        let mut all_cols = Vec::new();
-
-        for i in 0..4 {
-            let alpha = self.basis_elem(i);
-            for j in 0..4 {
-                let beta = other.basis_elem(j);
-                let product = alpha.mul_direct(&beta);
-                all_cols.push(Vector::new(
-                    *product.a.as_bigint(),
-                    *product.b.as_bigint(),
-                    *product.c.as_bigint(),
-                    *product.d.as_bigint(),
-                ));
-            }
-        }
+        // Build all 16 product columns on the stack.  The previous
+        // `Vec::new()` + 16-push shape forced two heap reallocs as
+        // the capacity grew 0 -> 4 -> 8 -> 16, each copying the
+        // partial buffer.  At sign-side widths (N up to ~50) those
+        // partial buffers are several KB.
+        let all_cols: [Vector<N>; 16] = array::from_fn(|k| {
+            let prod = self.basis_elem(k / 4).mul_direct(&other.basis_elem(k % 4));
+            Vector::new(
+                *prod.a.as_bigint(),
+                *prod.b.as_bigint(),
+                *prod.c.as_bigint(),
+                *prod.d.as_bigint(),
+            )
+        });
 
         let new_denom = self.denom.ct_mul(&other.denom);
 
         let first_block: [Vector<N>; 4] = [all_cols[0], all_cols[1], all_cols[2], all_cols[3]];
-        let det_modulus = Matrix::<N>::from_columns(&first_block).det().abs();
+        let det_modulus = Matrix::<N>::det_of_columns(&first_block).abs();
         let result_basis = if bool::from(det_modulus.is_zero()) {
             Matrix::from_hnf_columns(&all_cols)
         } else {
@@ -884,21 +883,15 @@ impl<const N: usize> Lattice<N> {
     /// `modulus` must be a positive multiple of the integer-column
     /// covolume of the result lattice.
     pub fn product_with_modulus(&self, other: &Self, modulus: &BigInt<N>) -> HnfLattice<N> {
-        let mut all_cols = Vec::new();
-
-        for i in 0..4 {
-            let alpha = self.basis_elem(i);
-            for j in 0..4 {
-                let beta = other.basis_elem(j);
-                let product = alpha.mul_direct(&beta);
-                all_cols.push(Vector::new(
-                    *product.a.as_bigint(),
-                    *product.b.as_bigint(),
-                    *product.c.as_bigint(),
-                    *product.d.as_bigint(),
-                ));
-            }
-        }
+        let all_cols: [Vector<N>; 16] = array::from_fn(|k| {
+            let prod = self.basis_elem(k / 4).mul_direct(&other.basis_elem(k % 4));
+            Vector::new(
+                *prod.a.as_bigint(),
+                *prod.b.as_bigint(),
+                *prod.c.as_bigint(),
+                *prod.d.as_bigint(),
+            )
+        });
 
         let new_denom = self.denom.ct_mul(&other.denom);
         let basis = if bool::from(modulus.is_zero()) {
@@ -944,7 +937,7 @@ impl<const N: usize> Lattice<N> {
         // `conj(δ)/N(I)` shape) blows past the storage budget; the
         // modular variant bounds intermediates by `|det|` and stays
         // within working width `N` whenever `bits(det) < N·64/2`.
-        let det_modulus = Matrix::<N>::from_columns(&new_cols).det().abs();
+        let det_modulus = Matrix::<N>::det_of_columns(&new_cols).abs();
         let basis = if bool::from(det_modulus.is_zero()) {
             Matrix::from_hnf_columns(&new_cols)
         } else {

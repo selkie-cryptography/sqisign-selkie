@@ -189,18 +189,20 @@ impl<const N: usize> Matrix<N> {
         };
 
         // Widen every input column into the working width W and
-        // immediately reduce mod D.
-        let mut a: Vec<[BigInt<W>; 4]> = cols
-            .iter()
-            .map(|v| {
-                [
-                    reduce(&v[0].widen::<W>()),
-                    reduce(&v[1].widen::<W>()),
-                    reduce(&v[2].widen::<W>()),
-                    reduce(&v[3].widen::<W>()),
-                ]
-            })
-            .collect();
+        // immediately reduce mod D.  Pre-size to `c_orig + d` so the
+        // four `D·e_i` columns appended below don't force a realloc
+        // (the prior `.collect()` sized to `c_orig` exactly, then
+        // hit a 22 KB memcpy at the geometric-growth boundary for
+        // sign-side widths).
+        let mut a: Vec<[BigInt<W>; 4]> = Vec::with_capacity(c_orig + d);
+        a.extend(cols.iter().map(|v| {
+            [
+                reduce(&v[0].widen::<W>()),
+                reduce(&v[1].widen::<W>()),
+                reduce(&v[2].widen::<W>()),
+                reduce(&v[3].widen::<W>()),
+            ]
+        }));
 
         // Append the implicit modulus columns D·e_i (i = 0..d) so the
         // row-pivot gcd accumulation produces the canonical pivot
