@@ -391,6 +391,19 @@ impl Fp64 {
         // op so Fp64 values are always in [0, p).)
         Self(out).final_sub_p()
     }
+
+    /// Modular squaring: `self * self mod p`.
+    ///
+    /// Delegates to [`Fp64::mul_montgomery`].  Matches C ref's `fp_sqr`
+    /// at `src/gf/broadwell/lvl1/fp_asm.S:464`, which is a one-line
+    /// `mov rdx, rsi; jmp fp_mul` -- no symmetric-squaring asm
+    /// shortcut.  A real symmetric impl saves roughly 30% of the
+    /// MULX ops; deferred until benches show it matters.
+    #[inline]
+    #[must_use]
+    pub fn square(&self) -> Self {
+        Self::mul_montgomery(self, self)
+    }
 }
 
 impl fmt::Debug for Fp64 {

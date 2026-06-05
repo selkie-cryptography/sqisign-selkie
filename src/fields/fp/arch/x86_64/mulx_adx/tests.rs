@@ -131,10 +131,20 @@ fn add_minus_one_one_is_zero() {
     assert_eq!(one + minus_one, Fp64::ZERO);
 }
 
-/// Generate a canonical `Fp64` value through the `Fp51`-bridge chain:
-/// random bytes -> Fp51 (canonical, in Mont form) -> Fp64 via bridge.
+/// Generate a canonical `Fp64` value through the `Fp51`-bridge chain.
+///
+/// Clamps the input bytes so the encoded integer is strictly `< p`
+/// (top byte forced to `<= 0x03`, giving value `< 4 * 2^248 < p`).
+/// `Fp51::from_bytes` then canonicalizes via a single conditional
+/// subtract of `p`, which is sufficient for inputs in `[0, 2p)`;
+/// from there `Fp64::from_limbs` produces canonical Fp64.
+///
+/// Without this clamp, arbitrary 32-byte inputs can encode values
+/// up to `~13.6p` (since `2^256 / p ~ 51`), which Fp51's single-
+/// subtract `final_sub` doesn't fully reduce.
 fn arb_fp64() -> impl Strategy<Value = Fp64> {
-    any::<[u8; 32]>().prop_map(|bytes| {
+    any::<[u8; 32]>().prop_map(|mut bytes| {
+        bytes[31] &= 0x03;
         let fp51 = Fp51::from_bytes(&bytes);
         Fp64::from_limbs(fp51.0)
     })
@@ -275,19 +285,69 @@ proptest! {
 
     /// Bridging commutes with mul:
     /// `Fp64(a51) * Fp64(b51) == Fp64(a51 * b51)`.
+    ///
+    /// Top byte clamped so encoded values stay `< p` (same reason as
+    /// in [`arb_fp64`]); Fp51's `mul` returns "less than 2p" so its
+    /// output then needs to flow through a canonicalizing bridge --
+    /// we route via `Fp51::to_bytes` + `from_bytes` round-trip to
+    /// normalize before bridging to Fp64.
     #[test]
-    fn mul_matches_fp51(bytes_a in any::<[u8; 32]>(), bytes_b in any::<[u8; 32]>()) {
+    fn mul_matches_fp51(mut bytes_a in any::<[u8; 32]>(), mut bytes_b in any::<[u8; 32]>()) {
+        bytes_a[31] &= 0x03;
+        bytes_b[31] &= 0x03;
         let a51 = Fp51::from_bytes(&bytes_a);
         let b51 = Fp51::from_bytes(&bytes_b);
 
         let a64 = Fp64::from_limbs(a51.0);
         let b64 = Fp64::from_limbs(b51.0);
 
+        // Fp51 mul leaves output in [0, 2p); canonicalize via byte
+        // round-trip before bridging.
         let prod51 = &a51 * &b51;
-        let prod64_via_bridge = Fp64::from_limbs(prod51.0);
+        let prod51_canonical = Fp51::from_bytes(&prod51.to_bytes());
+        let prod64_via_bridge = Fp64::from_limbs(prod51_canonical.0);
 
         let prod64_direct = a64 * b64;
 
         prop_assert_eq!(prod64_direct, prod64_via_bridge);
+    }
+}
+
+#[test]
+fn square_one_is_one() {
+    let one = canon(Fp51::ONE);
+    assert_eq!(one.square(), one);
+}
+
+#[test]
+fn square_two_is_four() {
+    let two = canon(Fp51::TWO);
+    let four = canon(Fp51::FOUR);
+    assert_eq!(two.square(), four);
+}
+
+#[test]
+fn square_minus_one_is_one() {
+    let one = canon(Fp51::ONE);
+    let minus_one = canon(Fp51::MINUS_ONE);
+    assert_eq!(minus_one.square(), one);
+}
+
+#[test]
+fn square_zero_is_zero() {
+    assert_eq!(Fp64::ZERO.square(), Fp64::ZERO);
+}
+
+proptest! {
+    /// `a.square() == a * a`.
+    #[test]
+    fn square_matches_mul(a in arb_fp64()) {
+        prop_assert_eq!(a.square(), &a * &a);
+    }
+
+    /// `(-a).square() == a.square()`.
+    #[test]
+    fn square_neg(a in arb_fp64()) {
+        prop_assert_eq!((-&a).square(), a.square());
     }
 }
