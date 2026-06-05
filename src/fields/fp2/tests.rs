@@ -141,4 +141,26 @@ proptest! {
         let b = Fp2::from_bytes(&bytes);
         prop_assert_eq!(a, b);
     }
+
+    #[test]
+    fn prop_fp2_sum_of_3_products_matches_naive(
+        a in arb_fp2(), b in arb_fp2(),
+        c in arb_fp2(), d in arb_fp2(),
+        e in arb_fp2(), f in arb_fp2(),
+    ) {
+        let fused = Fp2::sum_of_3_products(&a, &b, &c, &d, &e, &f);
+        let naive = &(&(&a * &b) + &(&c * &d)) + &(&e * &f);
+        prop_assert_eq!(fused, naive);
+    }
+
+    #[test]
+    fn prop_fp2_difference_of_3_products_matches_naive(
+        a in arb_fp2(), b in arb_fp2(),
+        c in arb_fp2(), d in arb_fp2(),
+        e in arb_fp2(), f in arb_fp2(),
+    ) {
+        let fused = Fp2::difference_of_3_products(&a, &b, &c, &d, &e, &f);
+        let naive = &(&(&a * &b) + &(&c * &d)) - &(&e * &f);
+        prop_assert_eq!(fused, naive);
+    }
 }
