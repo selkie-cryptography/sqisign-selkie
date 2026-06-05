@@ -242,11 +242,19 @@ impl ProjectiveXOnlyPoint {
 
         // B_XZ = (X_P · X_Q + Z_P · Z_Q)(X_P · Z_Q + Z_P · X_Q)
         //        + 2A · X_P · X_Q · Z_P · Z_Q
+        //
+        // Fused at the outer Fp² sum: one Mont reduction per coefficient
+        // for the two products (sum * sum) and (2A * xpxq·zpzq), vs two
+        // Fp² muls + an add.
         let xpxq = X_P * X_Q;
         let zpzq = Z_P * Z_Q;
         let xpzq = X_P * Z_Q;
         let zpxq = Z_P * X_Q;
-        let B_XZ = &(&(&xpxq + &zpzq) * &(&xpzq + &zpxq)) + &(&(A + A) * &(&xpxq * &zpzq));
+        let xpxq_zpzq = &xpxq * &zpzq;
+        let two_a = A + A;
+        let sum_pos = &xpxq + &zpzq;
+        let sum_cross = &xpzq + &zpxq;
+        let B_XZ = Fp2::sum_of_2_products(&sum_pos, &sum_cross, &two_a, &xpxq_zpzq);
 
         // B_ZZ = (X_P · Z_Q − Z_P · X_Q)²
         let B_ZZ = (&xpzq - &zpxq).square();

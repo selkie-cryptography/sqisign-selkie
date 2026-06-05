@@ -869,6 +869,78 @@ impl Fp64 {
         Self::sum_of_products_packed(&m, &s)
     }
 
+    /// Returns `a1·b1 + a2·b2 + a3·b3 + a4·b4 mod p`.
+    ///
+    /// The t=4 sibling of [`Fp64::sum_of_2_products`], used by
+    /// `Fp2::sum_of_2_products` for an `a·b + c·d` Fp² expression.
+    ///
+    /// # Divergences
+    ///
+    /// The [`Fp51`] backend fuses all four products into one
+    /// Montgomery reduction.  The MULX+ADX kernel
+    /// ([`Fp64::sum_of_products_packed`]) is hand-written for exactly
+    /// two products, so here we compose two `sum_of_2_products` calls
+    /// and one lazy add: two reductions instead of one.  Both summands
+    /// land in `[0, 2p)`, and the lazy [`Add`] keeps the sum in
+    /// `[0, 2p)`, so the result matches the fused backend mod p.
+    /// A native t=4 kernel is a follow-up asm optimization, not a
+    /// correctness gap.
+    ///
+    /// [`Fp51`]: super::super::generic::Fp51
+    #[must_use]
+    pub fn sum_of_4_products(pairs: [(&Self, &Self); 4]) -> Self {
+        let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
+        let lo = Self::sum_of_2_products(a1, b1, a2, b2);
+        let hi = Self::sum_of_2_products(a3, b3, a4, b4);
+        &lo + &hi
+    }
+
+    /// Returns `pairs[0]·pairs[1] + pairs[2] - pairs[3]` (each ·) mod p.
+    ///
+    /// Negates the last pair's `b` and defers to
+    /// [`Fp64::sum_of_4_products`].
+    #[must_use]
+    pub fn difference_of_4_products(pairs: [(&Self, &Self); 4]) -> Self {
+        let [(a1, b1), (a2, b2), (a3, b3), (a4, b4)] = pairs;
+        let neg_b4 = -b4;
+        Self::sum_of_4_products([(a1, b1), (a2, b2), (a3, b3), (a4, &neg_b4)])
+    }
+
+    /// Returns the sum of six base-field products mod p.
+    ///
+    /// The t=6 sibling of [`Fp64::sum_of_2_products`], used by
+    /// `Fp2::sum_of_3_products` for an `a·b + c·d + e·f` Fp²
+    /// expression.
+    ///
+    /// # Divergences
+    ///
+    /// As with [`Fp64::sum_of_4_products`], this composes three
+    /// two-product kernels and two lazy adds (three reductions vs the
+    /// one of the fused [`Fp51`] path) because the MULX+ADX kernel is
+    /// hand-written for two products.  Each summand is in `[0, 2p)` and
+    /// the lazy adds keep the running sum in `[0, 2p)`.
+    ///
+    /// [`Fp51`]: super::super::generic::Fp51
+    #[must_use]
+    pub fn sum_of_6_products(pairs: [(&Self, &Self); 6]) -> Self {
+        let [(a1, b1), (a2, b2), (a3, b3), (a4, b4), (a5, b5), (a6, b6)] = pairs;
+        let p01 = Self::sum_of_2_products(a1, b1, a2, b2);
+        let p23 = Self::sum_of_2_products(a3, b3, a4, b4);
+        let p45 = Self::sum_of_2_products(a5, b5, a6, b6);
+        &(&p01 + &p23) + &p45
+    }
+
+    /// Returns the t=6 sum-of-products with the last pair subtracted.
+    ///
+    /// Negates the last pair's `b` and defers to
+    /// [`Fp64::sum_of_6_products`].
+    #[must_use]
+    pub fn difference_of_6_products(pairs: [(&Self, &Self); 6]) -> Self {
+        let [p1, p2, p3, p4, p5, (a6, b6)] = pairs;
+        let neg_b6 = -b6;
+        Self::sum_of_6_products([p1, p2, p3, p4, p5, (a6, &neg_b6)])
+    }
+
     /// Constructs a field element from a small integer.
     ///
     /// Inserts `x` at limb 0 of the canonical form, then enters
