@@ -81,12 +81,16 @@ impl ProjectiveXOnlyPoint {
     /// [§8.2]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.2
     #[must_use]
     pub fn double(&self) -> ProjectiveXOnlyPoint {
+        // C24 is normalised to Fp2::ONE by every `Curve` constructor
+        // (DoublingConstants::from(ProjectiveCoefficient) at
+        // montgomery/mod.rs).  Skip the `t1 * C24` mul (= t1 * 1).
+        // Mirrors C ref's `xDBL_A24` short-circuit at ec.c when
+        // `A24_normalized` is set.
         let t0 = (&self.X + &self.Z).square();
         let t1 = (&self.X - &self.Z).square();
         let t2 = &t0 - &t1;
-        let t1_c24 = &t1 * &self.curve.doubling.C24;
-        let X2 = &t0 * &t1_c24;
-        let Z2 = &t2 * &(&(&t2 * &self.curve.doubling.A24) + &t1_c24);
+        let X2 = &t0 * &t1;
+        let Z2 = &t2 * &(&(&t2 * &self.curve.doubling.A24) + &t1);
         ProjectiveXOnlyPoint {
             X: X2,
             Z: Z2,
@@ -354,13 +358,14 @@ impl ProjectiveXOnlyPoint {
         let sum_P  = &self.X + &self.Z;
         let diff_P = &self.X - &self.Z;
 
-        // xDBL
-        let t0     = sum_P.square();
-        let t1     = diff_P.square();
-        let t2     = &t0 - &t1;
-        let t1_c24 = &t1 * &self.curve.doubling.C24;
-        let dbl_X  = &t0 * &t1_c24;
-        let dbl_Z  = &t2 * &(&(&t2 * &self.curve.doubling.A24) + &t1_c24);
+        // xDBL.  C24 is normalised to Fp2::ONE by every `Curve`
+        // constructor — skip the `t1 * C24` mul.  Same fix as
+        // `ProjectiveXOnlyPoint::double`.
+        let t0 = sum_P.square();
+        let t1 = diff_P.square();
+        let t2 = &t0 - &t1;
+        let dbl_X = &t0 * &t1;
+        let dbl_Z = &t2 * &(&(&t2 * &self.curve.doubling.A24) + &t1);
 
         // xADD
         let u     = &sum_P * &(&other.X - &other.Z);
