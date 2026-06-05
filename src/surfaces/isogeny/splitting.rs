@@ -425,10 +425,10 @@ impl JacobianPoint {
         // Algorithm 8.45:
         // X₁ = a·z + c·x,  Z₁ = a·z − c·x
         // X₂ = a·y + b·x,  Z₂ = a·y − b·x
-        let X1 = &(a * z) + &(c * x);
-        let Z1 = &(a * z) - &(c * x);
-        let X2 = &(a * y) + &(b * x);
-        let Z2 = &(a * y) - &(b * x);
+        let X1 = Fp2::sum_of_2_products(a, z, c, x);
+        let Z1 = Fp2::difference_of_2_products(a, z, c, x);
+        let X2 = Fp2::sum_of_2_products(a, y, b, x);
+        let Z2 = Fp2::difference_of_2_products(a, y, b, x);
 
         (
             ProjectiveXOnlyPoint::from_XZ(X1, Z1, &product.E1),

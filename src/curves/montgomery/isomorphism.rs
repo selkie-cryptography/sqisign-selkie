@@ -42,7 +42,7 @@ impl Isomorphism {
     #[must_use]
     pub fn eval(&self, p: &ProjectiveXOnlyPoint) -> ProjectiveXOnlyPoint {
         // X' = λ_x·(3CC'·X + AC'·Z) − λ_z·A'C·Z
-        let term = &(&self.three_cc_prime * &p.X) + &(&self.ac_prime * &p.Z);
+        let term = Fp2::sum_of_2_products(&self.three_cc_prime, &p.X, &self.ac_prime, &p.Z);
         let new_x = &(&self.lambda_x * &term) - &(&self.lambda_z * &(&self.a_prime_c * &p.Z));
         // Z' = 3·λ_z·CC'·Z
         let new_z = &self.lambda_z * &(&self.three_cc_prime * &p.Z);
