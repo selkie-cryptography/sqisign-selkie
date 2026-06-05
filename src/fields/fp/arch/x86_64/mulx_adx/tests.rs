@@ -185,3 +185,109 @@ proptest! {
         prop_assert_eq!(-(-&a), a);
     }
 }
+
+#[test]
+fn mul_one_one_is_one() {
+    let one = canon(Fp51::ONE);
+    assert_eq!(one * one, one);
+}
+
+#[test]
+fn mul_one_two_is_two() {
+    let one = canon(Fp51::ONE);
+    let two = canon(Fp51::TWO);
+    assert_eq!(one * two, two);
+    assert_eq!(two * one, two);
+}
+
+#[test]
+fn mul_two_two_is_four() {
+    let two = canon(Fp51::TWO);
+    let four = canon(Fp51::FOUR);
+    assert_eq!(two * two, four);
+}
+
+#[test]
+fn mul_zero_is_zero() {
+    let one = canon(Fp51::ONE);
+    let two = canon(Fp51::TWO);
+    assert_eq!(Fp64::ZERO * one, Fp64::ZERO);
+    assert_eq!(two * Fp64::ZERO, Fp64::ZERO);
+}
+
+#[test]
+fn mul_one_minus_one_is_minus_one() {
+    let one = canon(Fp51::ONE);
+    let minus_one = canon(Fp51::MINUS_ONE);
+    assert_eq!(one * minus_one, minus_one);
+}
+
+#[test]
+fn mul_minus_one_minus_one_is_one() {
+    let one = canon(Fp51::ONE);
+    let minus_one = canon(Fp51::MINUS_ONE);
+    assert_eq!(minus_one * minus_one, one);
+}
+
+proptest! {
+    /// `a * 1 == a`.
+    #[test]
+    fn mul_identity(a in arb_fp64()) {
+        let one = canon(Fp51::ONE);
+        prop_assert_eq!(&a * &one, a);
+    }
+
+    /// `a * 0 == 0`.
+    #[test]
+    fn mul_zero(a in arb_fp64()) {
+        prop_assert_eq!(&a * &Fp64::ZERO, Fp64::ZERO);
+    }
+
+    /// `a * b == b * a`.
+    #[test]
+    fn mul_commutes(a in arb_fp64(), b in arb_fp64()) {
+        prop_assert_eq!(&a * &b, &b * &a);
+    }
+
+    /// `(a * b) * c == a * (b * c)`.
+    #[test]
+    fn mul_associates(a in arb_fp64(), b in arb_fp64(), c in arb_fp64()) {
+        let lhs = &(&a * &b) * &c;
+        let rhs = &a * &(&b * &c);
+        prop_assert_eq!(lhs, rhs);
+    }
+
+    /// `a * (b + c) == a * b + a * c`.
+    #[test]
+    fn mul_distributes_over_add(a in arb_fp64(), b in arb_fp64(), c in arb_fp64()) {
+        let lhs = &a * &(&b + &c);
+        let rhs = &(&a * &b) + &(&a * &c);
+        prop_assert_eq!(lhs, rhs);
+    }
+
+    /// `a * (-b) == -(a * b)`.
+    #[test]
+    fn mul_neg(a in arb_fp64(), b in arb_fp64()) {
+        let lhs = &a * &(-&b);
+        let rhs = -(&a * &b);
+        prop_assert_eq!(lhs, rhs);
+    }
+
+    /// Bridging commutes with mul:
+    /// `Fp64(a51) * Fp64(b51) == Fp64(a51 * b51)`.
+    #[test]
+    fn mul_matches_fp51(bytes_a in any::<[u8; 32]>(), bytes_b in any::<[u8; 32]>()) {
+        let a51 = Fp51::from_bytes(&bytes_a);
+        let b51 = Fp51::from_bytes(&bytes_b);
+
+        let a64 = Fp64::from_limbs(a51.0);
+        let b64 = Fp64::from_limbs(b51.0);
+
+        let prod51 = &a51 * &b51;
+        let prod64_via_bridge = Fp64::from_limbs(prod51.0);
+
+        let prod64_direct = a64 * b64;
+
+        prop_assert_eq!(prod64_direct, prod64_via_bridge);
+    }
+}
