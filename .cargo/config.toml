@@ -32,11 +32,19 @@
 # sign from the DRBG), drops the soft-AES code path, and is the
 # baseline for future `aes_backend="avx256"` batched VAES.
 # PCLMULQDQ is free if unused.
+#
+# `target-feature=+adx` — ADCX/ADOX dual-carry-chain instructions.
+# Not in v{1..4} (available on every CPU newer than Broadwell 2014
+# but requires explicit opt-in).  Activates the asm! body in
+# `src/quaternions/bigint/arch/x86_64.rs` (`mag_mul_4_adx`), which
+# interleaves CF and OF carry chains for the schoolbook product —
+# rustc's portable lowering only emits a single CF chain via ADC.
+# All Fly CI runners are Broadwell+ Intel / Zen+ AMD.
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
     "-C", "link-arg=-fuse-ld=mold",
     "-C", "target-cpu=x86-64-v3",
-    "-C", "target-feature=+aes,+pclmulqdq",
+    "-C", "target-feature=+aes,+pclmulqdq,+adx",
 ]
 
 [target.aarch64-unknown-linux-gnu]
