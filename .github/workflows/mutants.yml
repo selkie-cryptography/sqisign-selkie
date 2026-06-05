@@ -83,7 +83,7 @@ jobs:
     outputs:
       has_rust: ${{ steps.filter.outputs.rust }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -171,7 +171,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SCCACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -322,7 +322,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SCCACHE_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
         with:
           persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -388,7 +388,7 @@ jobs:
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
         with:
           persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
