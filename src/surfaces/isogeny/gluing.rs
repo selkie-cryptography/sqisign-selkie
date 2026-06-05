@@ -200,10 +200,20 @@ impl GluingKernel {
         // uses cross-component products: u₁·w₂ (not u₁·w₁) and
         // v₁·w₂ (not v₁·w₁). Component 1 = (u₁,v₁,w₁) from curve 1,
         // component 2 = (u₂,v₂,w₂) from curve 2.
-        let U = (&(&u1 * &u2) + &(&v1 * &v2), &u1 * &w2, &w1 * &u2, &w1 * &w2);
+        let U = (
+            Fp2::sum_of_2_products(&u1, &u2, &v1, &v2),
+            &u1 * &w2,
+            &w1 * &u2,
+            &w1 * &w2,
+        );
 
         // 7. V ← (v₁·u₂ + u₁·v₂, v₁·w₂, w₁·v₂, 0)
-        let V = (&(&v1 * &u2) + &(&u1 * &v2), &v1 * &w2, &w1 * &v2, Fp2::ZERO);
+        let V = (
+            Fp2::sum_of_2_products(&v1, &u2, &u1, &v2),
+            &v1 * &w2,
+            &w1 * &v2,
+            Fp2::ZERO,
+        );
 
         // 8–9. U ← N · U,  V ← N · V
         let U = &data.N * &U;
@@ -387,50 +397,36 @@ fn theta_change_of_basis(
     let H = translation_finish(&d_H, &invs[4], &invs[5]);
     let Hp = translation_finish(&d_Hp, &invs[6], &invs[7]);
 
-    // Lines 4–7: intermediate products.
-    let t1 = &G[0][0] * &H[0][0] + &G[0][1] * &H[1][0];
-    let t2 = &G[1][0] * &H[0][0] + &G[1][1] * &H[1][0];
-    let t3 = &Gp[0][0] * &Hp[0][0] + &Gp[0][1] * &Hp[1][0];
-    let t4 = &Gp[1][0] * &Hp[0][0] + &Gp[1][1] * &Hp[1][0];
+    // Lines 4–7: intermediate products, each a fused t=4 Fp²
+    // sum-of-products (2 Mont reductions instead of 4 per row).
+    let t1 = Fp2::sum_of_2_products(&G[0][0], &H[0][0], &G[0][1], &H[1][0]);
+    let t2 = Fp2::sum_of_2_products(&G[1][0], &H[0][0], &G[1][1], &H[1][0]);
+    let t3 = Fp2::sum_of_2_products(&Gp[0][0], &Hp[0][0], &Gp[0][1], &Hp[1][0]);
+    let t4 = Fp2::sum_of_2_products(&Gp[1][0], &Hp[0][0], &Gp[1][1], &Hp[1][0]);
 
-    // Lines 8–23: build the 4×4 matrix N.
-    let one = Fp2::ONE;
+    // Lines 8–23: build the 4×4 matrix N.  Row 0 is four t=3 fused
+    // sums of Fp² products (`gg + hh + tt`); N00 adds the constant 1.
+    let N00 =
+        &Fp2::sum_of_3_products(&G[0][0], &Gp[0][0], &H[0][0], &Hp[0][0], &t1, &t3) + &Fp2::ONE;
+    let N01 = Fp2::sum_of_3_products(&G[0][0], &Gp[1][0], &H[0][0], &Hp[1][0], &t1, &t4);
+    let N02 = Fp2::sum_of_3_products(&G[1][0], &Gp[0][0], &H[1][0], &Hp[0][0], &t2, &t3);
+    let N03 = Fp2::sum_of_3_products(&G[1][0], &Gp[1][0], &H[1][0], &Hp[1][0], &t2, &t4);
 
-    let gg00 = &G[0][0] * &Gp[0][0];
-    let hh00 = &H[0][0] * &Hp[0][0];
-    let t1t3 = &t1 * &t3;
-    let N00 = &(&(&gg00 + &hh00) + &t1t3) + &one;
+    // Rows 1–3 reference N₀,ⱼ from row 0.  Each entry is a fused t=4.
+    let N10 = Fp2::sum_of_2_products(&Hp[0][0], &N00, &Hp[0][1], &N01);
+    let N11 = Fp2::sum_of_2_products(&Hp[1][0], &N00, &Hp[1][1], &N01);
+    let N12 = Fp2::sum_of_2_products(&Hp[0][0], &N02, &Hp[0][1], &N03);
+    let N13 = Fp2::sum_of_2_products(&Hp[1][0], &N02, &Hp[1][1], &N03);
 
-    let gg01 = &G[0][0] * &Gp[1][0];
-    let hh01 = &H[0][0] * &Hp[1][0];
-    let t1t4 = &t1 * &t4;
-    let N01 = &(&gg01 + &hh01) + &t1t4;
+    let N20 = Fp2::sum_of_2_products(&G[0][0], &N00, &G[0][1], &N02);
+    let N21 = Fp2::sum_of_2_products(&G[0][0], &N01, &G[0][1], &N03);
+    let N22 = Fp2::sum_of_2_products(&G[1][0], &N00, &G[1][1], &N02);
+    let N23 = Fp2::sum_of_2_products(&G[1][0], &N01, &G[1][1], &N03);
 
-    let gg10 = &G[1][0] * &Gp[0][0];
-    let hh10 = &H[1][0] * &Hp[0][0];
-    let t2t3 = &t2 * &t3;
-    let N02 = &(&gg10 + &hh10) + &t2t3;
-
-    let gg11 = &G[1][0] * &Gp[1][0];
-    let hh11 = &H[1][0] * &Hp[1][0];
-    let t2t4 = &t2 * &t4;
-    let N03 = &(&gg11 + &hh11) + &t2t4;
-
-    // Rows 1–3 reference N₀,ⱼ from row 0.
-    let N10 = &(&Hp[0][0] * &N00) + &(&Hp[0][1] * &N01);
-    let N11 = &(&Hp[1][0] * &N00) + &(&Hp[1][1] * &N01);
-    let N12 = &(&Hp[0][0] * &N02) + &(&Hp[0][1] * &N03);
-    let N13 = &(&Hp[1][0] * &N02) + &(&Hp[1][1] * &N03);
-
-    let N20 = &(&G[0][0] * &N00) + &(&G[0][1] * &N02);
-    let N21 = &(&G[0][0] * &N01) + &(&G[0][1] * &N03);
-    let N22 = &(&G[1][0] * &N00) + &(&G[1][1] * &N02);
-    let N23 = &(&G[1][0] * &N01) + &(&G[1][1] * &N03);
-
-    let N30 = &(&G[0][0] * &N10) + &(&G[0][1] * &N12);
-    let N31 = &(&G[0][0] * &N11) + &(&G[0][1] * &N13);
-    let N32 = &(&G[1][0] * &N10) + &(&G[1][1] * &N12);
-    let N33 = &(&G[1][0] * &N11) + &(&G[1][1] * &N13);
+    let N30 = Fp2::sum_of_2_products(&G[0][0], &N10, &G[0][1], &N12);
+    let N31 = Fp2::sum_of_2_products(&G[0][0], &N11, &G[0][1], &N13);
+    let N32 = Fp2::sum_of_2_products(&G[1][0], &N10, &G[1][1], &N12);
+    let N33 = Fp2::sum_of_2_products(&G[1][0], &N11, &G[1][1], &N13);
 
     GluingMatrix([
         [N00, N01, N02, N03],
