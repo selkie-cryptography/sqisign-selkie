@@ -4,19 +4,20 @@
 //! target CPU architecture and instruction subset.  The active backend
 //! is selected by `cfg(sqisign_selkie_arch)`, emitted by `build.rs`:
 //!
-//! - `generic` — radix-51 Montgomery `[u64; 5]` scalar `Fp`.  Always compiles;
-//!   the fallback for any target without a specialised cfg arm set.  Hot leaves
-//!   (`mul`, `square`, `sum_of_2_products`, `difference_of_2_products`)
-//!   dispatch to `x86_64::mulx_adx` when `target_feature = "bmi2"` and
-//!   `target_feature = "adx"` are both set.
-//! - `aarch64::neon` — radix-29 `Fp` backed by `Fp29` / `Fp29x4` NEON
-//!   primitives.  Activated by `cfg(sqisign_selkie_arch = "neon")`.
-//! - `x86_64::avx2` — radix-26 `Fp` backed by AVX2 lane-packed primitives via
-//!   `_mm256_mul_epu32`.  Activated by `cfg(sqisign_selkie_arch = "avx2")`.
-//! - `x86_64::mulx_adx` — MULX + dual ADCX/ADOX asm leaves for the radix-51
-//!   storage in `generic`; called from `generic`'s hot leaves under
-//!   `cfg(all(target_feature = "bmi2", target_feature = "adx"))`.  Not a
-//!   standalone backend.
+//! - `generic` -- radix-2^51 Montgomery `[u64; 5]` scalar `Fp51`.  Always
+//!   compiles; the fallback for any target without a specialised cfg arm set.
+//!   Source of truth for `pub const FOO: Fp = Fp::from_limbs([...])`
+//!   precomputed tables; every other backend's `from_limbs([u64; 5])`
+//!   const-bridge accepts `Fp51`'s radix-51 limbs and const-converts.
+//! - `x86_64::mulx_adx` -- radix-2^64 packed `Fp64([u64; 4])`.  Standalone
+//!   scalar `Fp` backend with MULX + dual-chain ADCX/ADOX asm leaves.  Active
+//!   on x86_64 builds with `target_feature = "bmi2"` + `target_feature = "adx"`
+//!   (Broadwell 2014+).  Matches the C ref's `gf/broadwell/lvl1/gf5248.c`
+//!   storage.
+//! - `aarch64::neon` -- radix-2^29 `Fp29` (scalar) + `Fp29x4` (4-wide SoA NEON
+//!   batch).  Activated by `cfg(sqisign_selkie_arch = "neon")`.
+//! - `x86_64::avx2` -- radix-2^26 `Fp26` (scalar) + `Fp26x4` (4-wide SoA AVX2
+//!   batch).  Activated by `cfg(sqisign_selkie_arch = "avx2")`.
 //!
 //! # No AVX-512 / IFMA52 path
 //!
