@@ -27,6 +27,8 @@
 
 use core::fmt;
 
+use subtle::{Choice, ConditionallySelectable};
+
 #[cfg(test)]
 mod tests;
 
@@ -189,5 +191,18 @@ impl Fp64 {
 impl fmt::Debug for Fp64 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Fp64({:?})", &self.0[..])
+    }
+}
+
+impl ConditionallySelectable for Fp64 {
+    /// Constant-time select between `a` and `b` per `choice`.
+    /// Limb-wise via `subtle::u64::conditional_select`.
+    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+        Self([
+            u64::conditional_select(&a.0[0], &b.0[0], choice),
+            u64::conditional_select(&a.0[1], &b.0[1], choice),
+            u64::conditional_select(&a.0[2], &b.0[2], choice),
+            u64::conditional_select(&a.0[3], &b.0[3], choice),
+        ])
     }
 }
