@@ -303,8 +303,8 @@ impl CubicalPoint {
         let b = &self.X - &self.Z;
         let c = &other.X + &other.Z;
         let d = &other.X - &other.Z;
-        let x2 = (&a * &d + &b * &c).square();
-        let z2 = (&a * &d - &b * &c).square();
+        let x2 = Fp2::sum_of_2_products(&a, &d, &b, &c).square();
+        let z2 = Fp2::difference_of_2_products(&a, &d, &b, &c).square();
         // Spec line 7: X_2 ← X_2 / x(P-Q).  See the doc comment above
         // for why we cannot move the factor onto Z_2 instead.
         let x2 = &x2 * x_diff_inv;
@@ -313,8 +313,8 @@ impl CubicalPoint {
 
     /// Cubical translation by a 2-torsion point ([§8.3.2], Algorithm 8.16).
     fn translate(&self, t: &Self) -> Self {
-        let x = &(&t.X * &self.X) - &(&t.Z * &self.Z);
-        let z = &(&t.Z * &self.X) - &(&t.X * &self.Z);
+        let x = Fp2::difference_of_2_products(&t.X, &self.X, &t.Z, &self.Z);
+        let z = Fp2::difference_of_2_products(&t.Z, &self.X, &t.X, &self.Z);
 
         // The 2-torsion edge case negates a coordinate. Select it in
         // constant time rather than branching on the secret coordinate,
@@ -323,7 +323,6 @@ impl CubicalPoint {
         let neg_z = -&z;
         let z = Fp2::conditional_select(&z, &neg_z, t.Z.ct_eq(&Fp2::ZERO));
         let x = Fp2::conditional_select(&x, &neg_x, t.X.ct_eq(&Fp2::ZERO));
-
         Self { X: x, Z: z }
     }
 
