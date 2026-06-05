@@ -1,10 +1,13 @@
-//! Portable scalar `Fp` backend — radix-51 Montgomery on `[u64; 5]`.
+//! `Fp51` backend — radix-51 Montgomery on `[u64; 5]`.
 //!
-//! The cross-architecture baseline; selected whenever the dispatcher
-//! has no `sqisign_selkie_arch = "neon" | "avx2"` cfg active.  Each
-//! limb holds 51 bits in unsaturated form, exploiting `p = 5 · 2^248 − 1`'s
+//! Cross-architecture baseline that compiles on any target.  Each limb
+//! holds 51 bits in unsaturated form, exploiting `p = 5 · 2^248 − 1`'s
 //! Montgomery-friendly structure with `P4 = 5 · 2^44` as the per-column
 //! fold multiplier.
+//!
+//! Tables in `params.rs` and `deuring/precomputed.rs` use this
+//! backend's limb shape as the source of truth; every other backend's
+//! `from_limbs` const-converts from `[u64; 5]` radix-51 limbs.
 
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -28,22 +31,22 @@ const P4: u64 = 5u64 << 44;
 /// representation with 5 limbs. Limbs are allowed to be slightly
 /// unreduced between operations.
 #[derive(Copy, Clone)]
-pub struct Fp(pub(crate) [u64; 5]);
+pub struct Fp51(pub(crate) [u64; 5]);
 
-impl Fp {
+impl Fp51 {
     /// Constructs from raw radix-51 limbs (already in Montgomery form).
     ///
     /// This is a const constructor for embedding precomputed constants.
     /// The caller is responsible for ensuring the limbs represent a
     /// valid Montgomery-form field element.
-    pub const fn from_limbs(limbs: [u64; 5]) -> Fp {
-        Fp(limbs)
+    pub const fn from_limbs(limbs: [u64; 5]) -> Fp51 {
+        Fp51(limbs)
     }
 }
 
-impl core::fmt::Debug for Fp {
+impl core::fmt::Debug for Fp51 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Fp({:?})", &self.0[..])
+        write!(f, "Fp51({:?})", &self.0[..])
     }
 }
 
@@ -51,7 +54,7 @@ impl core::fmt::Debug for Fp {
 /// R = 2^(5·51) = 2^255.
 ///
 /// Taken from the C reference `nres()` function.
-const R2: Fp = Fp([
+const R2: Fp51 = Fp51([
     0x0004CCCCCCCCCF5C,
     0x0001999999999999,
     0x0003333333333333,
@@ -59,12 +62,12 @@ const R2: Fp = Fp([
     0x00000CCCCCCCCCCC,
 ]);
 
-impl Fp {
+impl Fp51 {
     /// The additive identity (zero) in Montgomery form.
-    pub const ZERO: Fp = Fp([0, 0, 0, 0, 0]);
+    pub const ZERO: Fp51 = Fp51([0, 0, 0, 0, 0]);
 
     /// The multiplicative identity (one) in Montgomery form.
-    pub const ONE: Fp = Fp([
+    pub const ONE: Fp51 = Fp51([
         0x0000000000000019,
         0x0000000000000000,
         0x0000000000000000,
@@ -73,7 +76,7 @@ impl Fp {
     ]);
 
     /// The constant 2 in Montgomery form.
-    pub const TWO: Fp = Fp([
+    pub const TWO: Fp51 = Fp51([
         0x0000000000000032,
         0x0000000000000000,
         0x0000000000000000,
@@ -82,7 +85,7 @@ impl Fp {
     ]);
 
     /// The constant 4 in Montgomery form.
-    pub const FOUR: Fp = Fp([
+    pub const FOUR: Fp51 = Fp51([
         0x0000000000000064,
         0x0000000000000000,
         0x0000000000000000,
@@ -95,7 +98,7 @@ impl Fp {
     /// Used by the `NORMALIZATION_TRANSFORMS` precomputed matrices in
     /// the (2,2)-isogeny splitter (`src/surfaces/isogeny.rs`), where
     /// a `const` definition is required.
-    pub const MINUS_ONE: Fp = Fp([
+    pub const MINUS_ONE: Fp51 = Fp51([
         0x0007FFFFFFFFFFE5,
         0x0007FFFFFFFFFFFF,
         0x0007FFFFFFFFFFFF,
@@ -104,20 +107,20 @@ impl Fp {
     ]);
 
     /// Constructs a field element from a small integer.
-    pub fn from_small(x: u32) -> Fp {
-        let mut a = Fp::ZERO;
+    pub fn from_small(x: u32) -> Fp51 {
+        let mut a = Fp51::ZERO;
         a.0[0] = x as u64;
         a.to_montgomery()
     }
 
     /// Converts a field element in normal form to Montgomery form.
-    fn to_montgomery(self) -> Fp {
+    fn to_montgomery(self) -> Fp51 {
         &self * &R2
     }
 
     /// Converts from Montgomery form back to normal (canonical) form.
-    fn reduce_montgomery(self) -> Fp {
-        let one = Fp([1, 0, 0, 0, 0]);
+    fn reduce_montgomery(self) -> Fp51 {
+        let one = Fp51([1, 0, 0, 0, 0]);
         let mut r = &self * &one;
         r.final_sub();
         r
@@ -154,7 +157,7 @@ impl Fp {
     ///
     /// Returns the element in Montgomery form. The input must be a
     /// canonical encoding (i.e., the value must be less than p).
-    pub fn from_bytes(bytes: &[u8; FP_ENCODED_BYTES]) -> Fp {
+    pub fn from_bytes(bytes: &[u8; FP_ENCODED_BYTES]) -> Fp51 {
         // Unpack 32 bytes into 5 radix-51 limbs.
         let mut limbs = [0u64; 5];
         let mut acc: u128 = 0;
@@ -172,7 +175,7 @@ impl Fp {
         }
         limbs[limb_idx] = acc as u64;
 
-        let mut r = Fp(limbs);
+        let mut r = Fp51(limbs);
         // Canonicalize: subtract p, add back if underflow.
         r.final_sub();
         // Convert to Montgomery form.
@@ -182,7 +185,7 @@ impl Fp {
 
     /// Squares this field element.
     #[must_use]
-    pub fn square(&self) -> Fp {
+    pub fn square(&self) -> Fp51 {
         let a = &self.0;
 
         let tot = (a[0] as u128) * (a[0] as u128);
@@ -238,12 +241,12 @@ impl Fp {
         let c3 = (t as u64) & MASK;
         t >>= RADIX;
 
-        Fp([c0, c1, c2, c3, t as u64])
+        Fp51([c0, c1, c2, c3, t as u64])
     }
 
     /// Squares this element `n` times.
     #[must_use]
-    pub fn pow2k(&self, n: u32) -> Fp {
+    pub fn pow2k(&self, n: u32) -> Fp51 {
         let mut r = *self;
         for _ in 0..n {
             r = r.square();
@@ -256,7 +259,7 @@ impl Fp {
     /// This is used to derive inversions, square roots, and Legendre symbols.
     /// The addition chain is taken from the C reference implementation.
     #[must_use]
-    pub(crate) fn pow_p3div4(&self) -> Fp {
+    pub(crate) fn pow_p3div4(&self) -> Fp51 {
         let x = *self;
         let z = x.square(); // x^2
         let t0 = &x * &z; // x^3
@@ -294,7 +297,7 @@ impl Fp {
 
     /// Computes the multiplicative inverse: self^(p-2).
     #[must_use]
-    pub fn invert(&self) -> Fp {
+    pub fn invert(&self) -> Fp51 {
         let t = self.pow_p3div4();
         let t = t.pow2k(2);
         self * &t
@@ -305,14 +308,14 @@ impl Fp {
         let r = self.pow_p3div4();
         let r = r.square();
         let r = &r * self;
-        r.ct_eq(&Fp::ONE) | self.ct_eq(&Fp::ZERO)
+        r.ct_eq(&Fp51::ONE) | self.ct_eq(&Fp51::ZERO)
     }
 
     /// Computes the square root (when self is a QR).
     ///
     /// The result is only meaningful when `self.is_square()` is true.
     #[must_use]
-    pub fn sqrt(&self) -> Fp {
+    pub fn sqrt(&self) -> Fp51 {
         let y = self.pow_p3div4();
         &y * self
     }
@@ -349,7 +352,7 @@ impl Fp {
     }
 }
 
-impl Fp {
+impl Fp51 {
     /// Returns `a1·b1 + a2·b2 mod p` with a single Montgomery reduction.
     ///
     /// Implements [Longa's interleaved sum-of-products][longa]
@@ -359,7 +362,7 @@ impl Fp {
     /// fold is folded in once — cheaper than two separate `mul`s, which
     /// would each carry their own reduction.  Mirrors C ref's
     /// `fp2_mul_c0` / `fp2_mul_c1` (`src/gf/broadwell/lvl1/fp_asm.S`),
-    /// which compute one Fp² coefficient each as a single fused asm op.
+    /// which compute one Fp51² coefficient each as a single fused asm op.
     ///
     /// # Implementation
     ///
@@ -372,7 +375,7 @@ impl Fp {
     /// [spec]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.1
     #[must_use]
     #[rustfmt::skip]
-    pub fn sum_of_2_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
+    pub fn sum_of_2_products(a1: &Fp51, b1: &Fp51, a2: &Fp51, b2: &Fp51) -> Fp51 {
         debug_assert!(a1.0.iter().all(|&x| x <= MASK), "a1 limb exceeds MASK");
         debug_assert!(b1.0.iter().all(|&x| x <= MASK), "b1 limb exceeds MASK");
         debug_assert!(a2.0.iter().all(|&x| x <= MASK), "a2 limb exceeds MASK");
@@ -472,27 +475,27 @@ impl Fp {
         let c3 = (t as u64) & MASK;
         t >>= RADIX;
 
-        Fp([c0, c1, c2, c3, t as u64])
+        Fp51([c0, c1, c2, c3, t as u64])
     }
 
     /// Returns `a1·b1 − a2·b2 mod p` with a single Montgomery reduction.
     ///
     /// Negates `b2` (one limb-wise pass) and defers to
-    /// [`Fp::sum_of_2_products`].  Used by `Fp²::mul` to compute
+    /// [`Fp51::sum_of_2_products`].  Used by `Fp51²::mul` to compute
     /// `c0 = a0·b0 − a1·b1` per spec Algorithm 8.1.
     #[must_use]
-    pub fn difference_of_2_products(a1: &Fp, b1: &Fp, a2: &Fp, b2: &Fp) -> Fp {
+    pub fn difference_of_2_products(a1: &Fp51, b1: &Fp51, a2: &Fp51, b2: &Fp51) -> Fp51 {
         let neg_b2 = -b2;
-        Fp::sum_of_2_products(a1, b1, a2, &neg_b2)
+        Fp51::sum_of_2_products(a1, b1, a2, &neg_b2)
     }
 }
 
-impl<'b> Add<&'b Fp> for &Fp {
-    type Output = Fp;
+impl<'b> Add<&'b Fp51> for &Fp51 {
+    type Output = Fp51;
 
     /// Modular addition, reduced to less than 2p.
-    fn add(self, rhs: &'b Fp) -> Fp {
-        let mut n = Fp([
+    fn add(self, rhs: &'b Fp51) -> Fp51 {
+        let mut n = Fp51([
             self.0[0] + rhs.0[0],
             self.0[1] + rhs.0[1],
             self.0[2] + rhs.0[2],
@@ -511,12 +514,12 @@ impl<'b> Add<&'b Fp> for &Fp {
     }
 }
 
-impl<'b> Sub<&'b Fp> for &Fp {
-    type Output = Fp;
+impl<'b> Sub<&'b Fp51> for &Fp51 {
+    type Output = Fp51;
 
     /// Modular subtraction, reduced to less than 2p.
-    fn sub(self, rhs: &'b Fp) -> Fp {
-        let mut n = Fp([
+    fn sub(self, rhs: &'b Fp51) -> Fp51 {
+        let mut n = Fp51([
             self.0[0].wrapping_sub(rhs.0[0]),
             self.0[1].wrapping_sub(rhs.0[1]),
             self.0[2].wrapping_sub(rhs.0[2]),
@@ -531,23 +534,23 @@ impl<'b> Sub<&'b Fp> for &Fp {
     }
 }
 
-impl Neg for &Fp {
-    type Output = Fp;
+impl Neg for &Fp51 {
+    type Output = Fp51;
 
-    fn neg(self) -> Fp {
-        &Fp::ZERO - self
+    fn neg(self) -> Fp51 {
+        &Fp51::ZERO - self
     }
 }
 
-impl<'b> Mul<&'b Fp> for &Fp {
-    type Output = Fp;
+impl<'b> Mul<&'b Fp51> for &Fp51 {
+    type Output = Fp51;
 
     /// Modular multiplication (Montgomery form), reduced to less than 2p.
     ///
     /// Uses the schoolbook method with interleaved reduction, exploiting
     /// the special shape p = 5 · 2²⁴⁸ − 1.
     #[rustfmt::skip]
-    fn mul(self, rhs: &'b Fp) -> Fp {
+    fn mul(self, rhs: &'b Fp51) -> Fp51 {
         let (a, b) = (&self.0, &rhs.0);
         let mut t: u128 = 0;
 
@@ -608,85 +611,85 @@ impl<'b> Mul<&'b Fp> for &Fp {
         let c3 = (t as u64) & MASK;
         t >>= RADIX;
 
-        Fp([c0, c1, c2, c3, t as u64])
+        Fp51([c0, c1, c2, c3, t as u64])
     }
 }
 
 // Convenience impls: owned variants delegate to reference impls.
 
-impl Add<Fp> for Fp {
-    type Output = Fp;
-    fn add(self, rhs: Fp) -> Fp {
+impl Add<Fp51> for Fp51 {
+    type Output = Fp51;
+    fn add(self, rhs: Fp51) -> Fp51 {
         &self + &rhs
     }
 }
 
-impl Sub<Fp> for Fp {
-    type Output = Fp;
-    fn sub(self, rhs: Fp) -> Fp {
+impl Sub<Fp51> for Fp51 {
+    type Output = Fp51;
+    fn sub(self, rhs: Fp51) -> Fp51 {
         &self - &rhs
     }
 }
 
-impl Mul<Fp> for Fp {
-    type Output = Fp;
-    fn mul(self, rhs: Fp) -> Fp {
+impl Mul<Fp51> for Fp51 {
+    type Output = Fp51;
+    fn mul(self, rhs: Fp51) -> Fp51 {
         &self * &rhs
     }
 }
 
-impl Neg for Fp {
-    type Output = Fp;
-    fn neg(self) -> Fp {
+impl Neg for Fp51 {
+    type Output = Fp51;
+    fn neg(self) -> Fp51 {
         -&self
     }
 }
 
-impl AddAssign<&Fp> for Fp {
-    fn add_assign(&mut self, rhs: &Fp) {
+impl AddAssign<&Fp51> for Fp51 {
+    fn add_assign(&mut self, rhs: &Fp51) {
         *self = &*self + rhs;
     }
 }
 
-impl SubAssign<&Fp> for Fp {
-    fn sub_assign(&mut self, rhs: &Fp) {
+impl SubAssign<&Fp51> for Fp51 {
+    fn sub_assign(&mut self, rhs: &Fp51) {
         *self = &*self - rhs;
     }
 }
 
-impl MulAssign<&Fp> for Fp {
-    fn mul_assign(&mut self, rhs: &Fp) {
+impl MulAssign<&Fp51> for Fp51 {
+    fn mul_assign(&mut self, rhs: &Fp51) {
         *self = &*self * rhs;
     }
 }
 
-impl AddAssign for Fp {
-    fn add_assign(&mut self, rhs: Fp) {
+impl AddAssign for Fp51 {
+    fn add_assign(&mut self, rhs: Fp51) {
         *self += &rhs;
     }
 }
 
-impl SubAssign for Fp {
-    fn sub_assign(&mut self, rhs: Fp) {
+impl SubAssign for Fp51 {
+    fn sub_assign(&mut self, rhs: Fp51) {
         *self -= &rhs;
     }
 }
 
-impl MulAssign for Fp {
-    fn mul_assign(&mut self, rhs: Fp) {
+impl MulAssign for Fp51 {
+    fn mul_assign(&mut self, rhs: Fp51) {
         *self *= &rhs;
     }
 }
 
-impl ConstantTimeEq for Fp {
-    fn ct_eq(&self, other: &Fp) -> Choice {
+impl ConstantTimeEq for Fp51 {
+    fn ct_eq(&self, other: &Fp51) -> Choice {
         self.to_bytes().ct_eq(&other.to_bytes())
     }
 }
 
-impl ConditionallySelectable for Fp {
-    fn conditional_select(a: &Fp, b: &Fp, choice: Choice) -> Fp {
-        Fp([
+impl ConditionallySelectable for Fp51 {
+    fn conditional_select(a: &Fp51, b: &Fp51, choice: Choice) -> Fp51 {
+        Fp51([
             u64::conditional_select(&a.0[0], &b.0[0], choice),
             u64::conditional_select(&a.0[1], &b.0[1], choice),
             u64::conditional_select(&a.0[2], &b.0[2], choice),
@@ -696,10 +699,10 @@ impl ConditionallySelectable for Fp {
     }
 }
 
-impl Eq for Fp {}
+impl Eq for Fp51 {}
 
-impl PartialEq for Fp {
-    fn eq(&self, other: &Fp) -> bool {
+impl PartialEq for Fp51 {
+    fn eq(&self, other: &Fp51) -> bool {
         self.ct_eq(other).into()
     }
 }

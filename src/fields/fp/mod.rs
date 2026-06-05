@@ -52,16 +52,15 @@ mod tests;
 /// Number of bytes in a canonical encoding of an element of F_p.
 pub const FP_ENCODED_BYTES: usize = 32;
 
-// `Fp` re-export: backend selected at compile time from the cfg
-// `build.rs` emits.  The `"neon"` arm aliases the radix-29 `Fp29`
-// scalar as `Fp`; the `"avx2"` arm aliases the radix-26 `Fp26` scalar.
-// The precomputed-constant tables in `params.rs` and
-// `deuring/precomputed.rs` are signature-compatible across all three
-// backends because each non-portable `Fp::from_limbs` accepts the
-// portable backend's radix-51 Montgomery limbs and const-converts.
+// `Fp` re-export: scalar backend selected at compile time from the
+// cfg `build.rs` emits.  Each non-`Fp51` backend has a `from_limbs`
+// const-bridge that accepts `Fp51`'s radix-51 Montgomery limbs and
+// const-converts at compile time, so precomputed-constant tables in
+// `params.rs` and `deuring/precomputed.rs` are signature-compatible
+// across all backends.
 #[cfg(sqisign_selkie_arch = "neon")]
 pub use arch::aarch64::neon::Fp29 as Fp;
 #[cfg(not(any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2")))]
-pub use arch::generic::Fp;
+pub use arch::generic::Fp51 as Fp;
 #[cfg(sqisign_selkie_arch = "avx2")]
 pub use arch::x86_64::avx2::Fp26 as Fp;
