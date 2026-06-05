@@ -97,39 +97,63 @@ impl<const N: usize> Matrix<N> {
         ])
     }
 
-    /// Determinant of a 4×4 matrix via Laplace expansion.
+    /// Determinant of a 4x4 matrix via Laplace expansion.
     pub fn det(&self) -> BigInt<N> {
         let m = &self.0;
-        // Expand along first row.
+        Self::det4(|r, c| m[r][c])
+    }
+
+    /// Determinant of the 4x4 matrix whose columns are `cols[0..4]`,
+    /// without materializing a `Matrix`.
+    ///
+    /// `Lattice::product` and `alg_elem_mul` need `|det(first 4 cols)|`
+    /// as the modular-HNF bound; going via `Matrix::from_columns(cols)
+    /// .det()` first copies four `Vector<N>` into a fresh `Matrix<N>`
+    /// before reading any entry — for sign-side widths up to N~50
+    /// that's several KB of stack-frame moves per call.  This reads
+    /// from the column vectors in place.  `det(M) = det(M^T)`, so the
+    /// Laplace expansion uses `cols[col][row]` for entry `(row, col)`.
+    pub fn det_of_columns(cols: &[Vector<N>; 4]) -> BigInt<N> {
+        Self::det4(|r, c| cols[c][r])
+    }
+
+    /// 4x4 Laplace expansion of the determinant, parameterised on an
+    /// entry-accessor closure so `det` (row-major matrix) and
+    /// `det_of_columns` (column-vector array) share one formula.
+    #[inline]
+    fn det4<F>(entry: F) -> BigInt<N>
+    where
+        F: Fn(usize, usize) -> BigInt<N>,
+    {
         let minor =
             |r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: usize| -> BigInt<N> {
-                // 3×3 determinant of rows r0,r1,r2 and cols c0,c1,c2.
-                m[r0][c0]
+                // 3x3 determinant of rows r0,r1,r2 and cols c0,c1,c2.
+                entry(r0, c0)
                     .ct_mul(
-                        &m[r1][c1]
-                            .ct_mul(&m[r2][c2])
-                            .ct_sub(&m[r1][c2].ct_mul(&m[r2][c1])),
+                        &entry(r1, c1)
+                            .ct_mul(&entry(r2, c2))
+                            .ct_sub(&entry(r1, c2).ct_mul(&entry(r2, c1))),
                     )
                     .ct_sub(
-                        &m[r0][c1].ct_mul(
-                            &m[r1][c0]
-                                .ct_mul(&m[r2][c2])
-                                .ct_sub(&m[r1][c2].ct_mul(&m[r2][c0])),
+                        &entry(r0, c1).ct_mul(
+                            &entry(r1, c0)
+                                .ct_mul(&entry(r2, c2))
+                                .ct_sub(&entry(r1, c2).ct_mul(&entry(r2, c0))),
                         ),
                     )
                     .ct_add(
-                        &m[r0][c2].ct_mul(
-                            &m[r1][c0]
-                                .ct_mul(&m[r2][c1])
-                                .ct_sub(&m[r1][c1].ct_mul(&m[r2][c0])),
+                        &entry(r0, c2).ct_mul(
+                            &entry(r1, c0)
+                                .ct_mul(&entry(r2, c1))
+                                .ct_sub(&entry(r1, c1).ct_mul(&entry(r2, c0))),
                         ),
                     )
             };
-        m[0][0]
+        entry(0, 0)
             .ct_mul(&minor(1, 2, 3, 1, 2, 3))
-            .ct_sub(&m[0][1].ct_mul(&minor(1, 2, 3, 0, 2, 3)))
-            .ct_add(&m[0][2].ct_mul(&minor(1, 2, 3, 0, 1, 3)))
-            .ct_sub(&m[0][3].ct_mul(&minor(1, 2, 3, 0, 1, 2)))
+            .ct_sub(&entry(0, 1).ct_mul(&minor(1, 2, 3, 0, 2, 3)))
+            .ct_add(&entry(0, 2).ct_mul(&minor(1, 2, 3, 0, 1, 3)))
+            .ct_sub(&entry(0, 3).ct_mul(&minor(1, 2, 3, 0, 1, 2)))
     }
 
     /// Determinant of the 3x3 minor on rows `r` and columns `c`.
