@@ -678,6 +678,23 @@ impl Sub<Fp26> for Fp26 {
     }
 }
 
+impl Fp26 {
+    /// Returns `a1*b1 + a2*b2 mod p`.  Backend-portable baseline;
+    /// the surface exists so `Fp²::mul` under cfg-avx2 resolves the
+    /// same call the portable backend's `Fp::sum_of_2_products`
+    /// resolves.
+    #[must_use]
+    pub fn sum_of_2_products(a1: &Fp26, b1: &Fp26, a2: &Fp26, b2: &Fp26) -> Fp26 {
+        &(a1 * b1) + &(a2 * b2)
+    }
+
+    /// Returns `a1*b1 - a2*b2 mod p`.  Backend-portable baseline.
+    #[must_use]
+    pub fn difference_of_2_products(a1: &Fp26, b1: &Fp26, a2: &Fp26, b2: &Fp26) -> Fp26 {
+        &(a1 * b1) - &(a2 * b2)
+    }
+}
+
 impl<'b> Mul<&'b Fp26> for &Fp26 {
     type Output = Fp26;
 

@@ -1114,6 +1114,23 @@ impl Sub<Fp29> for Fp29 {
     }
 }
 
+impl Fp29 {
+    /// Returns `a1*b1 + a2*b2 mod p`.  Backend-portable baseline
+    /// (two muls + one add); the surface exists so `Fp²::mul` under
+    /// `cfg(sqisign_selkie_arch = "neon")` resolves the same call
+    /// the portable backend's `Fp::sum_of_2_products` resolves.
+    #[must_use]
+    pub fn sum_of_2_products(a1: &Fp29, b1: &Fp29, a2: &Fp29, b2: &Fp29) -> Fp29 {
+        &(a1 * b1) + &(a2 * b2)
+    }
+
+    /// Returns `a1*b1 - a2*b2 mod p`.  Backend-portable baseline.
+    #[must_use]
+    pub fn difference_of_2_products(a1: &Fp29, b1: &Fp29, a2: &Fp29, b2: &Fp29) -> Fp29 {
+        &(a1 * b1) - &(a2 * b2)
+    }
+}
+
 impl<'b> Mul<&'b Fp29> for &Fp29 {
     type Output = Fp29;
 
