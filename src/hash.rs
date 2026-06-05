@@ -50,7 +50,7 @@ const CHALLENGE_TOP_MASK: u8 = {
 // intermediate masking must be added back. See:
 // https://github.com/SQIsign/the-sqisign/blob/dd133d7aca576c361a270c8e6434832535b42ecc/src/verification/ref/lvlx/common.c
 const _: () = assert!(
-    (2 * SECURITY_BITS as usize) % 8 == 0,
+    (2 * SECURITY_BITS as usize).is_multiple_of(8),
     "intermediate SHAKE256 output is not byte-aligned; \
      intermediate masking must be added for this parameter set"
 );

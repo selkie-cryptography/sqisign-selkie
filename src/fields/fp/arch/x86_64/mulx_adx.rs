@@ -404,6 +404,33 @@ impl Fp64 {
     pub fn square(&self) -> Self {
         Self::mul_montgomery(self, self)
     }
+
+    /// Returns `a1 * b1 + a2 * b2 (mod p)`.
+    ///
+    /// Fused-shape op used by `Fp2::mul`'s Algorithm 8.1 path: each
+    /// `Fp2` coefficient is one sum-of-2-products.  Composed for now
+    /// from two `Mul`s and an `Add`; C ref ships a fused asm
+    /// (`fp2_mul_c1` at `src/gf/broadwell/lvl1/fp_asm.S:220`) that
+    /// shares the Montgomery reduction across both partial products.
+    /// Drop-in asm replacement lands in a later commit once the
+    /// scalar surface stabilizes.
+    #[inline]
+    #[must_use]
+    pub fn sum_of_2_products(a1: &Self, b1: &Self, a2: &Self, b2: &Self) -> Self {
+        &(a1 * b1) + &(a2 * b2)
+    }
+
+    /// Returns `a1 * b1 - a2 * b2 (mod p)`.
+    ///
+    /// Companion to [`Fp64::sum_of_2_products`]; computes the other
+    /// `Fp2::mul` coefficient (Algorithm 8.1).  C ref's
+    /// `fp2_mul_c0` at `src/gf/broadwell/lvl1/fp_asm.S:134` provides
+    /// the fused-asm equivalent.
+    #[inline]
+    #[must_use]
+    pub fn difference_of_2_products(a1: &Self, b1: &Self, a2: &Self, b2: &Self) -> Self {
+        &(a1 * b1) - &(a2 * b2)
+    }
 }
 
 impl fmt::Debug for Fp64 {

@@ -299,7 +299,7 @@ impl LeftIdeal<4> {
                     let mut bytes = [0u8; 32];
                     OsRng.fill_bytes(&mut bytes[..n_bytes]);
                     // Mask top byte to avoid bias.
-                    if n_bits % 8 != 0 {
+                    if !n_bits.is_multiple_of(8) {
                         bytes[n_bytes - 1] &= (1u8 << (n_bits % 8)) - 1;
                     }
                     let val = BigInt::<4>::from_bytes_le_unsigned(&bytes[..n_bytes]);
@@ -425,7 +425,7 @@ impl LeftIdeal<4> {
             loop {
                 let mut bytes = [0u8; 32];
                 rng.fill_bytes(&mut bytes[..bmina_bytes]);
-                if bmina_bits % 8 != 0 {
+                if !bmina_bits.is_multiple_of(8) {
                     bytes[bmina_bytes - 1] &= (1u8 << (bmina_bits % 8)) - 1;
                 }
                 let tmp = BigInt::<4>::from_bytes_le_unsigned(&bytes[..bmina_bytes]);
