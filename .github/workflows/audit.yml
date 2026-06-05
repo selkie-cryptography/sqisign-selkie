@@ -248,13 +248,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # 1.81.0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # 1.91.0
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
       - name: Check MSRV
         run: |
           rustc -O .github/scripts/msrv-report.rs -o /tmp/msrv-report
-          /tmp/msrv-report "${{ github.sha }}" "1.81.0" > msrv.json
+          /tmp/msrv-report "${{ github.sha }}" "1.91.0" > msrv.json
 
       - name: Verify msrv payload has data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

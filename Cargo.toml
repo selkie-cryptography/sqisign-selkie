@@ -2,7 +2,7 @@
 name = "sqisign-selkie"
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.81.0"
+rust-version = "1.91.0"
 authors = ["Deirdre Connolly <durumcrustulum@gmail.com>"]
 description = "Compact post-quantum signatures from quaternions and isogenies."
 license = "MIT OR Apache-2.0"
