@@ -23,10 +23,19 @@
 # everything up to AVX-512-IFMA52. v3 is the safe rung: covers
 # all production Fly machines and excludes only pre-2013 Intel /
 # pre-2015 AMD CPUs we don't deploy to.
+#
+# `target-feature=+aes,+pclmulqdq` — AES-NI is NOT in v{1..4}.
+# The `aes` crate already detects AES-NI via `cpufeatures` runtime
+# check, so this isn't software vs hardware AES; it short-circuits
+# the per-call dispatch branch (~1-2 cycles/block × ~3000 blocks/
+# sign from the DRBG), drops the soft-AES code path, and is the
+# baseline for future `aes_backend="avx256"` batched VAES.
+# PCLMULQDQ is free if unused.
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
     "-C", "link-arg=-fuse-ld=mold",
     "-C", "target-cpu=x86-64-v3",
+    "-C", "target-feature=+aes,+pclmulqdq",
 ]
 
 [env]
