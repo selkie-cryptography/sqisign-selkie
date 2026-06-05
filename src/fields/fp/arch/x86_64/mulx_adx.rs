@@ -19,23 +19,34 @@
 //! # Contents
 //!
 //! Today: storage, named constants, `from_limbs([u64; 5])`
-//! cross-backend const-bridge, `ConditionallySelectable`, and
-//! modular `Add` / `Sub` / `Neg` in pure Rust.  Subsequent commits
-//! add the asm leaves (`fp_mul`, `fp_sqr`, `fp2_mul_c0`,
+//! cross-backend const-bridge, `ConditionallySelectable`, modular
+//! `Add` / `Sub` / `Neg` in pure Rust, and Montgomery `Mul` via the
+//! `fp_mul` asm port of C ref's `FPMUL256x256` (4x4 MULX + dual ADX
+//! schoolbook with interleaved CIOS reduction).  Subsequent commits
+//! add the remaining asm leaves (`fp_sqr`, `fp2_mul_c0`,
 //! `fp2_mul_c1`) and the higher-level ops layered over them
 //! (`square`, `invert`, `sqrt`, `pow`, `sum_of_2_products`,
 //! `difference_of_2_products`).  Montgomery-form byte conversions
-//! (`From<[u8; 32]>` / `to_bytes`) land alongside the asm since they
-//! depend on Montgomery reduce.
+//! (`From<[u8; 32]>` / `to_bytes`) land alongside the higher-level
+//! ops since they internally use `Mul`-by-`R2` to enter the form.
 
 #![allow(dead_code)] // dispatcher activation lands in a later commit.
 
 use core::{
+    arch::asm,
     fmt,
-    ops::{Add, AddAssign, Neg, Sub, SubAssign},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
 use subtle::{Choice, ConditionallySelectable};
+
+/// The top limb of `p + 1 = 5 * 2^248` in `[u64; 4]` LE form (= the
+/// only non-zero limb).  The CIOS-style Montgomery reduction in
+/// [`Fp64::mul`]'s asm multiplies the low accumulator limb by this
+/// constant to fold the reduction into the upper limbs without a
+/// modular inverse.  Matches C ref's `p_plus_1` at
+/// `src/gf/broadwell/lvl1/fp_asm.S:12`.
+const P_PLUS_1_HI: u64 = 0x0500_0000_0000_0000;
 
 #[cfg(test)]
 mod tests;
@@ -227,6 +238,159 @@ impl Fp64 {
         let added = Self([a0, a1, a2, a3]);
         Self::conditional_select(&self, &added, cond)
     }
+
+    /// Montgomery multiplication: `self * rhs * R^{-1} mod p` with
+    /// `R = 2^256`.
+    ///
+    /// MULX schoolbook + dual-chain ADCX/ADOX accumulation,
+    /// interleaved with CIOS-style Montgomery reduction folded
+    /// through the special-form constant `p + 1 = 5 * 2^248`.  Ports
+    /// C ref's `fp_mul` + `FPMUL256x256` macro at
+    /// `src/gf/broadwell/lvl1/fp_asm.S:434` / `:288`.
+    ///
+    /// Inputs and output are in `[0, p)`.  The 16 partial products
+    /// span 5 limbs of accumulator; after each row of MULADD64x256
+    /// the low limb is folded into the upper limbs via MULADD64x64
+    /// using `P_PLUS_1_HI`, leaving the rotated accumulator one limb
+    /// shorter for the next row.
+    #[inline]
+    fn mul_montgomery(a: &Self, b: &Self) -> Self {
+        let mut out = [0u64; 4];
+        // SAFETY: cfg-gated at the parent module on bmi2 + adx; asm
+        // uses MULX/ADCX/ADOX unconditionally.  Reads 32 bytes from
+        // each of `a` and `b`, writes 32 bytes to `out`.  `nostack`
+        // since the prologue saves no GPRs (rustc handles
+        // callee-saved register preservation via the `out(reg)`
+        // declarations).
+        unsafe {
+            asm!(
+                // Prologue: (r8..r12) = a[0] * b (5 limbs, ADOX chain).
+                "mov rdx, qword ptr [{a} + 0]",
+                "mulx {z1}, {z0}, qword ptr [{b} + 0]",
+                "xor eax, eax",
+                "mulx {z2}, {t1}, qword ptr [{b} + 8]",
+                "adox {z1}, {t1}",
+                "mulx {z3}, {t1}, qword ptr [{b} + 16]",
+                "adox {z2}, {t1}",
+                "mulx {z4}, {t1}, qword ptr [{b} + 24]",
+                "adox {z3}, {t1}",
+                "adox {z4}, rax",
+
+                // Iter 0: reduce z0 (mul by p+1 top); then accumulate
+                // a[1] * b. After: accumulator slots rotate -- the
+                // "new z4" is what was z0.
+
+                // MULADD64x64(reduce z0): mulx with p+1's top limb;
+                // ADOX (T0:T1) into z2:z3.
+                "mov rdx, {z0}",
+                "mulx {t0}, {t1}, {p1hi}",
+                "xor eax, eax",
+                "adox {z2}, {t1}",
+                "adox {z3}, {t0}",
+
+                // MULADD64x256(a[1] * b, accumulate into z1:z4:z0):
+                // first mulx primes z1, z2 via ADOX; subsequent
+                // mulx-pairs interleave ADCX (lo chain into z2..z4)
+                // and ADOX (hi chain into z2..z0).  C is z0 (= the
+                // freed slot).
+                "mov rdx, qword ptr [{a} + 8]",
+                "mulx {t0}, {t1}, qword ptr [{b} + 0]",
+                "xor {z0}, {z0}",
+                "adox {z1}, {t1}",
+                "adox {z2}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{b} + 8]",
+                "adcx {z2}, {t1}",
+                "adox {z3}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{b} + 16]",
+                "adcx {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{b} + 24]",
+                "adcx {z4}, {t1}",
+                "adox {z0}, {t0}",
+                "adc {z0}, 0",
+
+                // Iter 1: reduce z1; accumulate a[2] * b into z2..z0:z1.
+                "mov rdx, {z1}",
+                "mulx {t0}, {t1}, {p1hi}",
+                "xor eax, eax",
+                "adox {z3}, {t1}",
+                "adox {z4}, {t0}",
+
+                "mov rdx, qword ptr [{a} + 16]",
+                "mulx {t0}, {t1}, qword ptr [{b} + 0]",
+                "xor {z1}, {z1}",
+                "adox {z2}, {t1}",
+                "adox {z3}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{b} + 8]",
+                "adcx {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{b} + 16]",
+                "adcx {z4}, {t1}",
+                "adox {z0}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{b} + 24]",
+                "adcx {z0}, {t1}",
+                "adox {z1}, {t0}",
+                "adc {z1}, 0",
+
+                // Iter 2: reduce z2; accumulate a[3] * b into z3..z1:z2.
+                "mov rdx, {z2}",
+                "mulx {t0}, {t1}, {p1hi}",
+                "xor eax, eax",
+                "adox {z4}, {t1}",
+                "adox {z0}, {t0}",
+
+                "mov rdx, qword ptr [{a} + 24]",
+                "mulx {t0}, {t1}, qword ptr [{b} + 0]",
+                "xor {z2}, {z2}",
+                "adox {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{b} + 8]",
+                "adcx {z4}, {t1}",
+                "adox {z0}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{b} + 16]",
+                "adcx {z0}, {t1}",
+                "adox {z1}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{b} + 24]",
+                "adcx {z1}, {t1}",
+                "adox {z2}, {t0}",
+                "adc {z2}, 0",
+
+                // Iter 3: final reduction; no further row addition.
+                "mov rdx, {z3}",
+                "mulx {t0}, {t1}, {p1hi}",
+                "xor eax, eax",
+                "adox {z0}, {t1}",
+                "adox {z1}, {t0}",
+
+                // Result lands in (z4, z0, z1, z2) -- four limbs after
+                // four rotations.  Store to out[0..3].
+                "mov qword ptr [{out} + 0], {z4}",
+                "mov qword ptr [{out} + 8], {z0}",
+                "mov qword ptr [{out} + 16], {z1}",
+                "mov qword ptr [{out} + 24], {z2}",
+
+                a = in(reg) a.0.as_ptr(),
+                b = in(reg) b.0.as_ptr(),
+                out = in(reg) out.as_mut_ptr(),
+                p1hi = in(reg) P_PLUS_1_HI,
+                z0 = out(reg) _,
+                z1 = out(reg) _,
+                z2 = out(reg) _,
+                z3 = out(reg) _,
+                z4 = out(reg) _,
+                t0 = out(reg) _,
+                t1 = out(reg) _,
+                out("rax") _,
+                out("rdx") _,
+                options(nostack),
+            );
+        }
+        // Output may be up to ~2p; canonicalize via single conditional
+        // subtract.  (C ref omits this; the C-side `fp_normalize`
+        // handles it at the trait boundary.  We canonicalize at every
+        // op so Fp64 values are always in [0, p).)
+        Self(out).final_sub_p()
+    }
 }
 
 impl fmt::Debug for Fp64 {
@@ -343,5 +507,34 @@ impl AddAssign for Fp64 {
 impl SubAssign for Fp64 {
     fn sub_assign(&mut self, rhs: Fp64) {
         *self -= &rhs;
+    }
+}
+
+impl<'b> Mul<&'b Fp64> for &Fp64 {
+    type Output = Fp64;
+
+    /// Modular Montgomery multiplication.  Dispatches to
+    /// [`Fp64::mul_montgomery`].
+    fn mul(self, rhs: &'b Fp64) -> Fp64 {
+        Fp64::mul_montgomery(self, rhs)
+    }
+}
+
+impl Mul<Fp64> for Fp64 {
+    type Output = Fp64;
+    fn mul(self, rhs: Fp64) -> Fp64 {
+        &self * &rhs
+    }
+}
+
+impl MulAssign<&Fp64> for Fp64 {
+    fn mul_assign(&mut self, rhs: &Fp64) {
+        *self = &*self * rhs;
+    }
+}
+
+impl MulAssign for Fp64 {
+    fn mul_assign(&mut self, rhs: Fp64) {
+        *self *= &rhs;
     }
 }
