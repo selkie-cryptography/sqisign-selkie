@@ -7,13 +7,16 @@
 //! swapping in a vectorised `Fp` later doesn't ripple beyond the
 //! `arch` module.
 //!
-//! The portable backend (`arch::portable`) is the always-available
+//! The generic backend (`arch::generic`) is the always-available
 //! radix-51 Montgomery `[u64; 5]` implementation matching the SQIsign
-//! C reference.  Future commits add `arch::aarch64::neon` (radix-29
-//! NEON-vectorised) and `arch::x86_64::avx2` (radix-26 AVX2-vectorised)
-//! complete-`Fp` backends selectable via `cfg(sqisign_selkie_arch)`
-//! emitted by `build.rs`.  All backends use Montgomery form per
-//! `p = β · 2^α − 1`'s structure (β = 5, α = 248).
+//! C reference.  `arch::aarch64::neon` (radix-29 NEON-vectorised) and
+//! `arch::x86_64::avx2` (radix-26 AVX2-vectorised) provide alternate
+//! storage layouts selected via `cfg(sqisign_selkie_arch)` emitted by
+//! `build.rs`.  On x86_64 with `target_feature = "bmi2"` and
+//! `target_feature = "adx"`, the generic backend's hot leaves dispatch
+//! to `arch::x86_64::mulx_adx`'s MULX + dual ADCX/ADOX asm without
+//! changing the radix-51 storage.  All backends
+//! use Montgomery form per `p = β · 2^α − 1`'s structure (β = 5, α = 248).
 //!
 //! [§2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.1
 //! [§8.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.1
@@ -59,6 +62,6 @@ pub const FP_ENCODED_BYTES: usize = 32;
 #[cfg(sqisign_selkie_arch = "neon")]
 pub use arch::aarch64::neon::Fp29 as Fp;
 #[cfg(not(any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2")))]
-pub use arch::portable::Fp;
+pub use arch::generic::Fp;
 #[cfg(sqisign_selkie_arch = "avx2")]
 pub use arch::x86_64::avx2::Fp26 as Fp;

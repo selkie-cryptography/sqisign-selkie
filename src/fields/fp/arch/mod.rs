@@ -1,24 +1,22 @@
 //! Architecture-specific implementations of [`Fp`][super::Fp].
 //!
-//! Each subdirectory holds one or more complete `Fp` implementations
-//! specialised for a target CPU architecture and instruction set:
+//! Each subdirectory holds a complete `Fp` backend specialised for a
+//! target CPU architecture and instruction subset.  The active backend
+//! is selected by `cfg(sqisign_selkie_arch)`, emitted by `build.rs`:
 //!
+//! - `generic` — radix-51 Montgomery `[u64; 5]` scalar `Fp`.  Always compiles;
+//!   the fallback for any target without a specialised cfg arm set.  Hot leaves
+//!   (`mul`, `square`, `sum_of_2_products`, `difference_of_2_products`)
+//!   dispatch to `x86_64::mulx_adx` when `target_feature = "bmi2"` and
+//!   `target_feature = "adx"` are both set.
 //! - `aarch64::neon` — radix-29 `Fp` backed by `Fp29` / `Fp29x4` NEON
-//!   primitives.  Active on aarch64 hosts that are not wider-scalar-pipe Apple
-//!   Silicon (M2 and later), where the build script sets
-//!   `cfg(sqisign_selkie_arch = "neon")`.  Currently only the primitives land
-//!   here; the full `Fp` wrapper (invert, sqrt, etc) follows in later commits.
-//! - `x86_64::avx2` — *future*, radix-26 `Fp` backed by AVX2 lane-packed
-//!   primitives via `_mm256_mul_epu32`.  File-level gated on
-//!   `cfg(target_feature = "avx2")` so the AVX2 intrinsics never enter non-AVX2
-//!   builds; activated by `cfg(sqisign_selkie_arch = "avx2")` in the dispatcher
-//!   (set by `build.rs` when `CARGO_CFG_TARGET_FEATURE` contains `avx2`).
-//!   Currently an empty stub.
-//!
-//! The remaining cross-architecture portable scalar `Fp` (radix-51,
-//! `[u64; 5]`) still lives in the parent [`super`] module; it will move
-//! to `arch/portable.rs` once the higher-level callers are demonstrated
-//! to be backend-agnostic.
+//!   primitives.  Activated by `cfg(sqisign_selkie_arch = "neon")`.
+//! - `x86_64::avx2` — radix-26 `Fp` backed by AVX2 lane-packed primitives via
+//!   `_mm256_mul_epu32`.  Activated by `cfg(sqisign_selkie_arch = "avx2")`.
+//! - `x86_64::mulx_adx` — MULX + dual ADCX/ADOX asm leaves for the radix-51
+//!   storage in `generic`; called from `generic`'s hot leaves under
+//!   `cfg(all(target_feature = "bmi2", target_feature = "adx"))`.  Not a
+//!   standalone backend.
 //!
 //! # No AVX-512 / IFMA52 path
 //!
@@ -28,7 +26,7 @@
 //! libcrux, rust-openssl, curve25519-dalek).  AVX2 over a radix-26
 //! layout is the realistic x86_64 vectorised-Fp target.
 
-pub mod portable;
+pub mod generic;
 
 #[cfg(target_arch = "aarch64")]
 #[allow(dead_code)] // not yet routed; activation needs persistent Fp29 storage
