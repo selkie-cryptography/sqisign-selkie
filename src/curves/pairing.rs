@@ -255,16 +255,23 @@ impl CubicalPoint {
     /// every downstream pairing-based check (Weil-pairing codomain
     /// disambiguation in `LeftIdeal::to_isogeny`,
     /// dlog-based change-of-basis recovery, etc).
-    fn differential_add(&self, other: &Self, x_diff: &Fp2) -> Self {
+    /// `x_diff_inv` is `1 / x(P-Q)`, precomputed once by the caller
+    /// and reused across every ladder iteration.  Matches the C
+    /// reference's `cubicalDBLADD(..., ixP, ...)` shape (the `_i`
+    /// suffix marks "inverse passed in") at `src/ec/ref/lvlx/
+    /// biextension.c:88`.  The previous shape took `x_diff` and
+    /// recomputed `x_diff.invert()` per call, paying ~`e - 1` Fp²
+    /// inversions per `tate()` for what is a loop-invariant value.
+    fn differential_add(&self, other: &Self, x_diff_inv: &Fp2) -> Self {
         let a = &self.X + &self.Z;
         let b = &self.X - &self.Z;
         let c = &other.X + &other.Z;
         let d = &other.X - &other.Z;
         let x2 = (&a * &d + &b * &c).square();
         let z2 = (&a * &d - &b * &c).square();
-        // Spec line 7: X_2 ← X_2 / x(P-Q). See doc comment above for
-        // why we cannot move the factor onto Z_2 instead.
-        let x2 = &x2 * &x_diff.invert();
+        // Spec line 7: X_2 ← X_2 / x(P-Q).  See the doc comment above
+        // for why we cannot move the factor onto Z_2 instead.
+        let x2 = &x2 * x_diff_inv;
         Self { X: x2, Z: z2 }
     }
 
@@ -318,9 +325,12 @@ impl TorsionBasis {
         // which holds whether npq starts at P+Q or P-Q (x is sign-symmetric).
         let mut np = CubicalPoint::from_affine(*x_p.as_fp2());
         let mut npq = CubicalPoint::from_affine(*x_pmq.as_fp2());
-        let xq = x_q.as_fp2();
+        // Hoist the per-iteration `x_q.invert()` out of the ladder
+        // (mirrors C ref `pairing_data->ixQ`); see
+        // `CubicalPoint::differential_add`.
+        let xq_inv = x_q.as_fp2().invert();
         for _ in 0..(e - 1) {
-            npq = npq.differential_add(&np, xq);
+            npq = npq.differential_add(&np, &xq_inv);
             np = np.double(&a24);
         }
 
@@ -331,7 +341,7 @@ impl TorsionBasis {
         let q_prime = npq.translate(&np);
 
         // Step 4: λ ← CubicalRatio(Q, Q') / CubicalRatio((1,0), O)
-        let q_tilde = CubicalPoint::from_affine(*xq);
+        let q_tilde = CubicalPoint::from_affine(*x_q.as_fp2());
         let lambda = &q_tilde.ratio(&q_prime) * &CubicalPoint::infinity().ratio(&o).invert();
 
         // Step 5: λ^((p²-1)/2^e)
@@ -476,10 +486,18 @@ impl TorsionBasis {
         let e_full = TorsionExponent::FULL.value();
         let e_red = e.value();
 
+        // Hoist the per-iteration `x{p,q}.invert()` out of the two
+        // ladders; both are loop-invariant.  Pre-doubling avoids the
+        // `e_full + 4 * e_red` redundant Fp² inversions the inline
+        // shape would have done.  Mirrors C ref's `pairing_data->ixP`
+        // / `ixQ` cache (`src/ec/ref/lvlx/biextension.c`).
+        let xp_inv = xp.invert();
+        let xq_inv = xq.invert();
+
         // Loop 1: full-order ladder on (P, Q). Runs `e_full − 1` iters
         // → np at 2-torsion of full order.
         for _ in 0..(e_full - 1) {
-            npq = npq.differential_add(&np, &xq);
+            npq = npq.differential_add(&np, &xq_inv);
             np = np.double(&a24);
         }
 
@@ -487,12 +505,12 @@ impl TorsionBasis {
         // `e_red − 1` iters → nr, ns at their reduced 2-torsion.
         // PnR/PnS/nRQ/nSQ accumulate the cross-pairing structure.
         for _ in 0..(e_red - 1) {
-            pnr = pnr.differential_add(&nr, &xp);
-            nrq = nrq.differential_add(&nr, &xq);
+            pnr = pnr.differential_add(&nr, &xp_inv);
+            nrq = nrq.differential_add(&nr, &xq_inv);
             nr = nr.double(&a24);
 
-            pns = pns.differential_add(&ns, &xp);
-            nsq = nsq.differential_add(&ns, &xq);
+            pns = pns.differential_add(&ns, &xp_inv);
+            nsq = nsq.differential_add(&ns, &xq_inv);
             ns = ns.double(&a24);
         }
 
