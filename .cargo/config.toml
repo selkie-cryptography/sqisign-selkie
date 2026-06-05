@@ -24,10 +24,19 @@
 # to AVX-512-IFMA52.  v3 is the safe rung: covers all production
 # Fly machines and excludes only pre-2013 Intel / pre-2015 AMD CPUs
 # we don't deploy to.
+#
+# `target-feature=+adx` — ADCX/ADOX dual-carry-chain instructions.
+# Not in v{1..4} (available on every CPU newer than Broadwell 2014
+# but requires explicit opt-in).  Activates the asm! body in
+# `src/quaternions/bigint/arch/x86_64.rs` (`mag_mul_4_adx`), which
+# interleaves CF and OF carry chains for the schoolbook product —
+# rustc's portable lowering only emits a single CF chain via ADC.
+# All Fly CI runners are Broadwell+ Intel / Zen+ AMD.
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
     "-C", "link-arg=-fuse-ld=mold",
     "-C", "target-cpu=x86-64-v3",
+    "-C", "target-feature=+adx",
 ]
 
 [target.aarch64-unknown-linux-gnu]

@@ -10,11 +10,36 @@ use super::{BigInt, widening_mul};
 impl<const N: usize> BigInt<N> {
     /// Schoolbook multiplication of magnitudes, truncated to `N` limbs.
     ///
-    /// Adapted from Table 1 (§3.1) of [Kouider et al.][ct-bigint] (schoolbook
-    /// limb-by-limb).
+    /// Adapted from Table 1 (§3.1) of [Kouider et al.][ct-bigint]
+    /// (schoolbook limb-by-limb).  For N=4 under `+adx,+bmi2`,
+    /// dispatches to the dual-CF/OF-chain `asm!` variant in
+    /// `super::arch::x86_64`; all other N (or other targets) use
+    /// the portable schoolbook below.
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
     pub(super) fn mag_mul(a: &[u64; N], b: &[u64; N]) -> [u64; N] {
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "adx",
+            target_feature = "bmi2",
+        ))]
+        if N == 4 {
+            // SAFETY: const-N == 4, so the casts are between
+            // `&[u64; 4]` and `&[u64; N]` with identical layouts.
+            let r4 = unsafe {
+                super::arch::x86_64::mag_mul_4_adx(
+                    &*(a.as_ptr().cast::<[u64; 4]>()),
+                    &*(b.as_ptr().cast::<[u64; 4]>()),
+                )
+            };
+            let mut out = [0u64; N];
+            // SAFETY: same const-N == 4.
+            unsafe {
+                core::ptr::copy_nonoverlapping(r4.as_ptr(), out.as_mut_ptr(), 4);
+            }
+            return out;
+        }
+
         let mut result = [0u64; N];
         let mut i = 0;
         while i < N {
