@@ -64,3 +64,124 @@ proptest! {
         prop_assert_eq!(r, expected);
     }
 }
+
+/// Maps `Fp51`'s known constants through the `from_limbs` bridge.
+/// Sources canonical `Fp64` values without needing Fp64-native byte
+/// I/O (which lands once `fp_mul` is in).
+fn canon(fp51: Fp51) -> Fp64 {
+    Fp64::from_limbs(fp51.0)
+}
+
+#[test]
+fn add_identity_zero() {
+    let one = canon(Fp51::ONE);
+    assert_eq!(one + Fp64::ZERO, one);
+    assert_eq!(Fp64::ZERO + one, one);
+}
+
+#[test]
+fn add_one_one_is_two() {
+    let one = canon(Fp51::ONE);
+    let two = canon(Fp51::TWO);
+    assert_eq!(one + one, two);
+}
+
+#[test]
+fn add_two_two_is_four() {
+    let two = canon(Fp51::TWO);
+    let four = canon(Fp51::FOUR);
+    assert_eq!(two + two, four);
+}
+
+#[test]
+fn sub_self_is_zero() {
+    let one = canon(Fp51::ONE);
+    assert_eq!(one - one, Fp64::ZERO);
+}
+
+#[test]
+fn sub_zero_one_is_minus_one() {
+    let one = canon(Fp51::ONE);
+    let minus_one = canon(Fp51::MINUS_ONE);
+    assert_eq!(Fp64::ZERO - one, minus_one);
+}
+
+#[test]
+fn neg_zero_is_zero() {
+    assert_eq!(-Fp64::ZERO, Fp64::ZERO);
+}
+
+#[test]
+fn neg_one_is_minus_one() {
+    let one = canon(Fp51::ONE);
+    let minus_one = canon(Fp51::MINUS_ONE);
+    assert_eq!(-one, minus_one);
+}
+
+#[test]
+fn neg_neg_is_identity() {
+    let one = canon(Fp51::ONE);
+    assert_eq!(-(-one), one);
+}
+
+#[test]
+fn add_minus_one_one_is_zero() {
+    let one = canon(Fp51::ONE);
+    let minus_one = canon(Fp51::MINUS_ONE);
+    assert_eq!(one + minus_one, Fp64::ZERO);
+}
+
+/// Generate a canonical `Fp64` value through the `Fp51`-bridge chain:
+/// random bytes -> Fp51 (canonical, in Mont form) -> Fp64 via bridge.
+fn arb_fp64() -> impl Strategy<Value = Fp64> {
+    any::<[u8; 32]>().prop_map(|bytes| {
+        let fp51 = Fp51::from_bytes(&bytes);
+        Fp64::from_limbs(fp51.0)
+    })
+}
+
+proptest! {
+    /// `a + b == b + a`.
+    #[test]
+    fn add_commutes(a in arb_fp64(), b in arb_fp64()) {
+        prop_assert_eq!(&a + &b, &b + &a);
+    }
+
+    /// `a + 0 == a`.
+    #[test]
+    fn add_identity(a in arb_fp64()) {
+        prop_assert_eq!(&a + &Fp64::ZERO, a);
+    }
+
+    /// `a + (-a) == 0`.
+    #[test]
+    fn add_inverse(a in arb_fp64()) {
+        prop_assert_eq!(&a + &(-&a), Fp64::ZERO);
+    }
+
+    /// `(a + b) + c == a + (b + c)`.
+    #[test]
+    fn add_associates(a in arb_fp64(), b in arb_fp64(), c in arb_fp64()) {
+        let lhs = &(&a + &b) + &c;
+        let rhs = &a + &(&b + &c);
+        prop_assert_eq!(lhs, rhs);
+    }
+
+    /// `a - a == 0`.
+    #[test]
+    fn sub_self(a in arb_fp64()) {
+        prop_assert_eq!(&a - &a, Fp64::ZERO);
+    }
+
+    /// `a - b == a + (-b)`.
+    #[test]
+    fn sub_via_neg(a in arb_fp64(), b in arb_fp64()) {
+        prop_assert_eq!(&a - &b, &a + &(-&b));
+    }
+
+    /// `-(-a) == a`.
+    #[test]
+    fn neg_involutes(a in arb_fp64()) {
+        prop_assert_eq!(-(-&a), a);
+    }
+}
