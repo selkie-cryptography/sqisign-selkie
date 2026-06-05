@@ -7,10 +7,10 @@ name: Constant-Time
 # measurements, run on dedicated hardware off-CI.
 
 on:
-  # DudeCT + Tacet run on pushes, pull requests, workflow_dispatch, and a
-  # weekly cron fallback (the `cron-gate` job skips a scheduled firing if
-  # any non-cron run fired in the last 7 days). The expensive ctgrind job
-  # (up to 2h) is guarded to skip pull requests — see its `if:`.
+  # DudeCT, Tacet, and ctgrind all run on pushes, pull requests,
+  # workflow_dispatch, and a weekly cron fallback (the `cron-gate` job
+  # skips a scheduled firing if any non-cron run fired in the last 7
+  # days).
   push:
     branches: [main]
     paths:
@@ -26,6 +26,7 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - 'tests/ctgrind.rs'
       - 'benches/dudect.rs'
       - 'benches/tacet.rs'
       - 'Cargo.toml'
@@ -212,21 +213,18 @@ jobs:
   ctgrind:
     name: ctgrind (Valgrind taint tracking)
     needs: [cron-gate]
-    # Skips pull requests — the slow (up to 2h) Valgrind run gates
-    # post-merge on main, not per-PR.
     if: |
       !cancelled() &&
-      github.event_name != 'pull_request' &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, perf-2x]
-    timeout-minutes: 120
+    timeout-minutes: 60
     env:
       # Enables the slow keygen/sign CT-on-secrets tests in
       # `tests/ctgrind.rs` (see `skip_unless_slow`). They each add a
-      # multi-minute Valgrind run; the weekly cadence + 120 min
-      # ceiling absorbs the cost. Unset → only the fast Fp / Fp2
-      # tests run, same as a local `cargo test --test ctgrind`.
+      # multi-minute Valgrind run; the 60 min ceiling absorbs the
+      # cost. Unset -> only the fast Fp / Fp2 tests run, same as a
+      # local `cargo test --test ctgrind`.
       CTGRIND_SLOW: "1"
       # `verify_oracle_resistance` is gated separately — it's not
       # a CT-on-secrets target (verify's inputs are all public per
