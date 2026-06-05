@@ -38,7 +38,9 @@ use core::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-use subtle::{Choice, ConditionallySelectable};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+
+use super::super::super::FP_ENCODED_BYTES;
 
 /// The top limb of `p + 1 = 5 * 2^248` in `[u64; 4]` LE form (= the
 /// only non-zero limb).  The CIOS-style Montgomery reduction in
@@ -430,6 +432,148 @@ impl Fp64 {
     #[must_use]
     pub fn difference_of_2_products(a1: &Self, b1: &Self, a2: &Self, b2: &Self) -> Self {
         &(a1 * b1) - &(a2 * b2)
+    }
+
+    /// Constructs a field element from a small integer.
+    ///
+    /// Inserts `x` at limb 0 of the canonical form, then enters
+    /// Montgomery form by multiplying by `R^2`.
+    #[must_use]
+    pub fn from_small(x: u32) -> Self {
+        let canonical = Self([x as u64, 0, 0, 0]);
+        &canonical * &Self::R2
+    }
+
+    /// Decodes 32 bytes (little-endian) into a Montgomery-form `Fp64`.
+    ///
+    /// The input must be a canonical encoding (value `< p`).  Parses
+    /// the bytes into `[u64; 4]` canonical form, then multiplies by
+    /// `R^2` to enter Montgomery scaling.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8; FP_ENCODED_BYTES]) -> Self {
+        let canonical = Self([
+            u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
+            u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+            u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+            u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
+        ]);
+        &canonical * &Self::R2
+    }
+
+    /// Encodes a Montgomery-form `Fp64` as 32 bytes, little-endian.
+    ///
+    /// Exits Montgomery form via `mul` by `1` (= raw `[1, 0, 0, 0]`),
+    /// which performs the Montgomery reduction without re-entering
+    /// the scaled form, then encodes the canonical `[u64; 4]`.
+    #[must_use]
+    pub fn to_bytes(self) -> [u8; FP_ENCODED_BYTES] {
+        let one_raw = Self([1, 0, 0, 0]);
+        let canonical = &self * &one_raw;
+        let mut out = [0u8; FP_ENCODED_BYTES];
+        out[0..8].copy_from_slice(&canonical.0[0].to_le_bytes());
+        out[8..16].copy_from_slice(&canonical.0[1].to_le_bytes());
+        out[16..24].copy_from_slice(&canonical.0[2].to_le_bytes());
+        out[24..32].copy_from_slice(&canonical.0[3].to_le_bytes());
+        out
+    }
+
+    /// Squares `self` `n` times in succession.
+    #[must_use]
+    pub fn pow2k(&self, n: u32) -> Self {
+        let mut r = *self;
+        for _ in 0..n {
+            r = r.square();
+        }
+        r
+    }
+
+    /// Computes `self^((p - 3)/4)`.
+    ///
+    /// Used to derive [`Fp64::invert`], [`Fp64::sqrt`], and
+    /// [`Fp64::is_square`].  Addition chain ported verbatim from
+    /// [`Fp51::pow_p3div4`] (same prime, same chain).
+    ///
+    /// [`Fp51::pow_p3div4`]: super::super::generic::Fp51::pow_p3div4
+    #[must_use]
+    pub(crate) fn pow_p3div4(&self) -> Self {
+        let x = *self;
+        let z = x.square();
+        let t0 = &x * &z;
+        let z = t0.square();
+        let z = &x * &z;
+        let t1 = z.square();
+        let t3 = t1.square();
+        let t2 = t3.square();
+        let t4 = t2.pow2k(3);
+        let t2 = &t2 * &t4;
+        let t4 = t2.pow2k(6);
+        let t2 = &t2 * &t4;
+        let t4 = t2.pow2k(2);
+        let t3 = &t3 * &t4;
+        let t3 = t3.pow2k(13);
+        let t2 = &t2 * &t3;
+        let t3 = t2.pow2k(27);
+        let t2 = &t2 * &t3;
+        let z = &z * &t2;
+        let t2 = z.pow2k(4);
+        let t1 = &t1 * &t2;
+        let t0 = &t0 * &t1;
+        let t1 = &t1 * &t0;
+        let t0 = &t1 * &t0;
+        let t2 = &t0 * &t1;
+        let t0 = &t0 * &t2;
+        let t1 = &t1 * &t0;
+        let t1 = t1.pow2k(63);
+        let t1 = &t0 * &t1;
+        let t1 = t1.pow2k(64);
+        let t0 = &t0 * &t1;
+        let t0 = t0.pow2k(57);
+        &z * &t0
+    }
+
+    /// Computes the multiplicative inverse: `self^(p - 2) mod p`.
+    ///
+    /// Returns garbage if `self == 0` (no inverse exists).  Uses
+    /// Fermat's little theorem via [`Fp64::pow_p3div4`].
+    #[must_use]
+    pub fn invert(&self) -> Self {
+        let t = self.pow_p3div4();
+        let t = t.pow2k(2);
+        self * &t
+    }
+
+    /// Tests whether `self` is a quadratic residue in `F_p`.
+    #[must_use]
+    pub fn is_square(&self) -> Choice {
+        let r = self.pow_p3div4();
+        let r = r.square();
+        let r = &r * self;
+        r.ct_eq(&Self::ONE) | self.ct_eq(&Self::ZERO)
+    }
+
+    /// Computes the square root, when `self.is_square()` is true.
+    ///
+    /// The result is only meaningful when `self.is_square()` is set;
+    /// callers that don't know upfront should check before using the
+    /// output.
+    #[must_use]
+    pub fn sqrt(&self) -> Self {
+        let y = self.pow_p3div4();
+        &y * self
+    }
+}
+
+impl ConstantTimeEq for Fp64 {
+    /// Constant-time equality on canonical `Fp64` values.
+    ///
+    /// Limb-wise via `subtle`'s `ConstantTimeEq` on `u64`.  Requires
+    /// both operands to be in canonical form (which they always are
+    /// after any `Fp64` op).
+    fn ct_eq(&self, other: &Self) -> Choice {
+        self.0[0].ct_eq(&other.0[0])
+            & self.0[1].ct_eq(&other.0[1])
+            & self.0[2].ct_eq(&other.0[2])
+            & self.0[3].ct_eq(&other.0[3])
     }
 }
 

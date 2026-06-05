@@ -384,3 +384,122 @@ proptest! {
         );
     }
 }
+
+#[test]
+fn from_small_zero() {
+    assert_eq!(Fp64::from_small(0), Fp64::ZERO);
+}
+
+#[test]
+fn from_small_one() {
+    assert_eq!(Fp64::from_small(1), Fp64::ONE);
+}
+
+#[test]
+fn from_small_two() {
+    assert_eq!(Fp64::from_small(2), Fp64::TWO);
+}
+
+#[test]
+fn from_small_four() {
+    assert_eq!(Fp64::from_small(4), Fp64::FOUR);
+}
+
+proptest! {
+    /// Mont-form bytes round-trip: `from_bytes(to_bytes(a)) == a`.
+    #[test]
+    fn bytes_round_trip(a in arb_fp64()) {
+        prop_assert_eq!(Fp64::from_bytes(&a.to_bytes()), a);
+    }
+
+    /// `to_bytes` produces the same canonical encoding as Fp51's
+    /// `to_bytes` for the same field element.
+    #[test]
+    fn to_bytes_matches_fp51(mut bytes in any::<[u8; 32]>()) {
+        bytes[31] &= 0x03;
+        let fp51 = Fp51::from_bytes(&bytes);
+        let fp64 = Fp64::from_limbs(fp51.0);
+        prop_assert_eq!(fp64.to_bytes(), fp51.to_bytes());
+    }
+
+    /// `from_bytes` agrees with `Fp51::from_bytes` round-tripped
+    /// through the const-bridge.
+    #[test]
+    fn from_bytes_matches_fp51(mut bytes in any::<[u8; 32]>()) {
+        bytes[31] &= 0x03;
+        let via_fp51 = Fp64::from_limbs(Fp51::from_bytes(&bytes).0);
+        let direct = Fp64::from_bytes(&bytes);
+        prop_assert_eq!(direct, via_fp51);
+    }
+
+    /// `a.pow2k(0) == a`.
+    #[test]
+    fn pow2k_zero(a in arb_fp64()) {
+        prop_assert_eq!(a.pow2k(0), a);
+    }
+
+    /// `a.pow2k(1) == a.square()`.
+    #[test]
+    fn pow2k_one(a in arb_fp64()) {
+        prop_assert_eq!(a.pow2k(1), a.square());
+    }
+
+    /// `a.pow2k(2) == a^4`.
+    #[test]
+    fn pow2k_two(a in arb_fp64()) {
+        prop_assert_eq!(a.pow2k(2), a.square().square());
+    }
+
+    /// `a * a.invert() == 1` (when `a != 0`).
+    #[test]
+    fn invert_inverts(a in arb_fp64()) {
+        prop_assume!(a != Fp64::ZERO);
+        prop_assert_eq!(&a * &a.invert(), Fp64::ONE);
+    }
+
+    /// `a.invert().invert() == a` (when `a != 0`).
+    #[test]
+    fn invert_involutes(a in arb_fp64()) {
+        prop_assume!(a != Fp64::ZERO);
+        prop_assert_eq!(a.invert().invert(), a);
+    }
+
+    /// `(a.sqrt())^2 == a` when `a.is_square()` is set.
+    #[test]
+    fn sqrt_squared_recovers(a in arb_fp64()) {
+        if bool::from(a.is_square()) {
+            let r = a.sqrt();
+            prop_assert_eq!(r.square(), a);
+        }
+    }
+
+    /// Square values are squares: `(a^2).is_square()` is always set.
+    #[test]
+    fn squares_are_squares(a in arb_fp64()) {
+        prop_assert!(bool::from(a.square().is_square()));
+    }
+}
+
+#[test]
+fn invert_one_is_one() {
+    let one = canon(Fp51::ONE);
+    assert_eq!(one.invert(), one);
+}
+
+#[test]
+fn invert_minus_one_is_minus_one() {
+    let minus_one = canon(Fp51::MINUS_ONE);
+    assert_eq!(minus_one.invert(), minus_one);
+}
+
+#[test]
+fn sqrt_one_squared_is_one() {
+    let one = canon(Fp51::ONE);
+    assert!(bool::from(one.is_square()));
+    assert_eq!(one.sqrt().square(), one);
+}
+
+#[test]
+fn is_square_zero_is_set() {
+    assert!(bool::from(Fp64::ZERO.is_square()));
+}
