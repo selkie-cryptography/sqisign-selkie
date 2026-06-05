@@ -9,7 +9,7 @@ use proptest::prelude::*;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 use super::{
-    super::super::{super::Fp, generic::Fp as PortableFp},
+    super::super::{super::Fp, generic::Fp51 as PortableFp},
     Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29,
 };
 

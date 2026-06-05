@@ -114,7 +114,7 @@ const K_PORT_TO_26: [u32; LIMBS_26] = [0x0006666, 0, 0, 0, 0, 0, 0, 0, 0, 0x0008
 
 /// Field element in radix-26 limb form, in Montgomery representation.
 ///
-/// Parallel representation to [`crate::fields::fp::arch::generic::Fp`]'s
+/// Parallel representation to [`crate::fields::fp::arch::generic::Fp51`]'s
 /// radix-51 layout, laid out for AVX2 32-bit-lane packing. Limbs are
 /// little-endian: `limbs[0]` is the least significant 26 bits. The stored
 /// value is `value * R_26 mod p` where `R_26 = 2^260`; multiplication
@@ -1250,7 +1250,7 @@ const _: () = {
     assert!(MASK_26 == (1u32 << RADIX_26) - 1);
     assert!(RADIX_26 as usize * LIMBS_26 >= 248);
 
-    let from_portable_zero = Fp26::from_limbs(super::super::generic::Fp::ZERO.0);
+    let from_portable_zero = Fp26::from_limbs(super::super::generic::Fp51::ZERO.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1258,7 +1258,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_one = Fp26::from_limbs(super::super::generic::Fp::ONE.0);
+    let from_portable_one = Fp26::from_limbs(super::super::generic::Fp51::ONE.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1266,7 +1266,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_two = Fp26::from_limbs(super::super::generic::Fp::TWO.0);
+    let from_portable_two = Fp26::from_limbs(super::super::generic::Fp51::TWO.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1274,7 +1274,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_four = Fp26::from_limbs(super::super::generic::Fp::FOUR.0);
+    let from_portable_four = Fp26::from_limbs(super::super::generic::Fp51::FOUR.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1282,7 +1282,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_minus_one = Fp26::from_limbs(super::super::generic::Fp::MINUS_ONE.0);
+    let from_portable_minus_one = Fp26::from_limbs(super::super::generic::Fp51::MINUS_ONE.0);
     let mut i = 0;
 
     while i < LIMBS_26 {

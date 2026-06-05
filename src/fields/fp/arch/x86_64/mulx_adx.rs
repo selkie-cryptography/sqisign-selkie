@@ -13,10 +13,10 @@
 //! `fp2_mul_c0`, `fp2_mul_c1`, `fp_add`, `fp_sub`); the surrounding
 //! `fp.c` wraps them and provides higher-level Fp behavior in C.
 //!
-//! [`Fp::mul`]: super::super::generic::Fp::mul
-//! [`Fp::square`]: super::super::generic::Fp::square
-//! [`Fp::sum_of_2_products`]: super::super::generic::Fp::sum_of_2_products
-//! [`Fp::difference_of_2_products`]: super::super::generic::Fp::difference_of_2_products
+//! [`Fp::mul`]: super::super::generic::Fp51::mul
+//! [`Fp::square`]: super::super::generic::Fp51::square
+//! [`Fp::sum_of_2_products`]: super::super::generic::Fp51::sum_of_2_products
+//! [`Fp::difference_of_2_products`]: super::super::generic::Fp51::difference_of_2_products
 
 // Contents land in subsequent commits:
 //   - fp_mul    (Montgomery 5x5 schoolbook with interleaved P4 reduction)

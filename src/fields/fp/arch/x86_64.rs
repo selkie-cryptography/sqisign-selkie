@@ -3,9 +3,9 @@
 //! Two submodules with different roles:
 //!
 //! - [`avx2`] — radix-26 `Fp26` backed by AVX2 lane-packed primitives via
-//!   `_mm256_mul_epu32`.  Standalone alternate-storage `Fp` backend.
-//!   File-level gated on `cfg(target_feature = "avx2")`; activated as the
-//!   crate-wide `Fp` by `cfg(sqisign_selkie_arch = "avx2")` in the dispatcher.
+//!   `_mm256_mul_epu32`.  Standalone alternate-storage `Fp` backend. File-level
+//!   gated on `cfg(target_feature = "avx2")`; activated as the crate-wide `Fp`
+//!   by `cfg(sqisign_selkie_arch = "avx2")` in the dispatcher.
 //! - [`mulx_adx`] — MULX + dual ADCX/ADOX asm leaves for the radix-51 storage
 //!   in [`super::generic`].  Not a standalone backend; `generic`'s hot leaves
 //!   call into these under `cfg(all(target_feature = "bmi2", target_feature =
