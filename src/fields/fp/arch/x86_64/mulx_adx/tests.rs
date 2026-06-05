@@ -350,4 +350,37 @@ proptest! {
     fn square_neg(a in arb_fp64()) {
         prop_assert_eq!((-&a).square(), a.square());
     }
+
+    /// `sum_of_2_products(a, b, c, d) == a*b + c*d`.
+    #[test]
+    fn sum_of_2_products_matches_composed(
+        a in arb_fp64(), b in arb_fp64(),
+        c in arb_fp64(), d in arb_fp64(),
+    ) {
+        let expected = &(&a * &b) + &(&c * &d);
+        prop_assert_eq!(Fp64::sum_of_2_products(&a, &b, &c, &d), expected);
+    }
+
+    /// `difference_of_2_products(a, b, c, d) == a*b - c*d`.
+    #[test]
+    fn difference_of_2_products_matches_composed(
+        a in arb_fp64(), b in arb_fp64(),
+        c in arb_fp64(), d in arb_fp64(),
+    ) {
+        let expected = &(&a * &b) - &(&c * &d);
+        prop_assert_eq!(Fp64::difference_of_2_products(&a, &b, &c, &d), expected);
+    }
+
+    /// `sum_of_2_products(a, b, c, d) == sum_of_2_products(c, d, a, b)`
+    /// (commutativity of the +).
+    #[test]
+    fn sum_of_2_products_commutes(
+        a in arb_fp64(), b in arb_fp64(),
+        c in arb_fp64(), d in arb_fp64(),
+    ) {
+        prop_assert_eq!(
+            Fp64::sum_of_2_products(&a, &b, &c, &d),
+            Fp64::sum_of_2_products(&c, &d, &a, &b),
+        );
+    }
 }
