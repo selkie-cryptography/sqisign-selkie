@@ -1550,7 +1550,7 @@
             <dl>
             <dt>Untested hot paths</dt><dd>Functions with high hit counts but surviving mutants — code that runs a lot but isn't verified.</dd>
             <dt>CT failures</dt><dd>DudeCT or Tacet tests detecting timing leaks on secret-derived data.</dd>
-            <dt>Panic sites</dt><dd>Panic symbols in the release binary — each is a potential DoS vector.</dd>
+            <dt>Panic sites</dt><dd>Runtime-reachable panic call sites in a linked release binary (post-DCE) — each is a potential DoS vector.</dd>
             <dt>Unsafe blocks</dt><dd>Unsafe code count per module. Should trend toward zero.</dd>
             <dt>CT + mutant overlap</dt><dd>Files containing both a TODO(ct) marker and one or more surviving mutants. The TODO(ct) line and survivor lines may differ — the signal is that any CT fix landing in this file would touch code where some mutation already escapes the test suite.</dd>
             <dt>Benchmark blind spots</dt><dd>Hot functions without benchmarks, or benchmarked functions that aren't hot.</dd>
@@ -1716,7 +1716,7 @@
             <dl>
             <dt>cargo deny</dt><dd>Dependency advisories and license compliance.</dd>
             <dt>Unsafe</dt><dd>Count of <code>unsafe</code> blocks per module. Should trend toward zero.</dd>
-            <dt>Panic count</dt><dd>Panic symbols in the release binary via <code>nm</code>. Each is a potential DoS channel.</dd>
+            <dt>Panic count</dt><dd>Runtime-reachable panic call sites in a linked release binary (post-DCE), via <code>llvm-objdump</code> disassembly. Each is a potential DoS channel.</dd>
             <dt>Zeroize</dt><dd>Verifies SigningKey memory is zeroed after drop.</dd>
             <dt>API surface</dt><dd>Public API item count by category (cargo-public-api). Tracks API growth.</dd>
             <dt>MSRV</dt><dd>Minimum Supported Rust Version compliance (1.81.0).</dd>

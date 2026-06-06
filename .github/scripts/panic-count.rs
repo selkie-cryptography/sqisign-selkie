@@ -1,7 +1,15 @@
-//! Count panic-related call sites in a release rlib, attributed to the
-//! calling Rust function via llvm-objdump disassembly.
+//! Count panic-related call sites reachable at runtime, attributed to
+//! the calling Rust function via llvm-objdump disassembly.
 //!
 //! Usage: panic-count <sha>
+//!
+//! Builds and analyzes a fully-linked example binary
+//! (`target/release/examples/readme`) rather than the intermediate
+//! rlib. Linker dead-code elimination removes panic sites only
+//! reachable from compile-time contexts (e.g. `const _: () =
+//! assert!(...)` items, `const fn` bodies never called at runtime),
+//! so the count reflects the actual runtime DoS surface, not the
+//! sum of every panic call ever emitted by the compiler.
 //!
 //! Emits JSON with both aggregate counts (back-compat with the
 //! dashboard's Risks panel) and a per-function `sites` array suitable
@@ -23,14 +31,18 @@ fn main() -> io::Result<()> {
     }
     let sha = &args[1];
 
-    // Build release with line-tables-only debug info. This is just
-    // enough for llvm-objdump's `--demangle` to attribute call sites
-    // to their calling Rust function via the standard symbol table —
-    // we do not parse DWARF directly.
-    eprintln!("[panic-count] building release...");
+    // Build a linked example binary with line-tables-only debug info.
+    // The example exercises the end-to-end happy path (keygen, sign,
+    // serialize, deserialize, verify); after linking, dead-code
+    // elimination removes any panic site no caller can reach at
+    // runtime. line-tables-only is just enough for llvm-objdump's
+    // `--demangle` to attribute call sites to their calling Rust
+    // function via the standard symbol table — we do not parse DWARF
+    // directly.
+    eprintln!("[panic-count] building release example...");
     let status = Command::new("cargo")
         .env("RUSTFLAGS", "-C debuginfo=line-tables-only")
-        .args(["build", "--release"])
+        .args(["build", "--release", "--example", "readme"])
         .status()
         .expect("failed to run cargo build");
     if !status.success() {
@@ -38,10 +50,10 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     }
 
-    let lib = match find_rlib() {
+    let lib = match find_example_binary() {
         Some(l) => l,
         None => {
-            eprintln!("[panic-count] could not find rlib");
+            eprintln!("[panic-count] could not find example binary");
             std::process::exit(1);
         }
     };
@@ -204,7 +216,17 @@ fn extract_call_target_symbol(line: &str) -> Option<String> {
 }
 
 /// Identify which panic helper a relocation/call references.
+///
+/// Explicitly excludes `core::panicking::panic_const_*` (e.g.
+/// `panic_const_neg_overflow`, `panic_const_div_overflow`), the
+/// const-eval-only helpers rustc emits for arithmetic errors detected
+/// during compile-time evaluation. These are statically dispatched and
+/// never fire at runtime; counting them as runtime panic surface
+/// double-counts what `cargo build --release --example` already DCEs.
 fn panic_kind_in_line(line: &str) -> Option<&'static str> {
+    if line.contains("panic_const_") {
+        return None;
+    }
     if line.contains("panic_bounds_check") {
         Some("bounds_check")
     } else if line.contains("expect_failed") {
@@ -271,23 +293,23 @@ fn normalize_function(raw: &str) -> String {
     s
 }
 
-fn find_rlib() -> Option<String> {
-    for entry in std::fs::read_dir("target/release").ok()? {
-        let entry = entry.ok()?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name == "libsqisign_selkie.rlib" {
-            return Some(entry.path().to_string_lossy().to_string());
-        }
+fn find_example_binary() -> Option<String> {
+    let canonical = "target/release/examples/readme";
+    if std::path::Path::new(canonical).exists() {
+        return Some(canonical.to_string());
     }
-    let mut candidates: Vec<_> = std::fs::read_dir("target/release/deps")
+    // Fall back to the hash-suffixed copy under `examples/` if Cargo's
+    // layout shifts. `cargo build --example readme` typically materializes
+    // both `examples/readme` and `examples/readme-<hash>`; we prefer the
+    // canonical name but accept any newest matching binary.
+    let mut candidates: Vec<_> = std::fs::read_dir("target/release/examples")
         .ok()?
         .filter_map(|e| e.ok())
         .filter(|e| {
             let n = e.file_name().to_string_lossy().to_string();
-            n.starts_with("libsqisign_selkie-") && n.ends_with(".rlib")
+            n == "readme" || (n.starts_with("readme-") && !n.ends_with(".d"))
         })
         .collect();
-    // Newest mtime first (handles stale rlibs from previous toolchains).
     candidates.sort_by_key(|e| {
         std::fs::metadata(e.path())
             .and_then(|m| m.modified())
