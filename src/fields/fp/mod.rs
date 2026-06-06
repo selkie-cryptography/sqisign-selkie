@@ -82,22 +82,31 @@ pub use arch::generic::Fp51 as Fp;
 ))]
 pub use arch::x86_64::mulx_adx::Fp64 as Fp;
 
-/// Batch helpers for call sites that want to process 4 `Fp`
-/// values in parallel.  Compiled in when the corresponding SIMD ISA
-/// is available; not the active scalar `Fp`.
+/// Batch helpers for call sites that want to process 4 `Fp` values
+/// in parallel.  Compiled in when the corresponding SIMD ISA is
+/// available; not the active scalar `Fp`.
 ///
-/// Each batch type has `from_active_fps([Fp; 4]) -> Self` and
-/// `into_active_fps(self) -> [Fp; 4]` conversion at the boundary
-/// (paid once per batch entry/exit, amortized over the batch ops).
+/// Each ISA pair has both the 4-wide batch type (`Fp26x4` / `Fp29x4`)
+/// and its scalar-batch partner (`Fp26` / `Fp29`) -- the type that
+/// `from_scalars` / `to_scalars` reads/writes at the batch boundary.
+///
+/// **`pub(crate)` for now**: there are no in-crate callers yet (the
+/// only uses are in backend tests + benches, which reach through the
+/// arch paths under `expose-internals`).  The module is shaped this
+/// way to anchor the API for the eventual persistent-batch refactor
+/// that lets hot loops (Mont ladder, isogeny composition, basis
+/// generation) carry `Fp26x4` / `Fp29x4` storage instead of scalar
+/// `Fp`.  Once a real persistent caller lands, promote to `pub` so
+/// the API surfaces externally.
 #[cfg(any(
     all(target_arch = "x86_64", target_feature = "avx2"),
     all(target_arch = "aarch64", target_feature = "neon"),
 ))]
-pub mod batch {
+pub(crate) mod batch {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     #[allow(unused_imports)] // no in-crate callers yet; persistent-batch refactor
-    pub use super::arch::aarch64::neon::Fp29x4;
+    pub use super::arch::aarch64::neon::{Fp29, Fp29x4};
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     #[allow(unused_imports)] // no in-crate callers yet; persistent-batch refactor
-    pub use super::arch::x86_64::avx2::Fp26x4;
+    pub use super::arch::x86_64::avx2::{Fp26, Fp26x4};
 }
