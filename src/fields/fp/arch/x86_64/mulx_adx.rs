@@ -133,14 +133,18 @@ impl Fp64 {
 
     /// Const-bridge from `Fp51`'s radix-2^51 Montgomery limbs.
     ///
-    /// Two-step:
+    /// Three-step:
     ///
-    /// 1. Bit-repack `[u64; 5]` radix-2^51 -> `[u64; 4]` radix-2^64. The 5
-    ///    input limbs hold 51 payload bits each (255 bits total); each output
-    ///    limb holds a full 64 bits.
-    /// 2. Multiply by 2 mod p (`Fp51`'s `R = 2^255`, `Fp64`'s `R = 2^256`,
-    ///    ratio 2).  Implemented as a 1-bit left-shift plus a conditional
-    ///    subtract of `p`.
+    /// 1. Bit-repack `[u64; 5]` radix-2^51 -> `[u64; 4]` radix-2^64.
+    /// 2. Canonicalize the repacked integer.  `Fp51` stores values in "less
+    ///    than 2p" form (its constants `ONE`, `TWO`, `FOUR`, `MINUS_ONE` are
+    ///    all stored with limbs whose integer value exceeds `p`), so the
+    ///    repacked value can be in `[0, 2p)` and needs one conditional subtract
+    ///    of `p` before doubling.
+    /// 3. Multiply by 2 mod p (`Fp51`'s `R = 2^255`, `Fp64`'s `R = 2^256`,
+    ///    ratio 2).  Implemented as a 1-bit left-shift plus a second
+    ///    conditional subtract of `p` to canonicalize the doubled value (which
+    ///    is in `[0, 2p)` since the input to the shift is in `[0, p)`).
     ///
     /// Signature-compatible with [`Fp51::from_limbs`][f51] and
     /// `arch::aarch64::neon::Fp29::from_limbs`, so the same
@@ -156,56 +160,71 @@ impl Fp64 {
         let l3 = portable_mont[3];
         let l4 = portable_mont[4];
 
-        // Repack radix-2^51 -> radix-2^64.  Each output limb's bits come
-        // from at most two input limbs.  (Input bit positions:
-        // l0=0..50, l1=51..101, l2=102..152, l3=153..203, l4=204..254.)
+        // Step 1: repack radix-2^51 -> radix-2^64.  Each output limb's
+        // bits come from at most two input limbs.  (Input bit
+        // positions: l0=0..50, l1=51..101, l2=102..152, l3=153..203,
+        // l4=204..254.)
         let v0 = l0 | (l1 << 51);
         let v1 = (l1 >> 13) | (l2 << 38);
         let v2 = (l2 >> 26) | (l3 << 25);
         let v3 = (l3 >> 39) | (l4 << 12);
 
-        // Multiply by 2: 1-bit left shift across the 4 limbs.  `v3 >>
-        // 63` is the bit-256 overflow.  For canonical-form Fp51
-        // inputs (`< 2^255`), the doubled value is `< 2^256` and
-        // `overflow` is 0 -- but the code still propagates it
-        // correctly for any caller that supplies a slightly-unreduced
-        // Fp51 value (Fp51 may leave intermediates up to ~2p).
+        // Step 2: canonicalize the repacked integer from Fp51's
+        // "less than 2p" contract to `[0, p)`.
+        let canon = Self([v0, v1, v2, v3]).cond_sub_p_const(false);
+        let v0 = canon.0[0];
+        let v1 = canon.0[1];
+        let v2 = canon.0[2];
+        let v3 = canon.0[3];
+
+        // Step 3: multiply by 2 (1-bit left shift across the 4
+        // limbs), then canonicalize again.  Since v is in `[0, p)`
+        // and `p < 2^252`, the doubled value is in `[0, 2p) < 2^253`
+        // and never produces a bit-256 overflow -- the `overflow`
+        // flag is always 0 here.  The code propagates it anyway as a
+        // defensive measure.
         let s0 = v0 << 1;
         let s1 = (v1 << 1) | (v0 >> 63);
         let s2 = (v2 << 1) | (v1 >> 63);
         let s3 = (v3 << 1) | (v2 >> 63);
         let overflow = v3 >> 63;
 
-        // Conditional subtract: speculatively compute `s - p` via
-        // chained `overflowing_sub` (no helper, no free function).
-        // If there's no final borrow, `s >= p` and the subtracted
-        // form is the canonical representative; if there was a true
-        // bit-256 overflow, the doubled value is unambiguously larger
-        // than p and the subtracted form is also correct.
+        Self([s0, s1, s2, s3]).cond_sub_p_const(overflow != 0)
+    }
+
+    /// Conditional subtract of `p` in a `const` context.
+    ///
+    /// Returns `self - p` if `self >= p` or `force` is true; else
+    /// returns `self` unchanged.  Used by [`Fp64::from_limbs`] to
+    /// canonicalize at compile time.  The runtime equivalent is
+    /// [`Fp64::final_sub_p`], which uses
+    /// `ConditionallySelectable` for branch-freedom (not available
+    /// in `const fn` yet).
+    const fn cond_sub_p_const(self, force: bool) -> Self {
         let p = Self::P.0;
 
-        let (d0, b0_out) = s0.overflowing_sub(p[0]);
+        let (d0, b0) = self.0[0].overflowing_sub(p[0]);
 
-        let (d1_a, b1_a) = s1.overflowing_sub(p[1]);
-        let (d1, b1_b) = d1_a.overflowing_sub(b0_out as u64);
-        let b1_out = b1_a | b1_b;
+        let (d1_a, b1_a) = self.0[1].overflowing_sub(p[1]);
+        let (d1, b1_b) = d1_a.overflowing_sub(b0 as u64);
+        let b1 = b1_a | b1_b;
 
-        let (d2_a, b2_a) = s2.overflowing_sub(p[2]);
-        let (d2, b2_b) = d2_a.overflowing_sub(b1_out as u64);
-        let b2_out = b2_a | b2_b;
+        let (d2_a, b2_a) = self.0[2].overflowing_sub(p[2]);
+        let (d2, b2_b) = d2_a.overflowing_sub(b1 as u64);
+        let b2 = b2_a | b2_b;
 
-        let (d3_a, b3_a) = s3.overflowing_sub(p[3]);
-        let (d3, b3_b) = d3_a.overflowing_sub(b2_out as u64);
-        let b3_out = b3_a | b3_b;
+        let (d3_a, b3_a) = self.0[3].overflowing_sub(p[3]);
+        let (d3, b3_b) = d3_a.overflowing_sub(b2 as u64);
+        let b3 = b3_a | b3_b;
 
-        let take_subtracted = overflow != 0 || !b3_out;
+        let take = force || !b3;
 
-        let r0 = if take_subtracted { d0 } else { s0 };
-        let r1 = if take_subtracted { d1 } else { s1 };
-        let r2 = if take_subtracted { d2 } else { s2 };
-        let r3 = if take_subtracted { d3 } else { s3 };
-
-        Self([r0, r1, r2, r3])
+        Self([
+            if take { d0 } else { self.0[0] },
+            if take { d1 } else { self.0[1] },
+            if take { d2 } else { self.0[2] },
+            if take { d3 } else { self.0[3] },
+        ])
     }
 
     /// Reduce `self` from `[0, 2p)` to `[0, p)` by conditionally
