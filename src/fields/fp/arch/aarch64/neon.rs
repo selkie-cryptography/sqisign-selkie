@@ -1,8 +1,17 @@
-//! aarch64 NEON backend for [`Fp`] arithmetic.
+//! aarch64 NEON backend, providing the radix-2^29 `Fp29` scalar and
+//! the `Fp29x4` 4-wide batch type.
 //!
-//! Future home for the vectorised `Fp` implementation of De Feo,
-//! Jian, Wang, Yang ([ePrint 2026/394][2026-394], CHES 2026), adapted
-//! from the SQIsign C reference's NEON port.
+//! Adapted from De Feo, Jian, Wang, Yang ([ePrint 2026/394][2026-394],
+//! CHES 2026) and the SQIsign C reference's NEON port.
+//!
+//! Active-`Fp` role: NONE.  Per the M1/M4 measurements in the
+//! `arch-neon-fp` memory entry, narrow-SIMD single-lane (Fp29)
+//! loses to wide-MUL scalar (Fp51) per-op on Apple Silicon's wide
+//! u64-multiply pipe, so the dispatcher keeps Fp51 active on
+//! aarch64.  `Fp29` continues to exist as `Fp29x4`'s scalar-batch
+//! partner -- the type that the conversion at the batch boundary
+//! reads / writes.  Call sites that explicitly want 4-Fp-at-once
+//! storage reach for `Fp29x4` via `fp::batch::Fp29x4`.
 //!
 //! - **Limb layout**: [`Fp29`] holds nine 29-bit unsaturated limbs in 32-bit
 //!   lanes.  Nine limbs cover the 248-bit modulus with 13 bits of per-limb

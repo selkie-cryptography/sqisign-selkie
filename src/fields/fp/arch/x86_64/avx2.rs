@@ -1,9 +1,17 @@
-//! x86_64 AVX2 backend for `Fp` arithmetic.
+//! x86_64 AVX2 backend, providing the radix-2^26 `Fp26` scalar and
+//! the `Fp26x4` 4-wide batch type.
 //!
-//! Future home of the AVX2-vectorised `Fp` implementation analogous to
-//! `crate::fields::fp::arch::aarch64::neon`. Targets Haswell-and-later
-//! Intel and Zen-and-later AMD CPUs (AVX2 is base ISA from 2013 on
-//! Intel, 2017 on AMD).
+//! Targets Haswell-and-later Intel, Zen-and-later AMD CPUs (AVX2 is
+//! base ISA from 2013 on Intel, 2017 on AMD).
+//!
+//! Active-`Fp` role: NONE.  As of the Fp64 dispatcher flip,
+//! `arch::x86_64::mulx_adx::Fp64` is the scalar `Fp` on
+//! x86_64+bmi2+adx builds (its MULX, dual ADCX/ADOX asm beats
+//! VPMULUDQ Mont mul per-op).  `Fp26` continues to exist as
+//! `Fp26x4`'s scalar-batch partner -- the type that
+//! `Fp26x4::from_scalars` / `to_scalars` convert at the batch
+//! boundary.  Call sites that explicitly want 4-Fp-at-once storage
+//! reach for `Fp26x4` via `fp::batch::Fp26x4`.
 //!
 //! - **Limb layout**: [`Fp26`] holds ten 26-bit unsaturated limbs in 32-bit
 //!   lanes. Ten limbs cover the 248-bit modulus with 12 bits of per-limb carry
