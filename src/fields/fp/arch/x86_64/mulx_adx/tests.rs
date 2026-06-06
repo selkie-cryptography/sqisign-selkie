@@ -503,3 +503,107 @@ fn sqrt_one_squared_is_one() {
 fn is_square_zero_is_set() {
     assert!(bool::from(Fp64::ZERO.is_square()));
 }
+
+/// Cross-impl proptests against Fp51 for the higher-level ops that
+/// the Fp64 isogeny path goes through.  All tests share the same
+/// shape: generate canonical-bytes input, compute via both backends,
+/// compare canonical bytes back out.
+///
+/// These exist to localise the `curves::isogeny::tests::*` failures
+/// that surfaced when the dispatcher activated Fp64.  The
+/// `mul_matches_fp51` proptest above already covers the Mul case;
+/// these add invert, sqrt, square, pow_p3div4.
+proptest! {
+    /// `Fp64::pow_p3div4` bytes match `Fp51::pow_p3div4` bytes.
+    ///
+    /// The addition chain was ported verbatim from Fp51; if this test
+    /// fails, some op inside the chain (mul or square via mul) is
+    /// producing a wrong result for specific intermediate values.
+    #[test]
+    fn pow_p3div4_matches_fp51(mut bytes in any::<[u8; 32]>()) {
+        bytes[31] &= 0x03;
+        let fp51 = Fp51::from_bytes(&bytes);
+        let fp64 = Fp64::from_bytes(&bytes);
+
+        let r51 = fp51.pow_p3div4();
+        let r64 = fp64.pow_p3div4();
+
+        prop_assert_eq!(r64.to_bytes(), r51.to_bytes());
+    }
+
+    /// `Fp64::invert` bytes match `Fp51::invert` bytes.
+    ///
+    /// `to_affine_x` calls `invert`; if invert is wrong, that's the
+    /// isogeny-test fault.
+    #[test]
+    fn invert_matches_fp51(mut bytes in any::<[u8; 32]>()) {
+        bytes[31] &= 0x03;
+        let fp51 = Fp51::from_bytes(&bytes);
+        let fp64 = Fp64::from_bytes(&bytes);
+
+        // Skip zero (no inverse).
+        prop_assume!(fp51.to_bytes() != Fp51::ZERO.to_bytes());
+
+        let inv51 = fp51.invert();
+        let inv64 = fp64.invert();
+
+        prop_assert_eq!(inv64.to_bytes(), inv51.to_bytes());
+    }
+
+    /// `Fp64::sqrt` bytes match `Fp51::sqrt` bytes when input is
+    /// a quadratic residue.
+    ///
+    /// Both impls use the same pow_p3div4 chain plus a final mul;
+    /// the canonical sqrt is the unique non-negative root.
+    #[test]
+    fn sqrt_matches_fp51(mut bytes in any::<[u8; 32]>()) {
+        bytes[31] &= 0x03;
+        let fp51 = Fp51::from_bytes(&bytes);
+        let fp64 = Fp64::from_bytes(&bytes);
+
+        prop_assume!(bool::from(fp51.is_square()));
+
+        let r51 = fp51.sqrt();
+        let r64 = fp64.sqrt();
+
+        prop_assert_eq!(r64.to_bytes(), r51.to_bytes());
+    }
+
+    /// `Fp64::square` bytes match `Fp51::square` bytes.
+    ///
+    /// Sanity-check that the simplest non-Add op agrees with Fp51,
+    /// independent of the mul_matches_fp51 test which uses
+    /// `from_limbs`-bridged inputs.
+    #[test]
+    fn square_matches_fp51(mut bytes in any::<[u8; 32]>()) {
+        bytes[31] &= 0x03;
+        let fp51 = Fp51::from_bytes(&bytes);
+        let fp64 = Fp64::from_bytes(&bytes);
+
+        let r51 = fp51.square();
+        let r64 = fp64.square();
+
+        prop_assert_eq!(r64.to_bytes(), r51.to_bytes());
+    }
+
+    /// `Fp64::mul` bytes match `Fp51::mul` bytes for the
+    /// canonical-bytes-in / canonical-bytes-out shape (vs the
+    /// from_limbs-bridged shape that `mul_matches_fp51` above tests).
+    #[test]
+    fn mul_matches_fp51_via_bytes(
+        mut bytes_a in any::<[u8; 32]>(),
+        mut bytes_b in any::<[u8; 32]>(),
+    ) {
+        bytes_a[31] &= 0x03;
+        bytes_b[31] &= 0x03;
+        let a51 = Fp51::from_bytes(&bytes_a);
+        let b51 = Fp51::from_bytes(&bytes_b);
+        let a64 = Fp64::from_bytes(&bytes_a);
+        let b64 = Fp64::from_bytes(&bytes_b);
+
+        let p51 = &a51 * &b51;
+        let p64 = a64 * b64;
+
+        prop_assert_eq!(p64.to_bytes(), p51.to_bytes());
+    }
+}
