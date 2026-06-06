@@ -52,52 +52,15 @@ mod tests;
 /// Number of bytes in a canonical encoding of an element of F_p.
 pub const FP_ENCODED_BYTES: usize = 32;
 
-// `Fp` re-export: scalar backend picked by `cfg(target_feature)`
-// directly (no `build.rs` indirection).  The active backend is the
-// best scalar `Fp` available on the target -- `Fp64` MULX+ADX asm
-// on x86_64+bmi2+adx, else the always-available `Fp51`.
-//
-// Each non-`Fp51` backend has a `from_limbs([u64; 5])` const-bridge
-// that accepts `Fp51`'s radix-51 Montgomery limbs and const-converts
-// at compile time, so precomputed-constant tables in `params.rs`
-// and `deuring/precomputed.rs` are signature-compatible across all
-// backends.
-//
-// Batch helpers (`Fp26x4` / `Fp29x4`) compile in independently
-// when their ISA is available; see [`batch`] below.  They are not
-// the active `Fp` -- per-op single-lane SIMD loses to scalar `Fp64`
-// asm on Sapphire and loses to scalar `Fp51` on M4.  Call sites
-// that need 4-Fp-at-once batches reach for the batch type
-// explicitly.
-#[cfg(not(all(
-    target_arch = "x86_64",
-    target_feature = "bmi2",
-    target_feature = "adx",
-)))]
+// `Fp` re-export: scalar backend selected at compile time from the
+// cfg `build.rs` emits.  Each non-`Fp51` backend has a `from_limbs`
+// const-bridge that accepts `Fp51`'s radix-51 Montgomery limbs and
+// const-converts at compile time, so precomputed-constant tables in
+// `params.rs` and `deuring/precomputed.rs` are signature-compatible
+// across all backends.
+#[cfg(sqisign_selkie_arch = "neon")]
+pub use arch::aarch64::neon::Fp29 as Fp;
+#[cfg(not(any(sqisign_selkie_arch = "neon", sqisign_selkie_arch = "avx2")))]
 pub use arch::generic::Fp51 as Fp;
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "bmi2",
-    target_feature = "adx",
-))]
-pub use arch::x86_64::mulx_adx::Fp64 as Fp;
-
-/// Batch helpers for call sites that want to process 4 `Fp`
-/// values in parallel.  Compiled in when the corresponding SIMD ISA
-/// is available; not the active scalar `Fp`.
-///
-/// Each batch type has `from_active_fps([Fp; 4]) -> Self` and
-/// `into_active_fps(self) -> [Fp; 4]` conversion at the boundary
-/// (paid once per batch entry/exit, amortized over the batch ops).
-#[cfg(any(
-    all(target_arch = "x86_64", target_feature = "avx2"),
-    all(target_arch = "aarch64", target_feature = "neon"),
-))]
-pub mod batch {
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    #[allow(unused_imports)] // no in-crate callers yet; persistent-batch refactor
-    pub use super::arch::aarch64::neon::Fp29x4;
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    #[allow(unused_imports)] // no in-crate callers yet; persistent-batch refactor
-    pub use super::arch::x86_64::avx2::Fp26x4;
-}
+#[cfg(sqisign_selkie_arch = "avx2")]
+pub use arch::x86_64::avx2::Fp26 as Fp;
