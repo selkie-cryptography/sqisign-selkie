@@ -306,13 +306,16 @@ impl Fp64 {
                 // a[1] * b. After: accumulator slots rotate -- the
                 // "new z4" is what was z0.
 
-                // MULADD64x64(reduce z0): mulx with p+1's top limb;
-                // ADOX (T0:T1) into z2:z3.
+                // MULADD64x64(reduce z0): mulx with p+1's top limb.
+                // The product (z0 * P_PLUS_1_HI) is a u128 representing
+                // an integer value at limb position 3 (since P_PLUS_1_HI
+                // is at limb 3 of p+1).  So T1 (= LO) lands at limb 3 =
+                // z3, T0 (= HI) at limb 4 = z4.
                 "mov rdx, {z0}",
                 "mulx {t0}, {t1}, {p1hi}",
                 "xor eax, eax",
-                "adox {z2}, {t1}",
-                "adox {z3}, {t0}",
+                "adox {z3}, {t1}",
+                "adox {z4}, {t0}",
 
                 // MULADD64x256(a[1] * b, accumulate into z1:z4:z0):
                 // first mulx primes z1, z2 via ADOX; subsequent
@@ -336,11 +339,13 @@ impl Fp64 {
                 "adc {z0}, 0",
 
                 // Iter 1: reduce z1; accumulate a[2] * b into z2..z0:z1.
+                // After iter 0's rotation, conceptual position-3 = z4
+                // and position-4 = z0 (the freed slot).
                 "mov rdx, {z1}",
                 "mulx {t0}, {t1}, {p1hi}",
                 "xor eax, eax",
-                "adox {z3}, {t1}",
-                "adox {z4}, {t0}",
+                "adox {z4}, {t1}",
+                "adox {z0}, {t0}",
 
                 "mov rdx, qword ptr [{a} + 16]",
                 "mulx {t0}, {t1}, qword ptr [{b} + 0]",
@@ -359,11 +364,13 @@ impl Fp64 {
                 "adc {z1}, 0",
 
                 // Iter 2: reduce z2; accumulate a[3] * b into z3..z1:z2.
+                // After iter 1's rotation, conceptual position-3 = z0
+                // and position-4 = z1.
                 "mov rdx, {z2}",
                 "mulx {t0}, {t1}, {p1hi}",
                 "xor eax, eax",
-                "adox {z4}, {t1}",
-                "adox {z0}, {t0}",
+                "adox {z0}, {t1}",
+                "adox {z1}, {t0}",
 
                 "mov rdx, qword ptr [{a} + 24]",
                 "mulx {t0}, {t1}, qword ptr [{b} + 0]",
@@ -382,11 +389,13 @@ impl Fp64 {
                 "adc {z2}, 0",
 
                 // Iter 3: final reduction; no further row addition.
+                // After iter 2's rotation, conceptual position-3 = z1
+                // and position-4 = z2.
                 "mov rdx, {z3}",
                 "mulx {t0}, {t1}, {p1hi}",
                 "xor eax, eax",
-                "adox {z0}, {t1}",
-                "adox {z1}, {t0}",
+                "adox {z1}, {t1}",
+                "adox {z2}, {t0}",
 
                 // Result lands in (z4, z0, z1, z2) -- four limbs after
                 // four rotations.  Store to out[0..3].
