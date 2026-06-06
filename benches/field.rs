@@ -4,7 +4,16 @@ use sqisign_selkie::fields::fp::arch::aarch64::neon::{Fp29, Fp29x4};
 use sqisign_selkie::fields::fp::arch::x86_64::avx2::Fp26;
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 use sqisign_selkie::fields::fp::arch::x86_64::avx2::Fp26x4;
-use sqisign_selkie::fields::{fp::Fp, fp2::Fp2};
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+use sqisign_selkie::fields::fp::arch::x86_64::mulx_adx::Fp64;
+use sqisign_selkie::fields::{
+    fp::{Fp, arch::generic::Fp51},
+    fp2::Fp2,
+};
 
 fn main() {
     divan::main();
@@ -57,6 +66,84 @@ fn fp2_invert(bencher: divan::Bencher) {
 #[divan::bench]
 fn fp2_sqrt(bencher: divan::Bencher) {
     let a = Fp2::new(Fp::from_small(3), Fp::from_small(7)).square();
+    bencher.bench(|| divan::black_box(&a).sqrt());
+}
+
+// --- Explicit backend benches for the Fp51 vs Fp64 head-to-head ---
+//
+// `fp_*` above measures the *active* `Fp` -- whichever backend the
+// dispatcher picked.  On the Fly perf-2x x86_64 runner that's `Fp64`
+// (MULX + dual ADCX/ADOX asm).  The benches below explicitly hit
+// `Fp51` (radix-2^51 LLVM scalar) and `Fp64` (radix-2^64 asm) on the
+// same hardware so the dashboard can show the per-op delta directly.
+
+#[divan::bench]
+fn fp51_mul(bencher: divan::Bencher) {
+    let a = Fp51::from_bytes(&[17u8; 32]);
+    let b = Fp51::from_bytes(&[42u8; 32]);
+    bencher.bench(|| divan::black_box(a) * divan::black_box(b));
+}
+
+#[divan::bench]
+fn fp51_square(bencher: divan::Bencher) {
+    let a = Fp51::from_bytes(&[17u8; 32]);
+    bencher.bench(|| divan::black_box(&a).square());
+}
+
+#[divan::bench]
+fn fp51_invert(bencher: divan::Bencher) {
+    let a = Fp51::from_bytes(&[17u8; 32]);
+    bencher.bench(|| divan::black_box(&a).invert());
+}
+
+#[divan::bench]
+fn fp51_sqrt(bencher: divan::Bencher) {
+    let a = Fp51::from_bytes(&[17u8; 32]).square();
+    bencher.bench(|| divan::black_box(&a).sqrt());
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+#[divan::bench]
+fn fp64_mul(bencher: divan::Bencher) {
+    let a = Fp64::from_bytes(&[17u8; 32]);
+    let b = Fp64::from_bytes(&[42u8; 32]);
+    bencher.bench(|| divan::black_box(a) * divan::black_box(b));
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+#[divan::bench]
+fn fp64_square(bencher: divan::Bencher) {
+    let a = Fp64::from_bytes(&[17u8; 32]);
+    bencher.bench(|| divan::black_box(&a).square());
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+#[divan::bench]
+fn fp64_invert(bencher: divan::Bencher) {
+    let a = Fp64::from_bytes(&[17u8; 32]);
+    bencher.bench(|| divan::black_box(&a).invert());
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+#[divan::bench]
+fn fp64_sqrt(bencher: divan::Bencher) {
+    let a = Fp64::from_bytes(&[17u8; 32]).square();
     bencher.bench(|| divan::black_box(&a).sqrt());
 }
 
