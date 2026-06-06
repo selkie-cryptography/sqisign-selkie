@@ -7,12 +7,10 @@
 //! - [`avx2`]: radix-2^26 `Fp26x4` 4-wide batch with `_mm256_mul_epu32`.
 //!
 //! `mulx_adx` matches the C ref's `gf/broadwell/lvl1/gf5248.c` storage
-//! exactly.  Library code only at present -- the dispatcher in
-//! `super::super` does NOT activate Fp64 as the crate-wide `Fp` yet;
-//! higher-level isogeny tests surfaced correctness issues that need
-//! debugging on x86_64 before the dispatcher can flip.  Module is
-//! cfg-gated on `target_feature = "bmi2"` + `target_feature = "adx"`;
-//! not in scope on doc builds without them.
+//! exactly.  Active as the crate-wide `Fp` on x86_64 builds that have
+//! `target_feature = "bmi2"` + `target_feature = "adx"` (Broadwell
+//! 2014+).  Module is cfg-gated on those features; not in scope on
+//! doc builds without them.
 //!
 //! `avx2` is not a standalone active `Fp` backend; exposed as a batch
 //! helper for call sites that explicitly opt into 4-Fp-at-once storage.
