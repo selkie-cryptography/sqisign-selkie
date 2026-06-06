@@ -136,15 +136,17 @@ impl Fp64 {
     /// Three-step:
     ///
     /// 1. Bit-repack `[u64; 5]` radix-2^51 -> `[u64; 4]` radix-2^64.
-    /// 2. Canonicalize the repacked integer.  `Fp51` stores values in "less
-    ///    than 2p" form (its constants `ONE`, `TWO`, `FOUR`, `MINUS_ONE` are
-    ///    all stored with limbs whose integer value exceeds `p`), so the
-    ///    repacked value can be in `[0, 2p)` and needs one conditional subtract
-    ///    of `p` before doubling.
+    /// 2. Canonicalize the repacked integer.  `Fp51`'s named constants (`ONE`,
+    ///    `TWO`, `FOUR`, `MINUS_ONE`) store integer values in `[0, ~7p)` --
+    ///    they're encoded for ease of Fp51's internal "less than 2p" Add
+    ///    contract, not at minimal Mont form.  E.g. `Fp51::FOUR` integer is
+    ///    `100 + 12 * 2^248 ~= 2.4p`. Fully reducing requires up to ~7
+    ///    conditional subtracts of `p`; we do 16 as a safety margin (each call
+    ///    past canonical is a no-op).
     /// 3. Multiply by 2 mod p (`Fp51`'s `R = 2^255`, `Fp64`'s `R = 2^256`,
-    ///    ratio 2).  Implemented as a 1-bit left-shift plus a second
-    ///    conditional subtract of `p` to canonicalize the doubled value (which
-    ///    is in `[0, 2p)` since the input to the shift is in `[0, p)`).
+    ///    ratio 2).  Implemented as a 1-bit left-shift plus a single
+    ///    conditional subtract of `p` to canonicalize the doubled value (in
+    ///    `[0, 2p)` since input is `[0, p)`).
     ///
     /// Signature-compatible with [`Fp51::from_limbs`][f51] and
     /// `arch::aarch64::neon::Fp29::from_limbs`, so the same
@@ -169,27 +171,30 @@ impl Fp64 {
         let v2 = (l2 >> 26) | (l3 << 25);
         let v3 = (l3 >> 39) | (l4 << 12);
 
-        // Step 2: canonicalize the repacked integer from Fp51's
-        // "less than 2p" contract to `[0, p)`.
-        let canon = Self([v0, v1, v2, v3]).cond_sub_p_const(false);
-        let v0 = canon.0[0];
-        let v1 = canon.0[1];
-        let v2 = canon.0[2];
-        let v3 = canon.0[3];
+        // Step 2: fully canonicalize the repacked integer.  Worst-case
+        // Fp51 named constants encode integers around `~6.4p`; loop
+        // 16 times to safely reduce to `[0, p)`.
+        let mut acc = Self([v0, v1, v2, v3]);
+        let mut i = 0;
+        while i < 16 {
+            acc = acc.cond_sub_p_const(false);
+            i += 1;
+        }
 
         // Step 3: multiply by 2 (1-bit left shift across the 4
-        // limbs), then canonicalize again.  Since v is in `[0, p)`
-        // and `p < 2^252`, the doubled value is in `[0, 2p) < 2^253`
-        // and never produces a bit-256 overflow -- the `overflow`
-        // flag is always 0 here.  The code propagates it anyway as a
-        // defensive measure.
+        // limbs).  Input is now in `[0, p)`, `p < 2^252`, so the
+        // doubled value is in `[0, 2p) < 2^253` and never produces a
+        // bit-256 overflow.  Single conditional subtract suffices.
+        let v0 = acc.0[0];
+        let v1 = acc.0[1];
+        let v2 = acc.0[2];
+        let v3 = acc.0[3];
         let s0 = v0 << 1;
         let s1 = (v1 << 1) | (v0 >> 63);
         let s2 = (v2 << 1) | (v1 >> 63);
         let s3 = (v3 << 1) | (v2 >> 63);
-        let overflow = v3 >> 63;
 
-        Self([s0, s1, s2, s3]).cond_sub_p_const(overflow != 0)
+        Self([s0, s1, s2, s3]).cond_sub_p_const(false)
     }
 
     /// Conditional subtract of `p` in a `const` context.
@@ -471,10 +476,21 @@ impl Fp64 {
     #[must_use]
     pub fn from_bytes(bytes: &[u8; FP_ENCODED_BYTES]) -> Self {
         let canonical = Self([
-            u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
-            u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
-            u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
-            u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
+            u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]),
+            u64::from_le_bytes([
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
+                bytes[15],
+            ]),
+            u64::from_le_bytes([
+                bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22],
+                bytes[23],
+            ]),
+            u64::from_le_bytes([
+                bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30],
+                bytes[31],
+            ]),
         ]);
         &canonical * &Self::R2
     }
