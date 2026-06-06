@@ -14,9 +14,9 @@
 //!   on x86_64 builds with `target_feature = "bmi2"` + `target_feature = "adx"`
 //!   (Broadwell 2014+).  Matches the C ref's `gf/broadwell/lvl1/gf5248.c`
 //!   storage.
-//! - `aarch64::neon` -- radix-2^29 `Fp29` (scalar) + `Fp29x4` (4-wide SoA NEON
+//! - `aarch64::neon` -- radix-2^29 `Fp29` (scalar) + `Fp29x4` (4-wide NEON
 //!   batch).  Activated by `cfg(sqisign_selkie_arch = "neon")`.
-//! - `x86_64::avx2` -- radix-2^26 `Fp26` (scalar) + `Fp26x4` (4-wide SoA AVX2
+//! - `x86_64::avx2` -- radix-2^26 `Fp26` (scalar) + `Fp26x4` (4-wide AVX2
 //!   batch).  Activated by `cfg(sqisign_selkie_arch = "avx2")`.
 //!
 //! # No AVX-512 / IFMA52 path
