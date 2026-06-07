@@ -427,30 +427,34 @@ impl Fp64 {
         Self(out).final_sub_p()
     }
 
-    /// Full 8-limb product `a^2` via dual-carry ADCX/ADOX, exploiting
-    /// squaring symmetry: the 6 cross products `a[i]*a[j]` (i<j) are
-    /// accumulated once with the CF (ADCX) and OF (ADOX) chains running
-    /// in parallel, the buffer is doubled, then the 4 diagonal squares
-    /// `a[i]^2` are folded in -- 10 MULX total.  Output is the raw
-    /// 512-bit square (unreduced); the caller applies Montgomery REDC.
+    /// Returns `a * a * R^{-1} mod p` (in `[0, 2p)`) as a single
+    /// register-resident asm block: dual-carry ADCX/ADOX product plus an
+    /// in-register `p+1` Montgomery REDC, with no 8-limb memory
+    /// round-trip.
     ///
-    /// Each cross-product row's two carry-outs are folded into the next
-    /// limb (`adcx top, 0` / `adox next, 0` / `adc next, 0`) before the
-    /// following row's `xor` resets the flags, so neither chain drops a
-    /// carry.  The doubling and diagonal phases use a single CF chain
-    /// (MULX and MOV preserve CF).
+    /// The 6 symmetric cross products `a[i]*a[j]` (i<j) accumulate once
+    /// on the CF (ADCX) and OF (ADOX) chains in parallel; each row's two
+    /// carry-outs fold into the next limb (`adcx top, 0` / `adox next, 0`
+    /// / `adc next, 0`) before the next row's `xor` resets the flags, so
+    /// neither chain drops a carry.  The buffer is doubled, the 4
+    /// diagonal squares `a[i]^2` fold in (single CF chain), then the
+    /// 8-limb product is reduced in place to 4 limbs.  14 MULX total (10
+    /// product + 4 reduction) vs `mul_montgomery`'s 20, and the product
+    /// limbs never leave registers -- the round-trip in the earlier
+    /// product-then-Rust-REDC split cost ~70 instructions per square,
+    /// which compounded over `pow_p3div4`'s ~244 squarings.
     ///
     /// # Safety
     ///
     /// cfg-gated on `+adx` and `+bmi2`; MULX/ADCX/ADOX are used
-    /// unconditionally.  Reads 32 bytes from `a`, writes 64 bytes to the
+    /// unconditionally.  Reads 32 bytes from `a`, writes 32 bytes to the
     /// returned buffer; `nostack`.
     #[inline]
-    fn sqr_wide_adx(a: &[u64; 4]) -> [u64; 8] {
-        let mut t = [0u64; 8];
+    fn sqr_montgomery(a: &[u64; 4]) -> [u64; 4] {
+        let mut t = [0u64; 4];
         // SAFETY: cfg-gated +adx/+bmi2; the asm has no operand-dependent
         // memory access or control flow.  Reads a[0..4] via its pointer,
-        // writes t[0..8] via its pointer.
+        // writes t[0..4] via its pointer.
         unsafe {
             asm!(
                 // Zero the eight accumulators.
@@ -529,17 +533,44 @@ impl Fp64 {
                 "adc {z6}, {lo}",
                 "adc {z7}, {hi}",
 
-                // Store the 8-limb product.
-                "mov qword ptr [{t} + 0], {z0}",
-                "mov qword ptr [{t} + 8], {z1}",
-                "mov qword ptr [{t} + 16], {z2}",
-                "mov qword ptr [{t} + 24], {z3}",
-                "mov qword ptr [{t} + 32], {z4}",
-                "mov qword ptr [{t} + 40], {z5}",
-                "mov qword ptr [{t} + 48], {z6}",
-                "mov qword ptr [{t} + 56], {z7}",
+                // In-register p+1 Montgomery REDC -- no memory round-trip.
+                // n_inv == 1 so the multiplier for limb i is m = z_i;
+                // add m * P_PLUS_1_HI at limbs i+3, i+4 and carry up,
+                // which cancels limb i exactly.  Limbs 0..3 are consumed;
+                // the result lands in z4..z7.  `a`'s pointer is dead
+                // after the product, so its register is reloaded with
+                // P_PLUS_1_HI (= 5 * 2^56) as the shared mulx operand.
+                "mov {a}, 0x0500000000000000",
+                "mov rdx, {z0}",
+                "mulx {hi}, {lo}, {a}",
+                "add {z3}, {lo}",
+                "adc {z4}, {hi}",
+                "adc {z5}, 0",
+                "adc {z6}, 0",
+                "adc {z7}, 0",
+                "mov rdx, {z1}",
+                "mulx {hi}, {lo}, {a}",
+                "add {z4}, {lo}",
+                "adc {z5}, {hi}",
+                "adc {z6}, 0",
+                "adc {z7}, 0",
+                "mov rdx, {z2}",
+                "mulx {hi}, {lo}, {a}",
+                "add {z5}, {lo}",
+                "adc {z6}, {hi}",
+                "adc {z7}, 0",
+                "mov rdx, {z3}",
+                "mulx {hi}, {lo}, {a}",
+                "add {z6}, {lo}",
+                "adc {z7}, {hi}",
 
-                a = in(reg) a.as_ptr(),
+                // Store the reduced 4-limb result (in [0, 2p)).
+                "mov qword ptr [{t} + 0], {z4}",
+                "mov qword ptr [{t} + 8], {z5}",
+                "mov qword ptr [{t} + 16], {z6}",
+                "mov qword ptr [{t} + 24], {z7}",
+
+                a = inout(reg) a.as_ptr() => _,
                 t = in(reg) t.as_mut_ptr(),
                 z0 = out(reg) _,
                 z1 = out(reg) _,
@@ -561,60 +592,23 @@ impl Fp64 {
 
     /// Modular squaring: `self * self mod p`.
     ///
-    /// Symmetric squaring: forms the full 2N-limb product `a^2` using
-    /// cross-term symmetry (each `a[i]*a[j]`, `i<j`, computed once then
-    /// doubled, plus the diagonal `a[i]^2`), then a `p+1`-trick
-    /// Montgomery REDC.  Totals ~14 `u128` limb-mults (10 product + 4
-    /// reduction) vs the 20 of `mul_montgomery` (16 + 4), which is why
-    /// `fp_square` beats `fp_mul`.  C ref's `fp_sqr` is `jmp fp_mul`
-    /// (no symmetric shortcut); this is a Selkie divergence motivated
-    /// by the bench gap.
+    /// Single register-resident asm block ([`Fp64::sqr_montgomery`]):
+    /// symmetric dual-carry product plus an in-register `p+1` Montgomery
+    /// REDC, 14 MULX total vs `mul_montgomery`'s 20.  No 8-limb memory
+    /// round-trip (the earlier product-then-Rust-REDC split cost ~70
+    /// instructions per square, which compounded badly over
+    /// `pow_p3div4`'s ~244 squarings -- see the `fp64_invert` Ir gap).
+    /// C ref's `fp_sqr` is `jmp fp_mul` (no symmetric shortcut); this is
+    /// a Selkie divergence motivated by the bench gap.
     ///
-    /// The product is the dual-carry [`Fp64::sqr_wide_adx`] asm; the
-    /// `p+1` REDC is `u128` Rust (only 4 limb-mults).  Validated against
-    /// the Montgomery definition (cycle-accurate flag sim, 500k random +
-    /// edges) and gated on CI by `square_matches_mul` /
-    /// `square_matches_fp51`.
+    /// Validated against the Montgomery definition (cycle-accurate CF/OF
+    /// flag sim of the exact instruction sequence, 500k random + edges)
+    /// and gated on CI by `square_matches_mul` / `square_matches_fp51`.
     #[inline]
     #[must_use]
     pub fn square(&self) -> Self {
-        // Phases 1-3: the full 8-limb product a^2 via dual-carry
-        // ADCX/ADOX asm (symmetric cross-terms, doubling, diagonals).
-        let mut t = Self::sqr_wide_adx(&self.0);
-
-        // Phase 4: Montgomery REDC via the p+1 identity.  Since
-        // `p[0] == -1`, the multiplier is `n_inv == 1`, so `m = t[i]`
-        // and `t += m*p` cancels limb i exactly (`t[i] - m == 0`, no
-        // borrow).  And `p + 1 == P_PLUS_1_HI * 2^192`, so the only
-        // nonzero add is `m * P_PLUS_1_HI` at limbs i+3, i+4 -- 4
-        // limb-mults total vs 16 for a full-modulus REDC.  Limbs 0..3
-        // are consumed (zeroed) and dropped; the result is t[4..8] in
-        // [0, 2p).
-        let mut i = 0;
-        while i < 4 {
-            let m = t[i];
-            let prod = m as u128 * P_PLUS_1_HI as u128;
-            let plo = prod as u64;
-            let phi = (prod >> 64) as u64;
-
-            let (s, c0) = t[i + 3].overflowing_add(plo);
-            t[i + 3] = s;
-            let (s, c1) = t[i + 4].overflowing_add(phi);
-            let (s, c2) = s.overflowing_add(c0 as u64);
-            t[i + 4] = s;
-
-            let mut carry = (c1 as u64) | (c2 as u64);
-            let mut idx = i + 5;
-            while idx < 8 && carry != 0 {
-                let (s, c) = t[idx].overflowing_add(carry);
-                t[idx] = s;
-                carry = c as u64;
-                idx += 1;
-            }
-            i += 1;
-        }
-
-        Self([t[4], t[5], t[6], t[7]]).final_sub_p()
+        // Output is in [0, 2p); one conditional subtract canonicalizes.
+        Self(Self::sqr_montgomery(&self.0)).final_sub_p()
     }
 
     /// Returns `a1 * b1 + a2 * b2 (mod p)`.
