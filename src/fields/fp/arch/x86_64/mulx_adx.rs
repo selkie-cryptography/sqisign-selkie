@@ -429,15 +429,101 @@ impl Fp64 {
 
     /// Modular squaring: `self * self mod p`.
     ///
-    /// Delegates to [`Fp64::mul_montgomery`].  Matches C ref's `fp_sqr`
-    /// at `src/gf/broadwell/lvl1/fp_asm.S:464`, which is a one-line
-    /// `mov rdx, rsi; jmp fp_mul` -- no symmetric-squaring asm
-    /// shortcut.  A real symmetric impl saves roughly 30% of the
-    /// MULX ops; deferred until benches show it matters.
+    /// Symmetric squaring: forms the full 2N-limb product `a^2` using
+    /// cross-term symmetry (each `a[i]*a[j]`, `i<j`, computed once then
+    /// doubled, plus the diagonal `a[i]^2`), then applies Montgomery
+    /// REDC mod `p`.  Costs ~10 `u128` limb-mults vs the 16 of a full
+    /// schoolbook `mul(a, a)`, which is why `fp_square` beats `fp_mul`.
+    /// C ref's `fp_sqr` is `jmp fp_mul` (no symmetric shortcut); this
+    /// is a Selkie divergence motivated by the bench gap.
+    ///
+    /// Pure-Rust `u128` (LLVM lowers to MULX): correct-by-construction,
+    /// mirroring the proptested `quaternions::bigint` wide-square plus a
+    /// `p`-specialized REDC (`-p^{-1} mod 2^64 == 1` since `p[0] == -1`).
+    /// A dual-carry ADCX/ADOX asm refinement is a follow-up.
     #[inline]
     #[must_use]
     pub fn square(&self) -> Self {
-        Self::mul_montgomery(self, self)
+        let a = &self.0;
+
+        // Phase 1: cross products a[i]*a[j] (i<j) into the 8-limb buffer
+        // `t` at position i+j, accumulating across outer iterations.
+        let mut t = [0u64; 8];
+        let mut i = 0;
+        while i < 4 {
+            let mut carry: u64 = 0;
+            let mut j = i + 1;
+            while j < 4 {
+                let pos = i + j;
+                let prod = a[i] as u128 * a[j] as u128 + t[pos] as u128 + carry as u128;
+                t[pos] = prod as u64;
+                carry = (prod >> 64) as u64;
+                j += 1;
+            }
+            t[i + 4] = carry;
+            i += 1;
+        }
+
+        // Phase 2: double the buffer (each cross term appears twice in a^2).
+        let mut carry: u64 = 0;
+        let mut k = 0;
+        while k < 8 {
+            let new = (t[k] << 1) | carry;
+            carry = t[k] >> 63;
+            t[k] = new;
+            k += 1;
+        }
+
+        // Phase 3: add diagonal squares a[i]^2 at position 2i, carrying
+        // upward.  At most one of (c1, c2) fires per add (the partial
+        // sum can't overflow twice), so `|` correctly merges them.
+        let mut carry: u64 = 0;
+        let mut i = 0;
+        while i < 4 {
+            let prod = a[i] as u128 * a[i] as u128;
+            let plo = prod as u64;
+            let phi = (prod >> 64) as u64;
+
+            let (s, c1) = t[2 * i].overflowing_add(plo);
+            let (s, c2) = s.overflowing_add(carry);
+            t[2 * i] = s;
+            let mid = (c1 as u64) | (c2 as u64);
+
+            let (s, c1) = t[2 * i + 1].overflowing_add(phi);
+            let (s, c2) = s.overflowing_add(mid);
+            t[2 * i + 1] = s;
+            carry = (c1 as u64) | (c2 as u64);
+
+            i += 1;
+        }
+
+        // Phase 4: Montgomery REDC mod p.  n_inv == 1, so the reduction
+        // multiplier m for limb i is just t[i]; add m*p at offset i so
+        // limb i cancels, then carry up.  After 4 rounds the result is
+        // in t[4..8], in [0, 2p).
+        let p = Self::P.0;
+        let mut i = 0;
+        while i < 4 {
+            let m = t[i];
+            let mut carry: u64 = 0;
+            let mut j = 0;
+            while j < 4 {
+                let prod = t[i + j] as u128 + m as u128 * p[j] as u128 + carry as u128;
+                t[i + j] = prod as u64;
+                carry = (prod >> 64) as u64;
+                j += 1;
+            }
+            let mut idx = i + 4;
+            while idx < 8 && carry != 0 {
+                let (s, c) = t[idx].overflowing_add(carry);
+                t[idx] = s;
+                carry = c as u64;
+                idx += 1;
+            }
+            i += 1;
+        }
+
+        Self([t[4], t[5], t[6], t[7]]).final_sub_p()
     }
 
     /// Returns `a1 * b1 + a2 * b2 (mod p)`.
