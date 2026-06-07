@@ -427,6 +427,138 @@ impl Fp64 {
         Self(out).final_sub_p()
     }
 
+    /// Full 8-limb product `a^2` via dual-carry ADCX/ADOX, exploiting
+    /// squaring symmetry: the 6 cross products `a[i]*a[j]` (i<j) are
+    /// accumulated once with the CF (ADCX) and OF (ADOX) chains running
+    /// in parallel, the buffer is doubled, then the 4 diagonal squares
+    /// `a[i]^2` are folded in -- 10 MULX total.  Output is the raw
+    /// 512-bit square (unreduced); the caller applies Montgomery REDC.
+    ///
+    /// Each cross-product row's two carry-outs are folded into the next
+    /// limb (`adcx top, 0` / `adox next, 0` / `adc next, 0`) before the
+    /// following row's `xor` resets the flags, so neither chain drops a
+    /// carry.  The doubling and diagonal phases use a single CF chain
+    /// (MULX and MOV preserve CF).
+    ///
+    /// # Safety
+    ///
+    /// cfg-gated on `+adx` and `+bmi2`; MULX/ADCX/ADOX are used
+    /// unconditionally.  Reads 32 bytes from `a`, writes 64 bytes to the
+    /// returned buffer; `nostack`.
+    #[inline]
+    fn sqr_wide_adx(a: &[u64; 4]) -> [u64; 8] {
+        let mut t = [0u64; 8];
+        // SAFETY: cfg-gated +adx/+bmi2; the asm has no operand-dependent
+        // memory access or control flow.  Reads a[0..4] via its pointer,
+        // writes t[0..8] via its pointer.
+        unsafe {
+            asm!(
+                // Zero the eight accumulators.
+                "xor {z0:e}, {z0:e}",
+                "xor {z1:e}, {z1:e}",
+                "xor {z2:e}, {z2:e}",
+                "xor {z3:e}, {z3:e}",
+                "xor {z4:e}, {z4:e}",
+                "xor {z5:e}, {z5:e}",
+                "xor {z6:e}, {z6:e}",
+                "xor {z7:e}, {z7:e}",
+
+                // Row 0: a[0] * (a[1], a[2], a[3]) -> z1..z4, fold to z5.
+                "mov rdx, qword ptr [{a} + 0]",
+                "xor eax, eax",
+                "mulx {hi}, {lo}, qword ptr [{a} + 8]",
+                "adox {z1}, {lo}",
+                "adox {z2}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{a} + 16]",
+                "adcx {z2}, {lo}",
+                "adox {z3}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{a} + 24]",
+                "adcx {z3}, {lo}",
+                "adox {z4}, {hi}",
+                "adcx {z4}, rax",
+                "adox {z5}, rax",
+                "adc {z5}, 0",
+
+                // Row 1: a[1] * (a[2], a[3]) -> z3..z5, fold to z6.
+                "mov rdx, qword ptr [{a} + 8]",
+                "xor eax, eax",
+                "mulx {hi}, {lo}, qword ptr [{a} + 16]",
+                "adox {z3}, {lo}",
+                "adox {z4}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{a} + 24]",
+                "adcx {z4}, {lo}",
+                "adox {z5}, {hi}",
+                "adcx {z5}, rax",
+                "adox {z6}, rax",
+                "adc {z6}, 0",
+
+                // Row 2: a[2] * a[3] -> z5, z6, fold to z7.
+                "mov rdx, qword ptr [{a} + 16]",
+                "xor eax, eax",
+                "mulx {hi}, {lo}, qword ptr [{a} + 24]",
+                "adox {z5}, {lo}",
+                "adox {z6}, {hi}",
+                "adcx {z6}, rax",
+                "adox {z7}, rax",
+                "adc {z7}, 0",
+
+                // Double z1..z7 (cross terms count twice); z0 stays 0.
+                "add {z1}, {z1}",
+                "adc {z2}, {z2}",
+                "adc {z3}, {z3}",
+                "adc {z4}, {z4}",
+                "adc {z5}, {z5}",
+                "adc {z6}, {z6}",
+                "adc {z7}, {z7}",
+
+                // Diagonals a[i]^2 at (2i, 2i+1); single CF chain.
+                "mov rdx, qword ptr [{a} + 0]",
+                "mulx {hi}, {lo}, rdx",
+                "add {z0}, {lo}",
+                "adc {z1}, {hi}",
+                "mov rdx, qword ptr [{a} + 8]",
+                "mulx {hi}, {lo}, rdx",
+                "adc {z2}, {lo}",
+                "adc {z3}, {hi}",
+                "mov rdx, qword ptr [{a} + 16]",
+                "mulx {hi}, {lo}, rdx",
+                "adc {z4}, {lo}",
+                "adc {z5}, {hi}",
+                "mov rdx, qword ptr [{a} + 24]",
+                "mulx {hi}, {lo}, rdx",
+                "adc {z6}, {lo}",
+                "adc {z7}, {hi}",
+
+                // Store the 8-limb product.
+                "mov qword ptr [{t} + 0], {z0}",
+                "mov qword ptr [{t} + 8], {z1}",
+                "mov qword ptr [{t} + 16], {z2}",
+                "mov qword ptr [{t} + 24], {z3}",
+                "mov qword ptr [{t} + 32], {z4}",
+                "mov qword ptr [{t} + 40], {z5}",
+                "mov qword ptr [{t} + 48], {z6}",
+                "mov qword ptr [{t} + 56], {z7}",
+
+                a = in(reg) a.as_ptr(),
+                t = in(reg) t.as_mut_ptr(),
+                z0 = out(reg) _,
+                z1 = out(reg) _,
+                z2 = out(reg) _,
+                z3 = out(reg) _,
+                z4 = out(reg) _,
+                z5 = out(reg) _,
+                z6 = out(reg) _,
+                z7 = out(reg) _,
+                lo = out(reg) _,
+                hi = out(reg) _,
+                out("rax") _,
+                out("rdx") _,
+                options(nostack),
+            );
+        }
+        t
+    }
+
     /// Modular squaring: `self * self mod p`.
     ///
     /// Symmetric squaring: forms the full 2N-limb product `a^2` using
@@ -438,65 +570,17 @@ impl Fp64 {
     /// (no symmetric shortcut); this is a Selkie divergence motivated
     /// by the bench gap.
     ///
-    /// Pure-Rust `u128` (LLVM lowers to MULX): correct-by-construction,
-    /// mirroring the proptested `quaternions::bigint` wide-square plus a
-    /// `p`-specialized REDC (`-p^{-1} mod 2^64 == 1` since `p[0] == -1`).
-    /// A dual-carry ADCX/ADOX asm refinement is a follow-up.
+    /// The product is the dual-carry [`Fp64::sqr_wide_adx`] asm; the
+    /// `p+1` REDC is `u128` Rust (only 4 limb-mults).  Validated against
+    /// the Montgomery definition (cycle-accurate flag sim, 500k random +
+    /// edges) and gated on CI by `square_matches_mul` /
+    /// `square_matches_fp51`.
     #[inline]
     #[must_use]
     pub fn square(&self) -> Self {
-        let a = &self.0;
-
-        // Phase 1: cross products a[i]*a[j] (i<j) into the 8-limb buffer
-        // `t` at position i+j, accumulating across outer iterations.
-        let mut t = [0u64; 8];
-        let mut i = 0;
-        while i < 4 {
-            let mut carry: u64 = 0;
-            let mut j = i + 1;
-            while j < 4 {
-                let pos = i + j;
-                let prod = a[i] as u128 * a[j] as u128 + t[pos] as u128 + carry as u128;
-                t[pos] = prod as u64;
-                carry = (prod >> 64) as u64;
-                j += 1;
-            }
-            t[i + 4] = carry;
-            i += 1;
-        }
-
-        // Phase 2: double the buffer (each cross term appears twice in a^2).
-        let mut carry: u64 = 0;
-        let mut k = 0;
-        while k < 8 {
-            let new = (t[k] << 1) | carry;
-            carry = t[k] >> 63;
-            t[k] = new;
-            k += 1;
-        }
-
-        // Phase 3: add diagonal squares a[i]^2 at position 2i, carrying
-        // upward.  At most one of (c1, c2) fires per add (the partial
-        // sum can't overflow twice), so `|` correctly merges them.
-        let mut carry: u64 = 0;
-        let mut i = 0;
-        while i < 4 {
-            let prod = a[i] as u128 * a[i] as u128;
-            let plo = prod as u64;
-            let phi = (prod >> 64) as u64;
-
-            let (s, c1) = t[2 * i].overflowing_add(plo);
-            let (s, c2) = s.overflowing_add(carry);
-            t[2 * i] = s;
-            let mid = (c1 as u64) | (c2 as u64);
-
-            let (s, c1) = t[2 * i + 1].overflowing_add(phi);
-            let (s, c2) = s.overflowing_add(mid);
-            t[2 * i + 1] = s;
-            carry = (c1 as u64) | (c2 as u64);
-
-            i += 1;
-        }
+        // Phases 1-3: the full 8-limb product a^2 via dual-carry
+        // ADCX/ADOX asm (symmetric cross-terms, doubling, diagonals).
+        let mut t = Self::sqr_wide_adx(&self.0);
 
         // Phase 4: Montgomery REDC via the p+1 identity.  Since
         // `p[0] == -1`, the multiplier is `n_inv == 1`, so `m = t[i]`
