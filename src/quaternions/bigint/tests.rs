@@ -887,3 +887,67 @@ proptest! {
         prop_assert_eq!(odd.two_adic_val(), 0);
     }
 }
+
+// Squaring vs multiplication agreement.  ct_sqr exploits cross-term
+// symmetry (6 mulx on x86_64 ADX vs 10 for ct_mul) — proves the
+// arithmetic agrees with the schoolbook ct_mul on the truncated 4-limb
+// output for random and edge-case inputs.
+proptest! {
+    #[test]
+    fn prop_bigint_sqr_matches_mul(a in arb_bigint4()) {
+        let via_sqr = a.ct_sqr();
+        let via_mul = &a * &a;
+        prop_assert_eq!(via_sqr, via_mul);
+    }
+
+    #[test]
+    fn prop_bigint_square_method_matches_mul(a in arb_bigint4()) {
+        prop_assert_eq!(a.square(), &a * &a);
+    }
+
+    #[test]
+    fn prop_bigint_sqr_negative_input_nonneg(a in arb_bigint4()) {
+        // (-a)^2 == a^2, and the result sign is always 0.
+        let neg_a = -a;
+        let sq = neg_a.square();
+        prop_assert_eq!(sq, a.square());
+        prop_assert_eq!(sq.sign, 0);
+    }
+}
+
+#[test]
+fn bigint_sqr_zero() {
+    let z = BigInt::<4>::ZERO;
+    assert_eq!(z.square(), z);
+}
+
+#[test]
+fn bigint_sqr_one() {
+    let one = BigInt::<4>::ONE;
+    assert_eq!(one.square(), one);
+}
+
+#[test]
+fn bigint_sqr_small_values() {
+    // (2^32)^2 == 2^64, which straddles limb 0 and limb 1.
+    let x = BigInt::<4>::from(1u64 << 32);
+    let sq = x.square();
+    assert_eq!(sq.limbs[0], 0);
+    assert_eq!(sq.limbs[1], 1);
+    assert_eq!(sq.limbs[2], 0);
+    assert_eq!(sq.limbs[3], 0);
+}
+
+#[test]
+fn bigint_sqr_max_limb_zero() {
+    // (2^64 - 1)^2 == 2^128 - 2^65 + 1.
+    let x = BigInt::<4> {
+        sign: 0,
+        limbs: [u64::MAX, 0, 0, 0],
+    };
+    let sq = x.square();
+    let via_mul = &x * &x;
+    assert_eq!(sq, via_mul);
+    assert_eq!(sq.limbs[0], 1);
+    assert_eq!(sq.limbs[1], u64::MAX - 1); // 2^64 - 2
+}
