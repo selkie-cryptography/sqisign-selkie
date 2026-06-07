@@ -15,21 +15,21 @@
 //!
 //! - **Limb layout**: [`Fp29`] holds nine 29-bit unsaturated limbs in 32-bit
 //!   lanes.  Nine limbs cover the 248-bit modulus with 13 bits of per-limb
-//!   carry headroom, enough for a chain of additions before normalisation.
+//!   carry headroom, enough for a chain of additions before normalization.
 //! - **SIMD packing**: 4 elements share a 9-vector of `uint32x4_t`, one limb
 //!   per lane.  One `vmlal_u32` schoolbook step computes the same limb position
 //!   for four independent products.
-//! - **Multiplication**: schoolbook `Fp × Fp` with `vmlal_u32` (multiply-
+//! - **Multiplication**: schoolbook `Fp * Fp` with `vmlal_u32` (multiply-
 //!   accumulate widening to 64-bit lanes), interleaved with Montgomery-style
-//!   reduction via the `p = 5·2^248 − 1` structure.
-//! - **Karatsuba `Fp²`**: composed at the [`crate::fields::fp2`] level over
-//!   vectorised `Fp` muls; already 3M+5A and stays so.
-//! - **Lazy reduction**: limbs are normalised only at boundaries where
+//!   reduction via the `p = 5 * 2^248 - 1` structure.
+//! - **Karatsuba `Fp^2`**: composed at the [`crate::fields::fp2`] level over
+//!   vectorized `Fp` muls; already 3M+5A and stays so.
+//! - **Lazy reduction**: limbs are normalized only at boundaries where
 //!   downstream code requires it (e.g. before `to_bytes`), not after every
 //!   add/sub.
 //!
-//! Reported speedup on Apple M1: 1.22× total signing.  On
-//! Cortex-A76 the same code gets 1.48–1.52× because more of the
+//! Reported speedup on Apple M1: 1.22x total signing.  On
+//! Cortex-A76 the same code gets 1.48-1.52x because more of the
 //! workload is multiplier-bound on the in-order core.
 //!
 //! # Why nine 29-bit limbs rather than eight 31-bit limbs
@@ -37,9 +37,9 @@
 //! NEON's widening multiply-accumulate is `u32 * u32 -> u64`.  With 31-bit
 //! limbs the accumulator only has 2 bits of headroom before the upper
 //! `u64` lane overflows, leaving no slack for the Montgomery cross-terms
-//! that fold `P4 = 5·2^44` into limb positions.  With 29-bit limbs the
+//! that fold `P4 = 5 * 2^44` into limb positions.  With 29-bit limbs the
 //! accumulator has 6 bits of headroom: enough for the schoolbook column
-//! and the two `× P4` cross-terms without an interleaved normalisation.
+//! and the two `* P4` cross-terms without an interleaved normalization.
 //!
 //! # Constant-time
 //!
@@ -94,29 +94,29 @@ pub const MASK_29: u32 = (1u32 << RADIX_29) - 1;
 /// above the 248-bit modulus.
 pub const LIMBS_29: usize = 9;
 
-/// Montgomery fold multiplier: `5 · 2^16`.
+/// Montgomery fold multiplier: `5 * 2^16`.
 ///
-/// At the boundary where the schoolbook column index `i ≥ 8`, the interleaved
-/// Montgomery reduction adds `v[i-8] · P4_29` to the accumulator.  This is
-/// equivalent (mod p) to adding `v[i-8] · 5 · 2^248` because `5 · 2^248 ≡ 1
-/// (mod p)`, and within limb 8 the offset is `248 − 8·29 = 16`.
+/// At the boundary where the schoolbook column index `i >= 8`, the interleaved
+/// Montgomery reduction adds `v[i-8] * P4_29` to the accumulator.  This is
+/// equivalent (mod p) to adding `v[i-8] * 5 * 2^248` because `5 * 2^248 == 1
+/// (mod p)`, and within limb 8 the offset is `248 - 8 * 29 = 16`.
 const P4_29: u32 = 5 << 16;
 
 /// `p` in radix-29 form.
 ///
 /// Used by `Fp29::final_sub` to subtract the modulus from an unreduced
-/// result.  Computed from `p = 5 · 2^248 − 1`:
-/// limbs 0..7 are `2^29 − 1`, limb 8 is `0x4FFFF`.
+/// result.  Computed from `p = 5 * 2^248 - 1`:
+/// limbs 0..7 are `2^29 - 1`, limb 8 is `0x4FFFF`.
 const P_LIMBS: [u32; LIMBS_29] = [
     0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF,
     0x0004FFFF,
 ];
 
-/// `R²_29 mod p` where `R_29 = 2^261`.
+/// `R^2_29 mod p` where `R_29 = 2^261`.
 ///
-/// Precomputed via `pow(2, 522, p)` and packed into 9 × 29-bit limbs.
+/// Precomputed via `pow(2, 522, p)` and packed into 9 x 29-bit limbs.
 /// Used by [`From<Fp>`] to enter Fp29 Montgomery form:
-/// `canonical_value · R²_29 · R⁻¹ = canonical_value · R`.
+/// `canonical_value * R^2_29 * R^-1 = canonical_value * R`.
 const R2_29: Fp29 = Fp29 {
     limbs: [
         0x0CF5_C28F,
@@ -132,18 +132,18 @@ const R2_29: Fp29 = Fp29 {
 };
 
 /// `1` in non-Montgomery form, used to exit Montgomery form via the `Mul`
-/// trait impl: `mont · 1 · R⁻¹ = mont / R = canonical`.
+/// trait impl: `mont * 1 * R^-1 = mont / R = canonical`.
 const ONE_RAW: Fp29 = Fp29 {
     limbs: [1, 0, 0, 0, 0, 0, 0, 0, 0],
 };
 
 /// Field element in radix-29 limb form, in Montgomery representation.
 ///
-/// Parallel representation to [`Fp`]'s radix-51 layout,
+/// Parallel representation to `Fp`'s radix-51 layout,
 /// laid out for NEON 32-bit-lane packing.  Limbs are little-endian:
 /// `limbs[0]` is the least significant 29 bits.  The stored value is
-/// `value · R_29 mod p` where `R_29 = 2^261`; multiplication via the
-/// `Mul` impl returns `a · b · R⁻¹`.
+/// `value * R_29 mod p` where `R_29 = 2^261`; multiplication via the
+/// `Mul` impl returns `a * b * R^-1`.
 ///
 /// # Invariants
 ///
@@ -157,13 +157,13 @@ const ONE_RAW: Fp29 = Fp29 {
 ///
 /// `Fp::mul` and its callers intentionally do not dispatch through
 /// `Fp29` or [`Fp29x4`].  Per-call routing through Fp29x4 is a regression
-/// on every CPU: the 4-Fp `Fp ↔ Fp29` conversion path dominates the
-/// 3 useful Fp29x4 sub-products at the `Fp²::mul` level, and Fp29x4
+/// on every CPU: the 4-Fp `Fp <-> Fp29` conversion path dominates the
+/// 3 useful Fp29x4 sub-products at the `Fp^2::mul` level, and Fp29x4
 /// can't help a single Fp::mul at all (radix-29 has 81 scalar u32-muls
 /// vs Fp51's 25 u64-muls).  Real activation requires persistent Fp29
 /// storage at the point-coordinate / isogeny-state level, paying
 /// conversion once at signature-input / signature-output byte
-/// boundaries — multi-PR architectural work outside this module.
+/// boundaries -- multi-PR architectural work outside this module.
 ///
 /// The scalar `Fp29` exists to anchor the cross-impl proptests against
 /// `Fp` (lane-by-lane equality after Montgomery exit), and is used as
@@ -180,24 +180,24 @@ impl Fp29 {
         limbs: [0; LIMBS_29],
     };
 
-    /// Multiplicative identity in radix-29 Montgomery form: `1 · R_29 mod p`,
+    /// Multiplicative identity in radix-29 Montgomery form: `1 * R_29 mod p`,
     /// precomputed via `python -c 'pow(2, 261, 5*2**248 - 1)'` then packed
-    /// into 9 × 29-bit limbs.
+    /// into 9 x 29-bit limbs.
     pub const ONE: Self = Self {
         limbs: [0x666, 0, 0, 0, 0, 0, 0, 0, 0x20000],
     };
 
-    /// Two in radix-29 Montgomery form: `2 · R_29 mod p`.
+    /// Two in radix-29 Montgomery form: `2 * R_29 mod p`.
     pub const TWO: Self = Self {
         limbs: [0xCCC, 0, 0, 0, 0, 0, 0, 0, 0x40000],
     };
 
-    /// Four in radix-29 Montgomery form: `4 · R_29 mod p`.
+    /// Four in radix-29 Montgomery form: `4 * R_29 mod p`.
     pub const FOUR: Self = Self {
         limbs: [0x1999, 0, 0, 0, 0, 0, 0, 0, 0x30000],
     };
 
-    /// `-1 mod p` in radix-29 Montgomery form: `(p - 1) · R_29 mod p`.
+    /// `-1 mod p` in radix-29 Montgomery form: `(p - 1) * R_29 mod p`.
     pub const MINUS_ONE: Self = Self {
         limbs: [
             0x1FFFF999, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF,
@@ -209,7 +209,7 @@ impl Fp29 {
     ///
     /// Mirrors [`super::super::super::Fp::from_small`]: places the canonical
     /// integer value in the low limbs and enters Montgomery form via the
-    /// precomputed `R²_29` constant.
+    /// precomputed `R^2_29` constant.
     pub fn from_small(x: u32) -> Self {
         let mut canonical = Self {
             limbs: [0; LIMBS_29],
@@ -225,11 +225,11 @@ impl Fp29 {
     /// the crate's precomputed-constant tables (`params.rs`,
     /// `deuring/precomputed.rs`, `curves/montgomery`) embed identically under
     /// either backend selection.  The input limbs encode the field element in
-    /// radix-51 Montgomery form (`value · 2^255 mod p`); this constructor
+    /// radix-51 Montgomery form (`value * 2^255 mod p`); this constructor
     /// repacks them at radix-29 and Montgomery-multiplies by the const
     /// `K = 2^267 mod p`, landing the value in this backend's
-    /// `value · 2^261 mod p` form: `(value · 2^255) · 2^267 · 2^(-261) = value
-    /// · 2^261`.
+    /// `value * 2^261 mod p` form: `(value * 2^255) * 2^267 * 2^(-261) = value
+    /// * 2^261`.
     ///
     /// `const fn` so the constants stay `pub const`.
     pub const fn from_limbs(portable_mont: [u64; 5]) -> Self {
@@ -246,7 +246,7 @@ impl Fp29 {
     /// Repacks a 5-limb radix-51 little-endian value as 9-limb radix-29 LE.
     ///
     /// Pure bit redistribution: the integer value is unchanged.  Input fits in
-    /// 255 bits (5 × 51); output uses 261 bits (9 × 29), so the top 6 bits of
+    /// 255 bits (5 x 51); output uses 261 bits (9 x 29), so the top 6 bits of
     /// `out[8]` are always zero.
     const fn repack_51_to_29(src: [u64; 5]) -> [u32; LIMBS_29] {
         let mut out = [0u32; LIMBS_29];
@@ -306,12 +306,12 @@ impl Fp29 {
         c
     }
 
-    /// Decodes 32 bytes (little-endian) into a normalised radix-29 element.
+    /// Decodes 32 bytes (little-endian) into a normalized radix-29 element.
     ///
-    /// Mirrors [`Fp::from_bytes`] but stays out of Montgomery
-    /// form: the limbs hold the canonical integer value, not `value · R mod p`.
+    /// Mirrors `Fp::from_bytes` but stays out of Montgomery
+    /// form: the limbs hold the canonical integer value, not `value * R mod p`.
     /// The input must encode a value less than `p`; out-of-range bits in
-    /// `bytes[31]` simply flow into the high limb without canonicalisation.
+    /// `bytes[31]` simply flow into the high limb without canonicalization.
     pub fn from_bytes_le(bytes: &[u8; 32]) -> Self {
         let mut limbs = [0u32; LIMBS_29];
         let mut acc: u64 = 0;
@@ -333,7 +333,7 @@ impl Fp29 {
         Self { limbs }
     }
 
-    /// Encodes a normalised radix-29 element as 32 bytes, little-endian.
+    /// Encodes a normalized radix-29 element as 32 bytes, little-endian.
     ///
     /// Each limb must be `< 2^29`; if the value is unsaturated the encoded
     /// bytes will overflow into adjacent positions.
@@ -362,9 +362,9 @@ impl Fp29 {
 
     /// Squares this element via the [`Mul`] impl.
     ///
-    /// The optimized radix-29 square (symmetric cross-terms, `2 · a[i] · a[j]`)
+    /// The optimized radix-29 square (symmetric cross-terms, `2 * a[i] * a[j]`)
     /// is deferred to the NEON-intrinsics commit, where the symmetry
-    /// translates to fewer vectorised products.
+    /// translates to fewer vectorized products.
     pub fn square(&self) -> Fp29 {
         self * self
     }
@@ -395,7 +395,7 @@ impl Fp29 {
         sign.wrapping_neg()
     }
 
-    /// Conditionally subtracts `p` to canonicalise an in-range result.
+    /// Conditionally subtracts `p` to canonicalize an in-range result.
     ///
     /// Assumes `self < 2p` with each limb already `< 2^29`.  Returns the
     /// representative in `[0, p)`.  Constant-time via
@@ -410,8 +410,8 @@ impl Fp29 {
             borrow = ((d as u64) >> 63) as u32 & 1;
         }
 
-        // borrow == 0 ⇒ subtraction succeeded (self ≥ p), use diff.
-        // borrow == 1 ⇒ self < p, keep self.
+        // borrow == 0 => subtraction succeeded (self >= p), use diff.
+        // borrow == 1 => self < p, keep self.
         let take_diff = Choice::from((1 - borrow) as u8);
         let mut out = [0u32; LIMBS_29];
         for i in 0..LIMBS_29 {
@@ -424,7 +424,7 @@ impl Fp29 {
     /// Exits Montgomery form: `mont -> mont / R = canonical`.
     ///
     /// Multiplies by `1` in non-Montgomery form (`ONE_RAW`); the Montgomery
-    /// product is `mont · 1 · R⁻¹ = mont / R`.  Then canonicalises via
+    /// product is `mont * 1 * R^-1 = mont / R`.  Then canonicalizes via
     /// [`Self::final_sub`].
     pub fn reduce_montgomery(self) -> Self {
         (&self * &ONE_RAW).final_sub()
@@ -432,7 +432,7 @@ impl Fp29 {
 
     /// Decodes canonical 32-byte little-endian into a Montgomery-form `Fp29`.
     ///
-    /// Mirrors [`Fp::from_bytes`] at the API level: unpacks the bytes as a
+    /// Mirrors `Fp::from_bytes` at the API level: unpacks the bytes as a
     /// canonical integer, then enters this backend's Montgomery form via
     /// multiplication by `R2_29`.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
@@ -441,14 +441,14 @@ impl Fp29 {
 
     /// Encodes a Montgomery-form `Fp29` as canonical 32-byte little-endian.
     ///
-    /// Mirrors [`Fp::to_bytes`]: exits Montgomery form via
+    /// Mirrors `Fp::to_bytes`: exits Montgomery form via
     /// [`Self::reduce_montgomery`], then packs the canonical limbs into 32
     /// bytes.
     pub fn to_bytes(self) -> [u8; 32] {
         self.reduce_montgomery().to_bytes_le()
     }
 
-    /// Squares this element `n` times.  Mirrors [`Fp::pow2k`].
+    /// Squares this element `n` times.  Mirrors `Fp::pow2k`.
     #[must_use]
     pub fn pow2k(&self, n: u32) -> Self {
         let mut r = *self;
@@ -458,7 +458,7 @@ impl Fp29 {
         r
     }
 
-    /// Computes `self^((p-3)/4)`.  Same addition chain as [`Fp::pow_p3div4`];
+    /// Computes `self^((p-3)/4)`.  Same addition chain as `Fp::pow_p3div4`;
     /// the prime is identical so the chain transfers unchanged, just running
     /// over this backend's Montgomery-form multiplication.
     #[must_use]
@@ -499,7 +499,7 @@ impl Fp29 {
     }
 
     /// Computes the multiplicative inverse: `self^(p-2)`.  Mirrors
-    /// [`Fp::invert`].
+    /// `Fp::invert`.
     #[must_use]
     pub fn invert(&self) -> Self {
         let t = self.pow_p3div4();
@@ -508,7 +508,7 @@ impl Fp29 {
     }
 
     /// Tests whether this element is a quadratic residue in F_p.
-    /// Mirrors [`Fp::is_square`].
+    /// Mirrors `Fp::is_square`.
     pub fn is_square(&self) -> Choice {
         let r = self.pow_p3div4();
         let r = r.square();
@@ -516,7 +516,7 @@ impl Fp29 {
         r.ct_eq(&Fp29::ONE) | self.ct_eq(&Fp29::ZERO)
     }
 
-    /// Computes the square root (when `self` is a QR).  Mirrors [`Fp::sqrt`];
+    /// Computes the square root (when `self` is a QR).  Mirrors `Fp::sqrt`;
     /// result meaningful only when [`Self::is_square`] is true.
     #[must_use]
     pub fn sqrt(&self) -> Self {
@@ -534,10 +534,10 @@ impl Fp29 {
 impl From<Fp> for Fp29 {
     /// Converts radix-51 Montgomery form to radix-29 Montgomery form.
     ///
-    /// Routes through canonical bytes: [`Fp::to_bytes`] exits
+    /// Routes through canonical bytes: `Fp::to_bytes` exits
     /// the radix-51 Montgomery scaling, [`Fp29::from_bytes_le`] repacks the
     /// integer value at radix-29, then multiplication by `R2_29` enters the
-    /// radix-29 Montgomery form (`canonical · R²_29 · R⁻¹ = canonical · R`).
+    /// radix-29 Montgomery form (`canonical * R^2_29 * R^-1 = canonical * R`).
     /// Expensive (two Montgomery reductions); intended for test boundaries.
     fn from(fp: Fp) -> Self {
         &Self::from_bytes_le(&fp.to_bytes()) * &R2_29
@@ -550,7 +550,7 @@ impl From<Fp29> for Fp {
     ///
     /// Symmetric to [`From<Fp> for Fp29`]: drops the radix-29
     /// Montgomery scaling via [`Fp29::reduce_montgomery`], emits canonical
-    /// bytes, then runs [`Fp::from_bytes`] to enter the radix-51
+    /// bytes, then runs `Fp::from_bytes` to enter the radix-51
     /// Montgomery form.
     fn from(fp29: Fp29) -> Self {
         Self::from_bytes(&fp29.reduce_montgomery().to_bytes_le())
@@ -623,7 +623,7 @@ impl Fp29x4 {
         out
     }
 
-    /// Vectorised Montgomery multiplication: returns
+    /// Vectorized Montgomery multiplication: returns
     /// `[a[0] * b[0] * R^-1, ..., a[3] * b[3] * R^-1]` packed in SoA form.
     ///
     /// Karatsuba-decomposed: splits each 9-limb input as
@@ -684,7 +684,7 @@ impl Fp29x4 {
         }
     }
 
-    /// Vectorised Montgomery squaring: returns
+    /// Vectorized Montgomery squaring: returns
     /// `[a[0]^2 * R^-1, ..., a[3]^2 * R^-1]` in SoA form.
     ///
     /// Karatsuba structure identical to [`Fp29x4::mul`], with the three sub-
@@ -726,7 +726,7 @@ impl Fp29x4 {
     ///
     /// # Safety
     ///
-    /// Caller must already be in an `unsafe` block — this function uses NEON
+    /// Caller must already be in an `unsafe` block -- this function uses NEON
     /// intrinsics throughout.
     #[inline(always)]
     unsafe fn karatsuba_assemble_and_reduce(
@@ -794,7 +794,7 @@ impl Fp29x4 {
         Fp29x4 { limbs: out }
     }
 
-    /// Conditionally subtracts `p` from each lane to canonicalise an
+    /// Conditionally subtracts `p` from each lane to canonicalize an
     /// in-range result.
     ///
     /// Assumes `self < 2p` per lane with each limb already `< 2^29`.
@@ -836,7 +836,7 @@ impl Fp29x4 {
         }
     }
 
-    /// Propagates carries across the nine limbs in vectorised SoA form.
+    /// Propagates carries across the nine limbs in vectorized SoA form.
     /// Returns a per-lane mask: `0` if the cumulative sum at that lane was
     /// non-negative, all-ones if negative (indicating an upstream borrow).
     ///
@@ -995,10 +995,10 @@ impl Fp29x4 {
 impl Add<Fp29x4> for Fp29x4 {
     type Output = Fp29x4;
 
-    /// Vectorised modular addition over four `Fp29` elements in parallel,
+    /// Vectorized modular addition over four `Fp29` elements in parallel,
     /// each result reduced to `[0, 2p)`.  Mirrors [`Fp29::add`] structurally
     /// at the lane level: limbwise vector add, subtract `2p` via the
-    /// add-2-to-limb-0 / subtract-`2·P4_29`-from-limb-8 trick, propagate
+    /// add-2-to-limb-0 / subtract-`2 * P4_29`-from-limb-8 trick, propagate
     /// carries, then conditionally add `2p` back per lane on borrow.
     fn add(self, rhs: Fp29x4) -> Fp29x4 {
         // SAFETY: register-width NEON ops; covered by the type-level Safety note.
@@ -1032,7 +1032,7 @@ impl Add<Fp29x4> for Fp29x4 {
 impl Sub<Fp29x4> for Fp29x4 {
     type Output = Fp29x4;
 
-    /// Vectorised modular subtraction over four `Fp29` elements in parallel,
+    /// Vectorized modular subtraction over four `Fp29` elements in parallel,
     /// each result reduced to `[0, 2p)`.  Lane-wise wrapping subtract, then
     /// conditionally adds `2p` per lane on borrow.  Mirrors [`Fp29::sub`].
     fn sub(self, rhs: Fp29x4) -> Fp29x4 {
@@ -1067,9 +1067,10 @@ impl Add<Fp29> for Fp29 {
 
     /// Modular addition, reduced to `[0, 2p)`.
     ///
-    /// Adds limbwise, subtracts `2p` (via add-2-to-limb-0 / subtract-`2·P4_29`-
-    /// from-limb-8), propagates carries, then conditionally adds `2p` back if
-    /// the propagation detected a borrow.  Mirrors `Fp::add` structurally.
+    /// Adds limbwise, subtracts `2p` (via add-2-to-limb-0 / subtract-`2 *
+    /// P4_29`- from-limb-8), propagates carries, then conditionally adds
+    /// `2p` back if the propagation detected a borrow.  Mirrors `Fp::add`
+    /// structurally.
     fn add(self, rhs: Fp29) -> Fp29 {
         let mut n = Fp29 {
             limbs: [
@@ -1125,7 +1126,7 @@ impl Sub<Fp29> for Fp29 {
 
 impl Fp29 {
     /// Returns `a1*b1 + a2*b2 mod p`.  Backend-portable baseline
-    /// (two muls + one add); the surface exists so `Fp²::mul` under
+    /// (two muls + one add); the surface exists so `Fp^2::mul` under
     /// `cfg(sqisign_selkie_arch = "neon")` resolves the same call
     /// the portable backend's `Fp::sum_of_2_products` resolves.
     #[must_use]
@@ -1143,16 +1144,16 @@ impl Fp29 {
 impl<'b> Mul<&'b Fp29> for &Fp29 {
     type Output = Fp29;
 
-    /// Montgomery multiplication: returns `a · b · R⁻¹ mod p`.
+    /// Montgomery multiplication: returns `a * b * R^-1 mod p`.
     ///
-    /// 9×9 schoolbook product with Montgomery reduction interleaved column-
+    /// 9 x 9 schoolbook product with Montgomery reduction interleaved column-
     /// by-column over the 17 output positions.  The fold step at column
-    /// `i ≥ 8` adds `v[i-8] · P4_29`, exploiting `5 · 2^248 ≡ 1 (mod p)`
+    /// `i >= 8` adds `v[i-8] * P4_29`, exploiting `5 * 2^248 == 1 (mod p)`
     /// to absorb the previously-computed low column into the high columns.
     ///
     /// Output limbs satisfy `limbs[i] < 2^29` for `i < 8` and `limbs[8] < 2^20`
     /// (so the result is in `[0, 2p)`).  Use `Fp29::final_sub` to
-    /// canonicalise to `[0, p)`.
+    /// canonicalize to `[0, p)`.
     fn mul(self, rhs: &'b Fp29) -> Fp29 {
         let a = &self.limbs;
         let b = &rhs.limbs;

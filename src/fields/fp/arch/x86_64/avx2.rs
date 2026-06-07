@@ -30,14 +30,14 @@
 //! the 64-bit accumulator for the per-column schoolbook plus the ` * P4_26`
 //! Montgomery cross-terms. Radix-26 keeps each limb safely under 32 bits
 //! while leaving the accumulator with 12 bits of slack for the two
-//! cross-term folds before a normalisation pass.
+//! cross-term folds before a normalization pass.
 //!
 //! # Why no AVX-512-IFMA52
 //!
-//! AVX-512-IFMA52 is the analogous "vectorised Fp" lever for x86_64 but
+//! AVX-512-IFMA52 is the analogous "vectorized Fp" lever for x86_64 but
 //! sits behind a narrow Intel-server CPU subset, is omitted from AMD
 //! Zen 4, and isn't targeted by any major crypto library. AVX2 over a
-//! radix-26 layout is the realistic x86_64 vectorised-Fp target.
+//! radix-26 layout is the realistic x86_64 vectorized-Fp target.
 //!
 //! # Status
 //!
@@ -172,11 +172,11 @@ impl Fp26 {
         ],
     };
 
-    /// Decodes 32 bytes (little-endian) into a normalised radix-26 element.
+    /// Decodes 32 bytes (little-endian) into a normalized radix-26 element.
     ///
     /// Mirrors `Fp::from_bytes` at the canonical-form level: the input
     /// must encode a value less than `p`; out-of-range bits in `bytes[31]`
-    /// simply flow into the high limb without canonicalisation. The
+    /// simply flow into the high limb without canonicalization. The
     /// result is *not* in Montgomery form; combine with multiplication
     /// by [`R2_26`] (future) to enter Fp26's Montgomery scaling.
     pub fn from_bytes_le(bytes: &[u8; 32]) -> Self {
@@ -202,7 +202,7 @@ impl Fp26 {
         Self { limbs }
     }
 
-    /// Encodes a normalised radix-26 element as 32 bytes, little-endian.
+    /// Encodes a normalized radix-26 element as 32 bytes, little-endian.
     ///
     /// Each limb must be `< 2^26`; if the value is unsaturated the encoded
     /// bytes will overflow into adjacent positions.
@@ -283,7 +283,7 @@ impl Fp26 {
     /// Identical CIOS structure to `super::super::aarch64::neon::Fp29`'s
     /// const Mont mul, retuned for radix-26 / 10 limbs / `P4_26 = 5 * 2^14`.
     /// Used by [`Self::from_limbs`] to enter Fp26 Montgomery form at compile
-    /// time from the portable backend's Montgomery limbs. A SIMD-vectorised
+    /// time from the portable backend's Montgomery limbs. A SIMD-vectorized
     /// runtime version follows in a later commit.
     const fn mont_mul_const(a: [u32; LIMBS_26], b: [u32; LIMBS_26]) -> [u32; LIMBS_26] {
         let mut t: u64 = 0;
@@ -332,7 +332,7 @@ impl Fp26 {
     /// limbs 0-7, plus two scalar multiplies for limbs 8-9.
     ///
     /// The Montgomery reduction exploits `p = 5 * 2^248 - 1`:
-    /// `p ≡ -1 (mod 2^26)`, so the multiplier `m` that zeros `t[0]` is
+    /// `p == -1 (mod 2^26)`, so the multiplier `m` that zeros `t[0]` is
     /// just `m = t[0] & MASK_26`. Adding `m * p` to `t` is equivalent
     /// to subtracting `m` from `t[0]` (zeroing the low limb) and
     /// adding `m * 5 * 2^14 = m * P4_26` at limb 9 (where bit 248
@@ -390,7 +390,7 @@ impl Fp26 {
             t[9] += a[9] as u64 * bj;
 
             // Montgomery reduce: zero t[0]'s low 26 bits.
-            // m = t[0] mod 2^26 (since p ≡ -1 mod 2^26, this is the
+            // m = t[0] mod 2^26 (since p == -1 mod 2^26, this is the
             // unique multiplier that clears t[0]'s low limb).
             let m = t[0] & MASK_26 as u64;
 
@@ -465,7 +465,7 @@ impl Fp26 {
         sign.wrapping_neg()
     }
 
-    /// Conditionally subtracts `p` to canonicalise an in-range result.
+    /// Conditionally subtracts `p` to canonicalize an in-range result.
     ///
     /// Assumes `self < 2p` with each limb already `< 2^26`. Returns the
     /// representative in `[0, p)`. Constant-time via
@@ -495,7 +495,7 @@ impl Fp26 {
     /// Exits Montgomery form: `mont -> mont / R = canonical`.
     ///
     /// Multiplies by `1` in non-Montgomery form ([`ONE_RAW`]); the Montgomery
-    /// product is `mont * 1 * R^-1 = mont / R`. Then canonicalises via
+    /// product is `mont * 1 * R^-1 = mont / R`. Then canonicalizes via
     /// [`Self::final_sub`].
     pub fn reduce_montgomery(self) -> Self {
         (&self * &ONE_RAW).final_sub()
@@ -688,7 +688,7 @@ impl Sub<Fp26> for Fp26 {
 
 impl Fp26 {
     /// Returns `a1*b1 + a2*b2 mod p`.  Backend-portable baseline;
-    /// the surface exists so `Fp²::mul` under cfg-avx2 resolves the
+    /// the surface exists so `Fp^2::mul` under cfg-avx2 resolves the
     /// same call the portable backend's `Fp::sum_of_2_products`
     /// resolves.
     #[must_use]
@@ -715,7 +715,7 @@ impl<'b> Mul<&'b Fp26> for &Fp26 {
     ///
     /// Output limbs satisfy `limbs[i] < 2^26` for `i < 9` and
     /// `limbs[9] < 2^17` (so the result is in `[0, 2p)`). Use
-    /// `Fp26::final_sub` to canonicalise to `[0, p)`.
+    /// `Fp26::final_sub` to canonicalize to `[0, p)`.
     ///
     /// Dispatches to `Fp26::mont_mul_avx2` (operand-scanning CIOS over
     /// `_mm256_mul_epu32`) when `cfg(target_feature = "avx2")` is set,
@@ -905,7 +905,7 @@ impl Fp26x4 {
         out
     }
 
-    /// Conditionally subtracts `p` per lane to canonicalise.
+    /// Conditionally subtracts `p` per lane to canonicalize.
     ///
     /// Assumes each lane is `< 2p` with each limb already `< 2^26`.
     /// Returns the representative in `[0, p)` per lane.  Constant-time
@@ -1003,7 +1003,7 @@ impl Fp26x4 {
 
         // Per-lane sign mask: scalar Fp26::prop uses bit 31 of limb 9
         // (a u32).  For Fp26x4's u64 lanes, the same bit position
-        // indicates "borrow occurred upstream" — extract bit 31 and
+        // indicates "borrow occurred upstream" -- extract bit 31 and
         // negate to all-0s / all-1s per lane.
         let bit_31 = _mm256_srli_epi64::<31>(self.limbs[LIMBS_26 - 1]);
         let bit_31_isolated = _mm256_and_si256(bit_31, _mm256_set1_epi64x(1));
@@ -1115,7 +1115,7 @@ impl Fp26x4 {
     ///
     /// Output limbs satisfy `limbs[i] < 2^26` per lane for `i < 9` and
     /// `limbs[9] < 2^20` per lane (result in `[0, 2p)`).  Use
-    /// [`Fp26x4::final_sub`] to canonicalise.
+    /// [`Fp26x4::final_sub`] to canonicalize.
     ///
     /// A Karatsuba 5+5 decomposition (3 sub-products of 5x5 + assembly)
     /// is the natural performance optimisation; it lands in a follow-up
@@ -1171,7 +1171,7 @@ impl Fp26x4 {
     /// Squares the four packed elements lane-wise.
     ///
     /// Symmetric-cross-term schoolbook over `_mm256_mul_epu32`: for
-    /// `a = self`, column `k` of `a*a` accumulates `Σ a[j] * a[k-j]`
+    /// `a = self`, column `k` of `a*a` accumulates `sum_j a[j] * a[k-j]`
     /// over the valid `j` range.  Pairs `(j, k-j)` with `j < k-j` are
     /// distinct off-diagonal products: each `a[j] * a[k-j]` appears
     /// twice in the asymmetric schoolbook (once for `(j, k-j)` and
