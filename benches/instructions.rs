@@ -24,6 +24,12 @@ use gungraun::{
     Callgrind, EventKind, FlamegraphConfig, LibraryBenchmarkConfig, library_benchmark,
     library_benchmark_group, main,
 };
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+use sqisign_selkie::fields::fp::arch::x86_64::mulx_adx::Fp64;
 use sqisign_selkie::{
     curves::{
         Scalar,
@@ -88,6 +94,46 @@ fn fp51_square() -> Fp51 {
 #[library_benchmark]
 fn fp51_invert() -> Fp51 {
     let a = black_box(Fp51::from_bytes(&[0x42; 32]));
+    a.invert()
+}
+
+// Explicit Fp64 benches (x86_64 MULX/ADCX/ADOX backend).  On the CI
+// runner the dispatched `fp_*` benches already resolve to Fp64 (adx is
+// always on), so these are a labeled duplicate there; they exist so the
+// dashboard names the backend explicitly and still reports Fp64 on any
+// runner where the active `Fp` differs.
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+#[library_benchmark]
+fn fp64_mul() -> Fp64 {
+    let a = black_box(Fp64::from_bytes(&[0x42; 32]));
+    let b = black_box(Fp64::from_bytes(&[0x99; 32]));
+    a * b
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+#[library_benchmark]
+fn fp64_square() -> Fp64 {
+    let a = black_box(Fp64::from_bytes(&[0x42; 32]));
+    a.square()
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+#[library_benchmark]
+fn fp64_invert() -> Fp64 {
+    let a = black_box(Fp64::from_bytes(&[0x42; 32]));
     a.invert()
 }
 
@@ -178,6 +224,27 @@ fn kat_sign() {
     let _ = black_box(sk.sign_derand(msg, &randomness));
 }
 
+// Two arch variants: the gungraun group/main macros take plain idents
+// (no `#[cfg]` on list entries), so the x86_64+adx build adds the
+// explicit fp64_* benches via a separate group definition.  Both keep
+// the name `field`, so `main!` and the `*::field::*` Profile shard are
+// unchanged.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
+library_benchmark_group!(
+    name = field;
+    benchmarks = fp_mul, fp_add, fp_sub, fp_square, fp2_mul, fp51_mul, fp51_square, fp51_invert,
+        fp64_mul, fp64_square, fp64_invert
+);
+
+#[cfg(not(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+)))]
 library_benchmark_group!(
     name = field;
     benchmarks = fp_mul, fp_add, fp_sub, fp_square, fp2_mul, fp51_mul, fp51_square, fp51_invert
