@@ -155,8 +155,21 @@ fn render_bench(base: Option<&Json>, cur: &Json) -> String {
     // Headline Δ% for the public benches as a ```diff block: GitHub
     // colors `-` rows red (slower) and `+` rows green (faster), with a
     // █ bar proportional to the magnitude. Renders everywhere; no Mermaid.
+    //
+    // The `_derand` rows sit next to their randomized counterparts: the
+    // randomized `keygen`/`sign` re-run a variable-length rejection loop
+    // per RNG draw, so their wall-clock has huge variance (the noise this
+    // whole surface warns about). The derand variants fix the trajectory
+    // and are the low-noise signal — read them, not the randomized rows,
+    // when judging a backend change.
     let mut diff_rows = String::new();
-    for b in ["keygen", "sign", "verify"] {
+    for b in [
+        "keygen",
+        "keygen_derand",
+        "sign",
+        "sign_derand",
+        "verify",
+    ] {
         let key = format!("sqisign::{b}");
         if let (Some((cur, ..)), Some((base, ..))) = (cur_map.get(&key), base_map.get(&key)) {
             if *base > 0.0 {
@@ -170,7 +183,7 @@ fn render_bench(base: Option<&Json>, cur: &Json) -> String {
                     " "
                 };
                 let pct_str = format!("{pct:+.1}%");
-                diff_rows.push_str(&format!("{prefix} {b:<7} {pct_str:>6}  {bar}\n"));
+                diff_rows.push_str(&format!("{prefix} {b:<13} {pct_str:>6}  {bar}\n"));
             }
         }
     }
