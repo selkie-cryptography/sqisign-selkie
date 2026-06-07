@@ -431,11 +431,12 @@ impl Fp64 {
     ///
     /// Symmetric squaring: forms the full 2N-limb product `a^2` using
     /// cross-term symmetry (each `a[i]*a[j]`, `i<j`, computed once then
-    /// doubled, plus the diagonal `a[i]^2`), then applies Montgomery
-    /// REDC mod `p`.  Costs ~10 `u128` limb-mults vs the 16 of a full
-    /// schoolbook `mul(a, a)`, which is why `fp_square` beats `fp_mul`.
-    /// C ref's `fp_sqr` is `jmp fp_mul` (no symmetric shortcut); this
-    /// is a Selkie divergence motivated by the bench gap.
+    /// doubled, plus the diagonal `a[i]^2`), then a `p+1`-trick
+    /// Montgomery REDC.  Totals ~14 `u128` limb-mults (10 product + 4
+    /// reduction) vs the 20 of `mul_montgomery` (16 + 4), which is why
+    /// `fp_square` beats `fp_mul`.  C ref's `fp_sqr` is `jmp fp_mul`
+    /// (no symmetric shortcut); this is a Selkie divergence motivated
+    /// by the bench gap.
     ///
     /// Pure-Rust `u128` (LLVM lowers to MULX): correct-by-construction,
     /// mirroring the proptested `quaternions::bigint` wide-square plus a
@@ -497,23 +498,29 @@ impl Fp64 {
             i += 1;
         }
 
-        // Phase 4: Montgomery REDC mod p.  n_inv == 1, so the reduction
-        // multiplier m for limb i is just t[i]; add m*p at offset i so
-        // limb i cancels, then carry up.  After 4 rounds the result is
-        // in t[4..8], in [0, 2p).
-        let p = Self::P.0;
+        // Phase 4: Montgomery REDC via the p+1 identity.  Since
+        // `p[0] == -1`, the multiplier is `n_inv == 1`, so `m = t[i]`
+        // and `t += m*p` cancels limb i exactly (`t[i] - m == 0`, no
+        // borrow).  And `p + 1 == P_PLUS_1_HI * 2^192`, so the only
+        // nonzero add is `m * P_PLUS_1_HI` at limbs i+3, i+4 -- 4
+        // limb-mults total vs 16 for a full-modulus REDC.  Limbs 0..3
+        // are consumed (zeroed) and dropped; the result is t[4..8] in
+        // [0, 2p).
         let mut i = 0;
         while i < 4 {
             let m = t[i];
-            let mut carry: u64 = 0;
-            let mut j = 0;
-            while j < 4 {
-                let prod = t[i + j] as u128 + m as u128 * p[j] as u128 + carry as u128;
-                t[i + j] = prod as u64;
-                carry = (prod >> 64) as u64;
-                j += 1;
-            }
-            let mut idx = i + 4;
+            let prod = m as u128 * P_PLUS_1_HI as u128;
+            let plo = prod as u64;
+            let phi = (prod >> 64) as u64;
+
+            let (s, c0) = t[i + 3].overflowing_add(plo);
+            t[i + 3] = s;
+            let (s, c1) = t[i + 4].overflowing_add(phi);
+            let (s, c2) = s.overflowing_add(c0 as u64);
+            t[i + 4] = s;
+
+            let mut carry = (c1 as u64) | (c2 as u64);
+            let mut idx = i + 5;
             while idx < 8 && carry != 0 {
                 let (s, c) = t[idx].overflowing_add(carry);
                 t[idx] = s;
