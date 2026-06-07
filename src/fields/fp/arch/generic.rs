@@ -188,27 +188,32 @@ impl Fp51 {
     pub fn square(&self) -> Fp51 {
         let a = &self.0;
 
+        // Column 0.
         let tot = (a[0] as u128) * (a[0] as u128);
         let mut t: u128 = tot;
         let v0 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 1.
         let tot = ((a[0] as u128) * (a[1] as u128)) * 2;
         t += tot;
         let v1 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 2.
         let mut tot = ((a[0] as u128) * (a[2] as u128)) * 2;
         tot += (a[1] as u128) * (a[1] as u128);
         t += tot;
         let v2 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 3.
         let tot = ((a[0] as u128) * (a[3] as u128) + (a[1] as u128) * (a[2] as u128)) * 2;
         t += tot;
         let v3 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 4 (start reduction: fold v0 * P4).
         let mut tot = ((a[0] as u128) * (a[4] as u128) + (a[1] as u128) * (a[3] as u128)) * 2;
         tot += (a[2] as u128) * (a[2] as u128);
         t += tot;
@@ -216,12 +221,14 @@ impl Fp51 {
         let v4 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 5 (reduce v1).
         let tot = ((a[1] as u128) * (a[4] as u128) + (a[2] as u128) * (a[3] as u128)) * 2;
         t += tot;
         t += (v1 as u128) * (P4 as u128);
         let c0 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 6 (reduce v2).
         let mut tot = ((a[2] as u128) * (a[4] as u128)) * 2;
         tot += (a[3] as u128) * (a[3] as u128);
         t += tot;
@@ -229,12 +236,14 @@ impl Fp51 {
         let c1 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 7 (reduce v3).
         let tot = ((a[3] as u128) * (a[4] as u128)) * 2;
         t += tot;
         t += (v3 as u128) * (P4 as u128);
         let c2 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 8 (reduce v4).
         let tot = (a[4] as u128) * (a[4] as u128);
         t += tot;
         t += (v4 as u128) * (P4 as u128);
@@ -554,21 +563,25 @@ impl<'b> Mul<&'b Fp51> for &Fp51 {
         let (a, b) = (&self.0, &rhs.0);
         let mut t: u128 = 0;
 
+        // Column 0.
         t += (a[0] as u128) * (b[0] as u128);
         let v0 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 1.
         t += (a[0] as u128) * (b[1] as u128);
         t += (a[1] as u128) * (b[0] as u128);
         let v1 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 2.
         t += (a[0] as u128) * (b[2] as u128);
         t += (a[1] as u128) * (b[1] as u128);
         t += (a[2] as u128) * (b[0] as u128);
         let v2 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 3.
         t += (a[0] as u128) * (b[3] as u128);
         t += (a[1] as u128) * (b[2] as u128);
         t += (a[2] as u128) * (b[1] as u128);
@@ -576,6 +589,7 @@ impl<'b> Mul<&'b Fp51> for &Fp51 {
         let v3 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 4 (start reduction: fold v0 * P4).
         t += (a[0] as u128) * (b[4] as u128);
         t += (a[1] as u128) * (b[3] as u128);
         t += (a[2] as u128) * (b[2] as u128);
@@ -585,6 +599,7 @@ impl<'b> Mul<&'b Fp51> for &Fp51 {
         let v4 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 5 (reduce v1).
         t += (a[1] as u128) * (b[4] as u128);
         t += (a[2] as u128) * (b[3] as u128);
         t += (a[3] as u128) * (b[2] as u128);
@@ -593,6 +608,7 @@ impl<'b> Mul<&'b Fp51> for &Fp51 {
         let c0 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 6 (reduce v2).
         t += (a[2] as u128) * (b[4] as u128);
         t += (a[3] as u128) * (b[3] as u128);
         t += (a[4] as u128) * (b[2] as u128);
@@ -600,12 +616,14 @@ impl<'b> Mul<&'b Fp51> for &Fp51 {
         let c1 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 7 (reduce v3).
         t += (a[3] as u128) * (b[4] as u128);
         t += (a[4] as u128) * (b[3] as u128);
         t += (v3 as u128) * (P4 as u128);
         let c2 = (t as u64) & MASK;
         t >>= RADIX;
 
+        // Column 8 (reduce v4).
         t += (a[4] as u128) * (b[4] as u128);
         t += (v4 as u128) * (P4 as u128);
         let c3 = (t as u64) & MASK;

@@ -353,6 +353,7 @@ impl<const N: usize> LeftIdeal<N> {
         // diff localizes whether `(s,t,u,v,β₁,β₂,d₁,d₂)` matches —
         // i.e., whether `reduce_to_prime_norm` produced the same
         // reduced ideal as the C ref despite same DRBG byte stream.
+
         // Steps 2–3: degrees (already in sui.factor1.degree, sui.factor2.degree).
         let d1 = &sui.factor1.degree;
         let _d2 = &sui.factor2.degree;
@@ -363,12 +364,14 @@ impl<const N: usize> LeftIdeal<N> {
         let u_deg = IsogenyDegree::new_odd(*sui.u.as_limbs())?;
         let (e_u, phi_u_p, phi_u_q, phi_u_pmq) =
             fixed_degree_isogeny(sui.factor1.order, &u_deg, rng)?;
+
         // Step 5: E_v, φ_v(P_t), φ_v(Q_t) ← FixedDegreeIsogeny(t, v)
         #[cfg(test)]
         let _t2 = std::time::Instant::now();
         let v_deg = IsogenyDegree::new_odd(*sui.v.as_limbs())?;
         let (e_v, phi_v_p, phi_v_q, phi_v_pmq) =
             fixed_degree_isogeny(sui.factor2.order, &v_deg, rng)?;
+
         // Step 6: second component of the outer kernel.
         //
         // # Divergences
@@ -425,6 +428,7 @@ impl<const N: usize> LeftIdeal<N> {
         let t_index = EXTREMAL_ORDERS
             .iter()
             .position(|o| o.q() == sui.factor2.order.q())?;
+
         // After `suitable_ideals`'s cross-order post-processing
         // (`ideal.rs` `(j_i != 0) ? beta_i = conj(delta · beta_i)`),
         // beta_i ∈ I ⊆ O₀ regardless of which alternate order it
@@ -460,6 +464,7 @@ impl<const N: usize> LeftIdeal<N> {
                 ENDOMORPHISM_MATRICES[endo_index_t][5],
             ],
         };
+
         let m_beta1 = endo_s.apply(&sui.factor1.beta, f)?;
         let m_beta2 = endo_t.apply(&sui.factor2.beta, f)?;
         let m_beta1_adj = m_beta1.adjugate_mod(f.value());
@@ -512,6 +517,7 @@ impl<const N: usize> LeftIdeal<N> {
         let s01 = s.mul_mod2k(m_prod.entry(0, 1), fv);
         let s10 = s.mul_mod2k(m_prod.entry(1, 0), fv);
         let s11 = s.mul_mod2k(m_prod.entry(1, 1), fv);
+
         let fdi_v_basis = TorsionBasis::from_propagated(phi_v_p, phi_v_q, phi_v_pmq);
         let p_step6 = fdi_v_basis.eval_decomposition(&s00, &s10);
         let q_step6 = fdi_v_basis.eval_decomposition(&s01, &s11);
@@ -648,6 +654,7 @@ impl<const N: usize> LeftIdeal<N> {
         // checks mirror the C reference's
         // `test_point_order_twof(..., exp)` assertions at
         // `dim2id2iso.c:1109-1110`.
+
         // Step 9: (2,2)-isogeny chain on E_u × E_v.
         let product = surfaces::EllipticProduct::new(e_u, e_v);
         let kernel = surfaces::Kernel::from_montgomery(

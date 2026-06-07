@@ -174,6 +174,7 @@ impl Fp2 {
         let x1 = &self.b * &x1;
         let t1 = (&x0 + &x0).square();
 
+        // Pick the branch whose square equals t0.
         let is_eq = t1.ct_eq(&t0);
         let re = Fp::conditional_select(&x1, &x0, is_eq);
         let im = Fp::conditional_select(&(-&x0), &x1, is_eq);

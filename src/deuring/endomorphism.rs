@@ -258,6 +258,7 @@ impl EndomorphismAction {
             }
             Lattice::new(basis_w, self.order.denom().widen::<20>())
         };
+
         let coords_w = order_w.decompose(&elem_w)?;
         let coords: [BigInt<4>; 4] = [
             coords_w[0].narrow_to::<4>()?,
@@ -265,6 +266,7 @@ impl EndomorphismAction {
             coords_w[2].narrow_to::<4>()?,
             coords_w[3].narrow_to::<4>()?,
         ];
+
         // Reduce all coefficients mod 2^f. For negative coefficients,
         // ct_mod returns a negative remainder (truncated division),
         // so add the modulus to get the canonical representative in

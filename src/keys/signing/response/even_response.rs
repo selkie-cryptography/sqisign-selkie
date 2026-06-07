@@ -131,6 +131,7 @@ impl EvenResponseKernel {
                 return None;
             }
         };
+
         let alpha_conj = alpha_for_kernel.conjugate();
         let endo_e0 = EndomorphismAction {
             order: EXTREMAL_ORDERS[0].order(),
@@ -140,6 +141,7 @@ impl EvenResponseKernel {
                 ENDOMORPHISM_MATRICES[0][5], // gen4 = action of (1+k)/2
             ],
         };
+
         let m_alpha = endo_e0.apply(&alpha_conj, TorsionExponent::try_from(r_rsp_val).ok()?)?;
         let modulus = BigInt::<4>::ONE << r_rsp_val;
         let s0 = BigInt::<4>::from(*m_alpha.entry(0, 0)).ct_mod(&modulus);
@@ -179,6 +181,7 @@ impl EvenResponseKernel {
             }
             TorsionBasis::from_propagated(Pr, Qr, Rr)
         };
+
         let s_scalar = Scalar::from(s);
         let t_scalar = Scalar::from(t);
         let K = basis_reduced.biscalar_mul(
