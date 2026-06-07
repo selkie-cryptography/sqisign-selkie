@@ -43,31 +43,35 @@ use sqisign_selkie::{
 };
 
 // --- Fp arithmetic ---
+//
+// Operands are built in `#[bench::case(...)]` setup -- the `from_bytes`
+// Montgomery conversion runs OUTSIDE the measured region, so the
+// reported Ir is the bare operation.  This matters: `from_bytes` cost
+// differs per backend (it calls each backend's Mont mul), and folding
+// it into the measured body earlier confounded the per-op counts (made
+// Fp64 square look cheaper than Fp51's when invert showed the reverse).
 
 #[library_benchmark]
-fn fp_mul() -> Fp {
-    let a = black_box(Fp::from_bytes(&[0x42; 32]));
-    let b = black_box(Fp::from_bytes(&[0x99; 32]));
+#[bench::case(Fp::from_bytes(&[0x42; 32]), Fp::from_bytes(&[0x99; 32]))]
+fn fp_mul(a: Fp, b: Fp) -> Fp {
     a * b
 }
 
 #[library_benchmark]
-fn fp_add() -> Fp {
-    let a = black_box(Fp::from_bytes(&[0x42; 32]));
-    let b = black_box(Fp::from_bytes(&[0x99; 32]));
+#[bench::case(Fp::from_bytes(&[0x42; 32]), Fp::from_bytes(&[0x99; 32]))]
+fn fp_add(a: Fp, b: Fp) -> Fp {
     a + b
 }
 
 #[library_benchmark]
-fn fp_sub() -> Fp {
-    let a = black_box(Fp::from_bytes(&[0x42; 32]));
-    let b = black_box(Fp::from_bytes(&[0x99; 32]));
+#[bench::case(Fp::from_bytes(&[0x42; 32]), Fp::from_bytes(&[0x99; 32]))]
+fn fp_sub(a: Fp, b: Fp) -> Fp {
     a - b
 }
 
 #[library_benchmark]
-fn fp_square() -> Fp {
-    let a = black_box(Fp::from_bytes(&[0x42; 32]));
+#[bench::case(Fp::from_bytes(&[0x42; 32]))]
+fn fp_square(a: Fp) -> Fp {
     a.square()
 }
 
@@ -79,21 +83,20 @@ fn fp_square() -> Fp {
 // undercounts the asm path's ILP win -- read Ir for the op-count delta.
 
 #[library_benchmark]
-fn fp51_mul() -> Fp51 {
-    let a = black_box(Fp51::from_bytes(&[0x42; 32]));
-    let b = black_box(Fp51::from_bytes(&[0x99; 32]));
+#[bench::case(Fp51::from_bytes(&[0x42; 32]), Fp51::from_bytes(&[0x99; 32]))]
+fn fp51_mul(a: Fp51, b: Fp51) -> Fp51 {
     a * b
 }
 
 #[library_benchmark]
-fn fp51_square() -> Fp51 {
-    let a = black_box(Fp51::from_bytes(&[0x42; 32]));
+#[bench::case(Fp51::from_bytes(&[0x42; 32]))]
+fn fp51_square(a: Fp51) -> Fp51 {
     a.square()
 }
 
 #[library_benchmark]
-fn fp51_invert() -> Fp51 {
-    let a = black_box(Fp51::from_bytes(&[0x42; 32]));
+#[bench::case(Fp51::from_bytes(&[0x42; 32]))]
+fn fp51_invert(a: Fp51) -> Fp51 {
     a.invert()
 }
 
@@ -109,9 +112,8 @@ fn fp51_invert() -> Fp51 {
     target_feature = "adx"
 ))]
 #[library_benchmark]
-fn fp64_mul() -> Fp64 {
-    let a = black_box(Fp64::from_bytes(&[0x42; 32]));
-    let b = black_box(Fp64::from_bytes(&[0x99; 32]));
+#[bench::case(Fp64::from_bytes(&[0x42; 32]), Fp64::from_bytes(&[0x99; 32]))]
+fn fp64_mul(a: Fp64, b: Fp64) -> Fp64 {
     a * b
 }
 
@@ -121,8 +123,8 @@ fn fp64_mul() -> Fp64 {
     target_feature = "adx"
 ))]
 #[library_benchmark]
-fn fp64_square() -> Fp64 {
-    let a = black_box(Fp64::from_bytes(&[0x42; 32]));
+#[bench::case(Fp64::from_bytes(&[0x42; 32]))]
+fn fp64_square(a: Fp64) -> Fp64 {
     a.square()
 }
 
@@ -132,23 +134,19 @@ fn fp64_square() -> Fp64 {
     target_feature = "adx"
 ))]
 #[library_benchmark]
-fn fp64_invert() -> Fp64 {
-    let a = black_box(Fp64::from_bytes(&[0x42; 32]));
+#[bench::case(Fp64::from_bytes(&[0x42; 32]))]
+fn fp64_invert(a: Fp64) -> Fp64 {
     a.invert()
 }
 
 // --- Fp2 arithmetic ---
 
 #[library_benchmark]
-fn fp2_mul() -> Fp2 {
-    let a = black_box(Fp2::new(
-        Fp::from_bytes(&[0x42; 32]),
-        Fp::from_bytes(&[0x11; 32]),
-    ));
-    let b = black_box(Fp2::new(
-        Fp::from_bytes(&[0x99; 32]),
-        Fp::from_bytes(&[0x55; 32]),
-    ));
+#[bench::case(
+    Fp2::new(Fp::from_bytes(&[0x42; 32]), Fp::from_bytes(&[0x11; 32])),
+    Fp2::new(Fp::from_bytes(&[0x99; 32]), Fp::from_bytes(&[0x55; 32]))
+)]
+fn fp2_mul(a: Fp2, b: Fp2) -> Fp2 {
     a * b
 }
 
