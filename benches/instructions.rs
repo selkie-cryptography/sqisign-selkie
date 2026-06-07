@@ -29,7 +29,10 @@ use sqisign_selkie::{
         Scalar,
         montgomery::{Curve, ProjectiveXOnlyPoint},
     },
-    fields::{fp::Fp, fp2::Fp2},
+    fields::{
+        fp::{Fp, arch::generic::Fp51},
+        fp2::Fp2,
+    },
     params::BASIS_E0_P_X,
 };
 
@@ -59,7 +62,33 @@ fn fp_sub() -> Fp {
 #[library_benchmark]
 fn fp_square() -> Fp {
     let a = black_box(Fp::from_bytes(&[0x42; 32]));
-    a * a
+    a.square()
+}
+
+// Explicit Fp51 baseline benches.  `fp_*` above measures the dispatched
+// `Fp` (Fp64 on x86_64+adx CI, Fp51 elsewhere); these always measure
+// Fp51, so a single deterministic run yields the backend head-to-head
+// (Ir + estimated cycles) immune to wall-clock runner noise.  Estimated
+// cycles is a callgrind cache-model proxy, not a pipeline model, so it
+// undercounts the asm path's ILP win -- read Ir for the op-count delta.
+
+#[library_benchmark]
+fn fp51_mul() -> Fp51 {
+    let a = black_box(Fp51::from_bytes(&[0x42; 32]));
+    let b = black_box(Fp51::from_bytes(&[0x99; 32]));
+    a * b
+}
+
+#[library_benchmark]
+fn fp51_square() -> Fp51 {
+    let a = black_box(Fp51::from_bytes(&[0x42; 32]));
+    a.square()
+}
+
+#[library_benchmark]
+fn fp51_invert() -> Fp51 {
+    let a = black_box(Fp51::from_bytes(&[0x42; 32]));
+    a.invert()
 }
 
 // --- Fp2 arithmetic ---
@@ -151,7 +180,7 @@ fn kat_sign() {
 
 library_benchmark_group!(
     name = field;
-    benchmarks = fp_mul, fp_add, fp_sub, fp_square, fp2_mul
+    benchmarks = fp_mul, fp_add, fp_sub, fp_square, fp2_mul, fp51_mul, fp51_square, fp51_invert
 );
 
 library_benchmark_group!(
