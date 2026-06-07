@@ -38,14 +38,17 @@ impl<const N: usize> BigInt<N> {
         if !is_negative {
             return Self::from_bytes_le_unsigned(bytes);
         }
+
         // Negate two's complement: flip bits, add 1.
         let mut flipped = [0u8; { 8 * 8 }]; // max N=8
         for (i, &b) in bytes.iter().enumerate() {
             flipped[i] = !b;
         }
+
         // Pad with 0xFF for remaining bytes up to the limb boundary.
         // Actually we only need to negate the bytes we have.
         let mut magnitude = Self::from_bytes_le_unsigned(&flipped[..bytes.len()]);
+
         // Add 1 to the magnitude.
         magnitude.limbs[0] = magnitude.limbs[0].wrapping_add(1);
         let mut carry = if magnitude.limbs[0] == 0 { 1u64 } else { 0 };
@@ -54,6 +57,7 @@ impl<const N: usize> BigInt<N> {
             magnitude.limbs[i] = val;
             carry = c as u64;
         }
+
         magnitude.sign = 1;
         magnitude
     }

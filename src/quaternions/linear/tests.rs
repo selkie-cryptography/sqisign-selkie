@@ -262,6 +262,7 @@ fn hnf_mod_kat29_cref_first_finduv() {
         let val = BigInt::<60>::from_bytes_le_unsigned(&bytes_be);
         if neg { val.wrapping_neg() } else { val }
     }
+
     type V60 = Vector<60>;
     let cols = [
         V60::new(
@@ -337,6 +338,7 @@ fn hnf_mod_kat29_our_first_finduv() {
         let val = BigInt::<60>::from_bytes_le_unsigned(&bytes_be);
         if neg { val.wrapping_neg() } else { val }
     }
+
     type V60 = Vector<60>;
     // Captured from a release `MULTIORDER_TRACE=1 cargo test --lib --release
     // keygen_kat_029 -- --ignored` run, first MULTIORDER_INPUT block.
@@ -605,6 +607,7 @@ fn from_hnf_columns_mod_cref_matches_classical_4cols() {
     let hnf_mod_cref = M::from_hnf_columns_mod_cref::<8>(&cols, &det);
     let cols_classical = hnf_classical.columns();
     let cols_mod_cref = hnf_mod_cref.columns();
+
     for j in 0..4 {
         for r in 0..4 {
             assert_eq!(
@@ -631,6 +634,7 @@ fn from_hnf_columns_mod_cref_with_negatives_4cols() {
     let hnf_mod_cref = M::from_hnf_columns_mod_cref::<8>(&cols, &det);
     let cols_classical = hnf_classical.columns();
     let cols_mod_cref = hnf_mod_cref.columns();
+
     for j in 0..4 {
         for r in 0..4 {
             assert_eq!(
@@ -763,6 +767,7 @@ fn from_hnf_columns_quaternion_shape_small() {
             j, col[0], col[1], col[2], col[3]
         );
     }
+
     assert_eq!(hnf_classical, hnf_mod_cref, "classical vs mod_cref");
     assert_eq!(hnf_classical, hnf_mod, "classical vs mod");
 }
@@ -814,6 +819,7 @@ fn from_hnf_columns_quaternion_shape_med_w30() {
             );
         }
     }
+
     assert_eq!(hnf_classical, hnf_mod_cref, "classical vs mod_cref");
     assert_eq!(hnf_classical, hnf_mod, "classical vs mod");
 }

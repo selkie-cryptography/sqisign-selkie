@@ -143,18 +143,21 @@ impl JacobianPoint {
     pub fn double_for_theta(&self) -> JacobianPoint {
         let A = *self.curve.coefficient().as_fp2();
 
+        // Tangent slope numerator alpha = 3x² + z²(z² + 2Ax).
         let xx = self.X.square();
         let three_xx = &(&xx + &xx) + &xx;
         let zz = self.Z.square();
         let two_ax = &(&A * &self.X) + &(&A * &self.X);
         let alpha = &three_xx + &(&zz * &(&zz + &two_ax));
 
+        // Output Z and supporting cross-terms.
         let z3 = &(&self.Y * &self.Z) + &(&self.Y * &self.Z); // 2yz
         let z3_sq = z3.square(); // 4y²z²
         let yy = self.Y.square();
         let two_yy = &yy + &yy;
         let four_xyy = &two_yy * &(&self.X + &self.X);
 
+        // Output X and Y.
         let x3 = &(&alpha.square() - &(&A * &z3_sq)) - &(&four_xyy + &four_xyy);
         let four_yyyy = two_yy.square();
         let y3 = &(&alpha * &(&four_xyy - &x3)) - &(&four_yyyy + &four_yyyy);

@@ -657,6 +657,7 @@ impl TorsionBasis {
             // Swap DIFF2a/DIFF2b if h is odd.
             ProjectiveXOnlyPoint::conditional_swap(&mut F1, &mut F2, h_bit0);
 
+            // Install the iteration's results.
             R0 = T0;
             R1 = T1;
             R2 = T2;
