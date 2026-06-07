@@ -504,15 +504,15 @@ fn is_square_zero_is_set() {
     assert!(bool::from(Fp64::ZERO.is_square()));
 }
 
-/// Cross-impl proptests against Fp51 for the higher-level ops that
-/// the Fp64 isogeny path goes through.  All tests share the same
-/// shape: generate canonical-bytes input, compute via both backends,
-/// compare canonical bytes back out.
-///
-/// These exist to localise the `curves::isogeny::tests::*` failures
-/// that surfaced when the dispatcher activated Fp64.  The
-/// `mul_matches_fp51` proptest above already covers the Mul case;
-/// these add invert, sqrt, square, pow_p3div4.
+// Cross-impl proptests against Fp51 for the higher-level ops that
+// the Fp64 isogeny path goes through.  All tests share the same
+// shape: generate canonical-bytes input, compute via both backends,
+// compare canonical bytes back out.
+//
+// These exist to localize the `curves::isogeny::tests::*` failures
+// that surfaced when the dispatcher activated Fp64.  The
+// `mul_matches_fp51` proptest above already covers the Mul case;
+// these add invert, sqrt, square, pow_p3div4.
 proptest! {
     /// `Fp64::pow_p3div4` bytes match `Fp51::pow_p3div4` bytes.
     ///
