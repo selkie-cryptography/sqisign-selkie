@@ -114,3 +114,92 @@ pub(in super::super) fn mag_mul_4_adx(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
 
     [r0, r1, r2, r3]
 }
+
+/// 4-limb truncated squaring via dual-chain ADX, exploiting cross-term
+/// symmetry `a[i]·a[j] == a[j]·a[i]`.
+///
+/// Returns the low 4 limbs of `a · a`, discarding the upper 256 bits.
+/// Issues 6 `mulx` instructions vs the 10 of [`mag_mul_4_adx`] applied to
+/// `(a, a)`: 4 cross products (`a[0]·a[1..3]`, `a[1]·a[2]`, each
+/// contributing to the truncated output once doubled) plus 2 diagonals
+/// (`a[0]²`, `a[1]²`).  The remaining diagonals (`a[2]²`, `a[3]²`) and
+/// crosses (`a[1]·a[3]`, `a[2]·a[3]`) land at positions 4-6, outside the
+/// truncated output.
+///
+/// Mirrors the cross-term recipe in `super::super::modular`'s wide
+/// squaring, specialized to N=4 and truncated.
+///
+/// # Safety
+///
+/// `target_feature = "adx"` and `"bmi2"` are cfg-required; the asm uses
+/// MULX/ADCX/ADOX unconditionally.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "adx",
+    target_feature = "bmi2",
+))]
+#[inline]
+pub(in super::super) fn mag_sqr_4_adx(a: &[u64; 4]) -> [u64; 4] {
+    let mut r0: u64;
+    let mut r1: u64;
+    let mut r2: u64;
+    let mut r3: u64;
+
+    // SAFETY: cfg-gated on +adx and +bmi2; readonly (no memory writes);
+    // nostack.  Reads exactly 32 bytes from `a` through its raw pointer.
+    unsafe {
+        asm!(
+            // Pre-doubling target positions for the cross-product sum:
+            //   pos 1 = lo(a[0]·a[1])
+            //   pos 2 = hi(a[0]·a[1]) + lo(a[0]·a[2])
+            //   pos 3 = hi(a[0]·a[2]) + lo(a[0]·a[3]) + lo(a[1]·a[2])
+            // Position-4 contributions (hi of a[0]·a[3], hi of a[1]·a[2],
+            // carries) are discarded.
+            "xor {r3:e}, {r3:e}",
+
+            // Cross-products fanning out from a[0]: a[0]·a[1..3].
+            "mov rdx, qword ptr [{a} + 0]",
+            "mulx {r2}, {r1}, qword ptr [{a} + 8]",
+
+            "mulx {hi}, {lo}, qword ptr [{a} + 16]",
+            "add {r2}, {lo}",
+            "adc {r3}, {hi}",
+
+            "mulx {hi}, {lo}, qword ptr [{a} + 24]",
+            "add {r3}, {lo}",
+
+            // Last cross-product a[1]·a[2]; only the low half stays in range.
+            "mov rdx, qword ptr [{a} + 8]",
+            "mulx {hi}, {lo}, qword ptr [{a} + 16]",
+            "add {r3}, {lo}",
+
+            // Double (r1, r2, r3) <<= 1; bit shifted out of r3 discarded.
+            "shl {r1}, 1",
+            "adc {r2}, {r2}",
+            "adc {r3}, {r3}",
+
+            // Diagonal a[0]^2 lands at (pos 0, pos 1).
+            "mov rdx, qword ptr [{a} + 0]",
+            "mulx {hi}, {r0}, rdx",
+            "add {r1}, {hi}",
+
+            // Diagonal a[1]^2 lands at (pos 2, pos 3).
+            "mov rdx, qword ptr [{a} + 8]",
+            "mulx {hi}, {lo}, rdx",
+            "adc {r2}, {lo}",
+            "adc {r3}, {hi}",
+
+            a = in(reg) a.as_ptr(),
+            r0 = out(reg) r0,
+            r1 = out(reg) r1,
+            r2 = out(reg) r2,
+            r3 = out(reg) r3,
+            lo = out(reg) _,
+            hi = out(reg) _,
+            out("rdx") _,
+            options(nostack, readonly),
+        );
+    }
+
+    [r0, r1, r2, r3]
+}

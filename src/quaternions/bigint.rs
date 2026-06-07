@@ -29,6 +29,7 @@ mod primes;
 mod rand;
 mod resize;
 mod shift;
+mod sqr;
 mod sqrt;
 mod sub;
 pub(crate) use modular::MontReducer;
