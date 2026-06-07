@@ -117,11 +117,17 @@ jobs:
                 })
             ),
             # Headline library benches, hoisted so the dashboard index can
-            # carry a per-commit scalar for the trend charts.
+            # carry a per-commit scalar for the trend charts. The `_derand`
+            # variants are the low-noise signal: randomized keygen/sign
+            # re-run a variable-length rejection loop per RNG draw, so their
+            # wall-clock variance swamps backend changes; the deterministic
+            # variants trend cleanly.
             summary: {
-              keygen_ns: ([$benches[] | select(.name == "sqisign::keygen") | .median_ns] | first),
-              sign_ns:   ([$benches[] | select(.name == "sqisign::sign")   | .median_ns] | first),
-              verify_ns: ([$benches[] | select(.name == "sqisign::verify") | .median_ns] | first)
+              keygen_ns:        ([$benches[] | select(.name == "sqisign::keygen")        | .median_ns] | first),
+              keygen_derand_ns: ([$benches[] | select(.name == "sqisign::keygen_derand") | .median_ns] | first),
+              sign_ns:          ([$benches[] | select(.name == "sqisign::sign")          | .median_ns] | first),
+              sign_derand_ns:   ([$benches[] | select(.name == "sqisign::sign_derand")   | .median_ns] | first),
+              verify_ns:        ([$benches[] | select(.name == "sqisign::verify")        | .median_ns] | first)
             }
           }' > bench-out/bench.json
 
