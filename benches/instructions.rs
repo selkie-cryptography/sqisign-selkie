@@ -196,6 +196,37 @@ fn sk_parse() {
     let _ = black_box(sqisign_selkie::SigningKey::from_bytes(&sk_arr));
 }
 
+// --- Variable-modulus Montgomery (MontReducer) ---
+//
+// `pow_mod` at width 18 drives `MontReducer::mul`/`square` over an
+// 18-limb modulus -- the width Miller-Rabin uses during keygen's
+// `random_prime_norm` (primality is 54% of keygen / 25% of sign per
+// the flamegraph). On x86_64+adx+bmi2 the multiply routes through the
+// `mont_mul_adx` dual-chain asm; elsewhere through the portable CIOS
+// loop. Isolates the Montgomery cost so the ADX delta is measurable
+// without the noise of the full keygen path. Exponent and modulus are
+// fixed (a Fermat-style `base^(m-1) mod m`) so Ir is deterministic.
+#[library_benchmark]
+fn mont_pow_mod_w18() {
+    use sqisign_selkie::quaternions::bigint::BigInt;
+
+    // An 18-limb odd modulus (2^1088 - 9, prime-shaped; primality is
+    // irrelevant -- only the Montgomery multiply chain is measured).
+    let mut m_limbs = [u64::MAX; 18];
+    m_limbs[0] = u64::MAX - 8;
+    let m = BigInt::<18>::from_limbs(m_limbs);
+    let base = BigInt::<18>::from_u64(3);
+    let mut exp_limbs = m_limbs;
+    exp_limbs[0] -= 1; // m - 1
+    let exp = BigInt::<18>::from_limbs(exp_limbs);
+
+    let _ = black_box(BigInt::<18>::pow_mod(
+        black_box(&base),
+        black_box(&exp),
+        black_box(&m),
+    ));
+}
+
 // --- Top-level operations ---
 
 // KAT vector 0 verification: parse vk + sig, verify.
@@ -249,6 +280,11 @@ library_benchmark_group!(
 );
 
 library_benchmark_group!(
+    name = bigint;
+    benchmarks = mont_pow_mod_w18
+);
+
+library_benchmark_group!(
     name = curves;
     benchmarks = scalar_mul, point_double
 );
@@ -276,6 +312,7 @@ main!(
             .flamegraph(FlamegraphConfig::default().event_kinds([EventKind::Ir])),
     );
     library_benchmark_groups = field,
+    bigint,
     curves,
     parsing,
     sqisign
