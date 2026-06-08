@@ -55,7 +55,16 @@ mod tests;
 
 /// An element of `F_p` (where `p = 5 * 2^248 - 1`) in radix-2^64
 /// Montgomery form, packed into four full-width u64 limbs.
-#[derive(Copy, Clone, PartialEq, Eq)]
+///
+/// **Lazy reduction**: values are kept in `[0, 2p)`, not canonical
+/// `[0, p)` (matching the C reference, whose `fp_mul` skips the final
+/// conditional subtract -- ~27% per mul).  `mul`/`square` accept and
+/// return `[0, 2p)`; `add`/`sub`/`neg` reduce to `[0, 2p)`.  A field
+/// element therefore has two representatives (`x` and `x + p`), so
+/// `PartialEq`, `ct_eq`, and `to_bytes` normalize to `[0, p)` first --
+/// `PartialEq`/`Eq` are hand-written, not derived (a structural compare
+/// would call `x` and `x + p` unequal).
+#[derive(Copy, Clone)]
 pub struct Fp64(pub(crate) [u64; 4]);
 
 impl Fp64 {
@@ -120,6 +129,16 @@ impl Fp64 {
         0xFFFFFFFFFFFFFFFF,
         0xFFFFFFFFFFFFFFFF,
         0x04FFFFFFFFFFFFFF,
+    ]);
+
+    /// `2p`, the reduction constant for the lazy-`[0, 2p)` invariant.
+    /// `add`/`sub`/`neg` produce values in `[0, 4p)` and subtract this
+    /// once to land back in `[0, 2p)`.
+    const TWO_P: Self = Self([
+        0xFFFFFFFFFFFFFFFE,
+        0xFFFFFFFFFFFFFFFF,
+        0xFFFFFFFFFFFFFFFF,
+        0x09FFFFFFFFFFFFFF,
     ]);
 
     /// `R^2 mod p` for converting in/out of Montgomery form (`R = 2^256`).
@@ -250,17 +269,29 @@ impl Fp64 {
         Self::conditional_select(&subbed, &self, Choice::from(b3 as u8))
     }
 
-    /// Conditionally add `p` to `self`.
-    ///
-    /// Returns `self + p (mod 2^256)` if `cond` is true, else `self`
-    /// unchanged.  Used by `Sub` to add `p` back when the raw
-    /// subtraction underflowed.
-    fn cond_add_p(self, cond: Choice) -> Self {
-        let p = Self::P.0;
-        let (a0, c0) = self.0[0].carrying_add(p[0], false);
-        let (a1, c1) = self.0[1].carrying_add(p[1], c0);
-        let (a2, c2) = self.0[2].carrying_add(p[2], c1);
-        let (a3, _c3) = self.0[3].carrying_add(p[3], c2);
+    /// Reduces a value in `[0, 4p)` to `[0, 2p)` by subtracting `2p`
+    /// when `self >= 2p` (constant-time via a borrow-masked select).
+    /// The lazy-invariant analog of [`Fp64::final_sub_p`].
+    fn cond_sub_2p(self) -> Self {
+        let tp = Self::TWO_P.0;
+        let (d0, b0) = self.0[0].borrowing_sub(tp[0], false);
+        let (d1, b1) = self.0[1].borrowing_sub(tp[1], b0);
+        let (d2, b2) = self.0[2].borrowing_sub(tp[2], b1);
+        let (d3, b3) = self.0[3].borrowing_sub(tp[3], b2);
+        let subbed = Self([d0, d1, d2, d3]);
+        // `b3 = true` iff `self < 2p`; in that case keep `self`.
+        Self::conditional_select(&subbed, &self, Choice::from(b3 as u8))
+    }
+
+    /// Conditionally adds `2p` to `self` (mod 2^256) when `cond`.  Used
+    /// by `Sub`: an underflowing `a - b` (with `a, b` in `[0, 2p)`)
+    /// wraps; adding `2p` back lands the result in `[0, 2p)`.
+    fn cond_add_2p(self, cond: Choice) -> Self {
+        let tp = Self::TWO_P.0;
+        let (a0, c0) = self.0[0].carrying_add(tp[0], false);
+        let (a1, c1) = self.0[1].carrying_add(tp[1], c0);
+        let (a2, c2) = self.0[2].carrying_add(tp[2], c1);
+        let (a3, _c3) = self.0[3].carrying_add(tp[3], c2);
         let added = Self([a0, a1, a2, a3]);
         Self::conditional_select(&self, &added, cond)
     }
@@ -420,11 +451,11 @@ impl Fp64 {
                 options(nostack),
             );
         }
-        // Output may be up to ~2p; canonicalize via single conditional
-        // subtract.  (C ref omits this; the C-side `fp_normalize`
-        // handles it at the trait boundary.  We canonicalize at every
-        // op so Fp64 values are always in [0, p).)
-        Self(out).final_sub_p()
+        // Lazy reduction: leave the result in [0, 2p) (Montgomery's
+        // bound for inputs < 2p, since 4p < R).  No final conditional
+        // subtract -- matching C ref's `fp_mul`.  Normalization to
+        // [0, p) happens only at boundaries (`to_bytes`, equality).
+        Self(out)
     }
 
     /// Modular squaring: `self * self mod p`.
@@ -641,12 +672,12 @@ impl Fp64 {
     /// Encodes a Montgomery-form `Fp64` as 32 bytes, little-endian.
     ///
     /// Exits Montgomery form via `mul` by `1` (= raw `[1, 0, 0, 0]`),
-    /// which performs the Montgomery reduction without re-entering
-    /// the scaled form, then encodes the canonical `[u64; 4]`.
+    /// then `final_sub_p` normalizes the lazy `[0, 2p)` result to the
+    /// canonical `[0, p)` before encoding.
     #[must_use]
     pub fn to_bytes(self) -> [u8; FP_ENCODED_BYTES] {
         let one_raw = Self([1, 0, 0, 0]);
-        let canonical = &self * &one_raw;
+        let canonical = (&self * &one_raw).final_sub_p();
         let mut out = [0u8; FP_ENCODED_BYTES];
         out[0..8].copy_from_slice(&canonical.0[0].to_le_bytes());
         out[8..16].copy_from_slice(&canonical.0[1].to_le_bytes());
@@ -742,18 +773,32 @@ impl Fp64 {
 }
 
 impl ConstantTimeEq for Fp64 {
-    /// Constant-time equality on canonical `Fp64` values.
+    /// Constant-time equality, lazy-reduction aware.
     ///
-    /// Limb-wise via `subtle`'s `ConstantTimeEq` on `u64`.  Requires
-    /// both operands to be in canonical form (which they always are
-    /// after any `Fp64` op).
+    /// Inputs are in `[0, 2p)`, where a field element has two
+    /// representatives (`x` and `x + p`), so both operands are
+    /// normalized to canonical `[0, p)` via `final_sub_p` before the
+    /// limb-wise compare.
     fn ct_eq(&self, other: &Self) -> Choice {
-        self.0[0].ct_eq(&other.0[0])
-            & self.0[1].ct_eq(&other.0[1])
-            & self.0[2].ct_eq(&other.0[2])
-            & self.0[3].ct_eq(&other.0[3])
+        let a = self.final_sub_p();
+        let b = other.final_sub_p();
+        a.0[0].ct_eq(&b.0[0])
+            & a.0[1].ct_eq(&b.0[1])
+            & a.0[2].ct_eq(&b.0[2])
+            & a.0[3].ct_eq(&b.0[3])
     }
 }
+
+impl PartialEq for Fp64 {
+    /// Field equality, lazy-reduction aware: normalizes both sides to
+    /// `[0, p)` so `x` and `x + p` (the same element) compare equal.
+    /// Routes through the constant-time [`ConstantTimeEq`] path.
+    fn eq(&self, other: &Self) -> bool {
+        bool::from(self.ct_eq(other))
+    }
+}
+
+impl Eq for Fp64 {}
 
 impl fmt::Debug for Fp64 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -777,51 +822,53 @@ impl ConditionallySelectable for Fp64 {
 impl<'b> Add<&'b Fp64> for &Fp64 {
     type Output = Fp64;
 
-    /// Modular addition.  Inputs in `[0, p)`; output in `[0, p)`.
+    /// Modular addition.  Inputs in `[0, 2p)`; output in `[0, 2p)`.
     ///
-    /// Sum of two canonical values fits in 4 limbs without bit-256
-    /// overflow (`2p < 2^253`); a single conditional subtract of `p`
-    /// canonicalizes.
+    /// The sum is in `[0, 4p)`, which fits 4 limbs (`4p < 2^253`, so the
+    /// top carry is always 0); `cond_sub_2p` brings it back to `[0, 2p)`.
     fn add(self, rhs: &'b Fp64) -> Fp64 {
         let (r0, c0) = self.0[0].carrying_add(rhs.0[0], false);
         let (r1, c1) = self.0[1].carrying_add(rhs.0[1], c0);
         let (r2, c2) = self.0[2].carrying_add(rhs.0[2], c1);
         let (r3, _c3) = self.0[3].carrying_add(rhs.0[3], c2);
-        Fp64([r0, r1, r2, r3]).final_sub_p()
+        Fp64([r0, r1, r2, r3]).cond_sub_2p()
     }
 }
 
 impl<'b> Sub<&'b Fp64> for &Fp64 {
     type Output = Fp64;
 
-    /// Modular subtraction.  Inputs in `[0, p)`; output in `[0, p)`.
+    /// Modular subtraction.  Inputs in `[0, 2p)`; output in `[0, 2p)`.
     ///
-    /// Subtract limb-wise; a final borrow means the raw difference
-    /// underflowed (`self < rhs`), in which case [`Fp64::cond_add_p`]
-    /// adds `p` back to canonicalize.
+    /// `a - b` with `a, b` in `[0, 2p)` is in `(-2p, 2p)`; a final
+    /// borrow means it underflowed (wrapped mod 2^256), and adding `2p`
+    /// back lands the result in `[0, 2p)`.
     fn sub(self, rhs: &'b Fp64) -> Fp64 {
         let (r0, b0) = self.0[0].borrowing_sub(rhs.0[0], false);
         let (r1, b1) = self.0[1].borrowing_sub(rhs.0[1], b0);
         let (r2, b2) = self.0[2].borrowing_sub(rhs.0[2], b1);
         let (r3, b3) = self.0[3].borrowing_sub(rhs.0[3], b2);
-        Fp64([r0, r1, r2, r3]).cond_add_p(Choice::from(b3 as u8))
+        Fp64([r0, r1, r2, r3]).cond_add_2p(Choice::from(b3 as u8))
     }
 }
 
 impl Neg for &Fp64 {
     type Output = Fp64;
 
-    /// Modular negation: `p - self mod p`.
+    /// Modular negation: `-self mod p`.  Input in `[0, 2p)`; output in
+    /// `[0, 2p)`.
     ///
-    /// Computes `p - self`; for `self == 0` the raw result is `p` and
-    /// [`Fp64::final_sub_p`] reduces it to `0`.
+    /// Computes `2p - self` (in `(0, 2p]` for `self` in `[0, 2p)`);
+    /// `cond_sub_2p` maps the `self == 0` case (`2p`) back to `0`.  Uses
+    /// `2p` rather than `p` so the subtraction never underflows for a
+    /// non-canonical `self` in `[p, 2p)`.
     fn neg(self) -> Fp64 {
-        let p = Fp64::P.0;
-        let (d0, b0) = p[0].borrowing_sub(self.0[0], false);
-        let (d1, b1) = p[1].borrowing_sub(self.0[1], b0);
-        let (d2, b2) = p[2].borrowing_sub(self.0[2], b1);
-        let (d3, _b3) = p[3].borrowing_sub(self.0[3], b2);
-        Fp64([d0, d1, d2, d3]).final_sub_p()
+        let tp = Fp64::TWO_P.0;
+        let (d0, b0) = tp[0].borrowing_sub(self.0[0], false);
+        let (d1, b1) = tp[1].borrowing_sub(self.0[1], b0);
+        let (d2, b2) = tp[2].borrowing_sub(self.0[2], b1);
+        let (d3, _b3) = tp[3].borrowing_sub(self.0[3], b2);
+        Fp64([d0, d1, d2, d3]).cond_sub_2p()
     }
 }
 

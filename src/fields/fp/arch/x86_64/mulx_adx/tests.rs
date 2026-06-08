@@ -196,6 +196,78 @@ proptest! {
     }
 }
 
+/// Generate a value in `[0, 2p)` paired with its canonical `[0, p)`
+/// equivalent.
+///
+/// Lazy reduction lets every op accept inputs in `[0, 2p)` rather than
+/// fully-reduced `[0, p)`; [`arb_fp64`] only ever produces canonical
+/// values, so it never exercises a `>= p` input.  Half the time this
+/// adds `p` to a canonical value, landing it in `[p, 2p)` -- the same
+/// field element in a non-canonical raw representation.  The returned
+/// pair is `(maybe_non_canonical, canonical)`; every op fed the first
+/// must agree with the same op fed the second.
+fn arb_fp64_lazy() -> impl Strategy<Value = (Fp64, Fp64)> {
+    (arb_fp64(), any::<bool>()).prop_map(|(canonical, add_p)| {
+        if !add_p {
+            return (canonical, canonical);
+        }
+        // canonical < p, so canonical + p < 2p < 2^256: no overflow.
+        let p = Fp64::P.0;
+        let (l0, c0) = canonical.0[0].carrying_add(p[0], false);
+        let (l1, c1) = canonical.0[1].carrying_add(p[1], c0);
+        let (l2, c2) = canonical.0[2].carrying_add(p[2], c1);
+        let (l3, _) = canonical.0[3].carrying_add(p[3], c2);
+        (Fp64::from_raw([l0, l1, l2, l3]), canonical)
+    })
+}
+
+proptest! {
+    /// A non-canonical `[p, 2p)` value compares equal to its canonical
+    /// rep (`PartialEq` normalizes via `final_sub_p`).
+    #[test]
+    fn lazy_eq_normalizes((x, xc) in arb_fp64_lazy()) {
+        prop_assert_eq!(x, xc);
+    }
+
+    /// `to_bytes` normalizes: a non-canonical input encodes identically
+    /// to its canonical rep.
+    #[test]
+    fn lazy_to_bytes_normalizes((x, xc) in arb_fp64_lazy()) {
+        prop_assert_eq!(x.to_bytes(), xc.to_bytes());
+    }
+
+    /// Adding a non-canonical operand matches adding its canonical rep.
+    #[test]
+    fn lazy_add_matches((x, xc) in arb_fp64_lazy(), (y, yc) in arb_fp64_lazy()) {
+        prop_assert_eq!(&x + &y, &xc + &yc);
+    }
+
+    /// Subtracting a non-canonical operand matches its canonical rep.
+    #[test]
+    fn lazy_sub_matches((x, xc) in arb_fp64_lazy(), (y, yc) in arb_fp64_lazy()) {
+        prop_assert_eq!(&x - &y, &xc - &yc);
+    }
+
+    /// Negating a non-canonical operand matches its canonical rep.
+    #[test]
+    fn lazy_neg_matches((x, xc) in arb_fp64_lazy()) {
+        prop_assert_eq!(-&x, -&xc);
+    }
+
+    /// Multiplying non-canonical operands matches their canonical reps
+    /// (the Montgomery mul must reduce a `[0, 2p)` input correctly).
+    #[test]
+    fn lazy_mul_matches((x, xc) in arb_fp64_lazy(), (y, yc) in arb_fp64_lazy()) {
+        prop_assert_eq!(&x * &y, &xc * &yc);
+    }
+
+    /// Squaring a non-canonical operand matches its canonical rep.
+    #[test]
+    fn lazy_square_matches((x, xc) in arb_fp64_lazy()) {
+        prop_assert_eq!(x.square(), xc.square());
+    }
+}
+
 #[test]
 fn mul_one_one_is_one() {
     let one = canon(Fp51::ONE);
