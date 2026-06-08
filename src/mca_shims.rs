@@ -48,7 +48,7 @@ pub extern "C" fn mca_fp51_square(a: [u64; 5]) -> [u64; 5] {
     target_feature = "adx"
 ))]
 mod adx {
-    use crate::fields::{fp::arch::x86_64::mulx_adx::Fp64, fp2::Fp2};
+    use crate::fields::fp::arch::x86_64::mulx_adx::Fp64;
 
     /// `Fp64` (radix-2^64) MULX + ADCX/ADOX Montgomery multiplication.
     #[no_mangle]
@@ -78,34 +78,10 @@ mod adx {
         Fp64::mul_wide_adx(&a, &b)
     }
 
-    /// `Fp2` multiplication (two `Fp64` real/imag limbs in, two out).
-    ///
-    /// Computes the Algorithm 8.1 coefficients directly via the two
-    /// `Fp64` primitives rather than `Fp2 * Fp2`: the `Mul for Fp2` impl
-    /// is not `#[inline]`, so wrapping it leaves only a `call` in the
-    /// shim body -- invisible to the pipeline model.  Inlining the
-    /// primitives here puts the real instruction stream in front of
-    /// `llvm-mca`.
-    #[no_mangle]
-    #[inline(never)]
-    pub extern "C" fn mca_fp2_mul(a: [u64; 8], b: [u64; 8]) -> [u64; 8] {
-        let a = core::hint::black_box(fp2_from_raw(a));
-        let b = core::hint::black_box(fp2_from_raw(b));
-        let re = Fp64::difference_of_2_products(&a.a, &b.a, &a.b, &b.b);
-        let im = Fp64::sum_of_2_products(&a.a, &b.b, &a.b, &b.a);
-        fp2_to_raw(Fp2::new(re, im))
-    }
-
-    /// Packs `Fp2` (real, imag) into eight raw `Fp64` limbs.
-    fn fp2_to_raw(x: Fp2) -> [u64; 8] {
-        let (re, im) = (x.a.0, x.b.0);
-        [re[0], re[1], re[2], re[3], im[0], im[1], im[2], im[3]]
-    }
-
-    /// Unpacks eight raw `Fp64` limbs into an `Fp2`.
-    fn fp2_from_raw(x: [u64; 8]) -> Fp2 {
-        let re = Fp64::from_raw([x[0], x[1], x[2], x[3]]);
-        let im = Fp64::from_raw([x[4], x[5], x[6], x[7]]);
-        Fp2::new(re, im)
-    }
+    // The fused `fp2` coordinate kernel (`Fp64::sum_of_products_packed`)
+    // is intentionally absent: it is register-dense (a 5-limb rotating
+    // accumulator over two products) and exceeds the GPR file when
+    // inlined into a `#[no_mangle] extern "C"` shim, though it fits in
+    // its production caller.  Its cost is tracked by the `field`
+    // instruction-count benches instead.
 }
