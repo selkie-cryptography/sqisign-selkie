@@ -61,6 +61,8 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
+use crate::fields::fp::arch::generic::Fp51;
+
 /// `1` in non-Montgomery form, used to exit Montgomery form via the `Mul`
 /// trait impl: `mont * 1 * R^-1 = mont / R = canonical`.
 const ONE_RAW: Fp26 = Fp26 {
@@ -1258,7 +1260,7 @@ const _: () = {
     assert!(MASK_26 == (1u32 << RADIX_26) - 1);
     assert!(RADIX_26 as usize * LIMBS_26 >= 248);
 
-    let from_portable_zero = Fp26::from_limbs(super::super::generic::Fp51::ZERO.0);
+    let from_portable_zero = Fp26::from_limbs(Fp51::ZERO.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1266,7 +1268,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_one = Fp26::from_limbs(super::super::generic::Fp51::ONE.0);
+    let from_portable_one = Fp26::from_limbs(Fp51::ONE.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1274,7 +1276,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_two = Fp26::from_limbs(super::super::generic::Fp51::TWO.0);
+    let from_portable_two = Fp26::from_limbs(Fp51::TWO.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1282,7 +1284,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_four = Fp26::from_limbs(super::super::generic::Fp51::FOUR.0);
+    let from_portable_four = Fp26::from_limbs(Fp51::FOUR.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1290,7 +1292,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_minus_one = Fp26::from_limbs(super::super::generic::Fp51::MINUS_ONE.0);
+    let from_portable_minus_one = Fp26::from_limbs(Fp51::MINUS_ONE.0);
     let mut i = 0;
 
     while i < LIMBS_26 {

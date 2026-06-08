@@ -13,7 +13,7 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-use super::super::FP_ENCODED_BYTES;
+use crate::fields::fp::FP_ENCODED_BYTES;
 
 /// Radix used for limb representation: 2^51.
 const RADIX: u32 = 51;

@@ -12,7 +12,8 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(target_feature = "avx2")]
 use super::Fp26x4;
-use super::{super::super::generic::Fp51 as PortableFp, Fp26, LIMBS_26, MASK_26, RADIX_26};
+use super::{Fp26, LIMBS_26, MASK_26, RADIX_26};
+use crate::fields::fp::arch::generic::Fp51 as PortableFp;
 
 /// Builds a [`PortableFp`] from arbitrary 32-byte inputs.  The portable
 /// backend's `from_bytes` is the cross-impl reference for canonical-byte

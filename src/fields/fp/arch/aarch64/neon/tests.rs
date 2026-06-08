@@ -8,10 +8,8 @@
 use proptest::prelude::*;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-use super::{
-    super::super::{super::Fp, generic::Fp51 as PortableFp},
-    Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29,
-};
+use super::{Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29};
+use crate::fields::fp::{Fp, arch::generic::Fp51 as PortableFp};
 
 /// Builds an `Fp` from arbitrary 32-byte inputs, matching the convention used
 /// in the parent `Fp` test module.
