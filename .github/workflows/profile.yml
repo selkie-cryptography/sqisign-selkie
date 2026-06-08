@@ -29,6 +29,7 @@ on:
       - '.github/workflows/profile.yml'
       - '.github/scripts/instructions-report.rs'
       - '.github/scripts/ci-scratch.rs'
+      - '.github/scripts/mca.rs'
   pull_request:
     branches: [main]
     paths:
@@ -39,6 +40,7 @@ on:
       - '.github/workflows/profile.yml'
       - '.github/scripts/instructions-report.rs'
       - '.github/scripts/ci-scratch.rs'
+      - '.github/scripts/mca.rs'
   workflow_dispatch:
 
 # Supersede in-flight PR runs; never cancel a main run mid-upload.
@@ -244,3 +246,49 @@ jobs:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
         run: /tmp/ci-scratch clean gungraun-shards "${{ github.sha }}"
+
+  # Static pipeline estimate (llvm-mca) for the hot x86_64 field asm.
+  # No execution -- llvm-mca models port pressure and throughput from
+  # the emitted instruction stream alone.  Independent of the gungraun
+  # shards above and informational only (never a merge gate); the
+  # "fewer mulx but more instructions" non-win signal that runtime
+  # benches alone can miss.
+  mca:
+    name: llvm-mca
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      # `llvm-mca` ships in the `llvm` apt package.  Skip the install
+      # if a runner image already bakes it in.
+      - name: Ensure llvm-mca
+        run: |
+          set -euo pipefail
+          if ! command -v llvm-mca >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y llvm
+          fi
+          llvm-mca --version | head -2
+
+      # `-mcpu=native` models this runner's actual CPU; the runner is
+      # x86_64, so the script's fixed `-mtriple=x86_64-...` matches.
+      # `MCA_CARGO=cargo` uses the stable toolchain (`--emit asm` is
+      # stable; no nightly needed).
+      - name: Run llvm-mca on hot kernels
+        env:
+          MCA_CPU: native
+          MCA_CARGO: cargo
+        run: |
+          set -euo pipefail
+          rustc -O .github/scripts/mca.rs -o /tmp/mca
+          {
+            echo "## llvm-mca static estimate (\`-mcpu=native\`)"
+            echo
+            /tmp/mca
+          } | tee -a "$GITHUB_STEP_SUMMARY"

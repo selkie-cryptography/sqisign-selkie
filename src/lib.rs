@@ -96,6 +96,12 @@ pub(crate) mod hash;
 // AES256-CTR-DRBG (SP 800-90A) used by _derand entry points
 pub(crate) mod drbg;
 
+// Symbol shims for the `llvm-mca` static-analysis tool (`mca` feature,
+// off by default; x86_64 only, since the tool analyzes x86 asm).  Not
+// production code -- see the module docs.
+#[cfg(all(feature = "mca", target_arch = "x86_64"))]
+mod mca_shims;
+
 // Key types and signatures
 #[cfg(not(feature = "expose-internals"))]
 pub(crate) mod keys;
