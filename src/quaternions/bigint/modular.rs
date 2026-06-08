@@ -160,15 +160,28 @@ impl<const N: usize> MontReducer<N> {
 
     /// Returns `a · a · R^{-1} mod n` for a Montgomery-form magnitude.
     ///
-    /// Decoupled implementation: computes the full 2N-limb `a²` using
-    /// schoolbook squaring with cross-term reuse (`~N(N+1)/2`
-    /// limb-mults, vs `N²` for [`Self::mul`]`(a, a)`), then applies
-    /// Montgomery REDC. Saves roughly 25% of the multiply phase
-    /// relative to `mul(a, a)`.
+    /// On x86_64 + ADX (for `N < MONT_ADX_MAX`) this routes through the
+    /// dual-chain CIOS asm `mont_mul_adx(a, a, ...)`: its `mulx` +
+    /// interleaved-reduction schedule beats the portable path despite
+    /// computing the full `N²` products rather than exploiting symmetry.
+    ///
+    /// Elsewhere it uses the decoupled portable path: the full 2N-limb
+    /// `a²` via schoolbook squaring with cross-term reuse
+    /// (`~N(N+1)/2` limb-mults, vs `N²` for [`Self::mul`]`(a, a)`),
+    /// then Montgomery REDC.
     ///
     /// Input `a` must be in Montgomery form, in `[0, n)`. Output is in
     /// `[0, n)`.
     fn square(&self, a: &[u64; N]) -> [u64; N] {
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "adx",
+            target_feature = "bmi2",
+        ))]
+        if N < super::arch::x86_64::MONT_ADX_MAX {
+            return super::arch::x86_64::mont_mul_adx(a, a, &self.n, self.n_inv_neg);
+        }
+
         let (lo, hi) = self.square_wide(a);
         self.reduce_wide(lo, hi)
     }
@@ -785,6 +798,30 @@ mod tests {
         assert_eq!(via_mont, via_oracle);
     }
 
+    /// Cross-checks [`MontReducer::square`] against the same doubled-width
+    /// oracle as [`check_mont_mul`].  On x86_64 + ADX `square` routes to
+    /// the `mont_mul_adx(a, a)` asm, which the independent `arb_bigint`
+    /// `x, y` of `check_mont_mul` never exercises with `x == y`; this
+    /// covers that path. The portable symmetric path is checked
+    /// everywhere else.
+    fn check_mont_square<const N: usize, const N2: usize>(a: &BigInt<N>, n: &BigInt<N>) {
+        let Some(ctx) = MontReducer::<N>::new(n) else {
+            return; // even modulus: Montgomery doesn't apply
+        };
+        let a_red = a.ct_mod(n);
+
+        let am = ctx.to_montgomery(&a_red.limbs);
+        let sq = ctx.reduce_montgomery(&ctx.square(&am));
+        let via_mont = BigInt::<N>::from_limbs(sq);
+
+        let aw: BigInt<N2> = a_red.widen();
+        let nw: BigInt<N2> = n.widen();
+        let via_oracle = (aw.ct_mul(&aw).ct_mod(&nw))
+            .narrow_to::<N>()
+            .expect("square mod n < n < 2^(64N) fits in N limbs");
+        assert_eq!(via_mont, via_oracle);
+    }
+
     /// Builds an odd `BigInt<N>` >= 3 from random limbs (forces bit 0 set
     /// and a nonzero high half so the modulus is a genuine `N`-limb odd).
     fn arb_odd_modulus<const N: usize>() -> impl Strategy<Value = BigInt<N>> {
@@ -826,6 +863,27 @@ mod tests {
             x in arb_bigint::<18>(), y in arb_bigint::<18>(), n in arb_odd_modulus::<18>(),
         ) {
             check_mont_mul::<18, 36>(&x, &y, &n);
+        }
+
+        #[test]
+        fn prop_mont_square_matches_schoolbook_n4(
+            a in arb_bigint::<4>(), n in arb_odd_modulus::<4>(),
+        ) {
+            check_mont_square::<4, 8>(&a, &n);
+        }
+
+        #[test]
+        fn prop_mont_square_matches_schoolbook_n9(
+            a in arb_bigint::<9>(), n in arb_odd_modulus::<9>(),
+        ) {
+            check_mont_square::<9, 18>(&a, &n);
+        }
+
+        #[test]
+        fn prop_mont_square_matches_schoolbook_n17(
+            a in arb_bigint::<17>(), n in arb_odd_modulus::<17>(),
+        ) {
+            check_mont_square::<17, 34>(&a, &n);
         }
     }
 
