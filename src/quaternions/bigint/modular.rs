@@ -102,6 +102,15 @@ impl<const N: usize> MontReducer<N> {
     ///
     /// [acar96]: https://www.microsoft.com/en-us/research/wp-content/uploads/1996/01/j37acmon.pdf
     fn mul(&self, a: &[u64; N], b: &[u64; N]) -> [u64; N] {
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "adx",
+            target_feature = "bmi2",
+        ))]
+        if N < super::arch::x86_64::MONT_ADX_MAX {
+            return super::arch::x86_64::mont_mul_adx(a, b, &self.n, self.n_inv_neg);
+        }
+
         let n = &self.n;
         let n_inv = self.n_inv_neg;
 
@@ -731,5 +740,105 @@ impl<const N: usize> BigInt<N> {
         let a_w: BigInt<W> = a.widen();
         let p_w: BigInt<W> = p.widen();
         BigInt::<W>::legendre(&a_w, &p_w)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::{BigInt, MontReducer};
+
+    /// Montgomery round-trip oracle: `to_mont -> mul -> reduce_mont`
+    /// must equal the independent schoolbook `(x * y) mod n`.
+    ///
+    /// On x86_64 with `+adx,+bmi2`, `MontReducer::mul` dispatches to the
+    /// `mont_mul_adx` dual-chain asm; on every other target it runs the
+    /// portable CIOS loop. The oracle multiplies at a doubled width
+    /// `2N` (so the `x*y` product never truncates) and reduces — a fully
+    /// independent path, so this cross-checks the asm against it on CI
+    /// and the portable loop against it everywhere else. Inputs are
+    /// reduced mod `n` first so they satisfy `mul`'s `[0, n)` contract.
+    fn check_mont_mul<const N: usize, const N2: usize>(
+        x: &BigInt<N>,
+        y: &BigInt<N>,
+        n: &BigInt<N>,
+    ) {
+        let Some(ctx) = MontReducer::<N>::new(n) else {
+            return; // even modulus: Montgomery doesn't apply
+        };
+        let x_red = x.ct_mod(n);
+        let y_red = y.ct_mod(n);
+
+        let xm = ctx.to_montgomery(&x_red.limbs);
+        let ym = ctx.to_montgomery(&y_red.limbs);
+        let prod = ctx.reduce_montgomery(&ctx.mul(&xm, &ym));
+        let via_mont = BigInt::<N>::from_limbs(prod);
+
+        // Oracle: widen to 2N, full-width multiply, reduce, narrow back.
+        let xw: BigInt<N2> = x_red.widen();
+        let yw: BigInt<N2> = y_red.widen();
+        let nw: BigInt<N2> = n.widen();
+        let via_oracle = (xw.ct_mul(&yw).ct_mod(&nw))
+            .narrow_to::<N>()
+            .expect("product mod n < n < 2^(64N) fits in N limbs");
+        assert_eq!(via_mont, via_oracle);
+    }
+
+    /// Builds an odd `BigInt<N>` >= 3 from random limbs (forces bit 0 set
+    /// and a nonzero high half so the modulus is a genuine `N`-limb odd).
+    fn arb_odd_modulus<const N: usize>() -> impl Strategy<Value = BigInt<N>> {
+        prop::array::uniform(any::<u64>()).prop_map(|mut limbs| {
+            limbs[0] |= 1;
+            limbs[N - 1] |= 1 << 63;
+            BigInt::from_limbs(limbs)
+        })
+    }
+
+    fn arb_bigint<const N: usize>() -> impl Strategy<Value = BigInt<N>> {
+        prop::array::uniform(any::<u64>()).prop_map(BigInt::from_limbs)
+    }
+
+    proptest! {
+        #[test]
+        fn prop_mont_mul_matches_schoolbook_n4(
+            x in arb_bigint::<4>(), y in arb_bigint::<4>(), n in arb_odd_modulus::<4>(),
+        ) {
+            check_mont_mul::<4, 8>(&x, &y, &n);
+        }
+
+        #[test]
+        fn prop_mont_mul_matches_schoolbook_n9(
+            x in arb_bigint::<9>(), y in arb_bigint::<9>(), n in arb_odd_modulus::<9>(),
+        ) {
+            check_mont_mul::<9, 18>(&x, &y, &n);
+        }
+
+        #[test]
+        fn prop_mont_mul_matches_schoolbook_n17(
+            x in arb_bigint::<17>(), y in arb_bigint::<17>(), n in arb_odd_modulus::<17>(),
+        ) {
+            check_mont_mul::<17, 34>(&x, &y, &n);
+        }
+
+        #[test]
+        fn prop_mont_mul_matches_schoolbook_n18(
+            x in arb_bigint::<18>(), y in arb_bigint::<18>(), n in arb_odd_modulus::<18>(),
+        ) {
+            check_mont_mul::<18, 36>(&x, &y, &n);
+        }
+    }
+
+    #[test]
+    fn mont_mul_edge_cases_n17() {
+        // n = 2^(64*17) - 1 (odd), x = y = n - 1.
+        let n_limbs = [u64::MAX; 17];
+        let n = BigInt::<17>::from_limbs(n_limbs);
+        let mut xm1 = n_limbs;
+        xm1[0] -= 1;
+        let x = BigInt::<17>::from_limbs(xm1);
+        check_mont_mul::<17, 34>(&x, &x, &n);
+        check_mont_mul::<17, 34>(&BigInt::ZERO, &x, &n);
+        check_mont_mul::<17, 34>(&BigInt::ONE, &x, &n);
     }
 }
