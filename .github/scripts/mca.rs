@@ -27,7 +27,7 @@ use std::process::{Command, Stdio, exit};
 const TARGET: &str = "x86_64-unknown-linux-gnu";
 
 /// Kernels analyzed by default, in report order.
-const ALL_KERNELS: &[&str] = &["fp64_mul", "fp64_square", "fp2_mul", "fp51_square"];
+const ALL_KERNELS: &[&str] = &["fp64_mul", "fp64_mul_wide", "fp64_square", "fp2_mul", "fp51_square"];
 
 fn main() {
     let kernels: Vec<String> = {
