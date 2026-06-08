@@ -19,7 +19,7 @@ default = ["zeroize"]
 zeroize = ["dep:zeroize"]
 expose-internals = []
 # Exposes `#[no_mangle] mca_*` shims around the inlined hot field
-# kernels so `.github/scripts/mca.sh` can isolate them as standalone
+# kernels so `.github/scripts/mca.rs` can isolate them as standalone
 # asm symbols for `llvm-mca`.  x86_64-only; cfg's out elsewhere.
 mca = []
 

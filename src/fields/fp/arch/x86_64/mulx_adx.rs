@@ -442,6 +442,138 @@ impl Fp64 {
         Self::mul_montgomery(self, self)
     }
 
+    /// Full 4x4 -> 8-limb product `a * b` (no Montgomery reduction), via
+    /// dual-carry ADCX/ADOX.  Each row `a[i]*b` accumulates on the CF
+    /// (ADCX) and OF (ADOX) chains; the two carry-outs fold into the next
+    /// limb before the next row resets the flags.
+    ///
+    /// Building block for measuring the fused-`fp2` reduction-sharing win
+    /// (`fp64_mul` cycles minus this = one Montgomery reduction).  Not yet
+    /// on a production path.
+    ///
+    /// # Safety
+    ///
+    /// cfg-gated on `+adx` + `+bmi2`; reads 32 bytes from each of `a`, `b`.
+    #[inline]
+    pub(crate) fn mul_wide_adx(a: &[u64; 4], b: &[u64; 4]) -> [u64; 8] {
+        let mut t = [0u64; 8];
+        // SAFETY: cfg-gated +adx/+bmi2; no operand-dependent memory or
+        // control flow.  Reads a[0..4], b[0..4]; writes t[0..8].
+        unsafe {
+            asm!(
+                "xor {z0:e}, {z0:e}",
+                "xor {z1:e}, {z1:e}",
+                "xor {z2:e}, {z2:e}",
+                "xor {z3:e}, {z3:e}",
+                "xor {z4:e}, {z4:e}",
+                "xor {z5:e}, {z5:e}",
+                "xor {z6:e}, {z6:e}",
+                "xor {z7:e}, {z7:e}",
+
+                // Row 0: a[0] * b[0..3] -> z0..z4, fold to z5.
+                "mov rdx, qword ptr [{a} + 0]",
+                "xor eax, eax",
+                "mulx {hi}, {lo}, qword ptr [{b} + 0]",
+                "adox {z0}, {lo}",
+                "adox {z1}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 8]",
+                "adcx {z1}, {lo}",
+                "adox {z2}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 16]",
+                "adcx {z2}, {lo}",
+                "adox {z3}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 24]",
+                "adcx {z3}, {lo}",
+                "adox {z4}, {hi}",
+                "adcx {z4}, rax",
+                "adox {z5}, rax",
+                "adc {z5}, 0",
+
+                // Row 1: a[1] * b[0..3] -> z1..z5, fold to z6.
+                "mov rdx, qword ptr [{a} + 8]",
+                "xor eax, eax",
+                "mulx {hi}, {lo}, qword ptr [{b} + 0]",
+                "adox {z1}, {lo}",
+                "adox {z2}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 8]",
+                "adcx {z2}, {lo}",
+                "adox {z3}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 16]",
+                "adcx {z3}, {lo}",
+                "adox {z4}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 24]",
+                "adcx {z4}, {lo}",
+                "adox {z5}, {hi}",
+                "adcx {z5}, rax",
+                "adox {z6}, rax",
+                "adc {z6}, 0",
+
+                // Row 2: a[2] * b[0..3] -> z2..z6, fold to z7.
+                "mov rdx, qword ptr [{a} + 16]",
+                "xor eax, eax",
+                "mulx {hi}, {lo}, qword ptr [{b} + 0]",
+                "adox {z2}, {lo}",
+                "adox {z3}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 8]",
+                "adcx {z3}, {lo}",
+                "adox {z4}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 16]",
+                "adcx {z4}, {lo}",
+                "adox {z5}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 24]",
+                "adcx {z5}, {lo}",
+                "adox {z6}, {hi}",
+                "adcx {z6}, rax",
+                "adox {z7}, rax",
+                "adc {z7}, 0",
+
+                // Row 3: a[3] * b[0..3] -> z3..z7 (product fits 8 limbs).
+                "mov rdx, qword ptr [{a} + 24]",
+                "xor eax, eax",
+                "mulx {hi}, {lo}, qword ptr [{b} + 0]",
+                "adox {z3}, {lo}",
+                "adox {z4}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 8]",
+                "adcx {z4}, {lo}",
+                "adox {z5}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 16]",
+                "adcx {z5}, {lo}",
+                "adox {z6}, {hi}",
+                "mulx {hi}, {lo}, qword ptr [{b} + 24]",
+                "adcx {z6}, {lo}",
+                "adox {z7}, {hi}",
+                "adcx {z7}, rax",
+
+                "mov qword ptr [{t} + 0], {z0}",
+                "mov qword ptr [{t} + 8], {z1}",
+                "mov qword ptr [{t} + 16], {z2}",
+                "mov qword ptr [{t} + 24], {z3}",
+                "mov qword ptr [{t} + 32], {z4}",
+                "mov qword ptr [{t} + 40], {z5}",
+                "mov qword ptr [{t} + 48], {z6}",
+                "mov qword ptr [{t} + 56], {z7}",
+
+                a = in(reg) a.as_ptr(),
+                b = in(reg) b.as_ptr(),
+                t = in(reg) t.as_mut_ptr(),
+                z0 = out(reg) _,
+                z1 = out(reg) _,
+                z2 = out(reg) _,
+                z3 = out(reg) _,
+                z4 = out(reg) _,
+                z5 = out(reg) _,
+                z6 = out(reg) _,
+                z7 = out(reg) _,
+                lo = out(reg) _,
+                hi = out(reg) _,
+                out("rax") _,
+                out("rdx") _,
+                options(nostack),
+            );
+        }
+        t
+    }
+
     /// Returns `a1 * b1 + a2 * b2 (mod p)`.
     ///
     /// Fused-shape op used by `Fp2::mul`'s Algorithm 8.1 path: each

@@ -67,6 +67,17 @@ mod adx {
         a.square().0
     }
 
+    /// `Fp64` 4x4 -> 8-limb product, no reduction.  `mca_fp64_mul` minus
+    /// this is the cost of one Montgomery reduction -- the per-coordinate
+    /// saving a fused `fp2` would capture.
+    #[no_mangle]
+    #[inline(never)]
+    pub extern "C" fn mca_fp64_mul_wide(a: [u64; 4], b: [u64; 4]) -> [u64; 8] {
+        let a = core::hint::black_box(a);
+        let b = core::hint::black_box(b);
+        Fp64::mul_wide_adx(&a, &b)
+    }
+
     /// `Fp2` multiplication (two `Fp64` real/imag limbs in, two out).
     ///
     /// Computes the Algorithm 8.1 coefficients directly via the two
