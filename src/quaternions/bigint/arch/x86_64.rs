@@ -115,6 +115,97 @@ pub(in super::super) fn mag_mul_4_adx(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
     [r0, r1, r2, r3]
 }
 
+/// Fused magnitude add-and-subtract via dual-chain ADX.
+///
+/// Computes `sum = a + b` on the CF chain (`adcx`) and `diff = a - b` on
+/// the OF chain (`adox`, via the two's-complement identity
+/// `a - b = a + ~b + 1` with the OF carry seeded to 1) in a single pass
+/// over `len` limbs.  The two chains live on independent flags, so one
+/// read of each operand feeds both results -- replacing the separate
+/// add and subtract passes a signed `ct_add` would otherwise run.
+///
+/// Writes `len` words to each of `sum` and `diff`; returns
+/// `(sum_carry, diff_no_borrow)`, where `diff_no_borrow == 1` iff
+/// `a >= b` (the subtraction did not borrow).  GMP's `mpn_add_n_sub_n`
+/// is the same fuse-both-in-one-pass idea; the dual-flag ADX form is the
+/// x86_64 realization (GMP ships only the generic `add_nc` + `sub_nc`).
+///
+/// Constant-time: data-independent ops and addressing; `loop`, `lea`,
+/// and `not` preserve both flag chains across the iteration.
+///
+/// # Safety
+///
+/// `target_feature = "adx"` and `"bmi2"` are cfg-required.  `sum` and
+/// `diff` must each point to `len` writable words; `a` and `n` to `len`
+/// readable words each.  `len` must be nonzero.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "adx",
+    target_feature = "bmi2",
+))]
+#[inline]
+pub(in super::super) unsafe fn addsub_n_adx(
+    sum: *mut u64,
+    diff: *mut u64,
+    a: *const u64,
+    b: *const u64,
+    len: u64,
+) -> (u64, u64) {
+    let scarry: u64;
+    let dnb: u64;
+
+    // SAFETY: cfg-gated on +adx,+bmi2; caller guarantees sum,diff have
+    // len writable words and a,b have len readable words, len > 0.
+    unsafe {
+        asm!(
+            // Seed CF = 0 (sum carry-in) and OF = 1 (the +1 of the
+            // diff's two's complement). `inc` sets OF without touching
+            // CF (0x7f -> 0x80 is a signed overflow).
+            "xor eax, eax",
+            "mov al, 0x7f",
+            "inc al",
+            "mov rcx, {len}",
+
+            "2:",
+            "mov {tb}, qword ptr [{b}]",
+            "mov {ta}, qword ptr [{a}]",
+            "mov {ts}, {ta}",
+            "adcx {ts}, {tb}",                    // CF chain: a + b
+            "mov qword ptr [{sum}], {ts}",
+            "not {tb}",                           // ~b (preserves CF/OF)
+            "adox {ta}, {tb}",                    // OF chain: a + ~b
+            "mov qword ptr [{diff}], {ta}",
+            "lea {a}, [{a} + 8]",                 // flag-preserving advance
+            "lea {b}, [{b} + 8]",
+            "lea {sum}, [{sum} + 8]",
+            "lea {diff}, [{diff} + 8]",
+            "loop 2b",
+
+            // Capture the final carries before any flag-clobbering op.
+            "setc {sc:l}",
+            "movzx {sc:e}, {sc:l}",
+            "seto {db:l}",
+            "movzx {db:e}, {db:l}",
+
+            sum = inout(reg) sum => _,
+            diff = inout(reg) diff => _,
+            a = inout(reg) a => _,
+            b = inout(reg) b => _,
+            len = in(reg) len,
+            ta = out(reg) _,
+            tb = out(reg) _,
+            ts = out(reg) _,
+            sc = out(reg) scarry,
+            db = out(reg) dnb,
+            out("rax") _,
+            out("rcx") _,
+            options(nostack),
+        );
+    }
+
+    (scarry, dnb)
+}
+
 /// One CIOS Montgomery iteration via dual-chain ADX: folds `a · b_i`
 /// into the accumulator, then runs one reduction round.
 ///

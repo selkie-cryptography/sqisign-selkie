@@ -35,6 +35,16 @@ fn arb_small_bigint4() -> impl Strategy<Value = BigInt<4>> {
     any::<i32>().prop_map(|v| BigInt::from_i64(v as i64))
 }
 
+/// Random `BigInt<8>` from a sign bit and eight `u64` limbs.
+///
+/// Exercises the wide (`N >= 8`) `ct_add` path, which on x86_64 + ADX
+/// routes through the dual-chain `addsub_n_adx` asm rather than the
+/// portable two-pass — the `<4>` generators never reach it.
+fn arb_bigint8() -> impl Strategy<Value = BigInt<8>> {
+    (any::<bool>(), any::<[u64; 8]>())
+        .prop_map(|(neg, limbs)| BigInt::from_sign_and_limbs(if neg { 1 } else { 0 }, limbs))
+}
+
 /// Lifts a `BigInt<N>` into unbounded-precision `num_bigint::BigInt`.
 ///
 /// Sign+magnitude → `Sign` + little-endian limb bytes. Zero
@@ -109,6 +119,24 @@ proptest! {
     fn oracle_sub(a in arb_bigint4(), b in arb_bigint4()) {
         let ours = canon(a - b);
         let theirs: BigInt<4> = from_num(&truncate::<4>(&(to_num(a) - to_num(b))));
+        prop_assert_eq!(ours, theirs);
+    }
+
+    /// `ct_add` at `N = 8` — the wide dual-chain `addsub_n_adx` path on
+    /// x86_64 + ADX — matches num-bigint over signed, full-width inputs.
+    #[test]
+    fn oracle_add_wide(a in arb_bigint8(), b in arb_bigint8()) {
+        let ours = canon(a + b);
+        let theirs: BigInt<8> = from_num(&truncate::<8>(&(to_num(a) + to_num(b))));
+        prop_assert_eq!(ours, theirs);
+    }
+
+    /// `ct_sub` at `N = 8` — same wide path via `ct_sub`'s `wrapping_neg`
+    /// + `ct_add` — matches num-bigint.
+    #[test]
+    fn oracle_sub_wide(a in arb_bigint8(), b in arb_bigint8()) {
+        let ours = canon(a - b);
+        let theirs: BigInt<8> = from_num(&truncate::<8>(&(to_num(a) - to_num(b))));
         prop_assert_eq!(ours, theirs);
     }
 

@@ -30,6 +30,49 @@ impl<const N: usize> BigInt<N> {
         (result, carry)
     }
 
+    /// Returns `(a + b, a - b, sum_carry, a_lt_b)` over the magnitudes,
+    /// where `a_lt_b == 1` iff `a < b` (the subtraction borrowed).
+    ///
+    /// On x86_64 + ADX, for widths past a small-N threshold, both
+    /// results come from one dual-chain `addsub_n_adx` pass (sum on the
+    /// CF chain, difference on the OF chain); elsewhere from the portable
+    /// two-pass [`Self::mag_add`] + [`Self::mag_sub`].  Both paths are
+    /// constant-time.
+    #[inline]
+    fn mag_add_sub(a: &[u64; N], b: &[u64; N]) -> ([u64; N], [u64; N], u64, u64) {
+        // The dual-chain pass wins once the carry-chain latency
+        // dominates the per-limb load/store overhead; below that the
+        // portable inlined adc/sbb chains are tighter.
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "adx",
+            target_feature = "bmi2",
+        ))]
+        if N >= 8 {
+            let mut sum = [0u64; N];
+            let mut diff = [0u64; N];
+
+            // SAFETY: cfg-gated on +adx,+bmi2; sum and diff have N
+            // writable words, a and b N readable words, N >= 8 > 0.
+            let (sum_carry, no_borrow) = unsafe {
+                super::arch::x86_64::addsub_n_adx(
+                    sum.as_mut_ptr(),
+                    diff.as_mut_ptr(),
+                    a.as_ptr(),
+                    b.as_ptr(),
+                    N as u64,
+                )
+            };
+
+            return (sum, diff, sum_carry, 1 - no_borrow);
+        }
+
+        let (sum, sum_carry) = Self::mag_add(a, b);
+        let (diff, borrow) = Self::mag_sub(a, b);
+
+        (sum, diff, sum_carry, borrow)
+    }
+
     /// Constant-time signed addition.
     ///
     /// If signs match: add magnitudes.
@@ -38,16 +81,14 @@ impl<const N: usize> BigInt<N> {
     pub fn ct_add(&self, rhs: &Self) -> Self {
         let same_sign = ((self.sign ^ rhs.sign) == 0) as u64;
 
-        // Case 1: same sign -> add magnitudes, keep sign.
-        let (sum, _carry) = Self::mag_add(&self.limbs, &rhs.limbs);
-
-        // Case 2: different signs -> subtract the smaller magnitude from
-        // the larger.  `mag_sub`'s borrow is the ordering (borrow == 1
-        // iff self < rhs), so no separate `mag_cmp`; and the reverse
-        // difference is the two's-complement negation of the forward
-        // one, so no second `mag_sub`.
-        let (diff_a, borrow) = Self::mag_sub(&self.limbs, &rhs.limbs);
-        let self_ge = 1 - borrow;
+        // The same-sign sum and the different-sign forward difference,
+        // fused into one dual-chain pass where it pays.  `mag_sub`'s
+        // borrow is the ordering (a_lt_b == 1 iff self < rhs), so no
+        // separate `mag_cmp`; and the reverse difference is the
+        // two's-complement negation of the forward one, so no second
+        // subtraction.
+        let (sum, diff_a, _carry, a_lt_b) = Self::mag_add_sub(&self.limbs, &rhs.limbs);
+        let self_ge = 1 - a_lt_b;
         let diff_b = Self::mag_negate(&diff_a);
 
         let diff_mag = Self::mag_select(&diff_b, &diff_a, self_ge);
