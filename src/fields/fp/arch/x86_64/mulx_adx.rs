@@ -40,7 +40,7 @@ use core::{
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-use super::super::super::FP_ENCODED_BYTES;
+use crate::fields::fp::FP_ENCODED_BYTES;
 
 /// The top limb of `p + 1 = 5 * 2^248` in `[u64; 4]` LE form (= the
 /// only non-zero limb).  The CIOS-style Montgomery reduction in

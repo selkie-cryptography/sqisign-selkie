@@ -70,7 +70,7 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 // dispatcher selects portable.  Under cfg-neon `Fp = Fp29` and the
 // conversions collapse to identity, making the import unused.
 #[cfg(not(sqisign_selkie_arch = "neon"))]
-use super::super::super::Fp;
+use crate::fields::fp::Fp;
 
 // The test submodule is cross-impl: every test bridges `Fp29 <-> Fp` via the
 // explicit `From` impls.  Under cfg-neon `Fp = Fp29` and those bridges
