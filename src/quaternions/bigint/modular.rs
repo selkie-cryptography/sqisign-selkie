@@ -102,12 +102,16 @@ impl<const N: usize> MontReducer<N> {
     ///
     /// [acar96]: https://www.microsoft.com/en-us/research/wp-content/uploads/1996/01/j37acmon.pdf
     fn mul(&self, a: &[u64; N], b: &[u64; N]) -> [u64; N] {
+        // EXPERIMENT: gate the runtime-loop asm CIOS to tiny N only,
+        // forcing the LLVM-unrolled portable CIOS at the N we actually
+        // use (primality runs at N=17/18/30). Measures whether
+        // mont_mul_adx is a net loss vs portable at those widths.
         #[cfg(all(
             target_arch = "x86_64",
             target_feature = "adx",
             target_feature = "bmi2",
         ))]
-        if N < super::arch::x86_64::MONT_ADX_MAX {
+        if N < 4 {
             return super::arch::x86_64::mont_mul_adx(a, b, &self.n, self.n_inv_neg);
         }
 
