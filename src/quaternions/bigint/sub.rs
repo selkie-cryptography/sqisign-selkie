@@ -28,6 +28,17 @@ impl<const N: usize> BigInt<N> {
         (result, borrow)
     }
 
+    /// Two's-complement negation of a magnitude: `2^(64*N) - x mod
+    /// 2^(64*N)`, discarding the top borrow.  For `x != 0` this is the
+    /// magnitude of `-x` reduced mod `2^(64*N)`; equivalently the result
+    /// of borrowing past the top limb.  Constant-time.
+    #[inline(always)]
+    pub(super) const fn mag_negate(x: &[u64; N]) -> [u64; N] {
+        let zero = [0u64; N];
+        let (neg, _) = Self::mag_sub(&zero, x);
+        neg
+    }
+
     /// Constant-time signed subtraction: `self - rhs`.
     #[inline]
     pub fn ct_sub(&self, rhs: &Self) -> Self {

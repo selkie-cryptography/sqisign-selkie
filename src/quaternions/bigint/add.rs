@@ -3,7 +3,7 @@
 //! [`mag_add`](BigInt::mag_add) limb-level helper, and the
 //! corresponding [`Add`] trait impls.
 
-use core::{cmp::Ordering, ops::Add};
+use core::ops::Add;
 
 use super::{BigInt, ct_select_u64};
 
@@ -41,12 +41,14 @@ impl<const N: usize> BigInt<N> {
         // Case 1: same sign -> add magnitudes, keep sign.
         let (sum, _carry) = Self::mag_add(&self.limbs, &rhs.limbs);
 
-        // Case 2: different signs -> subtract magnitudes.
-        let cmp = Self::mag_cmp(&self.limbs, &rhs.limbs);
-        let self_ge = (cmp != Ordering::Less) as u64;
-
-        let (diff_a, _) = Self::mag_sub(&self.limbs, &rhs.limbs);
-        let (diff_b, _) = Self::mag_sub(&rhs.limbs, &self.limbs);
+        // Case 2: different signs -> subtract the smaller magnitude from
+        // the larger.  `mag_sub`'s borrow is the ordering (borrow == 1
+        // iff self < rhs), so no separate `mag_cmp`; and the reverse
+        // difference is the two's-complement negation of the forward
+        // one, so no second `mag_sub`.
+        let (diff_a, borrow) = Self::mag_sub(&self.limbs, &rhs.limbs);
+        let self_ge = 1 - borrow;
+        let diff_b = Self::mag_negate(&diff_a);
 
         let diff_mag = Self::mag_select(&diff_b, &diff_a, self_ge);
         let diff_sign = ct_select_u64(rhs.sign, self.sign, self_ge);
