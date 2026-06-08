@@ -102,15 +102,6 @@ impl<const N: usize> MontReducer<N> {
     ///
     /// [acar96]: https://www.microsoft.com/en-us/research/wp-content/uploads/1996/01/j37acmon.pdf
     fn mul(&self, a: &[u64; N], b: &[u64; N]) -> [u64; N] {
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_feature = "adx",
-            target_feature = "bmi2",
-        ))]
-        if N < super::arch::x86_64::MONT_ADX_MAX {
-            return super::arch::x86_64::mont_mul_adx(a, b, &self.n, self.n_inv_neg);
-        }
-
         let n = &self.n;
         let n_inv = self.n_inv_neg;
 
@@ -752,12 +743,9 @@ mod tests {
     /// Montgomery round-trip oracle: `to_mont -> mul -> reduce_mont`
     /// must equal the independent schoolbook `(x * y) mod n`.
     ///
-    /// On x86_64 with `+adx,+bmi2`, `MontReducer::mul` dispatches to the
-    /// `mont_mul_adx` dual-chain asm; on every other target it runs the
-    /// portable CIOS loop. The oracle multiplies at a doubled width
-    /// `2N` (so the `x*y` product never truncates) and reduces — a fully
-    /// independent path, so this cross-checks the asm against it on CI
-    /// and the portable loop against it everywhere else. Inputs are
+    /// The oracle multiplies at a doubled width `2N` (so the `x*y`
+    /// product never truncates) and reduces — a fully independent path
+    /// that cross-checks `MontReducer::mul`'s CIOS loop. Inputs are
     /// reduced mod `n` first so they satisfy `mul`'s `[0, n)` contract.
     fn check_mont_mul<const N: usize, const N2: usize>(
         x: &BigInt<N>,
