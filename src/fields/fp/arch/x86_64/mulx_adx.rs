@@ -478,9 +478,9 @@ impl Fp64 {
     /// (ADCX) and OF (ADOX) chains; the two carry-outs fold into the next
     /// limb before the next row resets the flags.
     ///
-    /// Building block for measuring the fused-`fp2` reduction-sharing win
-    /// (`fp64_mul` cycles minus this = one Montgomery reduction).  Not yet
-    /// on a production path.
+    /// The wide half of the fused-`fp2` reduction-sharing path: both
+    /// [`Fp64::sum_of_2_products`] and [`Fp64::difference_of_2_products`]
+    /// form their two products with this, sum them, and reduce once.
     ///
     /// # Safety
     ///
@@ -605,31 +605,268 @@ impl Fp64 {
         t
     }
 
-    /// Returns `a1 * b1 + a2 * b2 (mod p)`.
+    /// Computes `m[0..4] * s[4..8] + m[4..8] * s[0..4] (mod p)`, in
+    /// `[0, 2p)`.
     ///
-    /// Fused-shape op used by `Fp2::mul`'s Algorithm 8.1 path: each
-    /// `Fp2` coefficient is one sum-of-2-products.  Composed for now
-    /// from two `Mul`s and an `Add`; C ref ships a fused asm
-    /// (`fp2_mul_c1` at `src/gf/broadwell/lvl1/fp_asm.S:220`) that
-    /// shares the Montgomery reduction across both partial products.
-    /// Drop-in asm replacement lands in a later commit once the
-    /// scalar surface stabilizes.
+    /// One fused CIOS pass: per column it accumulates a limb of both 4x4
+    /// products before a single shared Montgomery reduction (the
+    /// `p + 1 = P_PLUS_1_HI * 2^192` trick, `n' = 1` since
+    /// `p == -1 mod 2^64`).  Sharing the reduction across the two
+    /// products halves the reduction work versus two separate
+    /// multiplications.  The 5-limb rotating accumulator is the same
+    /// shape as [`Fp64::mul_montgomery`]; result limbs land in
+    /// `(z4, z0, z1, z2)`.  For inputs in `[0, 2p)` the value
+    /// `A*B + C*D < 8p^2 < 2p * R` (since `4p < R`), so the output
+    /// is `< 2p`.
+    ///
+    /// # Constant-time
+    ///
+    /// No data-dependent branches or memory addressing.
+    ///
+    /// # Safety
+    ///
+    /// cfg-gated on `+adx` + `+bmi2` (MULX/ADCX/ADOX).  Reads 64 bytes
+    /// from each of `m`, `s`; writes 32 bytes to the result.
+    // `inline(never)`: the asm holds 13 register operands, which fits a
+    // standalone frame but not when inlined into the two-coordinate
+    // `Fp2::mul` (whose other-coordinate state is live across the
+    // block).  A call per coordinate (~5 cycles) is negligible against
+    // the shared-reduction win.
+    #[inline(never)]
+    fn sum_of_products_packed(m: &[u64; 8], s: &[u64; 8]) -> Self {
+        let mut o = [0u64; 4];
+        // SAFETY: cfg-gated on bmi2 + adx; no operand-dependent memory
+        // or control flow.  Reads m[0..8], s[0..8]; writes o[0..4].
+        unsafe {
+            asm!(
+                // Column 0: z = A * B[0], then z += C * D[0], then
+                // reduce.  A = m[0..4], C = m[32..]; B = s[32..] (high
+                // block), D = s[0..] (low block).
+                "mov rdx, qword ptr [{s} + 32]",
+                "mulx {z1}, {z0}, qword ptr [{m} + 0]",
+                "xor eax, eax",
+                "mulx {z2}, {t1}, qword ptr [{m} + 8]",
+                "adox {z1}, {t1}",
+                "mulx {z3}, {t1}, qword ptr [{m} + 16]",
+                "adox {z2}, {t1}",
+                "mulx {z4}, {t1}, qword ptr [{m} + 24]",
+                "adox {z3}, {t1}",
+                "adox {z4}, rax",
+                "mov rdx, qword ptr [{s} + 0]",
+                "mulx {t0}, {t1}, qword ptr [{m} + 32]",
+                "xor eax, eax",
+                "adox {z0}, {t1}",
+                "adox {z1}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 40]",
+                "adcx {z1}, {t1}",
+                "adox {z2}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 48]",
+                "adcx {z2}, {t1}",
+                "adox {z3}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 56]",
+                "adcx {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "adc {z4}, 0",
+                "mov rdx, {z0}",
+                "mulx {t0}, {t1}, {p1hi}",
+                "xor eax, eax",
+                "adox {z3}, {t1}",
+                "adox {z4}, {t0}",
+
+                // Column 1: accumulator (z1, z2, z3, z4, z0), new high z0.
+                "mov rdx, qword ptr [{s} + 40]",
+                "mulx {t0}, {t1}, qword ptr [{m} + 0]",
+                "xor {z0:e}, {z0:e}",
+                "adox {z1}, {t1}",
+                "adox {z2}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 8]",
+                "adcx {z2}, {t1}",
+                "adox {z3}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 16]",
+                "adcx {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 24]",
+                "adcx {z4}, {t1}",
+                "adox {z0}, {t0}",
+                "adc {z0}, 0",
+                "mov rdx, qword ptr [{s} + 8]",
+                "mulx {t0}, {t1}, qword ptr [{m} + 32]",
+                "xor eax, eax",
+                "adox {z1}, {t1}",
+                "adox {z2}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 40]",
+                "adcx {z2}, {t1}",
+                "adox {z3}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 48]",
+                "adcx {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 56]",
+                "adcx {z4}, {t1}",
+                "adox {z0}, {t0}",
+                "adc {z0}, 0",
+                "mov rdx, {z1}",
+                "mulx {t0}, {t1}, {p1hi}",
+                "xor eax, eax",
+                "adox {z4}, {t1}",
+                "adox {z0}, {t0}",
+
+                // Column 2: accumulator (z2, z3, z4, z0, z1), new high z1.
+                "mov rdx, qword ptr [{s} + 48]",
+                "mulx {t0}, {t1}, qword ptr [{m} + 0]",
+                "xor {z1:e}, {z1:e}",
+                "adox {z2}, {t1}",
+                "adox {z3}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 8]",
+                "adcx {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 16]",
+                "adcx {z4}, {t1}",
+                "adox {z0}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 24]",
+                "adcx {z0}, {t1}",
+                "adox {z1}, {t0}",
+                "adc {z1}, 0",
+                "mov rdx, qword ptr [{s} + 16]",
+                "mulx {t0}, {t1}, qword ptr [{m} + 32]",
+                "xor eax, eax",
+                "adox {z2}, {t1}",
+                "adox {z3}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 40]",
+                "adcx {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 48]",
+                "adcx {z4}, {t1}",
+                "adox {z0}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 56]",
+                "adcx {z0}, {t1}",
+                "adox {z1}, {t0}",
+                "adc {z1}, 0",
+                "mov rdx, {z2}",
+                "mulx {t0}, {t1}, {p1hi}",
+                "xor eax, eax",
+                "adox {z0}, {t1}",
+                "adox {z1}, {t0}",
+
+                // Column 3: accumulator (z3, z4, z0, z1, z2), new high z2.
+                "mov rdx, qword ptr [{s} + 56]",
+                "mulx {t0}, {t1}, qword ptr [{m} + 0]",
+                "xor {z2:e}, {z2:e}",
+                "adox {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 8]",
+                "adcx {z4}, {t1}",
+                "adox {z0}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 16]",
+                "adcx {z0}, {t1}",
+                "adox {z1}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 24]",
+                "adcx {z1}, {t1}",
+                "adox {z2}, {t0}",
+                "adc {z2}, 0",
+                "mov rdx, qword ptr [{s} + 24]",
+                "mulx {t0}, {t1}, qword ptr [{m} + 32]",
+                "xor eax, eax",
+                "adox {z3}, {t1}",
+                "adox {z4}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 40]",
+                "adcx {z4}, {t1}",
+                "adox {z0}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 48]",
+                "adcx {z0}, {t1}",
+                "adox {z1}, {t0}",
+                "mulx {t0}, {t1}, qword ptr [{m} + 56]",
+                "adcx {z1}, {t1}",
+                "adox {z2}, {t0}",
+                "adc {z2}, 0",
+                "mov rdx, {z3}",
+                "mulx {t0}, {t1}, {p1hi}",
+                "xor eax, eax",
+                "adox {z1}, {t1}",
+                "adox {z2}, {t0}",
+
+                // Result (z4, z0, z1, z2) -> o[0..4].
+                "mov qword ptr [{o} + 0], {z4}",
+                "mov qword ptr [{o} + 8], {z0}",
+                "mov qword ptr [{o} + 16], {z1}",
+                "mov qword ptr [{o} + 24], {z2}",
+
+                m = in(reg) m.as_ptr(),
+                s = in(reg) s.as_ptr(),
+                o = in(reg) o.as_mut_ptr(),
+                p1hi = in(reg) P_PLUS_1_HI,
+                z0 = out(reg) _,
+                z1 = out(reg) _,
+                z2 = out(reg) _,
+                z3 = out(reg) _,
+                z4 = out(reg) _,
+                t0 = out(reg) _,
+                t1 = out(reg) _,
+                out("rax") _,
+                out("rdx") _,
+                options(nostack),
+            );
+        }
+
+        Self(o)
+    }
+
+    /// Returns `a1 * b1 + a2 * b2 (mod p)`, in `[0, 2p)`.
+    ///
+    /// One `Fp2::mul` coefficient (Algorithm 8.1), via the shared-
+    /// reduction kernel [`Fp64::sum_of_products_packed`].
+    ///
+    /// # Constant-time
+    ///
+    /// Constant-time on all four operands.
+    ///
+    /// # Divergences
+    ///
+    /// Ports C ref's fused `fp2_mul_c1`
+    /// (`src/gf/broadwell/lvl1/fp_asm.S:220`).
     #[inline]
     #[must_use]
     pub fn sum_of_2_products(a1: &Self, b1: &Self, a2: &Self, b2: &Self) -> Self {
-        &(a1 * b1) + &(a2 * b2)
+        let m = [
+            a1.0[0], a1.0[1], a1.0[2], a1.0[3], a2.0[0], a2.0[1], a2.0[2], a2.0[3],
+        ];
+        let s = [
+            b2.0[0], b2.0[1], b2.0[2], b2.0[3], b1.0[0], b1.0[1], b1.0[2], b1.0[3],
+        ];
+
+        Self::sum_of_products_packed(&m, &s)
     }
 
-    /// Returns `a1 * b1 - a2 * b2 (mod p)`.
+    /// Returns `a1 * b1 - a2 * b2 (mod p)`, in `[0, 2p)`.
     ///
-    /// Companion to [`Fp64::sum_of_2_products`]; computes the other
-    /// `Fp2::mul` coefficient (Algorithm 8.1).  C ref's
-    /// `fp2_mul_c0` at `src/gf/broadwell/lvl1/fp_asm.S:134` provides
-    /// the fused-asm equivalent.
+    /// The other Algorithm 8.1 coefficient (companion to
+    /// [`Fp64::sum_of_2_products`]).  The subtrahend's `b2` is negated as
+    /// `2p - b2` (in `(0, 2p]` for `b2` in `[0, 2p)`, so no underflow),
+    /// turning the difference into a non-negative sum
+    /// (`a2 * (2p - b2) == -a2 * b2 (mod p)`) handled by the same kernel.
+    ///
+    /// # Constant-time
+    ///
+    /// Constant-time on all four operands.
+    ///
+    /// # Divergences
+    ///
+    /// Ports C ref's fused `fp2_mul_c0`
+    /// (`src/gf/broadwell/lvl1/fp_asm.S:134`).
     #[inline]
     #[must_use]
     pub fn difference_of_2_products(a1: &Self, b1: &Self, a2: &Self, b2: &Self) -> Self {
-        &(a1 * b1) - &(a2 * b2)
+        let tp = Self::TWO_P.0;
+        let (n0, c0) = tp[0].borrowing_sub(b2.0[0], false);
+        let (n1, c1) = tp[1].borrowing_sub(b2.0[1], c0);
+        let (n2, c2) = tp[2].borrowing_sub(b2.0[2], c1);
+        let (n3, _) = tp[3].borrowing_sub(b2.0[3], c2);
+
+        let m = [
+            a1.0[0], a1.0[1], a1.0[2], a1.0[3], a2.0[0], a2.0[1], a2.0[2], a2.0[3],
+        ];
+        let s = [n0, n1, n2, n3, b1.0[0], b1.0[1], b1.0[2], b1.0[3]];
+
+        Self::sum_of_products_packed(&m, &s)
     }
 
     /// Constructs a field element from a small integer.

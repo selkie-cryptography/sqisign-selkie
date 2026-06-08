@@ -455,6 +455,30 @@ proptest! {
             Fp64::sum_of_2_products(&c, &d, &a, &b),
         );
     }
+
+    /// The fused `sum_of_2_products` accepts non-canonical `[0, 2p)`
+    /// operands -- exercises the wide-sum-then-single-reduction path
+    /// with inputs `>= p` (canonical generators never reach it).
+    #[test]
+    fn sum_of_2_products_lazy_matches(
+        (a, ac) in arb_fp64_lazy(), (b, bc) in arb_fp64_lazy(),
+        (c, cc) in arb_fp64_lazy(), (d, dc) in arb_fp64_lazy(),
+    ) {
+        let expected = &(&ac * &bc) + &(&cc * &dc);
+        prop_assert_eq!(Fp64::sum_of_2_products(&a, &b, &c, &d), expected);
+    }
+
+    /// The fused `difference_of_2_products` accepts non-canonical
+    /// `[0, 2p)` operands (the `2p - b2` negation must not underflow
+    /// for `b2` in `[p, 2p)`).
+    #[test]
+    fn difference_of_2_products_lazy_matches(
+        (a, ac) in arb_fp64_lazy(), (b, bc) in arb_fp64_lazy(),
+        (c, cc) in arb_fp64_lazy(), (d, dc) in arb_fp64_lazy(),
+    ) {
+        let expected = &(&ac * &bc) - &(&cc * &dc);
+        prop_assert_eq!(Fp64::difference_of_2_products(&a, &b, &c, &d), expected);
+    }
 }
 
 #[test]
