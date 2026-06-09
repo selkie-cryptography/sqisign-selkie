@@ -231,6 +231,16 @@ impl<const N: usize> Matrix<N> {
         Some(result)
     }
 
+    /// Returns column `c` as a [`Vector`].
+    ///
+    /// Building a single column directly avoids the four-`Vector`
+    /// [`Self::columns`] array when only one column is needed.
+    pub fn column(&self, c: usize) -> Vector<N> {
+        let s = &self.0;
+
+        Vector::new(s[0][c], s[1][c], s[2][c], s[3][c])
+    }
+
     /// Returns the columns of this matrix as an array of [`Vector`].
     pub fn columns(&self) -> [Vector<N>; 4] {
         let s = &self.0;

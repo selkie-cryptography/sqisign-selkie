@@ -458,10 +458,15 @@ impl<const N: usize> Lattice<N> {
         let det1 = tmp_a.det().abs();
         let det2 = tmp_b.det().abs();
         let modulus = det1.gcd(&det2);
-        let cols_a = tmp_a.columns();
-        let cols_b = tmp_b.columns();
         let all_cols = [
-            cols_a[0], cols_a[1], cols_a[2], cols_a[3], cols_b[0], cols_b[1], cols_b[2], cols_b[3],
+            tmp_a.column(0),
+            tmp_a.column(1),
+            tmp_a.column(2),
+            tmp_a.column(3),
+            tmp_b.column(0),
+            tmp_b.column(1),
+            tmp_b.column(2),
+            tmp_b.column(3),
         ];
         let common_denom = d1.denom().ct_mul(d2.denom());
         let sum_basis = Matrix::<W>::from_hnf_columns_mod::<W>(&all_cols, &modulus);
