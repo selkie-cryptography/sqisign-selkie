@@ -60,6 +60,53 @@ pointer / in-place semantics.  The stack representation is
 allocation-free and constant-time-friendly, at the cost of by-value
 copies (a lever discussed in \S\ref{sec:next}).
 
+\paragraph{Narrowing wide integers before the extended GCD.}
+The quaternion lattice and Hermite-normal-form code stores integers in
+fixed-width \texttt{BigInt<N>} sized for worst-case coefficient blow-up,
+with $N$ as large as $500$ limbs at the response-phase intersection.  The
+values that actually reach the HNF reduction's extended GCD are far
+smaller, usually a handful of limbs, so Stein's binary \texttt{xgcd} run
+at the full storage width spends almost every halve-and-subtract step on
+always-zero high limbs.  We narrow each \texttt{xgcd} operand to the
+smallest fixed working width that holds it and its B\'{e}zout cofactors,
+run the binary algorithm there, and widen the result back; the output is
+identical to the full-width computation, so the signature bytes are
+unchanged.  This recovers behavior the C reference gets for free: its
+\texttt{ibz\_t} is GMP's variable-length \texttt{mpz\_t}, whose
+\texttt{mpz\_gcdext} only ever touches significant limbs.  Our fixed-width
+\texttt{BigInt} traded that size-proportional cost for constant-time-friendly
+stack storage, and the narrowing restores it.  The \texttt{xgcd} subtree
+was $45.9\%$ of signing
+instructions, and the narrowing cut it by $6.7\times$, for $-39.0\%$
+signing and $-8.6\%$ key-generation instructions overall.  On an Apple M4
+the wall-clock gains are $-36\%$ signing and $-14\%$ key-generation; the
+key-generation wall-clock gain exceeds its instruction-count gain because
+the narrowed working set fits in L1, a cache effect the instruction count
+does not capture.
+
+\paragraph{Narrowing the primality test.}
+The norm-equation prime search (\texttt{RepresentInteger} and the
+ideal-norm reduction) runs Miller--Rabin, whose Montgomery exponentiation
+costs $O(W^2)$ in the working width $W$.  As with the extended GCD, $W$ is
+fixed for the worst-case candidate ($17$ limbs for \texttt{RepresentInteger},
+whose aux-path norm reaches $\approx 2^{514}$, and $30$ for the ideal-norm
+reduction), while the common candidate is $270$--$380$ bits.  The Montgomery
+reduction silently truncates unless $64\,W \ge 2\cdot\mathrm{bits}$, a floor
+we confirmed empirically (correct at the floor, mis-deciding below it), so
+we dispatch each candidate to the smallest width meeting it plus a one-limb
+margin, capped at the worst-case ceiling.  The deterministic witness set is
+fixed, so the primality decision, and the signature bytes, are unchanged;
+this again recovers the size-proportional cost the C reference gets from
+GMP's variable-length integers.  Together with sharing the cofactor and
+determinant $2\times 2$ minors in the lattice dual (matching the C
+reference's \texttt{ibz\_mat\_4x4\_inv\_with\_det\_as\_denom}), it cut Apple
+M4 key generation by $44\%$ and signing by $31\%$, the primality narrowing
+dominating and key generation gaining most because Miller--Rabin is the bulk
+of its work.  The candidate's bit length selects the width, so the dispatch
+is variable-time in the candidate magnitude; the prime search is already a
+variable-time, secret-derived surface slated for a separate constant-time
+pass, so this introduces no new class of leakage.
+
 \paragraph{Assembly pays only when fully unrolled.}
 The most useful negative result of the backend work: hand-written
 assembly for big-integer arithmetic helps only when it can be

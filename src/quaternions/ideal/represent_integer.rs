@@ -214,7 +214,7 @@ impl ExtremalOrder<8> {
                 // for any `m` above ~280 bits and made
                 // `represent_integer` never find a witness for aux-
                 // path magnitudes.
-                if !m_prime.is_probable_prime_w::<17>(12) {
+                if !m_prime.is_probable_prime_auto::<17>(12) {
                     continue;
                 }
                 _primes_found += 1;
