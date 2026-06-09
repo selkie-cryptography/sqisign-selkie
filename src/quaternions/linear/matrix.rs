@@ -132,45 +132,49 @@ impl<const N: usize> Matrix<N> {
             .ct_sub(&m[0][3].ct_mul(&minor(1, 2, 3, 0, 1, 2)))
     }
 
+    /// Determinant of the 3x3 minor on rows `r` and columns `c`.
+    ///
+    /// Shared by [`Self::adjugate`] and [`Self::cofactor`].
+    fn minor3(&self, r: [usize; 3], c: [usize; 3]) -> BigInt<N> {
+        let m = &self.0;
+
+        m[r[0]][c[0]]
+            .ct_mul(
+                &m[r[1]][c[1]]
+                    .ct_mul(&m[r[2]][c[2]])
+                    .ct_sub(&m[r[1]][c[2]].ct_mul(&m[r[2]][c[1]])),
+            )
+            .ct_sub(
+                &m[r[0]][c[1]].ct_mul(
+                    &m[r[1]][c[0]]
+                        .ct_mul(&m[r[2]][c[2]])
+                        .ct_sub(&m[r[1]][c[2]].ct_mul(&m[r[2]][c[0]])),
+                ),
+            )
+            .ct_add(
+                &m[r[0]][c[2]].ct_mul(
+                    &m[r[1]][c[0]]
+                        .ct_mul(&m[r[2]][c[1]])
+                        .ct_sub(&m[r[1]][c[1]].ct_mul(&m[r[2]][c[0]])),
+                ),
+            )
+    }
+
     /// Adjugate (classical adjoint) of a 4×4 matrix.
     ///
-    /// `self * self.adjugate() == det(self) * I`.
+    /// `self * self.adjugate() == det(self) * I`.  Equals
+    /// `transpose(self.cofactor())`, built transposed in place.
     pub fn adjugate(&self) -> Self {
-        let m = &self.0;
-        let minor3 =
-            |r0: usize, r1: usize, r2: usize, c0: usize, c1: usize, c2: usize| -> BigInt<N> {
-                m[r0][c0]
-                    .ct_mul(
-                        &m[r1][c1]
-                            .ct_mul(&m[r2][c2])
-                            .ct_sub(&m[r1][c2].ct_mul(&m[r2][c1])),
-                    )
-                    .ct_sub(
-                        &m[r0][c1].ct_mul(
-                            &m[r1][c0]
-                                .ct_mul(&m[r2][c2])
-                                .ct_sub(&m[r1][c2].ct_mul(&m[r2][c0])),
-                        ),
-                    )
-                    .ct_add(
-                        &m[r0][c2].ct_mul(
-                            &m[r1][c0]
-                                .ct_mul(&m[r2][c1])
-                                .ct_sub(&m[r1][c1].ct_mul(&m[r2][c0])),
-                        ),
-                    )
-            };
-
         // Cofactor C[i][j] = (-1)^(i+j) * minor(rows without i, cols without j).
         // Adjugate = transpose of cofactor matrix.
         let rows = [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]];
+
         let mut result = Self::ZERO;
         for i in 0..4 {
             for j in 0..4 {
-                let m3 = minor3(
-                    rows[i][0], rows[i][1], rows[i][2], rows[j][0], rows[j][1], rows[j][2],
-                );
-                // Adjugate is transposed: result[j][i] = cofactor[i][j]
+                let m3 = self.minor3(rows[i], rows[j]);
+
+                // Adjugate is transposed: result[j][i] = cofactor[i][j].
                 result.0[j][i] = if (i + j) % 2 == 0 {
                     m3
                 } else {
@@ -178,6 +182,31 @@ impl<const N: usize> Matrix<N> {
                 };
             }
         }
+
+        result
+    }
+
+    /// Cofactor matrix `C[i][j] = (-1)^(i+j) * minor(i, j)`.
+    ///
+    /// Equals `transpose(self.adjugate())`, computed directly so the
+    /// dual-lattice numerator `denom * adj^T` is formed without a
+    /// separate transpose copy of the matrix.  See `Lattice::dual`.
+    pub fn cofactor(&self) -> Self {
+        let rows = [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]];
+
+        let mut result = Self::ZERO;
+        for i in 0..4 {
+            for j in 0..4 {
+                let m3 = self.minor3(rows[i], rows[j]);
+
+                result.0[i][j] = if (i + j) % 2 == 0 {
+                    m3
+                } else {
+                    m3.wrapping_neg()
+                };
+            }
+        }
+
         result
     }
 

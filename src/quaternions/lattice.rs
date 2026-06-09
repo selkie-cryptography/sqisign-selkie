@@ -133,14 +133,17 @@ impl<const N: usize> Lattice<N> {
     /// [§3.1.5.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsubsection.3.1.5.2
     pub(crate) fn dual(&self) -> Self {
         // L^{-1} = adj(L) / det(L), so L^{-T} = adj(L)^T / det(L).
-        // Dual basis = denom · adj(basis)^T, with new denom = det(basis).
-        let adj_t = self.basis.adjugate().transpose();
+        // adj(basis)^T is the cofactor matrix, so the dual numerator
+        // denom · adj(basis)^T equals denom · cofactor(basis), scaled
+        // in place to avoid the separate adjugate and transpose copies
+        // (a Matrix<W> is ~16 KB at the response-phase width W = 128).
         let det = self.basis.det();
 
-        let mut dual_basis = Matrix::ZERO;
+        let mut dual_basis = self.basis.cofactor();
         for row in 0..4 {
             for col in 0..4 {
-                dual_basis[row][col] = self.denom.ct_mul(&adj_t[row][col]);
+                let scaled = self.denom.ct_mul(&dual_basis[row][col]);
+                dual_basis[row][col] = scaled;
             }
         }
 
