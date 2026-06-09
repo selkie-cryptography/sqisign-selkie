@@ -537,6 +537,15 @@ proptest! {
             b.transpose().mat_mul(&a.transpose())
         );
     }
+
+    #[test]
+    fn prop_matrix_cofactor_and_det_matches_adjugate(a in arb_matrix4()) {
+        // The shared-minor cofactor_and_det must agree with the trusted
+        // 3x3-minor adjugate (cofactor == adjugate^T) and determinant.
+        let (cofactor, det) = a.cofactor_and_det();
+        prop_assert_eq!(cofactor, a.adjugate().transpose());
+        prop_assert_eq!(det, a.det());
+    }
 }
 
 /// `from_hnf_columns` must preserve the column lattice's covolume.

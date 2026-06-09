@@ -140,4 +140,70 @@ impl<const N: usize> BigInt<N> {
         let self_w: BigInt<W> = self.widen();
         self_w.is_probable_prime(rounds)
     }
+
+    /// Miller-Rabin at the tightest working width that still holds the
+    /// Montgomery exponentiation, narrowing from the caller's ceiling
+    /// `WMAX` when the candidate is small.
+    ///
+    /// The Montgomery REDC truncates unless `64*W >= 2*bits(self)` (the
+    /// confirmed floor; below it the test silently mis-decides), so the
+    /// chosen width is `ceil(2*bits/64) + 1` limb of margin.  `WMAX` is
+    /// the caller's already-proven-safe ceiling (the width it would
+    /// otherwise fix unconditionally); the dispatch only narrows *below*
+    /// `WMAX` and falls back to it, so the primality decision is
+    /// identical to
+    /// [`is_probable_prime_w`](Self::is_probable_prime_w)`::<WMAX>`
+    /// for every candidate.  The win is that the common small candidates
+    /// (the norm-equation primes are usually far below the worst-case
+    /// `WMAX`) run their `O(W^2)` Montgomery arithmetic at a much smaller
+    /// width.
+    ///
+    /// # Constant-time
+    ///
+    /// The candidate's bit length selects the width, so this is
+    /// variable-time in the candidate magnitude.  Primality on
+    /// secret-derived candidates is already variable-time (the
+    /// norm-equation prime search is the Cornacchia/Basso side-channel
+    /// surface scheduled for the constant-time pass); this adds no new
+    /// class of leak and is closed there wholesale.
+    #[must_use]
+    pub fn is_probable_prime_auto<const WMAX: usize>(&self, rounds: u32) -> bool {
+        let bits = Self::mag_bitsize(&self.limbs) as usize;
+        let need = (2 * bits).div_ceil(64) + 1;
+
+        if WMAX > 8 && need <= 8 {
+            return self.prime_at::<8>(rounds);
+        }
+        if WMAX > 10 && need <= 10 {
+            return self.prime_at::<10>(rounds);
+        }
+        if WMAX > 12 && need <= 12 {
+            return self.prime_at::<12>(rounds);
+        }
+        if WMAX > 14 && need <= 14 {
+            return self.prime_at::<14>(rounds);
+        }
+        if WMAX > 16 && need <= 16 {
+            return self.prime_at::<16>(rounds);
+        }
+        if WMAX > 18 && need <= 18 {
+            return self.prime_at::<18>(rounds);
+        }
+        if WMAX > 20 && need <= 20 {
+            return self.prime_at::<20>(rounds);
+        }
+        if WMAX > 24 && need <= 24 {
+            return self.prime_at::<24>(rounds);
+        }
+
+        self.prime_at::<WMAX>(rounds)
+    }
+
+    /// Resizes the candidate to width `W` (value-preserving: the caller
+    /// guarantees `W` holds it) and runs
+    /// [`is_probable_prime`](Self::is_probable_prime).
+    #[must_use]
+    fn prime_at<const W: usize>(&self, rounds: u32) -> bool {
+        self.resize_unchecked::<W>().is_probable_prime(rounds)
+    }
 }

@@ -65,6 +65,31 @@ impl<const N: usize> BigInt<N> {
             limbs,
         })
     }
+
+    /// Copies `self` into width `W`, taking the low `min(N, W)` limbs and
+    /// preserving the sign, with no fit assertion.
+    ///
+    /// Unlike [`Self::widen`] / [`Self::narrow_to`] this places no
+    /// compile-time relation on `N` and `W`, so it type-checks inside the
+    /// runtime-dispatched width ladder of [`BigInt::is_probable_prime_auto`],
+    /// where the dispatch provably picks a width that holds the candidate
+    /// value (any dropped high limbs are zero).  Not for general use.
+    #[must_use]
+    pub(super) fn resize_unchecked<const W: usize>(self) -> BigInt<W> {
+        let mut limbs = [0u64; W];
+        let n = if N < W { N } else { W };
+
+        let mut i = 0;
+        while i < n {
+            limbs[i] = self.limbs[i];
+            i += 1;
+        }
+
+        BigInt::<W> {
+            sign: self.sign,
+            limbs,
+        }
+    }
 }
 
 /// Widen: zero-extend a four-limb integer to eight limbs.

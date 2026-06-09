@@ -531,7 +531,7 @@ where
             // Divide by 2 to get m.
             let m = class_basis.eval_quadratic_form(&c) >> 1;
 
-            if m.is_probable_prime_w::<PRIME_W>(primality_rounds) {
+            if m.is_probable_prime_auto::<PRIME_W>(primality_rounds) {
                 // Reconstruct α = Σ c_i · col_i in the reduced basis.
                 let mut alpha = [BigInt::<N>::ZERO; 4];
                 for (i, c_i) in c.iter().enumerate() {

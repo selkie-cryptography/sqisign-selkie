@@ -134,12 +134,12 @@ impl<const N: usize> Lattice<N> {
     pub(crate) fn dual(&self) -> Self {
         // L^{-1} = adj(L) / det(L), so L^{-T} = adj(L)^T / det(L).
         // adj(basis)^T is the cofactor matrix, so the dual numerator
-        // denom · adj(basis)^T equals denom · cofactor(basis), scaled
-        // in place to avoid the separate adjugate and transpose copies
-        // (a Matrix<W> is ~16 KB at the response-phase width W = 128).
-        let det = self.basis.det();
+        // denom · adj(basis)^T equals denom · cofactor(basis). The
+        // cofactor and det share their 2x2 minors, and the scale runs in
+        // place, avoiding the separate adjugate and transpose copies (a
+        // Matrix<W> is ~16 KB at the response-phase width W = 128).
+        let (mut dual_basis, det) = self.basis.cofactor_and_det();
 
-        let mut dual_basis = self.basis.cofactor();
         for row in 0..4 {
             for col in 0..4 {
                 let scaled = self.denom.ct_mul(&dual_basis[row][col]);

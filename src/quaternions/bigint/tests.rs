@@ -1016,3 +1016,40 @@ proptest! {
         prop_assert_eq!(lhs, g.widen::<610>());
     }
 }
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(600))]
+
+    // is_probable_prime_auto must be transparent: the same decision as the
+    // fixed-width is_probable_prime_w it narrows from, for every candidate
+    // size (tiny narrows to a small rung; large falls back to WMAX).
+    #[test]
+    fn prop_prime_auto_matches_fixed_w17(
+        sig in 1usize..=16,
+        raw in prop::collection::vec(any::<u64>(), 16),
+    ) {
+        let mut l = [0u64; 16];
+        for (i, v) in raw.iter().enumerate().take(sig) {
+            l[i] = *v;
+        }
+        l[0] |= 1;
+
+        let n = BigInt::<16>::from_sign_and_limbs(0, l);
+        prop_assert_eq!(n.is_probable_prime_auto::<17>(12), n.is_probable_prime_w::<17>(12));
+    }
+
+    #[test]
+    fn prop_prime_auto_matches_fixed_w30(
+        sig in 1usize..=16,
+        raw in prop::collection::vec(any::<u64>(), 16),
+    ) {
+        let mut l = [0u64; 16];
+        for (i, v) in raw.iter().enumerate().take(sig) {
+            l[i] = *v;
+        }
+        l[0] |= 1;
+
+        let n = BigInt::<16>::from_sign_and_limbs(0, l);
+        prop_assert_eq!(n.is_probable_prime_auto::<30>(12), n.is_probable_prime_w::<30>(12));
+    }
+}
