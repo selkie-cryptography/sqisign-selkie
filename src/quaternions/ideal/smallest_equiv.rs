@@ -3,7 +3,7 @@
 //! shortest element `δ`. Used by both signing's `id2iso` chain
 //! (Alg. 3.16 preparation) and the alternate-order search.
 
-use super::super::{
+use crate::quaternions::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
     lattice::{HnfLattice, Lattice, LeftIdeal, NrdBasis},
