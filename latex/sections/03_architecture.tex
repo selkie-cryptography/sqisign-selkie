@@ -78,14 +78,19 @@ the larger cycle margin reflects the assembly's per-limb
 load-modify-store costing extra cache traffic.  Output is
 byte-identical, so the assembly was dropped; verification is
 unaffected, as it never uses the runtime-modulus reducer, only the
-separate fixed-prime field layer.  A
-dual-chain
-add-and-subtract (the \texttt{mpn\_add\_n\_sub\_n} idea: sum on the
-carry chain, difference on the overflow chain) and routing Montgomery
-squaring through the multiply assembly both regressed for the same
-reason.  By contrast the fully-unrolled $N{=}4$ truncated multiply and
-square are perf-neutral.  The portable arithmetic is the default;
-assembly is written only where a fixed width lets it be straight-line.
+separate fixed-prime field layer.  A dual-chain add-and-subtract (the
+\texttt{mpn\_add\_n\_sub\_n} idea, with the sum on the carry chain and
+the difference on the overflow chain) and routing Montgomery squaring
+through the multiply assembly both regressed, for the same reason.  The
+fully-unrolled $N{=}4$ truncated multiply and square, by contrast, are
+perf-neutral: a controlled same-runner A/B moved key generation by
+$0.0002\%$ and verification not at all, because \texttt{BigInt<4>}
+multiply and square are not a hot path.  So portable arithmetic is the
+default, and hand-written assembly earns its place only where it can be
+fully unrolled \emph{and} the operation dominates a hot path: the
+unrolled \texttt{Fp64} field multiply (the active scalar $\mathbb{F}_p$
+on \texttt{x86\_64}+ADX) qualifies, while the big-integer routines above
+do not.
 
 \subsection{Randomness and the \texttt{\_derand} entry points}
 \label{sec:randomness}
