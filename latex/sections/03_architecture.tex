@@ -4,8 +4,9 @@
 The implementation is organized into five layers:
 
 \begin{description}
-  \item[\texttt{fields/}] Prime field $\mathbb{F}_p$ (radix-51
-    Montgomery form) and quadratic extension $\mathbb{F}_{p^2}$.
+  \item[\texttt{fields/}] Prime field $\mathbb{F}_p$ (Montgomery form,
+    with instruction-set-specialized backends;
+    \S\ref{sec:backends}) and quadratic extension $\mathbb{F}_{p^2}$.
   \item[\texttt{curves/}] Montgomery curves, $x$-only projective
     arithmetic, torsion bases, $2^e$-isogeny chains, and the
     \texttt{IsogenyDegree} newtype.
@@ -17,6 +18,74 @@ The implementation is organized into five layers:
     \texttt{IdealToIsogeny}, \texttt{FixedDegreeIsogeny},
     \texttt{SuitableIdeals}, action matrices.
 \end{description}
+
+\subsection{Arithmetic backends}
+\label{sec:backends}
+
+The field and big-integer arithmetic each have several implementations
+selected at compile time for the target, behind a single Rust API so
+the higher layers are backend-agnostic.
+
+\paragraph{Field $\mathbb{F}_p$ backends.}
+The active scalar $\mathbb{F}_p$ ($p = 5\cdot 2^{248}-1$) is represented
+in one of two Montgomery forms, selected at compile time: a portable radix-$2^{51}$
+form (\texttt{Fp51}), or, on \texttt{x86\_64}+BMI2+ADX, a
+radix-$2^{64}$ form (\texttt{Fp64}) using \texttt{MULX} with dual
+\texttt{ADCX}/\texttt{ADOX} carry chains.  Two further radices exist
+\emph{only} as the scalar element type of the SIMD 4-wide batch
+types --- radix-$2^{29}$ (\texttt{Fp29}, paired with the NEON
+\texttt{Fp29x4}) and radix-$2^{26}$ (\texttt{Fp26}, paired with the
+AVX2 \texttt{Fp26x4}).  Their unsaturated limbs are sized to the
+vector widening-multiply lanes (e.g.\ AVX2's 32-bit $\times$ 32-bit
+$\to$ 64-bit \texttt{VPMULUDQ}), not for general scalar use; per-call
+routing
+through the 4-wide types does not pay, so they are never the active
+scalar \texttt{Fp}.  A \texttt{const fn from\_limbs} bridge repacks the
+portable Montgomery limbs into each backend's radix at compile time,
+so the same \texttt{pub const} precomputed-constant tables embed
+identically regardless of backend.  Two \texttt{Fp64}
+design choices matter: values are kept in the \emph{lazy} range
+$[0,2p)$ rather than fully reduced (the multiply's final conditional
+subtract is dropped, matching the C reference, normalizing only at
+byte and equality boundaries), and the $\mathbb{F}_{p^2}$ product
+shares one Montgomery reduction across both real/imaginary
+cross-products, forming the two $4\times 4$ products wide and reducing
+once, rather than reducing each separately.
+
+\paragraph{Big-integer \texttt{BigInt<N>}.}
+Quaternion-side integers are fixed-width stack values
+(\texttt{[u64; N]}, \texttt{Copy}) with no heap allocation --- the
+opposite of the C reference, which uses heap GMP \texttt{mpz} with
+pointer / in-place semantics.  The stack representation is
+allocation-free and constant-time-friendly, at the cost of by-value
+copies (a lever discussed in \S\ref{sec:next}).
+
+\paragraph{Assembly pays only when fully unrolled.}
+The most useful negative result of the backend work: hand-written
+assembly for big-integer arithmetic helps only when it can be
+\emph{unrolled for a compile-time-constant width}.  A dual-chain
+\texttt{MULX}/\texttt{ADCX}/\texttt{ADOX} CIOS routine for the
+runtime-modulus Montgomery multiply (\texttt{MontReducer::mul},
+backing Miller--Rabin primality) is a runtime-length \texttt{loop}
+over the limbs; at the widths the prime search uses
+($N \in \{17,18,30\}$) its per-iteration overhead loses to LLVM's
+fully-unrolled portable CIOS at each constant $N$.  The portable
+implementation wins on both metrics \texttt{gungraun} reports: $7.3\%$
+fewer key-generation and $3.1\%$ fewer signing instructions than the
+assembly, and $8.6\%$ and $3.4\%$ fewer estimated cycles.  The cycle
+model weights the instruction count by L1 / last-level / RAM hit costs;
+the larger cycle margin reflects the assembly's per-limb
+load-modify-store costing extra cache traffic.  Output is
+byte-identical, so the assembly was dropped; verification is
+unaffected, as it never uses the runtime-modulus reducer, only the
+separate fixed-prime field layer.  A
+dual-chain
+add-and-subtract (the \texttt{mpn\_add\_n\_sub\_n} idea: sum on the
+carry chain, difference on the overflow chain) and routing Montgomery
+squaring through the multiply assembly both regressed for the same
+reason.  By contrast the fully-unrolled $N{=}4$ truncated multiply and
+square are perf-neutral.  The portable arithmetic is the default;
+assembly is written only where a fixed width lets it be straight-line.
 
 \subsection{Randomness and the \texttt{\_derand} entry points}
 \label{sec:randomness}
