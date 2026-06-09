@@ -178,4 +178,18 @@ self-contained library; the integration commit is shelved.
     secret-derived input (where the Hanyecz BKZ-2 substitution above
     is the intended fix, bundled with the other KAT-breaking CT items
     into a single non-interop release).
+  \item In-place / out-parameter refactor of the hot wide-\texttt{BigInt}
+    lattice operations to remove struct-copy overhead
+    (\texttt{memcpy} is $\sim\!13.5\%$ of signing).  The arithmetic
+    returns values by move --- \texttt{Lattice::product},
+    \texttt{Vector}/\texttt{Matrix} operations, and the \texttt{BigInt}
+    operators all return new wide structs (a $4\times 4$
+    \texttt{Matrix} of $30$-limb integers is $\sim\!3.8$~KB), copied on
+    every compose in the HNF / intersection loops.  The C reference
+    avoids this with an out-parameter, const-reference convention
+    (\texttt{op(out, a, b)}, e.g.\ \texttt{ibz\_vec\_4\_add}); adopting
+    in-place variants for the hot wide operations is the corresponding
+    structural lever, and is interop- and constant-time-safe.  Unlike
+    the assembly attempts (\S\ref{sec:backends}), it is a portable,
+    all-architecture change.
 \end{enumerate}

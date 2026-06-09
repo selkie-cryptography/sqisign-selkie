@@ -8,7 +8,7 @@ use core::{
     ops::{Add, Index, IndexMut, Neg, Sub},
 };
 
-use super::super::bigint::BigInt;
+use crate::quaternions::bigint::BigInt;
 
 /// A 4-element vector of [`BigInt<N>`] values.
 ///

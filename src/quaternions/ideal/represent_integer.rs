@@ -4,7 +4,7 @@
 
 use rand_core::RngCore;
 
-use super::super::{
+use crate::quaternions::{
     algebra::{Coordinate, Denominator, Element},
     bigint::BigInt,
     lattice::{ExtremalOrder, Lattice},

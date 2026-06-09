@@ -6,14 +6,16 @@
 
 use core::ops::Deref;
 
-use super::super::{
-    algebra::{Coordinate, Denominator, Element},
-    bigint::BigInt,
-    lattice::{ExtremalOrder, Lattice, LeftIdeal, NrdBasis},
-    linear::{Matrix, Vector},
-    precomputed::{EXTREMAL_ORDERS, NUM_EXTREMAL_ORDERS, P_WIDE},
+use crate::{
+    curves::{TorsionExponent, isogeny::IsogenyDegree},
+    quaternions::{
+        algebra::{Coordinate, Denominator, Element},
+        bigint::BigInt,
+        lattice::{ExtremalOrder, Lattice, LeftIdeal, NrdBasis},
+        linear::{Matrix, Vector},
+        precomputed::{EXTREMAL_ORDERS, NUM_EXTREMAL_ORDERS, P_WIDE},
+    },
 };
-use crate::curves::{TorsionExponent, isogeny::IsogenyDegree};
 
 /// One factor of a [`SuitableIdealResult`] decomposition.
 ///
