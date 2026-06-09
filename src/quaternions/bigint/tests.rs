@@ -951,3 +951,68 @@ fn bigint_sqr_max_limb_zero() {
     assert_eq!(sq.limbs[0], 1);
     assert_eq!(sq.limbs[1], u64::MAX - 1); // 2^64 - 2
 }
+
+/// Generates a `BigInt<N>` with a random significant-limb count (from
+/// zero up to `N - 2`) and a random sign, so the [`BigInt::xgcd`] width
+/// dispatch is exercised across every rung and the full-width
+/// fallthrough.
+///
+/// The `N - 2` cap leaves the two limbs of headroom the binary xgcd
+/// needs for its Bezout cofactors (the intermediate `aa + y` reaches one
+/// limb beyond the operands). Real callers always supply that headroom
+/// (HNF runs at `W` far wider than its reduced-mod-`D` operands);
+/// operands that fill the entire storage width overflow the cofactor
+/// regardless of the narrowing, in the original code too.
+fn arb_wide_bigint<const N: usize>() -> impl Strategy<Value = BigInt<N>> {
+    (
+        any::<bool>(),
+        0usize..=N.saturating_sub(2),
+        prop::collection::vec(any::<u64>(), N),
+    )
+        .prop_map(|(neg, sig, raw)| {
+            let mut limbs = [0u64; N];
+            for (i, limb) in raw.iter().enumerate().take(sig) {
+                limbs[i] = *limb;
+            }
+
+            BigInt::from_sign_and_limbs(u64::from(neg), limbs)
+        })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    // xgcd narrows wide-N operands to a tight working width before
+    // running the binary algorithm; the result must equal running at the
+    // full storage width. Cross-check the gcd against the independent
+    // full-width `gcd`, and the cofactors against the Bezout identity
+    // `a*x + b*y == g` evaluated at double width so the products do not
+    // truncate.
+    #[test]
+    fn prop_xgcd_dispatch_wide_60(a in arb_wide_bigint::<60>(), b in arb_wide_bigint::<60>()) {
+        let (g, x, y) = a.xgcd(&b);
+
+        prop_assert_eq!(g, a.gcd(&b));
+
+        let lhs = a
+            .widen::<130>()
+            .ct_mul(&x.widen::<130>())
+            .ct_add(&b.widen::<130>().ct_mul(&y.widen::<130>()));
+        prop_assert_eq!(lhs, g.widen::<130>());
+    }
+
+    // Wider storage to exercise the 64/128/256-limb rungs and the
+    // full-width fallthrough at needed > 256.
+    #[test]
+    fn prop_xgcd_dispatch_wide_300(a in arb_wide_bigint::<300>(), b in arb_wide_bigint::<300>()) {
+        let (g, x, y) = a.xgcd(&b);
+
+        prop_assert_eq!(g, a.gcd(&b));
+
+        let lhs = a
+            .widen::<610>()
+            .ct_mul(&x.widen::<610>())
+            .ct_add(&b.widen::<610>().ct_mul(&y.widen::<610>()));
+        prop_assert_eq!(lhs, g.widen::<610>());
+    }
+}

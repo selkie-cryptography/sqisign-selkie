@@ -68,15 +68,105 @@ impl<const N: usize> BigInt<N> {
     /// Extended GCD: returns `(gcd, x, y)` such that
     /// `self * x + other * y = gcd`, with `gcd >= 0`.
     ///
+    /// Dispatches to [`Self::xgcd_binary`] at the smallest fixed working
+    /// width that safely holds the operands and their Bezout cofactors.
+    /// The quaternion lattice code calls this on values stored in wide
+    /// `BigInt<N>` (N up to ~500) whose actual magnitudes are far
+    /// smaller, so each halve/subtract step would otherwise run across
+    /// hundreds of always-zero high limbs. Narrowing first makes the
+    /// per-iteration cost track the operand size, not the storage width;
+    /// the result is identical to running at width `N`.
+    ///
+    /// **Variable-time**, same sources of leakage as [`Self::gcd`] plus
+    /// cofactor sign branches.
+    #[must_use]
+    pub fn xgcd(&self, other: &Self) -> (Self, Self, Self) {
+        // Operands and the binary-GCD cofactors are bounded in magnitude
+        // by `max(|self|, |other|)`, so `bits/64 + 2` limbs (one for the
+        // bit-length boundary, one of slack) hold every intermediate.
+        let bits = Self::mag_bitsize(&self.limbs).max(Self::mag_bitsize(&other.limbs)) as usize;
+        let needed = bits / 64 + 2;
+
+        if N > 8 && needed <= 8 {
+            return self.xgcd_narrowed::<8>(other);
+        }
+        if N > 16 && needed <= 16 {
+            return self.xgcd_narrowed::<16>(other);
+        }
+        if N > 32 && needed <= 32 {
+            return self.xgcd_narrowed::<32>(other);
+        }
+        if N > 64 && needed <= 64 {
+            return self.xgcd_narrowed::<64>(other);
+        }
+        if N > 128 && needed <= 128 {
+            return self.xgcd_narrowed::<128>(other);
+        }
+        if N > 256 && needed <= 256 {
+            return self.xgcd_narrowed::<256>(other);
+        }
+
+        self.xgcd_binary(other)
+    }
+
+    /// Runs [`Self::xgcd_binary`] at narrower working width `M`, resizing
+    /// the `(gcd, x, y)` result back to `N`.
+    ///
+    /// The caller ([`Self::xgcd`]) chooses `M >= needed`, so the operand
+    /// magnitudes (and hence all cofactors) fit in `M` limbs and the
+    /// narrowed computation produces the same values as width `N`; only
+    /// leading zero limbs are dropped.
+    #[must_use]
+    fn xgcd_narrowed<const M: usize>(&self, other: &Self) -> (Self, Self, Self) {
+        let a = self.resize_for_xgcd::<M>();
+        let b = other.resize_for_xgcd::<M>();
+
+        let (g, x, y) = a.xgcd_binary(&b);
+
+        (
+            g.resize_for_xgcd::<N>(),
+            x.resize_for_xgcd::<N>(),
+            y.resize_for_xgcd::<N>(),
+        )
+    }
+
+    /// Copies `self` into width `W`, taking the low `min(N, W)` limbs and
+    /// preserving the sign — without the fit assertions of
+    /// [`Self::widen`] / [`Self::narrow_to`].
+    ///
+    /// Used only by [`Self::xgcd_narrowed`], where the dispatch in
+    /// [`Self::xgcd`] provably picks a width holding every value, so any
+    /// dropped high limbs are zero. The runtime `if N > M` guards mean
+    /// the shrinking direction never executes for `W < N` (and vice
+    /// versa); the assertion-free copy only exists so those statically
+    /// unreachable instantiations still type-check. Not for general use.
+    #[must_use]
+    fn resize_for_xgcd<const W: usize>(self) -> BigInt<W> {
+        let mut limbs = [0u64; W];
+        let n = if N < W { N } else { W };
+
+        let mut i = 0;
+        while i < n {
+            limbs[i] = self.limbs[i];
+            i += 1;
+        }
+
+        BigInt::<W> {
+            sign: self.sign,
+            limbs,
+        }
+    }
+
     /// Stein's binary extended GCD (HAC algorithm 14.61). Same shape as
     /// [`Self::gcd`] but tracks Bezout cofactors through the halving and
     /// subtract steps; when the cofactor pair isn't both even, the
     /// originals (post common-factor strip) are added/subtracted to make
     /// them so before halving.
     ///
-    /// **Variable-time**, same sources of leakage as [`Self::gcd`] plus
-    /// cofactor sign branches.
-    pub fn xgcd(&self, other: &Self) -> (Self, Self, Self) {
+    /// Runs entirely at the storage width `N`; [`Self::xgcd`] narrows to
+    /// a tight width before calling this.
+    #[must_use]
+    fn xgcd_binary(&self, other: &Self) -> (Self, Self, Self) {
         let a_abs = self.abs();
         let b_abs = other.abs();
 
