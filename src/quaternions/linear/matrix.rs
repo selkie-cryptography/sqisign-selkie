@@ -134,7 +134,7 @@ impl<const N: usize> Matrix<N> {
 
     /// Determinant of the 3x3 minor on rows `r` and columns `c`.
     ///
-    /// Shared by [`Self::adjugate`] and [`Self::cofactor`].
+    /// Used by [`Self::adjugate`].
     fn minor3(&self, r: [usize; 3], c: [usize; 3]) -> BigInt<N> {
         let m = &self.0;
 
