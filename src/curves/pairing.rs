@@ -315,18 +315,28 @@ impl CubicalPoint {
     fn translate(&self, t: &Self) -> Self {
         let x = &(&t.X * &self.X) - &(&t.Z * &self.Z);
         let z = &(&t.Z * &self.X) - &(&t.X * &self.Z);
-        let z = if t.Z == Fp2::ZERO { -&z } else { z };
-        let x = if t.X == Fp2::ZERO { -&x } else { x };
+
+        // The 2-torsion edge case negates a coordinate. Select it in
+        // constant time rather than branching on the secret coordinate,
+        // matching the C reference's `fp2_select` (biextension.c).
+        let neg_x = -&x;
+        let neg_z = -&z;
+        let z = Fp2::conditional_select(&z, &neg_z, t.Z.ct_eq(&Fp2::ZERO));
+        let x = Fp2::conditional_select(&x, &neg_x, t.X.ct_eq(&Fp2::ZERO));
+
         Self { X: x, Z: z }
     }
 
     /// Cubical ratio ([§8.3.2], Algorithm 8.17).
     fn ratio(&self, other: &Self) -> Fp2 {
-        if self.X == Fp2::ZERO {
-            &other.Z * &self.Z.invert()
-        } else {
-            &other.X * &self.X.invert()
-        }
+        // Compute both representatives and select in constant time, rather
+        // than branching on whether the secret X coordinate is zero. The
+        // unused inversion of a zero coordinate yields zero (Fermat
+        // inversion) and is selected away.
+        let via_x = &other.X * &self.X.invert();
+        let via_z = &other.Z * &self.Z.invert();
+
+        Fp2::conditional_select(&via_x, &via_z, self.X.ct_eq(&Fp2::ZERO))
     }
 }
 

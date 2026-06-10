@@ -154,7 +154,10 @@ depends only on the public $e$ and the secret window value never indexes
 memory.  Signatures are byte-identical, and the constant-time form is
 also faster: deterministic instruction count $-4.84\%$ key generation
 and $-1.33\%$ signing, with $-4.7\%$ / $-1.8\%$ wall-clock on an Apple
-M4.
+M4.  The Tate pairings that feed the logarithm (\texttt{cross\_pairings})
+carried the same kind of leak, secret-dependent branches on the cubical
+zero-coordinate and 2-torsion edge cases; they are hardened the same way,
+by constant-time selection matching the C reference's \texttt{fp2\_select}.
 
 \subsection{Randomness and the \texttt{\_derand} entry points}
 \label{sec:randomness}
