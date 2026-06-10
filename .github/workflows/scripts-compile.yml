@@ -20,7 +20,7 @@ on:
       - '.github/scripts/**'
       - '.github/workflows/scripts-compile.yml'
   pull_request:
-    branches: [main]
+    branches: [main, next]
     paths:
       - '.github/scripts/**'
       - '.github/workflows/scripts-compile.yml'

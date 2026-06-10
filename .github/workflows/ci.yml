@@ -15,7 +15,7 @@ on:
       - '.config/nextest.toml'
       - '.github/workflows/ci.yml'
   pull_request:
-    branches: [main]
+    branches: [main, next]
     paths:
       - 'src/**'
       - 'tests/**'

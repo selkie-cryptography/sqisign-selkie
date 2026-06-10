@@ -16,7 +16,7 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/c-ref-cross-check.yml'
   pull_request:
-    branches: [main]
+    branches: [main, next]
     paths:
       - 'src/**'
       - 'Cargo.toml'

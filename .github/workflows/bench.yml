@@ -22,7 +22,7 @@ on:
       - '.github/scripts/divan-to-json.rs'
       - '.github/scripts/bench-compare.rs'
   pull_request:
-    branches: [main]
+    branches: [main, next]
     paths:
       - 'src/**'
       - 'benches/**'

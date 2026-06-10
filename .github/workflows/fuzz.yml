@@ -24,7 +24,7 @@ on:
       - 'examples/seed-fuzz-corpus.rs'
       - '.github/workflows/fuzz.yml'
   pull_request:
-    branches: [main]
+    branches: [main, next]
     paths:
       - 'fuzz/**'
       - 'examples/seed-fuzz-corpus.rs'

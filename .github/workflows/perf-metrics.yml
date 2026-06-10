@@ -17,7 +17,7 @@ on:
       - '.github/scripts/alloc-report.rs'
       - '.github/scripts/stack-depth.rs'
   pull_request:
-    branches: [main]
+    branches: [main, next]
     paths:
       - 'src/**'
       - 'benches/**'
