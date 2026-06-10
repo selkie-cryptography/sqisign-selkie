@@ -102,7 +102,26 @@ truncated-mod remainder via \texttt{if r.is\_negative()}.
 Both rewritten as branch-free \texttt{conditional\_select}s.
 Byte-identical across $100/100$ sign KATs.  The residual variable-time
 \texttt{BigInt::gcd} on $(s_0, t_0)$ in (a) is a separate
-\texttt{TODO(ct)}, deferred to the divstep wiring pass.
+\texttt{TODO(ct)}, deferred to the divstep integration pass.
+
+\paragraph{Small-prime pre-screen before Miller--Rabin.}
+The norm-equation prime search spends most of its time in
+Miller--Rabin, where the modular exponentiation and the per-test
+Montgomery setup dominate; primality is the single largest cost in key
+generation and a substantial fraction of signing.  The primality test
+now trial-divides a candidate by the small odd primes it already uses
+as Miller--Rabin witnesses, before any Montgomery setup or
+exponentiation.  A composite divisible by a used base $p$ (with the
+candidate not equal to $p$) fails that base's round regardless, so the
+accepted set is exactly that of plain Miller--Rabin and all signing and
+key-generation KATs stay byte-identical.  The common case (a composite
+with a tiny factor, which is the bulk of the candidates the search
+rejects) skips the witness exponentiations entirely.  The scan is
+data-independent (a fixed base set, no early exit, constant-time
+reduction) and only gates the already-variable-time test, so it adds no
+secret-dependent behavior beyond what that test already has.  Wall-clock
+A/B (profiling build): $-32\%$ on key generation, $-21\%$ on signing,
+output byte-identical.
 
 \subsection{Tried approaches that did not land}
 \label{sec:tried-rejected}
