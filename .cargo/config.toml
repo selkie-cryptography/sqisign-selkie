@@ -47,8 +47,28 @@ rustflags = [
     "-C", "target-feature=+aes,+pclmulqdq,+adx",
 ]
 
+# `--cfg aes_armv8` (aarch64 only) — compile the `aes` crate's ARMv8
+# Cryptography Extensions backend. Unlike x86_64, where the AES-NI
+# backend is always compiled and `cpufeatures` picks it at runtime,
+# the aarch64 intrinsic backend is gated behind this cfg; without it
+# `aes` silently falls back to the soft fixslice path for every block.
+# With the cfg set, `cpufeatures` runtime-detects FEAT_AES (Linux
+# getauxval, macOS sysctl) and falls back to soft fixslice on CPUs
+# without it, so this stays portable. The DRBG drives ~3000 AES
+# blocks/sign; hardware AES is constant-time and produces identical
+# output, so KAT signatures are byte-for-byte unchanged.
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+rustflags = [
+    "-C", "link-arg=-fuse-ld=mold",
+    "--cfg", "aes_armv8",
+]
+
+# macOS on Apple Silicon (M-series). No mold (uses the system linker)
+# and no `target-cpu` override; only the AES backend cfg, for the same
+# reason as the aarch64-linux table above. M-series CPUs all implement
+# FEAT_AES.
+[target.aarch64-apple-darwin]
+rustflags = ["--cfg", "aes_armv8"]
 
 [env]
 # Tests run signing on width-60 BigInts (480 bytes each); debug-mode
