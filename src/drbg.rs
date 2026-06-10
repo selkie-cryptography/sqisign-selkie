@@ -23,7 +23,7 @@
 //! [ch8]: https://sqisign.org/spec/sqisign-20250707.pdf#chapter.8
 
 use aes::{
-    Aes256,
+    Aes256Enc,
     cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray},
 };
 use rand_core::{CryptoRng, Error, RngCore};
@@ -90,7 +90,7 @@ impl Aes256CtrDrbg {
     /// CTR_DRBG_Update (SP 800-90A §10.2.1.2).
     fn update(&mut self, provided_data: Option<&[u8; SEEDLEN]>) {
         let mut temp = [0u8; SEEDLEN];
-        let cipher = Aes256::new(GenericArray::from_slice(&self.key));
+        let cipher = Aes256Enc::new(GenericArray::from_slice(&self.key));
         for i in 0..(SEEDLEN / BLOCKLEN) {
             Self::increment_v(&mut self.v);
             let mut block = *GenericArray::from_slice(&self.v);
@@ -108,7 +108,7 @@ impl Aes256CtrDrbg {
 
     /// CTR_DRBG_Generate (SP 800-90A §10.2.1.5), no additional input.
     fn randombytes(&mut self, out: &mut [u8]) {
-        let cipher = Aes256::new(GenericArray::from_slice(&self.key));
+        let cipher = Aes256Enc::new(GenericArray::from_slice(&self.key));
         let mut i = 0;
         while i < out.len() {
             Self::increment_v(&mut self.v);

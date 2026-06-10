@@ -53,6 +53,30 @@ subtracts in \texttt{mul}, \texttt{reduce\_wide}, and
 identical.  Deterministic measurement: $-1.01\%$ on key
 generation, $-0.10\%$ on signing.  Verification untouched.
 
+\paragraph{Hardware AES on aarch64.}
+The AES-CTR-DRBG that drives every random draw in key generation and
+signing (roughly $3000$ block encryptions per signature) was running
+the \texttt{aes} crate's software fixslice backend on aarch64.  The
+crate gates its ARMv8 Cryptography Extensions backend behind a
+\texttt{cfg(aes\_armv8)} that the build was not setting, whereas the
+x86\_64 AES-NI backend is compiled unconditionally and selected at
+runtime.  Setting the cfg on the aarch64 target tables lets
+\texttt{cpufeatures} runtime-select the hardware backend, with the
+software path preserved as a fallback on CPUs lacking
+\texttt{FEAT\_AES}.  Hardware AES is constant-time and bit-identical to
+the fixslice output, so all KATs stay byte-identical.  Wall-clock A/B
+(Apple M4): $-12.0\%$ on key generation, $-3.7\%$ on signing.  Key
+generation gains more because the norm-equation prime search issues far
+more DRBG draws per operation than signing does.  A time-profile of the
+hardware-AES build shows the residual AES cost (about $1.25\%$ of key
+generation, less of signing) is dominated by the AES key schedule, not
+block encryption, and the key-schedule cadence is fixed by the
+CTR-DRBG \texttt{update} cycle, so it is not byte-identically
+recoverable.  The DRBG was switched from the full \texttt{aes::Aes256}
+cipher to the encryption-only \texttt{Aes256Enc}, since CTR mode never
+decrypts; this drops the wasted decryption key schedule and is the
+correct cipher type for the construction.
+
 \subsection{Tried approaches that did not land}
 \label{sec:tried-rejected}
 
@@ -144,6 +168,32 @@ requires a KAT re-baseline; it bundles with the Cornacchia fix
 into a single non-interop release.  The four BKZ-2 algorithm
 commits remain on \texttt{hanyecz-euclidean-input-lll} as a
 self-contained library; the integration commit is shelved.
+
+\paragraph{Whole-program LTO with a single codegen unit.}
+A \texttt{[profile.release]} with \texttt{lto = "fat"} and
+\texttt{codegen-units = 1} was tried on the theory that cross-crate
+inlining of the \texttt{aes}, \texttt{subtle}, and field kernels would
+help.  It regressed both hot operations relative to the default
+sixteen-codegen-unit build: wall-clock A/B (Apple M4) of $+6\%$ on
+signing and $+5\%$ on key generation.  The single codegen unit appears
+to make worse register-allocation and inlining choices in the MLLL and
+lattice-product inner loops than the per-unit default.  Output is
+byte-identical; the regression is pure codegen.  Not adopted.
+
+\paragraph{Byte-identical micro-optimizations with no wall-clock
+effect.}
+Three byte-identical changes measured neutral (within run-to-run noise)
+on an Apple M4 and were not adopted as performance work: (a) a
+stack-allocated $16$-element array in place of the \texttt{Vec}
+accumulator in \texttt{Lattice::product} and its modulus variant,
+removing the heap reallocations of the $16$-column product but not
+moving wall-clock; (b) fusing the doubling and conditional-subtract
+limb passes in the $R^2$ Montgomery-setup loop; and
+(c) strength-reducing the multiply-by-$p$ in the MLLL Gram computation
+to $(x \ll 250) + (x \ll 248) - x$ (using $p = 5\cdot 2^{248} - 1$),
+which at the $110$-limb response-phase width is no faster than the
+length-aware schoolbook multiply by the four-limb constant it
+replaced.
 
 \subsection{Next steps}
 \label{sec:next}
