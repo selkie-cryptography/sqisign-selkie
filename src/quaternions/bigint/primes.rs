@@ -1,7 +1,14 @@
 //! Miller-Rabin probabilistic primality testing for
 //! [`BigInt<N>`][super::BigInt].
 
+use subtle::{Choice, ConstantTimeEq};
+
 use super::{BigInt, MontReducer};
+
+/// Miller-Rabin witness bases, reused as the small-prime trial set in
+/// [`BigInt::is_probable_prime`]'s pre-screen. Deterministic for values
+/// below 3.3*10^24; probabilistic above.
+const MR_WITNESSES: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
 
 impl<const N: usize> BigInt<N> {
     /// Miller-Rabin probabilistic primality test.
@@ -46,11 +53,54 @@ impl<const N: usize> BigInt<N> {
             return false;
         }
 
+        // Trial-divide by the small odd primes Miller-Rabin uses as
+        // witnesses, before the Montgomery setup and exponentiations. A
+        // multiple of any used base `p` (with `self != p`) fails that
+        // base's round regardless, so this rejects exactly the same
+        // composites -- without the modular exponentiations (and the
+        // `MontReducer::new` cost) that most rejected candidates pay.
+        if bool::from(self.has_small_witness_factor(rounds)) {
+            return false;
+        }
+
         // Build the Montgomery context once and delegate. (Per the CT
         // note on `MontReducer`: this within-function context is safe even
         // when `self` is a secret-derived prime candidate.)
         let ctx = MontReducer::<N>::new(self).expect("self is odd > 1 by the early returns above");
         self.is_probable_prime_with_ctx(rounds, &ctx)
+    }
+
+    /// Returns whether one of the first `rounds` Miller-Rabin witness
+    /// bases ([`MR_WITNESSES`]) divides `self`, excluding the case
+    /// `self` equals that base.
+    ///
+    /// Pre-filter for [`is_probable_prime`](Self::is_probable_prime):
+    /// the bases are small primes, and any composite divisible by a base
+    /// `p` is rejected by `p`'s Miller-Rabin round anyway (for `self >
+    /// p`, `p^d` is divisible by `p` so it can be neither `1` nor `-1`
+    /// mod `self`). Screening here is therefore output-identical to
+    /// Miller-Rabin while skipping the exponentiations for the common
+    /// case of a composite with a tiny factor.
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time. `TODO(ct)`: gates the variable-time Miller-Rabin
+    /// test on a secret-derived candidate (Algorithm 4.2 line 16, via
+    /// RepresentInteger). The scan itself takes a data-independent path
+    /// -- a fixed base set, no early exit, `ct_mod` -- so it reveals no
+    /// more than the surrounding test it feeds.
+    fn has_small_witness_factor(&self, rounds: u32) -> Choice {
+        let num_rounds = (rounds as usize).min(MR_WITNESSES.len());
+
+        let mut composite = Choice::from(0u8);
+        for &p in &MR_WITNESSES[..num_rounds] {
+            let p_big = Self::from_u64(p);
+            let divides = self.ct_mod(&p_big).is_zero();
+            let is_self = self.ct_eq(&p_big);
+            composite |= divides & !is_self;
+        }
+
+        composite
     }
 
     /// Same as [`is_probable_prime`](Self::is_probable_prime) but with
@@ -90,11 +140,9 @@ impl<const N: usize> BigInt<N> {
         let s = n_minus_1.two_adic_val();
         let d = n_minus_1 >> s;
 
-        // Deterministic witnesses sufficient for values up to 3.3×10²⁴.
-        let witnesses: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
-        let num_rounds = (rounds as usize).min(witnesses.len());
+        let num_rounds = (rounds as usize).min(MR_WITNESSES.len());
 
-        for &a_val in &witnesses[..num_rounds] {
+        for &a_val in &MR_WITNESSES[..num_rounds] {
             let a = Self::from_u64(a_val);
             if a >= *self {
                 continue;
