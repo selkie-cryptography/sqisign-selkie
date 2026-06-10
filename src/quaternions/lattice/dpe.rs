@@ -26,6 +26,9 @@ use core::{
 
 use crate::quaternions::bigint::BigInt;
 
+#[cfg(test)]
+mod tests;
+
 /// A double-precision float with an explicit base-2 exponent.
 ///
 /// Represents the value `m * 2^e`. The mantissa is kept in
@@ -106,17 +109,52 @@ impl DoublePlusExponent {
     /// `tests/ffi_cref_lll.rs::to_dpe_*` under the `ffi-cref-lll`
     /// feature.
     pub fn from_bigint<const N: usize>(v: &BigInt<N>) -> Self {
-        if bool::from(v.is_zero()) {
+        // The mantissa is the top 53 bits of |v|, truncated toward zero,
+        // and the exponent is bitsize(|v|). `to_f64_trunc` computes the
+        // same f64 from the whole magnitude, but everything below the top
+        // 53 bits only scales it by a power of two, which `frexp`
+        // discards. So read just the top one or two limbs around the MSB
+        // and skip the full-width `abs`/shift/limb-loop. Bit-for-bit equal
+        // to `frexp(to_f64_trunc(|v| >> max(0, bits - 1024))).0` (the
+        // `mini_mpz_get_d_2exp` path); see the differential test in
+        // `tests`.
+        let limbs = v.as_limbs();
+        let mut top_idx = N;
+        while top_idx > 0 && limbs[top_idx - 1] == 0 {
+            top_idx -= 1;
+        }
+        if top_idx == 0 {
             return Self::ZERO;
         }
-        let bits = v.bitsize() as i64;
-        let abs = v.abs();
-        let shifted = if bits > f64::MAX_EXP as i64 {
-            abs >> (bits - f64::MAX_EXP as i64) as u32
+
+        let top = limbs[top_idx - 1];
+        let clz = top.leading_zeros();
+        let bits = (top_idx as i64) * 64 - clz as i64;
+
+        // m = clz + 53 - 64: bits the top limb has beyond/below 53. m <= 0
+        // means the top limb already covers >= 53 bits (mask its low
+        // -m bits); m > 0 means we need the top m bits of the next limb.
+        let m: i32 = clz as i32 - 11;
+        let raw: f64 = if m <= 0 {
+            let masked = if m < 0 {
+                top & (u64::MAX << ((-m) as u32))
+            } else {
+                top
+            };
+            masked as f64
         } else {
-            abs
+            // Top limb has 53 - m significant bits; take m more from the
+            // next limb's high end. b = 2^64 (the limb's place value);
+            // frexp normalizes away the place, so only the ratio matters.
+            let b: f64 = (1u128 << 64) as f64;
+            let mut x = (top as f64) * b;
+            if top_idx >= 2 {
+                let l2 = limbs[top_idx - 2] & (u64::MAX << ((64 - m) as u32));
+                x += l2 as f64;
+            }
+            x
         };
-        let raw = shifted.to_f64_trunc();
+
         let mantissa = frexp(raw).0;
         let signed = if bool::from(v.is_negative()) {
             -mantissa
