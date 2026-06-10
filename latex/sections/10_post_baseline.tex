@@ -53,18 +53,6 @@ subtracts in \texttt{mul}, \texttt{reduce\_wide}, and
 identical.  Deterministic measurement: $-1.01\%$ on key
 generation, $-0.10\%$ on signing.  Verification untouched.
 
-\paragraph{Windowed Pohlig--Hellman discrete logarithm.}
-\texttt{RootOfUnity::dlog} on the 2-power pairing-output group
-$\mu_{2^e}$ was rewritten from a recursive halving Pohlig--Hellman
-into an iterative windowed variant with window width $W = 4$ and a
-constant-time table scan.  The old recursion called \texttt{pow\_scalar}
-at every node, walking $256$ bits regardless of the exponent size, and
-was variable-time on the secret-derived bases $M_{\mathrm{sk}}$ and
-$M_{\mathrm{chl}}$; that leak is closed.  Deterministic measurement:
-$-4.84\%$ on key generation, $-1.33\%$ on signing, $-2.03\%$
-total --- the largest single-step improvement so far.  Verification
-essentially unchanged ($-0.04\%$).
-
 \subsection{Tried approaches that did not land}
 \label{sec:tried-rejected}
 

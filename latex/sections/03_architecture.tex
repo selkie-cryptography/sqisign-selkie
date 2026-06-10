@@ -139,6 +139,23 @@ unrolled \texttt{Fp64} field multiply (the active scalar $\mathbb{F}_p$
 on \texttt{x86\_64}+ADX) qualifies, while the big-integer routines above
 do not.
 
+\paragraph{Constant-time discrete logarithm.}
+The change-of-basis recovers integer coordinates through a discrete
+logarithm in the $2$-power pairing group $\mu_{2^e}$
+(\texttt{RootOfUnity::dlog}, on the secret-derived bases
+$M_{\mathrm{sk}}$ and $M_{\mathrm{chl}}$).  Our first version, a
+recursive halving Pohlig--Hellman that called a variable-time
+\texttt{pow\_scalar} at each node, leaked bits of the secret logarithm,
+a divergence from the C reference's constant-time design.  We recover
+that baseline with an iterative windowed Pohlig--Hellman: window width
+$W = 4$, a $16$-entry table read by \texttt{ConstantTimeEq} /
+\texttt{ConditionallySelectable} scatter-gather, so the iteration count
+depends only on the public $e$ and the secret window value never indexes
+memory.  Signatures are byte-identical, and the constant-time form is
+also faster: deterministic instruction count $-4.84\%$ key generation
+and $-1.33\%$ signing, with $-4.7\%$ / $-1.8\%$ wall-clock on an Apple
+M4.
+
 \subsection{Randomness and the \texttt{\_derand} entry points}
 \label{sec:randomness}
 
