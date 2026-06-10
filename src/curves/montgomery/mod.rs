@@ -46,7 +46,11 @@ pub use jacobian::JacobianPoint;
 pub use point::ProjectiveXOnlyPoint;
 use subtle::{Choice, ConditionallySelectable};
 
-use crate::fields::{fp::Fp, fp2::Fp2};
+use crate::{
+    curves::{BasisHint, TorsionBasis},
+    fields::{fp::Fp, fp2::Fp2},
+    params::TORSION_EVEN_POWER,
+};
 
 /// The Montgomery coefficient A of a curve E_A : y² = x³ + Ax² + x.
 ///
@@ -414,14 +418,15 @@ impl Curve {
     /// Cost: one [`TorsionBasis::from_hint`] plus `2·(f − 1)`
     /// doublings.
     ///
-    /// Variable-time on `self`. Fine for verify-side parse since the
-    /// curve coefficient is public.
+    /// # Constant-time
+    ///
+    /// Variable-time on the public curve coefficient (verify-side parse).
     ///
     /// [§4.5]: https://sqisign.org/spec/sqisign-20250707.pdf#section.4.5
     /// [`TorsionBasis::from_hint`]: crate::curves::TorsionBasis::from_hint
     /// [`TORSION_EVEN_POWER`]: crate::params::TORSION_EVEN_POWER
-    pub fn is_supersingular_via_basis(&self, hint: crate::curves::BasisHint) -> bool {
-        let Some(basis) = crate::curves::TorsionBasis::from_hint(self, hint) else {
+    pub fn is_supersingular_via_basis(&self, hint: BasisHint) -> bool {
+        let Some(basis) = TorsionBasis::from_hint(self, hint) else {
             return false;
         };
         // `from_hint`'s output layout: `basis.P` is spec's P,
@@ -429,7 +434,7 @@ impl Curve {
         // layout `(x_P, x_{P−Q}, x_Q)`, not the spec's algebra).
         let mut p = basis.P;
         let mut q = basis.PmQ;
-        for _ in 0..(crate::params::TORSION_EVEN_POWER - 1) {
+        for _ in 0..(TORSION_EVEN_POWER - 1) {
             p = p.double();
             q = q.double();
         }

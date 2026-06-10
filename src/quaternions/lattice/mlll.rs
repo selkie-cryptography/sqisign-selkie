@@ -27,27 +27,13 @@
 //!
 //! Validated by differential tests against the canonical HNF (the
 //! `mlll_preserves_lattice_*` tests in `tests`): for redundant generating
-//! sets — including the `G = 16` ideal-product count and a randomized sweep —
+//! sets, including the `G = 16` ideal-product count and a randomized sweep,
 //! `HNF(mlll_reduce(gens)) == HNF(gens)`, confirming the reduced basis spans
 //! the same lattice. DPE precision at the ~2^1027 NIST-I ideal-product scale is
-//! covered by the wide-input probes in `super::tests`. Not yet wired into
-//! `Lattice::product` / intersection; that integration is gated on
-//! byte-identical sign and keygen KATs.
-//!
-//! # Integration plan
-//!
-//! - `CompactIdealMultiplication` ([Alg. 2]): LLL-reduce each input ideal
-//!   basis, form the 16 products `αᵢβⱼ`, `Generators::<N, 16>::new`,
-//!   `mlll_reduce`, rescale by `r₁r₂`. Replaces `Lattice::product`'s HNF.
-//! - `CompactLatticeIntersection` ([Alg. 3]): the dual-sum-dual path with
-//!   `MLLL` in place of HNF on the 8-column dual sum. Replaces
-//!   `intersection_via_dual_sum_dual` — the 32000-bit working width that the
-//!   profiling measured at ~45% of signing time.
+//! covered by the wide-input probes in `super::tests`.
 //!
 //! [cqa]: https://eprint.iacr.org/2026/1031.pdf
 //! [Alg. 1]: https://eprint.iacr.org/2026/1031.pdf#algorithm.1
-//! [Alg. 2]: https://eprint.iacr.org/2026/1031.pdf#algorithm.2
-//! [Alg. 3]: https://eprint.iacr.org/2026/1031.pdf#algorithm.3
 //! [Alg. 8]: https://eprint.iacr.org/2026/1031.pdf#algorithm.8
 //! [Lemma 8]: https://eprint.iacr.org/2026/1031.pdf#lemma.1.8
 //! [ml2]: https://doi.org/10.1137/070705702
@@ -129,6 +115,12 @@ impl<const N: usize, const G: usize> Generators<N, G> {
     ///
     /// Implements ML2 ([Alg. 1]). The lattice spanned is unchanged; only the
     /// basis representation differs (all column ops are unimodular).
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time. `TODO(ct)`: the size-reduction branches and the
+    /// iteration count depend on the generators, which are secret-derived
+    /// on the signing response path (Algorithm 4.2, lines 13-19).
     ///
     /// [Alg. 1]: https://eprint.iacr.org/2026/1031.pdf#algorithm.1
     #[must_use]
