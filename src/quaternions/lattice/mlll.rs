@@ -279,12 +279,29 @@ impl<const N: usize, const G: usize> Generators<N, G> {
                         cols[kappa][row] = cols[kappa][row].ct_sub(&x.ct_mul(&old[row]));
                     }
 
+                    // Symmetric rank-1 Gram update for b_κ -= x·b_i. G is
+                    // symmetric, so off the diagonal the κ-row product
+                    // x·G[i][m] equals the κ-column product x·G[m][i];
+                    // compute each once and reuse for both, instead of
+                    // multiplying twice.
                     let gram_i = gram[i];
-                    for (dst, src) in gram[kappa].iter_mut().zip(gram_i.iter()) {
-                        *dst = dst.ct_sub(&x.ct_mul(src));
+                    let mut prods = [BigInt::<N>::ZERO; G];
+                    for (p, src) in prods.iter_mut().zip(gram_i.iter()) {
+                        *p = x.ct_mul(src);
                     }
-                    for row in gram.iter_mut() {
-                        let upd = x.ct_mul(&row[i]);
+
+                    for (dst, p) in gram[kappa].iter_mut().zip(prods.iter()) {
+                        *dst = dst.ct_sub(p);
+                    }
+
+                    // The m == κ entry recomputes from the just-updated G[κ][i],
+                    // which folds in the x²·G[i][i] term of ‖b_κ - x·b_i‖².
+                    for (m, row) in gram.iter_mut().enumerate() {
+                        let upd = if m == kappa {
+                            x.ct_mul(&row[i])
+                        } else {
+                            prods[m]
+                        };
                         row[kappa] = row[kappa].ct_sub(&upd);
                     }
                 }
