@@ -70,12 +70,26 @@ generation gains more because the norm-equation prime search issues far
 more DRBG draws per operation than signing does.  A time-profile of the
 hardware-AES build shows the residual AES cost (about $1.25\%$ of key
 generation, less of signing) is dominated by the AES key schedule, not
-block encryption, and the key-schedule cadence is fixed by the
-CTR-DRBG \texttt{update} cycle, so it is not byte-identically
-recoverable.  The DRBG was switched from the full \texttt{aes::Aes256}
-cipher to the encryption-only \texttt{Aes256Enc}, since CTR mode never
-decrypts; this drops the wasted decryption key schedule and is the
-correct cipher type for the construction.
+block encryption.  The DRBG was also switched from the full
+\texttt{aes::Aes256} cipher to the encryption-only \texttt{Aes256Enc},
+since CTR mode never decrypts; this drops the wasted decryption key
+schedule and is the correct cipher type for the construction.
+
+\paragraph{One key schedule per DRBG generate cycle.}
+The key-schedule cost above is one AES-256 expansion per
+\texttt{CTR\_DRBG\_Generate}: the \texttt{Key} changes on every
+\texttt{Update}, so one expansion per cycle is mandated by SP 800-90A
+and is not byte-identically removable.  The implementation was doing
+\emph{two}, though: \texttt{randombytes} expanded the key for its
+generate loop, then the trailing \texttt{Update} (which encrypts under
+the same, not-yet-changed \texttt{Key}) expanded it again.  Sharing the
+one schedule across both loops halves the per-cycle expansion; the
+generate loop was also switched from one-block-at-a-time
+\texttt{encrypt\_block} to batched \texttt{encrypt\_blocks} so the
+backend's parallel pipeline is fed.  Output is byte-identical (all KATs
+green).  Profiled on an Apple M4, the key-schedule self-time in key
+generation fell from about $1.05\%$ to $0.50\%$ of the total, with the
+generate-loop encryption falling below the sampling threshold.
 
 \subsection{Tried approaches that did not land}
 \label{sec:tried-rejected}

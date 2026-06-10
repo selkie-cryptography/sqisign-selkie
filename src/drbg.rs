@@ -24,7 +24,7 @@
 
 use aes::{
     Aes256Enc,
-    cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray},
+    cipher::{Block, BlockEncrypt, KeyInit, generic_array::GenericArray},
 };
 use rand_core::{CryptoRng, Error, RngCore};
 
@@ -88,14 +88,29 @@ impl Aes256CtrDrbg {
     }
 
     /// CTR_DRBG_Update (SP 800-90A §10.2.1.2).
+    ///
+    /// Expands the key schedule from the current `Key`. When the update
+    /// follows a generate step that already expanded the same `Key`
+    /// (see [`Self::randombytes`]), use [`Self::update_with_cipher`] to
+    /// reuse that schedule instead of expanding twice.
     fn update(&mut self, provided_data: Option<&[u8; SEEDLEN]>) {
-        let mut temp = [0u8; SEEDLEN];
         let cipher = Aes256Enc::new(GenericArray::from_slice(&self.key));
-        for i in 0..(SEEDLEN / BLOCKLEN) {
+        self.update_with_cipher(&cipher, provided_data);
+    }
+
+    /// CTR_DRBG_Update using an already-expanded key schedule for the
+    /// current `Key`. `cipher` must be `Aes256Enc::new(self.key)`.
+    fn update_with_cipher(&mut self, cipher: &Aes256Enc, provided_data: Option<&[u8; SEEDLEN]>) {
+        let mut blocks = [Block::<Aes256Enc>::default(); SEEDLEN / BLOCKLEN];
+        for block in &mut blocks {
             Self::increment_v(&mut self.v);
-            let mut block = *GenericArray::from_slice(&self.v);
-            cipher.encrypt_block(&mut block);
-            temp[i * BLOCKLEN..(i + 1) * BLOCKLEN].copy_from_slice(&block);
+            *block = *GenericArray::from_slice(&self.v);
+        }
+        cipher.encrypt_blocks(&mut blocks);
+
+        let mut temp = [0u8; SEEDLEN];
+        for (i, block) in blocks.iter().enumerate() {
+            temp[i * BLOCKLEN..(i + 1) * BLOCKLEN].copy_from_slice(block);
         }
         if let Some(pd) = provided_data {
             for i in 0..SEEDLEN {
@@ -108,17 +123,30 @@ impl Aes256CtrDrbg {
 
     /// CTR_DRBG_Generate (SP 800-90A §10.2.1.5), no additional input.
     fn randombytes(&mut self, out: &mut [u8]) {
+        // One key schedule for the whole call: the generate loop and the
+        // trailing update both encrypt under the current `Key`, which is
+        // unchanged until the update writes the new one. Generate up to
+        // `PAR` counter blocks per AES call so the backend's parallel
+        // block pipeline is fed instead of one block at a time.
+        const PAR: usize = 8;
         let cipher = Aes256Enc::new(GenericArray::from_slice(&self.key));
+        let mut blocks = [Block::<Aes256Enc>::default(); PAR];
         let mut i = 0;
         while i < out.len() {
-            Self::increment_v(&mut self.v);
-            let mut block = *GenericArray::from_slice(&self.v);
-            cipher.encrypt_block(&mut block);
-            let take = BLOCKLEN.min(out.len() - i);
-            out[i..i + take].copy_from_slice(&block[..take]);
-            i += take;
+            let nblocks = (out.len() - i).div_ceil(BLOCKLEN).min(PAR);
+            for block in &mut blocks[..nblocks] {
+                Self::increment_v(&mut self.v);
+                *block = *GenericArray::from_slice(&self.v);
+            }
+            cipher.encrypt_blocks(&mut blocks[..nblocks]);
+            for block in &blocks[..nblocks] {
+                let take = BLOCKLEN.min(out.len() - i);
+                out[i..i + take].copy_from_slice(&block[..take]);
+                i += take;
+            }
         }
-        self.update(None);
+
+        self.update_with_cipher(&cipher, None);
         #[cfg(test)]
         {
             self.consumed += out.len() as u64;
