@@ -17,7 +17,7 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/sage-cross-check.yml'
   pull_request:
-    branches: [main]
+    branches: [main, next]
     paths:
       - 'scripts/precomp/verify_precomputed.py'
       - 'scripts/precomp/parameters.py'

@@ -7,7 +7,7 @@ on:
       - 'latex/**'
       - '.github/workflows/latex.yml'
   pull_request:
-    branches: [main]
+    branches: [main, next]
     paths:
       - 'latex/**'
       - '.github/workflows/latex.yml'
