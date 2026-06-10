@@ -22,6 +22,11 @@ expose-internals = []
 # kernels so `.github/scripts/mca.rs` can isolate them as standalone
 # asm symbols for `llvm-mca`.  x86_64-only; cfg's out elsewhere.
 mca = []
+# Routes the `profile_sign` example through dhat's heap-profiling
+# global allocator (writes `dhat-heap.json`). Off by default so time
+# profiles keep the real allocator. `dhat` is a dev-dependency, so this
+# only affects examples/tests/benches, never the shipped library.
+dhat-heap = []
 
 [dependencies]
 # TODO: replace with our own SHAKE256 implementation to minimize trusted dependencies.
@@ -227,3 +232,13 @@ incremental = true
 [profile.mutants]
 inherits = "release-checked"
 debug = "none"
+
+# Profile for local flamegraph / heap profiling (samply, Instruments
+# via cargo-instruments / xctrace, dhat). Release codegen so the hot
+# paths match production, plus full debuginfo so the profiler can
+# attribute inlined frames. No debug-assertions/overflow-checks (those
+# perturb the timing). Used by `scripts/profile.rs` and the
+# `profile_sign` example.
+[profile.profiling]
+inherits = "release"
+debug = true
