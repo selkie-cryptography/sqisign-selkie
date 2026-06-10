@@ -801,6 +801,7 @@ impl SigningKey {
             // must use the dual-sum-dual path here.
             let intersection = {
                 let compact = i_chl_sk_lat.compact_intersection::<110>(&i_com_conj_lat);
+
                 #[cfg(test)]
                 {
                     let hnf = i_chl_sk_lat.intersection_via_dual_sum_dual::<500>(&i_com_conj_lat);
@@ -809,6 +810,7 @@ impl SigningKey {
                         "compact_intersection::<110> != dual_sum_dual::<500>"
                     );
                 }
+
                 match compact {
                     Some(l) => l,
                     None => {
@@ -1113,6 +1115,7 @@ impl SigningKey {
                 // distinct lattices. dual-sum-dual matches C-ref.
                 let inter_hnf_w8 = {
                     let compact = i_com_rsp_lat_w.compact_intersection::<48>(&i_aux_lat_w);
+
                     #[cfg(test)]
                     {
                         let hnf =
@@ -1122,6 +1125,7 @@ impl SigningKey {
                             "compact_intersection::<48> != dual_sum_dual::<200>"
                         );
                     }
+
                     match compact {
                         Some(h) => h,
                         None => {
