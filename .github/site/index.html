@@ -2604,7 +2604,7 @@
         const fmt = (v) => v != null ? esc(String(v)) : '\u2014';
         // Own-site SVG renders directly; opens full-size in a new tab.
         const flame = r.flamegraph
-          ? `<a href="${esc(r.flamegraph)}" target="_blank" rel="noopener" title="Ir flamegraph">\u{1F525}</a>`
+          ? `<a href="${esc(r.flamegraph)}" target="_blank" rel="noopener" title="sampled flamegraph">\u{1F525}</a>`
           : '\u2014';
         html += `<tr>
           <td class="fn-name">${esc(r.name)}</td>

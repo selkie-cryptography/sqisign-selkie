@@ -34,6 +34,12 @@ use std::time::SystemTime;
 /// served here via nginx's `/instructions/` alias.
 const SITE: &str = "https://sqisign-selkie-ci.fly.dev";
 
+/// Benches the Profile workflow's `flamegraphs` job records sampled
+/// call-stack flamegraphs for (perf over `examples/profile_sign.rs`).
+/// Keep in sync with that job's mode loop.
+const FLAMEGRAPH_BENCHES: [&str; 3] =
+    ["sqisign::kat_keygen", "sqisign::kat_sign", "sqisign::kat_verify"];
+
 /// One benchmark's whole-run totals, mapped onto the dashboard's field set.
 struct BenchResult {
     /// `group::bench` identifier, derived from the summary's `module_path`.
@@ -53,9 +59,9 @@ struct BenchResult {
     /// Callgrind's `EstimatedCycles` (instructions + memory penalties).
     /// Present only with `--cache-sim=yes`.
     estimated_cycles: Option<u64>,
-    /// Public URL of this benchmark's `Ir` flamegraph on the CI site, set when
-    /// gungraun emitted one (`Ir.flamegraph.svg` beside the summary). The
-    /// upload step pushes the SVG to the matching `/data/...` path.
+    /// Public URL of this benchmark's sampled flamegraph on the CI site, set
+    /// for the benches in [`FLAMEGRAPH_BENCHES`]. The Profile workflow's
+    /// `flamegraphs` job pushes each SVG to the matching `/data/...` path.
     flamegraph: Option<String>,
 }
 
@@ -67,12 +73,10 @@ impl BenchResult {
         let name = summary_name(dir)?;
         let metrics = callgrind_totals(summary)?;
 
-        // gungraun writes the regular Ir flamegraph beside the summary as
-        // `callgrind.<bench>.total.Ir.flamegraph.svg` (prefix + `total`
-        // modifier), so match the suffix rather than an exact name. Derive the
-        // eventual public URL from the asset name (`group__bench.svg`); the
-        // upload step writes the file to the matching path.
-        let flamegraph = dir_has_ir_flamegraph(dir).then(|| {
+        // The flamegraphs job uploads `<group>__<bench>.svg` for the fixed
+        // bench set; emit the matching URL. The jobs run concurrently, so
+        // the link may 404 briefly until the SVG lands.
+        let flamegraph = FLAMEGRAPH_BENCHES.contains(&name.as_str()).then(|| {
             format!("{SITE}/instructions/flamegraphs/{sha}/{}.svg", name.replace("::", "__"))
         });
 
@@ -97,30 +101,14 @@ impl BenchResult {
     }
 }
 
-/// Returns whether `dir` holds gungraun's regular Ir flamegraph. The file is
-/// named `callgrind.<bench>.total.Ir.flamegraph.svg`, so match the
-/// `Ir.flamegraph.svg` suffix; the `.old`/`.diff` baseline variants end
-/// differently and are excluded.
-fn dir_has_ir_flamegraph(dir: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
-    };
-    entries.flatten().any(|e| {
-        e.file_name()
-            .to_str()
-            .is_some_and(|n| n.ends_with("Ir.flamegraph.svg"))
-    })
-}
-
 /// Derives the `group::bench` name from the summary's directory, which
 /// gungraun lays out as `.../<group>/<bench>/summary.json`.
 ///
 /// The directory is the reliable source: the summary's `module_path` ends in
 /// the function name, not the group, so parsing it yields `bench::bench`. The
-/// directory's last two components are `<group>/<bench>`, and this matches the
-/// `<group>__<bench>` asset name `ci-upload` derives from the flamegraph's own
-/// path — so the URLs `instructions-report` emits line up with the files
-/// `ci-upload` writes.
+/// directory's last two components are `<group>/<bench>`, matching the
+/// `<group>__<bench>.svg` file names the flamegraphs job uploads — so the
+/// URLs emitted here line up with the hosted files.
 fn summary_name(dir: &Path) -> Option<String> {
     let components: Vec<&str> = dir
         .components()
