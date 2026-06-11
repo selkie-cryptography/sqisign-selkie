@@ -380,7 +380,7 @@ fn render_instructions(
 
     let flamegraphs = instructions_flamegraphs(Some(cur));
     if !flamegraphs.is_empty() {
-        out.push_str("\n#### Flamegraphs (`Ir`)\n\n");
+        out.push_str("\n#### Flamegraphs (sampled)\n\n");
 
         // Embed the heaviest benchmark's flamegraph inline (most interesting
         // call tree); link the rest. SVGs are hosted on the CI site and

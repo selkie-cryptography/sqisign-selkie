@@ -13,6 +13,13 @@ name: Profile
 # aggregation job pulls every shard, merges them, runs the report
 # generator, and posts the sticky comment.
 #
+# A parallel `flamegraphs` job records sampled call-stack flamegraphs
+# for keygen/sign/verify at native speed (perf + cargo-flamegraph over
+# `examples/profile_sign.rs`) and hosts the SVGs the report embeds.
+# callgrind output has no stack traces, so gungraun's own "flamegraphs"
+# ranked functions by inclusive Ir with bogus ancestry; the sampled
+# graphs have real attribution and add no critical-path wall-clock.
+#
 # The data kind on the CI dashboard is still `instructions` for
 # continuity --- the JSON payload carries all metrics (instructions,
 # estimated_cycles, l1_misses, l2_misses, branch_misses) regardless
@@ -25,6 +32,7 @@ on:
       - 'src/**'
       - 'benches/**'
       - 'tests/**'
+      - 'examples/profile_sign.rs'
       - 'Cargo.toml'
       - '.github/workflows/profile.yml'
       - '.github/scripts/instructions-report.rs'
@@ -36,6 +44,7 @@ on:
       - 'src/**'
       - 'benches/**'
       - 'tests/**'
+      - 'examples/profile_sign.rs'
       - 'Cargo.toml'
       - '.github/workflows/profile.yml'
       - '.github/scripts/instructions-report.rs'
@@ -153,6 +162,73 @@ jobs:
         if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
         run: sccache --show-stats
 
+  # Sampled call-stack flamegraphs for the three top-level benches.
+  # Runs the deterministic `profile_sign` workload natively under perf
+  # (seconds, vs minutes under callgrind) and renders one SVG per mode
+  # at the `instructions/flamegraphs/<sha>/sqisign__kat_<mode>.svg`
+  # path the report links. Keep the mode loop in sync with
+  # FLAMEGRAPH_BENCHES in instructions-report.rs.
+  #
+  # Fly Machines (Firecracker) expose no PMU, so sampling uses the
+  # software clock (`-e cpu-clock`) instead of perf's default cycles
+  # event, with DWARF unwinding from the profiling profile's debuginfo.
+  flamegraphs:
+    name: flamegraphs
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 30
+    env:
+      RUSTC_WRAPPER: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID != '' && 'sccache' || '' }}
+      SCCACHE_BUCKET: selkie-ci-sccache
+      SCCACHE_ENDPOINT: https://fly.storage.tigris.dev
+      SCCACHE_REGION: auto
+      AWS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SCCACHE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e  # v0.0.10
+        if: env.RUSTC_WRAPPER == 'sccache'
+
+      - name: Install perf and cargo-flamegraph
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends linux-tools-generic
+          cargo install flamegraph --locked
+
+      - name: Record flamegraphs
+        run: |
+          set -euo pipefail
+          sudo sysctl -w kernel.perf_event_paranoid=1
+          # Ubuntu's /usr/bin/perf shim dispatches on `uname -r`, which
+          # never matches a linux-tools package on Fly's kernel; point
+          # cargo-flamegraph at the versioned binary directly.
+          PERF=$(echo /usr/lib/linux-tools/*/perf)
+          export PERF
+          mkdir -p flamegraphs
+          for mode in keygen sign verify; do
+            cargo flamegraph --profile profiling --example profile_sign \
+              --deterministic \
+              -c "record -F 997 -e cpu-clock --call-graph dwarf,16384 -g" \
+              -o "flamegraphs/sqisign__kat_${mode}.svg" -- "$mode"
+          done
+
+      # Best-effort like the rest of the flamegraph plumbing: a failed
+      # upload must not fail the run --- the URLs just 404 until the
+      # next successful one. Skipped on fork PRs (no Fly token).
+      - name: Host flamegraphs
+        continue-on-error: true
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/ci-upload
+        with:
+          assets: flamegraphs
+          remote-subdir: instructions/flamegraphs/${{ github.sha }}
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
   # Merges every shard's output into one combined report and posts
   # the sticky comment.  Job name `gungraun` matches the prior
   # single-job name so the required-status-check on the PR keeps
@@ -201,23 +277,6 @@ jobs:
 
       - name: Verify profile payload has data
         run: jq -e '.total > 0 and (.results | length > 0)' instructions.json > /dev/null || { echo "::error::instructions.json has no benchmark results"; cat instructions.json >&2; exit 1; }
-
-      # Host the per-benchmark flamegraph SVGs so the report can embed them.
-      # Ungated (PR runs need their graphs live to render in the comment) but
-      # skipped on fork PRs, which can't see the Fly token.
-      # Best-effort: a flaky flyctl download or sftp hiccup must not fail the
-      # run or skip the Report below --- the flamegraph URLs just 404 until
-      # the next successful run.
-      - name: Host flamegraphs
-        continue-on-error: true
-        if: >-
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.head.repo.full_name == github.repository
-        uses: ./.github/actions/ci-upload
-        with:
-          assets: target/gungraun
-          remote-subdir: instructions/flamegraphs/${{ github.sha }}
-          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
       # Upload the data payload only from main: a PR or branch dispatch
       # must not clobber main's stored baseline.

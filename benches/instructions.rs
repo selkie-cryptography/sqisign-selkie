@@ -4,9 +4,11 @@
 //! Runs each bench under Valgrind/callgrind with cache + branch
 //! simulation, so every run emits `Ir` (instructions), `EstimatedCycles`,
 //! L1/LL cache misses, and branch mispredicts --- all deterministic
-//! across CI runners (no timing noise).  A per-benchmark `Ir` flamegraph
-//! is written alongside each summary as
-//! `callgrind.<bench>.total.Ir.flamegraph.svg`.
+//! across CI runners (no timing noise).  Flamegraphs are NOT produced
+//! here: callgrind output carries no stack traces, so gungraun's SVGs
+//! rank functions by inclusive cost without real ancestry. The Profile
+//! workflow's `flamegraphs` job samples genuine call stacks instead
+//! (perf + cargo-flamegraph over `examples/profile_sign.rs`).
 //!
 //! Sharded under the `Profile` workflow (`.github/workflows/profile.yml`),
 //! one matrix job per bench group / slow sqisign bench, so the wall-clock
@@ -20,10 +22,7 @@ mod common;
 
 use std::hint::black_box;
 
-use gungraun::{
-    Callgrind, EventKind, FlamegraphConfig, LibraryBenchmarkConfig, library_benchmark,
-    library_benchmark_group, main,
-};
+use gungraun::{library_benchmark, library_benchmark_group, main};
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "bmi2",
@@ -243,8 +242,8 @@ fn kat_keygen() {
     let _ = black_box(sqisign_selkie::SigningKey::generate_derand(&seed));
 }
 
-// Deterministic sign with KAT key 0 — the response-phase flat profile and
-// flamegraph that drive optimization targeting.
+// Deterministic sign with KAT key 0 — the response-phase flat profile
+// that drives optimization targeting.
 #[library_benchmark]
 fn kat_sign() {
     let sk = common::kat0_signing_key();
@@ -297,20 +296,16 @@ library_benchmark_group!(
 library_benchmark_group!(
     name = sqisign;
     // Top-level sqisign keygen/sign/verify under Valgrind. keygen and sign are
-    // the slow, high-value profiles — their flamegraphs locate the targets.
+    // the slow, high-value profiles.
     benchmarks = kat_verify, kat_sign, kat_keygen
 );
 
+// gungraun defaults `--cache-sim=yes --branch-sim=yes`, which is what we
+// want here: every bench produces estimated_cycles, L1/LL cache misses,
+// and branch mispredicts alongside Ir.  Cache simulation roughly doubles
+// per-bench wall-clock; the workflow shards across benches to keep total
+// wall-clock bounded.
 main!(
-    config = LibraryBenchmarkConfig::default().tool(
-        // gungraun defaults `--cache-sim=yes --branch-sim=yes`, which is
-        // what we want here: every bench produces estimated_cycles, L1/LL
-        // cache misses, and branch mispredicts alongside Ir.  Cache
-        // simulation roughly doubles per-bench wall-clock; the workflow
-        // shards across benches to keep total wall-clock bounded.
-        Callgrind::default()
-            .flamegraph(FlamegraphConfig::default().event_kinds([EventKind::Ir])),
-    );
     library_benchmark_groups = field,
     bigint,
     curves,
