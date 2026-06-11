@@ -24,8 +24,11 @@ const FLY_API_BASE: &str = "https://api.machines.dev/v1";
 /// destroys finishing runners every minute or two so capacity returns
 /// fast and stranding the GH workflow_job in `queued` is worse than
 /// waiting briefly here.
-const SPAWN_RETRY_DELAYS: &[Duration] =
-    &[Duration::from_secs(5), Duration::from_secs(10), Duration::from_secs(20)];
+const SPAWN_RETRY_DELAYS: &[Duration] = &[
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(20),
+];
 
 /// Per-vCPU memory allowance applied when a size omits `memory_mb`.
 /// 2 GB is Fly's recommendation for general-purpose Rust builds and
