@@ -256,10 +256,14 @@ impl<const N: usize> NrdBasis<N> {
                             continue;
                         }
 
-                        // b_k ← b_k - x · b_ii
-                        let old_bi = basis[ii];
+                        // b_k ← b_k - x · b_ii. ii < k, so a disjoint
+                        // split lets us read b_ii and mutate b_k without
+                        // copying the whole Vector<N> b_ii each step.
+                        let (lo, hi) = basis.split_at_mut(k);
+                        let old_bi = &lo[ii];
+                        let tgt = &mut hi[0];
                         for row in 0..D {
-                            basis[k][row] = basis[k][row].ct_sub(&x_big.ct_mul(&old_bi[row]));
+                            tgt[row] = tgt[row].ct_sub(&x_big.ct_mul(&old_bi[row]));
                         }
 
                         // Update Gram matrix symmetrically.
