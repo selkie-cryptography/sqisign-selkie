@@ -185,6 +185,7 @@ impl Fp51 {
 
     /// Squares this field element.
     #[must_use]
+    #[inline]
     pub fn square(&self) -> Fp51 {
         let a = &self.0;
 
@@ -384,6 +385,7 @@ impl Fp51 {
     /// [spec]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.1
     #[must_use]
     #[rustfmt::skip]
+    #[inline]
     pub fn sum_of_2_products(a1: &Fp51, b1: &Fp51, a2: &Fp51, b2: &Fp51) -> Fp51 {
         debug_assert!(a1.0.iter().all(|&x| x <= MASK), "a1 limb exceeds MASK");
         debug_assert!(b1.0.iter().all(|&x| x <= MASK), "b1 limb exceeds MASK");
@@ -503,6 +505,7 @@ impl<'b> Add<&'b Fp51> for &Fp51 {
     type Output = Fp51;
 
     /// Modular addition, reduced to less than 2p.
+    #[inline]
     fn add(self, rhs: &'b Fp51) -> Fp51 {
         let mut n = Fp51([
             self.0[0] + rhs.0[0],
@@ -527,6 +530,7 @@ impl<'b> Sub<&'b Fp51> for &Fp51 {
     type Output = Fp51;
 
     /// Modular subtraction, reduced to less than 2p.
+    #[inline]
     fn sub(self, rhs: &'b Fp51) -> Fp51 {
         let mut n = Fp51([
             self.0[0].wrapping_sub(rhs.0[0]),
@@ -546,6 +550,7 @@ impl<'b> Sub<&'b Fp51> for &Fp51 {
 impl Neg for &Fp51 {
     type Output = Fp51;
 
+    #[inline]
     fn neg(self) -> Fp51 {
         &Fp51::ZERO - self
     }
@@ -559,6 +564,7 @@ impl<'b> Mul<&'b Fp51> for &Fp51 {
     /// Uses the schoolbook method with interleaved reduction, exploiting
     /// the special shape p = 5 · 2²⁴⁸ − 1.
     #[rustfmt::skip]
+    #[inline]
     fn mul(self, rhs: &'b Fp51) -> Fp51 {
         let (a, b) = (&self.0, &rhs.0);
         let mut t: u128 = 0;
@@ -637,6 +643,7 @@ impl<'b> Mul<&'b Fp51> for &Fp51 {
 
 impl Add<Fp51> for Fp51 {
     type Output = Fp51;
+    #[inline]
     fn add(self, rhs: Fp51) -> Fp51 {
         &self + &rhs
     }
@@ -644,6 +651,7 @@ impl Add<Fp51> for Fp51 {
 
 impl Sub<Fp51> for Fp51 {
     type Output = Fp51;
+    #[inline]
     fn sub(self, rhs: Fp51) -> Fp51 {
         &self - &rhs
     }
@@ -651,6 +659,7 @@ impl Sub<Fp51> for Fp51 {
 
 impl Mul<Fp51> for Fp51 {
     type Output = Fp51;
+    #[inline]
     fn mul(self, rhs: Fp51) -> Fp51 {
         &self * &rhs
     }
@@ -658,6 +667,7 @@ impl Mul<Fp51> for Fp51 {
 
 impl Neg for Fp51 {
     type Output = Fp51;
+    #[inline]
     fn neg(self) -> Fp51 {
         -&self
     }
