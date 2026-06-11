@@ -265,7 +265,9 @@ pub(super) fn enumerate_hypercube(m: i64, gram_has_i_symmetry: bool) -> Vec<[i64
     let dim2 = dim * dim;
     let dim3 = dim2 * dim;
 
-    let cap = (dim as usize).pow(4);
+    // Half-cube iteration (x <= 0) pushes at most ceil(dim^4 / 2); the
+    // parity and symmetry filters only reduce that further.
+    let cap = (dim as usize).pow(4).div_ceil(2);
     let mut out = Vec::with_capacity(cap);
 
     for x in -m..=0 {
@@ -363,13 +365,17 @@ impl<const W: usize> NrdBasis<W> {
             return Vec::new();
         };
 
-        let width = (2 * m + 1) as usize;
-        let mut vectors = Vec::with_capacity(width.pow(4) - 1);
-
         let need_remove_symmetry =
             self.gram()[0][0] == self.gram()[1][1] && self.gram()[3][3] == self.gram()[2][2];
 
-        for [x_i, y_i, z_i, w_i] in enumerate_hypercube(m, need_remove_symmetry) {
+        // `enumerate_hypercube` is already half-cube- and parity-pruned,
+        // so its length is the exact upper bound on pushes below. Sizing
+        // from `width.pow(4)` over-allocated ~10x (624 slots for a few
+        // dozen survivors) -- the single largest heap site in signing.
+        let candidates = enumerate_hypercube(m, need_remove_symmetry);
+        let mut vectors = Vec::with_capacity(candidates.len());
+
+        for [x_i, y_i, z_i, w_i] in candidates {
             let x = [
                 BigInt::<W>::from_i64(x_i),
                 BigInt::<W>::from_i64(y_i),
@@ -426,8 +432,6 @@ impl<const W: usize> NrdBasis<W> {
             });
         }
 
-        let _ = width; // capacity hint only
-
         // Mirror C ref's `enumerate_hypercube` off-by-one at
         // `dim2id2iso.c:449` (`return count - 1;`). C ref kept `count`
         // vectors during enumeration but reports only `count - 1` to
@@ -441,7 +445,7 @@ impl<const W: usize> NrdBasis<W> {
         // context.
         vectors.pop();
         debug_assert!(
-            vectors.len() < width.pow(4),
+            vectors.len() < ((2 * m + 1) as usize).pow(4),
             "post-pop vector count consistent with hypercube bound"
         );
 
