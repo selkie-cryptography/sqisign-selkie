@@ -73,6 +73,7 @@ impl Fp2 {
     ///   real = (a + b)(a − b)
     ///   imag = 2ab
     #[must_use]
+    #[inline]
     pub fn square(&self) -> Fp2 {
         let a_plus_b = &self.a + &self.b;
         let a_minus_b = &self.a - &self.b;
@@ -217,6 +218,7 @@ impl Fp2 {
 
 impl<'b> Add<&'b Fp2> for &Fp2 {
     type Output = Fp2;
+    #[inline]
     fn add(self, rhs: &'b Fp2) -> Fp2 {
         Fp2 {
             a: &self.a + &rhs.a,
@@ -227,6 +229,7 @@ impl<'b> Add<&'b Fp2> for &Fp2 {
 
 impl<'b> Sub<&'b Fp2> for &Fp2 {
     type Output = Fp2;
+    #[inline]
     fn sub(self, rhs: &'b Fp2) -> Fp2 {
         Fp2 {
             a: &self.a - &rhs.a,
@@ -237,6 +240,7 @@ impl<'b> Sub<&'b Fp2> for &Fp2 {
 
 impl Neg for &Fp2 {
     type Output = Fp2;
+    #[inline]
     fn neg(self) -> Fp2 {
         Fp2 {
             a: -&self.a,
@@ -264,6 +268,7 @@ impl<'b> Mul<&'b Fp2> for &Fp2 {
     /// mul-pairs + 2 reductions).
     ///
     /// [spec]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.1
+    #[inline]
     fn mul(self, rhs: &'b Fp2) -> Fp2 {
         Fp2 {
             a: Fp::difference_of_2_products(&self.a, &rhs.a, &self.b, &rhs.b),
@@ -275,6 +280,7 @@ impl<'b> Mul<&'b Fp2> for &Fp2 {
 /// Multiplies an F_{p²} element by a base field element.
 impl<'b> Mul<&'b Fp> for &Fp2 {
     type Output = Fp2;
+    #[inline]
     fn mul(self, rhs: &'b Fp) -> Fp2 {
         Fp2 {
             a: &self.a * rhs,
@@ -287,6 +293,7 @@ impl<'b> Mul<&'b Fp> for &Fp2 {
 
 impl Add for Fp2 {
     type Output = Fp2;
+    #[inline]
     fn add(self, rhs: Fp2) -> Fp2 {
         &self + &rhs
     }
@@ -294,6 +301,7 @@ impl Add for Fp2 {
 
 impl Sub for Fp2 {
     type Output = Fp2;
+    #[inline]
     fn sub(self, rhs: Fp2) -> Fp2 {
         &self - &rhs
     }
@@ -301,6 +309,7 @@ impl Sub for Fp2 {
 
 impl Mul for Fp2 {
     type Output = Fp2;
+    #[inline]
     fn mul(self, rhs: Fp2) -> Fp2 {
         &self * &rhs
     }
@@ -308,6 +317,7 @@ impl Mul for Fp2 {
 
 impl Neg for Fp2 {
     type Output = Fp2;
+    #[inline]
     fn neg(self) -> Fp2 {
         -&self
     }
@@ -356,6 +366,7 @@ impl ConstantTimeEq for Fp2 {
 }
 
 impl ConditionallySelectable for Fp2 {
+    #[inline]
     fn conditional_select(a: &Fp2, b: &Fp2, choice: Choice) -> Fp2 {
         Fp2 {
             a: Fp::conditional_select(&a.a, &b.a, choice),

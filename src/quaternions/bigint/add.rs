@@ -35,6 +35,7 @@ impl<const N: usize> BigInt<N> {
     /// If signs match: add magnitudes.
     /// If signs differ: subtract the smaller magnitude from the larger,
     /// with the sign of the larger.
+    #[inline]
     pub fn ct_add(&self, rhs: &Self) -> Self {
         let same_sign = ((self.sign ^ rhs.sign) == 0) as u64;
 
