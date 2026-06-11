@@ -53,9 +53,16 @@ impl<const N: usize> BigInt<N> {
             (1u8 << top_byte_bits) - 1
         };
 
-        let mut buf = vec![0u8; len_bytes];
+        // Stack buffer sized to the widest possible magnitude (`N` limbs
+        // = `N*8` bytes); the live prefix is `len_bytes`. Avoids a heap
+        // allocation per call -- `rand_interval` is the inner step of the
+        // norm-equation rejection sampling and runs thousands of times
+        // per signature. The single contiguous `fill_bytes(len_bytes)`
+        // is preserved, so the DRBG byte stream is unchanged.
+        let mut storage = [[0u8; 8]; N];
+        let buf = &mut storage.as_flattened_mut()[..len_bytes];
         loop {
-            rng.fill_bytes(&mut buf);
+            rng.fill_bytes(buf);
             buf[len_bytes - 1] &= top_mask;
             // Decode little-endian into `BigInt<N>` limbs.
             let mut limbs = [0u64; N];

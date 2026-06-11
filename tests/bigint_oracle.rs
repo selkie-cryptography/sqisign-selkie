@@ -40,17 +40,35 @@ fn arb_small_bigint4() -> impl Strategy<Value = BigInt<4>> {
 /// Sign+magnitude → `Sign` + little-endian limb bytes. Zero
 /// canonicalises to `Sign::NoSign` regardless of our `sign` field.
 fn to_num<const N: usize>(a: BigInt<N>) -> NumBigInt {
-    let mut bytes = [0u8; 8 * 8];
-    assert!(N <= 8, "oracle helper sized for N <= 8");
+    let mut bytes = vec![0u8; N * 8];
     for (i, limb) in a.as_limbs().iter().enumerate() {
         bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
     }
-    let magnitude = NumBigInt::from_bytes_le(Sign::Plus, &bytes[..N * 8]);
+    let magnitude = NumBigInt::from_bytes_le(Sign::Plus, &bytes);
     if a.is_negative().into() {
         -magnitude
     } else {
         magnitude
     }
+}
+
+/// Random `BigInt<N>` with a uniformly random *effective* limb length:
+/// limbs above a random cutoff are zeroed. Exercises the
+/// leading-zero-skip multiply/square across all operand widths.
+fn arb_wide<const N: usize>() -> impl Strategy<Value = BigInt<N>> {
+    (
+        any::<bool>(),
+        prop::collection::vec(any::<u64>(), N),
+        0usize..=N,
+    )
+        .prop_map(|(neg, mut v, cut)| {
+            for x in v.iter_mut().skip(cut) {
+                *x = 0;
+            }
+            let mut limbs = [0u64; N];
+            limbs.copy_from_slice(&v);
+            BigInt::from_sign_and_limbs(u64::from(neg), limbs)
+        })
 }
 
 /// Projects a `num_bigint::BigInt` into `BigInt<N>` by truncating the
@@ -197,5 +215,40 @@ proptest! {
             shifted
         };
         prop_assert_eq!(ours, from_num::<4>(&signed));
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// Wide multiply against num-bigint, covering the leading-zero-skip
+    /// path at the response-phase intersection width.
+    #[test]
+    fn oracle_mul_wide_110(a in arb_wide::<110>(), b in arb_wide::<110>()) {
+        let ours = canon(a * b);
+        let theirs: BigInt<110> = from_num(&truncate::<110>(&(to_num(a) * to_num(b))));
+        prop_assert_eq!(ours, theirs);
+    }
+
+    #[test]
+    fn oracle_mul_wide_32(a in arb_wide::<32>(), b in arb_wide::<32>()) {
+        let ours = canon(a * b);
+        let theirs: BigInt<32> = from_num(&truncate::<32>(&(to_num(a) * to_num(b))));
+        prop_assert_eq!(ours, theirs);
+    }
+
+    /// Wide square against num-bigint (effective-width symmetric squaring).
+    #[test]
+    fn oracle_sqr_wide_110(a in arb_wide::<110>()) {
+        let ours = canon(a.square());
+        let theirs: BigInt<110> = from_num(&truncate::<110>(&(to_num(a) * to_num(a))));
+        prop_assert_eq!(ours, theirs);
+    }
+
+    #[test]
+    fn oracle_sqr_wide_32(a in arb_wide::<32>()) {
+        let ours = canon(a.square());
+        let theirs: BigInt<32> = from_num(&truncate::<32>(&(to_num(a) * to_num(a))));
+        prop_assert_eq!(ours, theirs);
     }
 }
