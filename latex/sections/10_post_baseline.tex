@@ -91,6 +91,32 @@ green).  Profiled on an Apple M4, the key-schedule self-time in key
 generation fell from about $1.05\%$ to $0.50\%$ of the total, with the
 generate-loop encryption falling below the sampling threshold.
 
+\paragraph{Leading-zero skipping in the wide integer multiply.}
+The quaternion intersection and Hermite-normal-form arithmetic runs
+multi-precision multiplication at integer widths sized for the worst
+case (the proven $110$-limb bound of Kim et al.\ at the main
+intersection, $48$ and $30$ limbs elsewhere), but a profile of the
+actual operands shows the typical value occupies under half those
+limbs, so the truncated schoolbook multiply was spending roughly half
+its time multiplying zero limbs.  The multiply now bounds its loops by
+the operands' effective limb lengths and propagates the final carry,
+producing byte-identical limbs.  This matches the C reference's bignum
+library, whose multiply already operates only on the significant limbs;
+the fixed-width grid was an artifact of our worst-case storage width.
+Wall-clock A/B (Apple M4): $-44.7\%$ on signing, $-14.4\%$ on key
+generation, verification unchanged; all KATs and the multi-precision
+differential oracle stay byte-identical.  The win is large because the
+wide multiply dominates signing once MLLL replaced the dual-sum-dual
+intersection.  Constant-time scope: the skip is restricted to the wide
+widths, so it is reached only by the variable-time quaternion-lattice
+arithmetic; the narrow-width multiplies that every constant-time path
+relies on (the secret-torsion endomorphism action; the field layer uses
+none; primality's modular exponentiation has its own routines) keep the
+fixed-width path and are unaffected.  Like the reference's bignum
+library this path is variable-time in operand magnitude; making it
+constant-time folds into the quaternion layer's eventual constant-time
+pass, which reworks these multiplies.
+
 \subsection{Tried approaches that did not land}
 \label{sec:tried-rejected}
 
