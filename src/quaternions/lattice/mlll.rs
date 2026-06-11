@@ -266,9 +266,16 @@ impl<const N: usize, const G: usize> Generators<N, G> {
                         continue;
                     }
 
-                    let old = cols[i];
-                    for row in 0..4 {
-                        cols[kappa][row] = cols[kappa][row].ct_sub(&x.ct_mul(&old[row]));
+                    // i < kappa, so a disjoint split lets us read b_i and
+                    // mutate b_kappa without copying the whole Vector<N>
+                    // b_i each size-reduction step.
+                    {
+                        let (lo, hi) = cols.split_at_mut(kappa);
+                        let old = &lo[i];
+                        let tgt = &mut hi[0];
+                        for row in 0..4 {
+                            tgt[row] = tgt[row].ct_sub(&x.ct_mul(&old[row]));
+                        }
                     }
 
                     // Symmetric rank-1 Gram update for b_κ -= x·b_i. G is
@@ -276,9 +283,8 @@ impl<const N: usize, const G: usize> Generators<N, G> {
                     // x·G[i][m] equals the κ-column product x·G[m][i];
                     // compute each once and reuse for both, instead of
                     // multiplying twice.
-                    let gram_i = gram[i];
                     let mut prods = [BigInt::<N>::ZERO; G];
-                    for (p, src) in prods.iter_mut().zip(gram_i.iter()) {
+                    for (p, src) in prods.iter_mut().zip(gram[i].iter()) {
                         *p = x.ct_mul(src);
                     }
 
