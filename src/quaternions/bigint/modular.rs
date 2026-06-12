@@ -324,6 +324,32 @@ impl<const N: usize> MontReducer<N> {
         t
     }
 
+    /// Returns `a · b mod n` for canonical-form inputs in `[0, n)`,
+    /// computed through Montgomery form so the `2N`-limb product folds
+    /// back via REDC with no truncation. Result is canonical, in
+    /// `[0, n)`.
+    ///
+    /// Unlike `a.ct_mul(&b).ct_mod(n)` this is correct whenever `a` and
+    /// `b` fit in `N` limbs (and are `< n`), with no `64*N >= 2*bits`
+    /// floor: it is what lets [`modular_sqrt`](BigInt::modular_sqrt) run
+    /// its Tonelli-Shanks multiplies at the candidate's own width rather
+    /// than a doubled one.
+    ///
+    /// # Preconditions
+    ///
+    /// `a, b` in `[0, n)`. Inputs are not reduced first; the caller
+    /// guarantees reduction (every operand at the `modular_sqrt` call
+    /// sites is a `pow`/`mul_mod` output or a small constant `< n`).
+    pub(crate) fn mul_mod(&self, a: &BigInt<N>, b: &BigInt<N>) -> BigInt<N> {
+        let am = self.to_montgomery(&a.limbs);
+        let bm = self.to_montgomery(&b.limbs);
+
+        BigInt {
+            sign: 0,
+            limbs: self.reduce_montgomery(&self.mul(&am, &bm)),
+        }
+    }
+
     /// Modular exponentiation: `base^exp mod n`. Computed in Montgomery
     /// form using a 4-bit fixed-window scheme: precompute table of
     /// `base^i` for `i in 0..16`, then process the exponent four bits at
@@ -632,13 +658,15 @@ impl<const N: usize> BigInt<N> {
     /// the spec, with fast paths for m ≡ 3 (mod 4) and m ≡ 5 (mod 8),
     /// and Tonelli-Shanks for the general case m ≡ 1 (mod 8).
     ///
-    /// # Width requirement
+    /// # Width
     ///
-    /// All internal operations use [`pow_mod`](Self::pow_mod) and
-    /// direct `ct_mul`/`ct_mod` at width `N`. The caller must ensure
-    /// `64*N >= 2*bits(m)` — otherwise the squarings silently
-    /// truncate and the result is wrong. For larger moduli use
-    /// [`modular_sqrt_w`](Self::modular_sqrt_w).
+    /// Every modular multiply runs in Montgomery form (the exponentiations
+    /// via [`pow_mod`](Self::pow_mod), the Tonelli-Shanks products via
+    /// [`MontReducer::mul_mod`]), so the `2N`-limb products fold back
+    /// through REDC with no truncation. Correct whenever `m` fits in `N`
+    /// limbs; there is no `64*N >= 2*bits(m)` floor. (An even `m` takes
+    /// the schoolbook `ct_mul`/`ct_mod` fallback, which does carry that
+    /// floor, but `m` is required to be an odd prime.)
     ///
     /// [Alg. 3.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.1
     pub fn modular_sqrt(n: &Self, m: &Self) -> Option<Self> {
@@ -670,6 +698,16 @@ impl<const N: usize> BigInt<N> {
             }
         };
 
+        // Helper: a·b mod m. Montgomery via the cached ctx (no
+        // truncation, correct at the candidate's own width); schoolbook
+        // ct_mul/ct_mod fallback for even m. Mirrors `pow`.
+        let mul_mod = |a: &Self, b: &Self| -> Self {
+            match &ctx {
+                Some(c) => c.mul_mod(a, b),
+                None => a.ct_mul(b).ct_mod(m),
+            }
+        };
+
         let m_mod4 = m.as_limbs()[0] & 3;
         let m_mod8 = m.as_limbs()[0] & 7;
 
@@ -677,7 +715,7 @@ impl<const N: usize> BigInt<N> {
         if m_mod4 == 3 {
             let exp = m.ct_add(&Self::ONE) >> 2;
             let r = pow(&n_mod, &exp);
-            let check = r.ct_mul(&r).ct_mod(m);
+            let check = mul_mod(&r, &r);
             return if check == n_mod { Some(r) } else { None };
         }
 
@@ -692,11 +730,11 @@ impl<const N: usize> BigInt<N> {
                 return Some(pow(&n_mod, &exp));
             } else {
                 // return 2n(4n)^((m-5)/8) mod m
-                let four_n = n_mod.ct_mul(&Self::from_u64(4)).ct_mod(m);
+                let four_n = mul_mod(&n_mod, &Self::from_u64(4));
                 let exp = m.ct_sub(&Self::from_u64(5)) >> 3;
                 let base = pow(&four_n, &exp);
-                let r = Self::TWO.ct_mul(&n_mod).ct_mul(&base).ct_mod(m);
-                let check = r.ct_mul(&r).ct_mod(m);
+                let r = mul_mod(&mul_mod(&Self::TWO, &n_mod), &base);
+                let check = mul_mod(&r, &r);
                 return if check == n_mod { Some(r) } else { None };
             }
         }
@@ -730,14 +768,14 @@ impl<const N: usize> BigInt<N> {
             let b = pow(&y, &f);
             if b == m.ct_sub(&Self::ONE) {
                 // b ≡ -1 mod m
-                x = x.ct_mul(&z).ct_mod(m);
-                y = y.ct_mul(&z).ct_mul(&z).ct_mod(m);
+                x = mul_mod(&x, &z);
+                y = mul_mod(&mul_mod(&y, &z), &z);
             }
-            z = z.ct_mul(&z).ct_mod(m);
+            z = mul_mod(&z, &z);
             f = f >> 1;
         }
 
-        let check = x.ct_mul(&x).ct_mod(m);
+        let check = mul_mod(&x, &x);
         if check == n_mod { Some(x) } else { None }
     }
 
@@ -764,11 +802,12 @@ impl<const N: usize> BigInt<N> {
     /// Legendre symbol: returns 1 if `a` is a quadratic residue mod
     /// `p`, -1 if not, 0 if a ≡ 0 mod p. Requires `p` odd prime.
     ///
-    /// # Width requirement
+    /// # Width
     ///
-    /// Uses Euler's criterion via [`pow_mod`](Self::pow_mod), which
-    /// requires `64*N >= 2*bits(p)`. For larger primes use
-    /// [`legendre_w`](Self::legendre_w).
+    /// Uses Euler's criterion via [`pow_mod`](Self::pow_mod), which for
+    /// an odd `p` runs in Montgomery form with no truncation. Correct
+    /// whenever `p` fits in `N` limbs; there is no `64*N >= 2*bits(p)`
+    /// floor.
     pub fn legendre(a: &Self, p: &Self) -> i32 {
         let a_mod = a.ct_mod(p);
         if bool::from(a_mod.is_zero()) {

@@ -219,9 +219,10 @@ impl ExtremalOrder<8> {
                 }
                 _primes_found += 1;
 
-                // Cornacchia uses the same modular-sqrt machinery
-                // and needs the same widening.
-                let Some((x, y)) = BigInt::<8>::cornacchia_w::<17>(&q, &m_prime) else {
+                // Cornacchia shares the Montgomery modular-sqrt machinery,
+                // correct at the candidate's own width; narrow from the
+                // same WMAX = 17 ceiling as the primality test above.
+                let Some((x, y)) = BigInt::<8>::cornacchia_auto::<17>(&q, &m_prime) else {
                     continue;
                 };
                 _cornacchia_ok += 1;

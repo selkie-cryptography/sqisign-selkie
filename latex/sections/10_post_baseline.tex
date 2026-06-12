@@ -74,6 +74,25 @@ removed division.  The decision is unchanged, so all KATs stay
 byte-identical.  Instruction-count A/B (Apple M4): $-13.6\%$ on key
 generation, $-15.0\%$ on signing.
 
+\paragraph{The same narrowing in Cornacchia's modular square root.}
+Cornacchia's algorithm (used to solve the norm equation
+$x^2 + q y^2 = m$ once a prime $m$ is found) carries the same
+over-provisioned width for the same reason, one layer down.  Its
+exponentiations are already in Montgomery form, but the modular
+multiplies \emph{between} them in the Tonelli--Shanks square root
+(forming products up to $(m-1)^2$ or $(m-1)^3$ before reducing) ran in
+canonical form and truncated, again demanding $64W \geq 2\,\mathrm{bits}
+(m)$ and so $W = 17$.  Routing those products through Montgomery
+multiplication removes the truncation, leaving the only requirement
+that $W$ hold $m$, and a width dispatch on $\lceil \mathrm{bits}(m)/64
+\rceil$ then runs the same $273$-bit norm-equation prime at $W = 6$.
+The narrowing is confined to the prime-search call site, which is
+already variable-time; the Montgomery rewrite of the square root itself
+is byte-identical and data-independent, so the wider left-ideal square
+roots inherit only the correctness cleanup.  All KATs stay
+byte-identical.  Instruction-count A/B (Apple M4), on top of the
+preceding change: $-3.6\%$ on key generation, $-3.5\%$ on signing.
+
 \paragraph{Hardware AES on aarch64.}
 The AES-CTR-DRBG that drives every random draw in key generation and
 signing (roughly $3000$ block encryptions per signature) was running
