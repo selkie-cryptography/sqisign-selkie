@@ -10,22 +10,22 @@ preserved) unless explicitly noted under
 layers are already constant-time (the Montgomery ladder runs a fixed
 bit count; \texttt{subtle::ConstantTimeEq} guards secret comparisons);
 the quaternion-arithmetic layer is the primary remaining variable-time
-surface, and the entries below describe its progressive hardening.
+surface, which the optimizations below progressively harden.
 
-The remainder of this section is two running logs --- one of
-experiments that landed, one of experiments that did not.  Recording
-the second is as important as recording the first: each entry that
-names a tried-and-rejected approach spares the next reader the same
-dead end.
+We first present the optimizations that improved performance or closed
+a timing leak (\S\ref{sec:perf-ct}), then the alternatives we evaluated
+and rejected (\S\ref{sec:tried-rejected}).  The negative results are
+recorded because each documents a design decision and spares a reader
+the same dead end.
 
-\subsection{Landed work}
+\subsection{Performance and constant-time optimizations}
 \label{sec:perf-ct}
 
-Measurements below are the deterministic instruction-count delta
-(Valgrind via \texttt{gungraun}) relative to \texttt{main} at the time
-the work landed, on the operation indicated.  Wall-clock benchmarks
-(\texttt{divan}) are tracked separately because they are sensitive to
-runner conditions.
+Performance figures are either deterministic instruction counts --
+Valgrind via \texttt{gungraun}, or hardware instructions-retired via
+\texttt{/usr/bin/time -l} -- or wall-clock A/B medians; each result
+states which. Wall-clock figures are flagged because they are sensitive
+to runner conditions, where the instruction counts are not.
 
 \paragraph{MLLL replacing dual-sum-dual at the response-phase
 intersection.}
@@ -225,36 +225,90 @@ Byte-identical across $100/100$ sign KATs.  The residual variable-time
 \texttt{BigInt::gcd} on $(s_0, t_0)$ in (a) is a separate
 \texttt{TODO(ct)}, deferred to the divstep wiring pass.
 
-\subsection{Tried approaches that did not land}
+\paragraph{Proven-width size-reduction multiplies in MLLL.}
+Each MLLL size-reduction step (the lazy size-reduction, Alg.~8
+of~\cite{KLY26}) subtracts $\lfloor\mu_{\kappa,i}\rceil\,b_i$ from the
+working vector and applies the matching symmetric rank-one update to its
+Gram row, running a handful of products of the integer coefficient
+$\lfloor\mu_{\kappa,i}\rceil$ against a basis coordinate or a Gram entry.
+At fixed-width \texttt{BigInt} these are full $N\times N$ schoolbook
+products at the working width $W=N$ ($110$ limbs at the main
+intersection, $48$ at the auxiliary one), although the operands are far
+narrower.  The C reference avoids the waste implicitly (its
+\texttt{mpz} arithmetic multiplies only the significant limbs of each
+operand), but that is variable-time in the operand magnitude, a timing
+leak on this secret-derived path.  A fixed, \emph{provable} width bound
+recovers the saving without the leak.
+
+\begin{lemma}\label{lem:mlll-widths}
+In the MLLL reduction over fixed-width $\mathtt{BigInt}\langle N\rangle$
+at working width $W=N$, every basis coordinate occupies at most $N/2$
+limbs and every size-reduction coefficient $\lfloor\mu_{\kappa,i}\rceil$
+at most $N/2+1$ limbs.
+\end{lemma}
+
+\begin{proof}
+Let $B$ be the largest-input-norm$^2$ bound that sizes the working
+width, so every intermediate integer satisfies $|x|<2^{64N}$, hence
+$\sqrt{B}<2^{32N}$.  A basis coordinate is bounded by its vector norm,
+$|b[r]|\le\lVert b\rVert=\sqrt{\langle b,b\rangle}\le\sqrt{B}<2^{32N}$,
+so it occupies at most $N/2$ limbs.  For the coefficient, Cauchy--Schwarz
+and the $L^2$ Lov\'asz invariant on the already-reduced prefix give
+\[
+  |\mu_{\kappa,i}|\le\frac{\lVert b_\kappa\rVert}{\lVert b_i^\ast\rVert}
+  \le\frac{\sqrt{B}}{(\bar\delta-\tfrac14)^{(G-1)/2}},
+\]
+using $\lVert b_\kappa\rVert\le\sqrt{B}$, the Lov\'asz bound
+$\lVert b_i^\ast\rVert^2\ge(\bar\delta-\tfrac14)^{\,i-\zeta}
+\lVert b_\zeta^\ast\rVert^2$, and $\lVert b_\zeta\rVert\ge1$ for the
+nonzero integer vector $b_\zeta$.  With $\bar\delta=0.995$ and $G\le16$
+the denominator exceeds $2^{-4}$, so $\lfloor\mu_{\kappa,i}\rceil<
+2^{32N+4}$, which fits in $N/2+1$ limbs.  Both bounds depend only on $N$
+and the $L^2$ constants, not on the operand values.
+\end{proof}
+
+The bounded multiply exploits Lemma~\ref{lem:mlll-widths}: the column
+update multiplies two $\le N/2$-limb operands ($(N/2)^2$ partial
+products instead of $N^2$), and the Gram update an $N/2$-limb coefficient
+against a full-width entry ($(N/2)\,N$).  The trip counts are fixed by
+those widths, with no branch on a secret coefficient's magnitude, so the
+narrowing the reference performs variably becomes constant-time and leaks
+nothing through timing.  Output is byte-identical across all $100$
+signing KATs.  Hardware instruction count (\texttt{/usr/bin/time -l}):
+$-12.9\%$ on signing.
+
+\subsection{Rejected alternatives}
 \label{sec:tried-rejected}
 
-Each entry below names what was tried and the reason it did not
-land.
+Each alternative below was evaluated and not adopted.  We record the
+reason in each case, since a documented dead end is itself a design
+decision and spares a reader the same one.
 
 \paragraph{Cost-optimal isogeny strategy for the verify-side 4-isogeny
 chain.}
 The verify-side $2^e$-isogeny chain in
-\texttt{src/curves/isogeny/mod.rs} --- decomposed into
-$\lfloor e/2 \rfloor$ 4-isogenies --- was changed from runtime
+\texttt{src/curves/isogeny/mod.rs} (decomposed into
+$\lfloor e/2 \rfloor$ 4-isogenies) was changed from runtime
 balanced halving to a compile-time-precomputed cost-optimal De
 Feo--Jao--Plut strategy.  Output is byte-identical.
 Deterministic measurement:
 $-0.04\%$ on verification, $0$ on key generation and
-signing --- no measurable gain because verification's hot path
+signing: no measurable gain, because verification's hot path
 is $\mathbb{F}_{p^2}$ and elliptic-curve arithmetic, not the strategy
 walker, at our chain length ($e \leq 126$).
 
 \paragraph{Cost-optimal strategy on the $(2,2)$-theta chain (surfaces).}
 The same DP strategy was applied to Phase~1 of the $(2,2)$-theta chain
-in \texttt{src/surfaces/mod.rs}.  $166$ of $707$ lib tests failed,
-including the majority of signing KATs.  Root cause: Phase~1 uses the
+in \texttt{src/surfaces/mod.rs}.  A large fraction of the lib tests
+failed, including the majority of signing KATs.  Root cause: Phase~1 uses the
 non-standard Jacobian doubling \texttt{double\_for\_theta} (with
 $Z' = 2yz$) deliberately, so the gluing step receives the specific
 projective representative the C reference produces.  Reordering the
 doublings within the strategy walker changes the cumulative $Z$
 scaling, which the gluing matrix multiplies by, which then changes the
-produced signature bytes --- even though the composed isogeny is
-mathematically unchanged.  Cleared to the non-interop pass.
+produced signature bytes, even though the composed isogeny is
+mathematically unchanged.  The reordering is therefore confined to a
+future non-interoperable release.
 
 \paragraph{Batch inversion in \texttt{cross\_pairings} final
 exponentiation.}
@@ -272,8 +326,8 @@ signing operation.
 \paragraph{Substituting MLLL into ideal multiplication.}
 Replacing the HNF step in \texttt{Lattice::product} with MLLL on the
 same theory as the intersection win.  In practice the multiplication
-runs at small widths where MLLL's fixed overhead --- a $16 \times 16$
-Gram matrix and the iterative reduction --- exceeds the modest HNF
+runs at small widths where MLLL's fixed overhead (a $16 \times 16$
+Gram matrix and the iterative reduction) exceeds the modest HNF
 blow-up it removes.  Result: roughly $1.9\times$ regression on
 key generation in a controlled A/B.
 
@@ -293,29 +347,25 @@ al., ePrint 2025/027, is the intended substitute).
 of the MLLL intersection.}
 Hanyecz et al.\ (ePrint 2025/027) give a constant-time dim-4 BKZ
 with block size $2$ as the Euclidean-norm replacement for
-\texttt{l2\_reduce} on secret-derived inputs.  Their five algorithms
-port to \texttt{src/quaternions/lattice/bkz2.rs} on branch
-\texttt{hanyecz-euclidean-input-lll}; invoked in front of
-\texttt{compact\_intersection} at the two response-phase call sites
-of \S\ref{sec:perf-ct}, output stays byte-identical with the C
-reference (canonical-HNF depends only on the inputs'
-$\mathbb{Z}$-modules, not their basis representatives).
+\texttt{l2\_reduce} on secret-derived inputs.  We ported their five
+algorithms (\texttt{src/quaternions/lattice/bkz2.rs}) and invoked them
+in front of \texttt{compact\_intersection} at the two response-phase
+call sites of \S\ref{sec:perf-ct}; output stays byte-identical with the
+C reference, since the canonical HNF depends only on the inputs'
+$\mathbb{Z}$-modules, not their basis representatives.
 
-The integration did not land.  MLLL already runs at the proven
-width bound of~\cite{KLY26}, which is a property of the lattice and
-not of any basis representation, so BKZ-2 preprocessing cannot
-narrow it further; in our measurements the preprocessing added cost
-at every parameter setting tried and regressed signing wall-clock
-by roughly an order of magnitude.  Separately, the paper's own
-proposed use of BKZ-2 --- substituting for \texttt{l2\_reduce} on
-secret-derived inputs --- is KAT-breaking, since the surviving
-\texttt{l2\_reduce} call sites are followed by basis-dependent
-downstream logic.  Capturing the paper-claimed CT win therefore
-requires a KAT re-baseline; it bundles with the Cornacchia fix
-(ePrint 2025/2192) and the fast-primality items (\S\ref{sec:next})
-into a single non-interop release.  The four BKZ-2 algorithm
-commits remain on \texttt{hanyecz-euclidean-input-lll} as a
-self-contained library; the integration commit is shelved.
+The preprocessing does not help here.  MLLL already runs at the proven
+width bound of~\cite{KLY26}, a property of the lattice rather than of
+any basis representation, so BKZ-2 cannot narrow it further; across
+every parameter setting it added cost and regressed signing wall-clock
+by roughly an order of magnitude.  Separately, the paper's own proposed
+use (substituting for \texttt{l2\_reduce} on secret-derived inputs)
+is KAT-breaking, since the surviving \texttt{l2\_reduce} call sites
+feed basis-dependent downstream logic.  Capturing that constant-time
+win therefore requires a KAT re-baseline, bundled with the Cornacchia
+fix (ePrint 2025/2192) and the fast-primality items (\S\ref{sec:next})
+into a single non-interoperable release.  The BKZ-2 algorithms are
+retained as a self-contained library; only the integration is deferred.
 
 \paragraph{Whole-program LTO with a single codegen unit.}
 A \texttt{[profile.release]} with \texttt{lto = "fat"} and
@@ -326,7 +376,8 @@ sixteen-codegen-unit build: wall-clock A/B (Apple M4) of $+6\%$ on
 signing and $+5\%$ on key generation.  The single codegen unit appears
 to make worse register-allocation and inlining choices in the MLLL and
 lattice-product inner loops than the per-unit default.  Output is
-byte-identical; the regression is pure codegen.  Not adopted.
+byte-identical; the regression is pure codegen, so the default
+multi-unit build is retained.
 
 \paragraph{Byte-identical micro-optimizations with no wall-clock
 effect.}
@@ -359,7 +410,7 @@ replaced.
     (\S\ref{sec:ct}).  The remaining variable-time surfaces are
     \texttt{MontReducer::pow}'s base reduction
     (\texttt{mag\_div\_rem}), Cornacchia in the norm-equation search
-    (ePrint 2025/2192, the highest-severity item --- poly-time key
+    (ePrint 2025/2192, the highest-severity item, poly-time key
     recovery from the input leak), and \texttt{l2\_reduce} on
     secret-derived input (where the Hanyecz BKZ-2 substitution above
     is the intended fix, bundled with the other KAT-breaking CT items
@@ -367,7 +418,7 @@ replaced.
   \item In-place / out-parameter refactor of the hot wide-\texttt{BigInt}
     lattice operations to remove struct-copy overhead
     (\texttt{memcpy} is $\sim\!13.5\%$ of signing).  The arithmetic
-    returns values by move --- \texttt{Lattice::product},
+    returns values by move: \texttt{Lattice::product},
     \texttt{Vector}/\texttt{Matrix} operations, and the \texttt{BigInt}
     operators all return new wide structs (a $4\times 4$
     \texttt{Matrix} of $30$-limb integers is $\sim\!3.8$~KB), copied on
