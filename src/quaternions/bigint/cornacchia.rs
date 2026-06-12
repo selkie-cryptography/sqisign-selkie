@@ -132,10 +132,8 @@ impl<const N: usize> BigInt<N> {
     ///
     /// Widens `q` and `m` to `BigInt<W>` for the modular arithmetic
     /// (Legendre symbol, modular square root, Euclidean reduction),
-    /// then narrows the result back to `BigInt<N>`. Use when
-    /// `64*N < 2*bits(m)` — otherwise [`cornacchia`](Self::cornacchia)
-    /// silently truncates during `pow_mod` and fails to find
-    /// solutions.
+    /// then narrows the result back to `BigInt<N>`. Use when `m` does
+    /// not fit in `N` limbs.
     pub fn cornacchia_w<const W: usize>(q: &Self, m: &Self) -> Option<(Self, Self)> {
         const {
             assert!(
@@ -147,5 +145,74 @@ impl<const N: usize> BigInt<N> {
         let m_w: BigInt<W> = m.widen();
         let (x_w, y_w) = BigInt::<W>::cornacchia(&q_w, &m_w)?;
         Some((x_w.narrow_to::<N>()?, y_w.narrow_to::<N>()?))
+    }
+
+    /// Cornacchia at the tightest working width that still holds `m`,
+    /// narrowing from the caller's ceiling `WMAX` when `m` is small.
+    ///
+    /// Every modular multiply inside [`cornacchia`](Self::cornacchia)
+    /// (Legendre via [`pow_mod`](Self::pow_mod), the square root via
+    /// [`modular_sqrt`](Self::modular_sqrt)) now runs in Montgomery form,
+    /// so nothing truncates and the only width requirement is that `W`
+    /// holds `m`: `64*W >= bits(m)`. The chosen width is
+    /// `ceil(bits(m)/64) + 1` (one limb of margin); `q <= m` fits in the
+    /// same width. `WMAX` is the caller's already-proven-safe ceiling,
+    /// and the dispatch only narrows below it and falls back to it, so
+    /// the result is identical to
+    /// [`cornacchia_w`](Self::cornacchia_w)`::<WMAX>` for every input.
+    /// Cost scales `O(W^2)` in the exponentiation and the Euclidean
+    /// reduction, so the narrowing is large: an `m` of 273 bits runs at
+    /// `W = 6` rather than `WMAX = 17`.
+    ///
+    /// # Constant-time
+    ///
+    /// `bits(m)` selects the width, so this is variable-time in the
+    /// magnitude of `m`. Cornacchia is part of the norm-equation prime
+    /// search of `represent_integer`, which is already the variable-time
+    /// Cornacchia/Basso side-channel surface scheduled for the
+    /// constant-time pass; this adds no new class of leak and is closed
+    /// there wholesale.
+    #[must_use]
+    pub fn cornacchia_auto<const WMAX: usize>(q: &Self, m: &Self) -> Option<(Self, Self)> {
+        let bits = Self::mag_bitsize(&m.limbs) as usize;
+        let need = bits.div_ceil(64) + 1;
+
+        if WMAX > 6 && need <= 6 {
+            return Self::corn_at::<6>(q, m);
+        }
+        if WMAX > 7 && need <= 7 {
+            return Self::corn_at::<7>(q, m);
+        }
+        if WMAX > 8 && need <= 8 {
+            return Self::corn_at::<8>(q, m);
+        }
+        if WMAX > 9 && need <= 9 {
+            return Self::corn_at::<9>(q, m);
+        }
+        if WMAX > 10 && need <= 10 {
+            return Self::corn_at::<10>(q, m);
+        }
+        if WMAX > 12 && need <= 12 {
+            return Self::corn_at::<12>(q, m);
+        }
+        if WMAX > 14 && need <= 14 {
+            return Self::corn_at::<14>(q, m);
+        }
+        if WMAX > 16 && need <= 16 {
+            return Self::corn_at::<16>(q, m);
+        }
+
+        Self::corn_at::<WMAX>(q, m)
+    }
+
+    /// Resizes `q` and `m` to width `W` (the dispatch guarantees `W`
+    /// holds them), runs [`cornacchia`](Self::cornacchia), and resizes
+    /// the result back to `N`.
+    #[must_use]
+    fn corn_at<const W: usize>(q: &Self, m: &Self) -> Option<(Self, Self)> {
+        let q_w = q.resize_unchecked::<W>();
+        let m_w = m.resize_unchecked::<W>();
+        let (x_w, y_w) = BigInt::<W>::cornacchia(&q_w, &m_w)?;
+        Some((x_w.resize_unchecked::<N>(), y_w.resize_unchecked::<N>()))
     }
 }
