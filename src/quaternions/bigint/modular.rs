@@ -337,6 +337,21 @@ impl<const N: usize> MontReducer<N> {
     /// table read needs to be made oblivious (scan all 16 entries with
     /// `subtle::ConditionallySelectable`).
     pub(crate) fn pow(&self, base: &BigInt<N>, exp: &BigInt<N>) -> BigInt<N> {
+        BigInt {
+            sign: 0,
+            limbs: self.reduce_montgomery(&self.pow_mont(base, exp)),
+        }
+    }
+
+    /// Returns `base^exp mod n` in **Montgomery form** (the canonical
+    /// residue times `R mod n`). [`Self::pow`] is this followed by
+    /// [`Self::reduce_montgomery`].
+    ///
+    /// Kept separate so the strong-probable-prime test
+    /// ([`Self::is_strong_probable_prime`]) can chain its squarings on
+    /// the Montgomery-form result without round-tripping through the
+    /// canonical domain.
+    fn pow_mont(&self, base: &BigInt<N>, exp: &BigInt<N>) -> [u64; N] {
         // Reduce base mod n then convert to Mont form.
         let base_red = BigInt::<N>::mag_div_rem(&base.limbs, &self.n).1;
         let base_m = self.to_montgomery(&base_red);
@@ -355,11 +370,8 @@ impl<const N: usize> MontReducer<N> {
 
         let bs = exp.bitsize();
         if bs == 0 {
-            // base^0 = 1.
-            return BigInt {
-                sign: 0,
-                limbs: self.reduce_montgomery(&table[0]),
-            };
+            // base^0 = 1, in Mont form.
+            return table[0];
         }
 
         // Scan exponent in 4-bit windows from the most-significant
@@ -402,10 +414,62 @@ impl<const N: usize> MontReducer<N> {
             }
         }
 
-        BigInt {
-            sign: 0,
-            limbs: self.reduce_montgomery(&result),
+        result
+    }
+
+    /// Returns `true` if `n` (the modulus this reducer was built for) is
+    /// a strong probable prime to base `a` — equivalently, `a` is *not*
+    /// a Miller-Rabin witness for the compositeness of `n`.
+    ///
+    /// `n - 1 = 2^s · d` with `d` odd; the caller supplies `d`, `s`, and
+    /// `n_minus_1` (computed once per `n`, shared across all witness
+    /// bases). `n_minus_1` must equal `n - 1`.
+    ///
+    /// # Width
+    ///
+    /// The square-chain after the initial exponentiation runs in
+    /// Montgomery form via [`Self::square`], whose internal `2N`-limb
+    /// product is folded back by REDC with no truncation. The test is
+    /// therefore correct whenever `n` fits in `N` limbs, independent of
+    /// how `bits(n)` compares to `64·N`. (The earlier formulation
+    /// squared in canonical form via a fixed-width `N`-limb multiply,
+    /// which truncated `x²` and imposed the spurious `64·N >= 2·bits`
+    /// floor.)
+    ///
+    /// # Constant-time
+    ///
+    /// Variable-time on the candidate via [`Self::pow_mont`]'s
+    /// window-indexed table read and the early `return true` once a
+    /// witness is satisfied. Primality on secret-derived candidates is
+    /// already variable-time (the Cornacchia/Basso side-channel surface
+    /// scheduled for the constant-time pass).
+    pub(crate) fn is_strong_probable_prime(
+        &self,
+        a: &BigInt<N>,
+        d: &BigInt<N>,
+        s: u32,
+        n_minus_1: &BigInt<N>,
+    ) -> bool {
+        let mut one = [0u64; N];
+        one[0] = 1;
+        let one_m = self.to_montgomery(&one);
+        let n_minus_1_m = self.to_montgomery(&n_minus_1.limbs);
+
+        let mut x = self.pow_mont(a, d);
+        if x == one_m || x == n_minus_1_m {
+            return true;
         }
+
+        let mut r = 1;
+        while r < s {
+            x = self.square(&x);
+            if x == n_minus_1_m {
+                return true;
+            }
+            r += 1;
+        }
+
+        false
     }
 
     /// Returns `-u^{-1} mod 2^64` for odd `u`.
