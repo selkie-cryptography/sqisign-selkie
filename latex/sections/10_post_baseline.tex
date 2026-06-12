@@ -53,6 +53,27 @@ subtracts in \texttt{mul}, \texttt{reduce\_wide}, and
 identical.  Deterministic measurement: $-1.01\%$ on key
 generation, $-0.10\%$ on signing.  Verification untouched.
 
+\paragraph{Montgomery-form Miller--Rabin square-chain unlocks width
+narrowing.}
+After the witness exponentiation $x = a^d \bmod n$, the strong
+probable-prime test squares $x$ repeatedly until it reaches $n-1$ or
+exhausts its $s$ steps.  This square-chain was running in canonical
+form (a fixed-width $W$-limb multiply followed by a modular
+reduction), which truncates the $2\,\mathrm{bits}(n)$-wide product
+$x^2$ to $W$ limbs and so demands a working width satisfying
+$64W \geq 2\,\mathrm{bits}(n)$: a $273$-bit norm-equation prime was
+tested at $W = 10$.  Moving the chain into Montgomery form, where
+each step squares via REDC (the full $2W$-limb product folds back
+with no truncation, and no per-step division), makes the test correct
+whenever the candidate merely fits, $64W \geq \mathrm{bits}(n)$.  The
+working-width dispatch then narrows on $\lceil \mathrm{bits}(n)/64
+\rceil$ rather than $\lceil 2\,\mathrm{bits}(n)/64 \rceil$, halving
+the width: the same $273$-bit candidate now runs at $W = 6$, and
+because the per-square cost is $O(W^2)$ the gain compounds with the
+removed division.  The decision is unchanged, so all KATs stay
+byte-identical.  Instruction-count A/B (Apple M4): $-13.6\%$ on key
+generation, $-15.0\%$ on signing.
+
 \paragraph{Hardware AES on aarch64.}
 The AES-CTR-DRBG that drives every random draw in key generation and
 signing (roughly $3000$ block encryptions per signature) was running
