@@ -18,14 +18,16 @@ impl<const N: usize> BigInt<N> {
     ///
     /// [Miller76]: https://en.wikipedia.org/wiki/Miller%E2%80%93Rabin_primality_test
     ///
-    /// # Width requirement
+    /// # Width
     ///
-    /// Miller-Rabin uses [`pow_mod`](Self::pow_mod) and direct
-    /// `ct_mul` on values up to `self`. The caller must ensure
-    /// `64*N >= 2*bits(self)` — otherwise the squarings silently
-    /// truncate and the test returns wrong answers (in practice,
-    /// false negatives on primes). For larger candidates use
-    /// [`is_probable_prime_w`](Self::is_probable_prime_w).
+    /// The whole test (witness exponentiation and the strong-prime
+    /// square-chain) runs in Montgomery form via
+    /// [`MontReducer::is_strong_probable_prime`], whose internal
+    /// `2N`-limb products are folded back by REDC without truncation.
+    /// It is therefore correct for any `self` that fits in `N` limbs;
+    /// there is no `64*N >= 2*bits` floor. (The earlier canonical-form
+    /// square-chain squared with a fixed-width `N`-limb multiply that
+    /// truncated `x²`, which did impose that floor.)
     ///
     /// WARNING: Not constant-time — the number of iterations and
     /// modular exponentiations depend on the value.
@@ -100,20 +102,7 @@ impl<const N: usize> BigInt<N> {
                 continue;
             }
 
-            let mut x = ctx.pow(&a, &d);
-            if x == Self::ONE || x == n_minus_1 {
-                continue;
-            }
-
-            let mut composite = true;
-            for _r in 1..s {
-                x = x.ct_mul(&x).ct_mod(self);
-                if x == n_minus_1 {
-                    composite = false;
-                    break;
-                }
-            }
-            if composite {
+            if !ctx.is_strong_probable_prime(&a, &d, s, &n_minus_1) {
                 return false;
             }
         }
@@ -142,21 +131,23 @@ impl<const N: usize> BigInt<N> {
     }
 
     /// Miller-Rabin at the tightest working width that still holds the
-    /// Montgomery exponentiation, narrowing from the caller's ceiling
-    /// `WMAX` when the candidate is small.
+    /// candidate, narrowing from the caller's ceiling `WMAX` when the
+    /// candidate is small.
     ///
-    /// The Montgomery REDC truncates unless `64*W >= 2*bits(self)` (the
-    /// confirmed floor; below it the test silently mis-decides), so the
-    /// chosen width is `ceil(2*bits/64) + 1` limb of margin.  `WMAX` is
-    /// the caller's already-proven-safe ceiling (the width it would
-    /// otherwise fix unconditionally); the dispatch only narrows *below*
-    /// `WMAX` and falls back to it, so the primality decision is
-    /// identical to
-    /// [`is_probable_prime_w`](Self::is_probable_prime_w)`::<WMAX>`
-    /// for every candidate.  The win is that the common small candidates
-    /// (the norm-equation primes are usually far below the worst-case
-    /// `WMAX`) run their `O(W^2)` Montgomery arithmetic at a much smaller
-    /// width.
+    /// The whole test runs in Montgomery form (see
+    /// [`is_probable_prime`](Self::is_probable_prime)), which never
+    /// truncates, so the only width requirement is that `W` holds the
+    /// candidate: `64*W >= bits(self)`. The chosen width is therefore
+    /// `ceil(bits/64) + 1` (one limb of margin). `WMAX` is the caller's
+    /// already-proven-safe ceiling (the width it would otherwise fix
+    /// unconditionally); the dispatch only narrows *below* `WMAX` and
+    /// falls back to it, so the primality decision is identical to
+    /// [`is_probable_prime_w`](Self::is_probable_prime_w)`::<WMAX>` for
+    /// every candidate. The win is that the common candidates (the
+    /// norm-equation primes are 273 to ~515 bits, far below the
+    /// worst-case `WMAX`) run their `O(W^2)` Montgomery arithmetic at a
+    /// much smaller width: a 273-bit candidate narrows from `WMAX = 17`
+    /// to `W = 6`, an ~8x reduction in limb-mults per squaring.
     ///
     /// # Constant-time
     ///
@@ -169,10 +160,19 @@ impl<const N: usize> BigInt<N> {
     #[must_use]
     pub fn is_probable_prime_auto<const WMAX: usize>(&self, rounds: u32) -> bool {
         let bits = Self::mag_bitsize(&self.limbs) as usize;
-        let need = (2 * bits).div_ceil(64) + 1;
+        let need = bits.div_ceil(64) + 1;
 
+        if WMAX > 6 && need <= 6 {
+            return self.prime_at::<6>(rounds);
+        }
+        if WMAX > 7 && need <= 7 {
+            return self.prime_at::<7>(rounds);
+        }
         if WMAX > 8 && need <= 8 {
             return self.prime_at::<8>(rounds);
+        }
+        if WMAX > 9 && need <= 9 {
+            return self.prime_at::<9>(rounds);
         }
         if WMAX > 10 && need <= 10 {
             return self.prime_at::<10>(rounds);
