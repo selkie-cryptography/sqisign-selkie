@@ -248,6 +248,22 @@ impl<const N: usize, const G: usize> Generators<N, G> {
         let eta_bar_dpe = DoublePlusExponent::from_f64(eta_bar);
         let neg_eta_bar_dpe = DoublePlusExponent::from_f64(-eta_bar);
 
+        // The size-reduction coefficient x = ⌊μ_{κ,i}⌉ is provably narrow:
+        // |μ_{κ,i}| <= ‖b_κ‖/‖b_i*‖ <= √B / (δ̄ - 1/4)^((G-1)/2), where B is
+        // the largest-input-norm² bound that sizes W = N (so B < 2^(N·64),
+        // √B < 2^(N·32)), the prefix is LLL-reduced (so ‖b_i*‖ is bounded
+        // below), and ‖b_ζ‖ >= 1 (nonzero integer vector). Hence x fits in
+        // N/2 + 1 limbs regardless of the secret operand values, so the
+        // x·(·) products below run at a fixed N/2 + 2 limb width. This is a
+        // data-independent bound (a function of N and the L² constants, not
+        // of x), so it does not branch on secret magnitudes.
+        let mu_bound = N / 2 + 2;
+
+        // Each basis coordinate is equally narrow: |b[row]| <= ‖b‖ =
+        // √(gram[·][·]) <= √B < 2^(N·32), i.e. at most N/2 limbs. So the
+        // x·b_i products in the column update bound *both* operands.
+        let basis_bound = N / 2 + 1;
+
         loop {
             // Cholesky GSO of b_κ against the live prefix (Alg. 8 step 2).
             for j in zeta..=kappa {
@@ -282,7 +298,11 @@ impl<const N: usize, const G: usize> Generators<N, G> {
                         let old = &lo[i];
                         let tgt = &mut hi[0];
                         for row in 0..4 {
-                            tgt[row] = tgt[row].ct_sub(&x.ct_mul(&old[row]));
+                            tgt[row] = tgt[row].ct_sub(&x.ct_mul_both_bounded(
+                                &old[row],
+                                mu_bound,
+                                basis_bound,
+                            ));
                         }
                     }
 
@@ -293,7 +313,7 @@ impl<const N: usize, const G: usize> Generators<N, G> {
                     // multiplying twice.
                     let mut prods = [BigInt::<N>::ZERO; G];
                     for (p, src) in prods.iter_mut().zip(gram[i].iter()) {
-                        *p = x.ct_mul(src);
+                        *p = x.ct_mul_lhs_bounded(src, mu_bound);
                     }
 
                     for (dst, p) in gram[kappa].iter_mut().zip(prods.iter()) {
@@ -304,7 +324,7 @@ impl<const N: usize, const G: usize> Generators<N, G> {
                     // which folds in the x²·G[i][i] term of ‖b_κ - x·b_i‖².
                     for (m, row) in gram.iter_mut().enumerate() {
                         let upd = if m == kappa {
-                            x.ct_mul(&row[i])
+                            x.ct_mul_lhs_bounded(&row[i], mu_bound)
                         } else {
                             prods[m]
                         };
