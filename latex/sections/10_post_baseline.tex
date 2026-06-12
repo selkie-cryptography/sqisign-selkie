@@ -93,6 +93,23 @@ roots inherit only the correctness cleanup.  All KATs stay
 byte-identical.  Instruction-count A/B (Apple M4), on top of the
 preceding change: $-3.6\%$ on key generation, $-3.5\%$ on signing.
 
+\paragraph{Fixed-width square root in commitment-ideal sampling.}
+The same Montgomery square root has a second beneficiary, on a surface
+where the width is fixed rather than narrowed per candidate.  Sampling
+a random left ideal of norm $N = D_{\mathrm{mix}}$ (a $513$-bit
+\emph{public} parameter) draws a trace-zero quaternion and recovers its
+missing coordinate by a Legendre test and a square root modulo $N$,
+inside a rejection loop.  Those two operations were running at the
+$30$-limb storage width the surrounding lattice columns require, though
+$N$ and the reduced operand need only nine limbs.  Since $N$ is a fixed
+public bound, not a secret-dependent magnitude, narrowing this modular
+arithmetic to nine limbs is data-independent (the same width on every
+call), and the Montgomery square root makes it correct.  Output
+byte-identical.  Instruction-count A/B (Apple M4): $-4.2\%$ on key
+generation, $-0.5\%$ on signing; key generation gains the most because
+it builds the secret ideal here, whereas signing samples only the
+commitment.
+
 \paragraph{Hardware AES on aarch64.}
 The AES-CTR-DRBG that drives every random draw in key generation and
 signing (roughly $3000$ block encryptions per signature) was running

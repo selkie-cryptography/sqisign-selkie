@@ -224,16 +224,30 @@ impl LeftIdeal<30> {
             let nrd_mod = nrd.ct_mod(n);
             let neg_nrd = n.ct_sub(&nrd_mod);
 
-            // Check Legendre(-nrd(γ), N) = 1. The `_w::<30>` variants
-            // keep the primality/sqrt arithmetic at the storage width
-            // (well above the 1026-bit `pow_mod` requirement).
-            if BigInt::<30>::legendre_w::<30>(&neg_nrd, n) != 1 {
+            // The Legendre check and square root take N = D_MIX (513
+            // bits) as modulus, with neg_nrd reduced at or below it, so
+            // both fit in 9 limbs. Run them there rather than at the
+            // 30-limb storage width (which the lattice columns and gram
+            // need, but this modular arithmetic does not). The width is a
+            // static bound on N, not a branch on the secret operand, so
+            // this stays data-independent; Montgomery `modular_sqrt` is
+            // correct at 9 limbs, so the decision and root are
+            // byte-identical to the 30-limb path.
+            let neg_nrd_9 = neg_nrd
+                .narrow_to::<9>()
+                .expect("neg_nrd <= N = D_MIX (513 bits) fits in 9 limbs");
+            let n_9 = n
+                .narrow_to::<9>()
+                .expect("N = D_MIX (513 bits) fits in 9 limbs");
+
+            // Check Legendre(-nrd(γ), N) = 1.
+            if BigInt::<9>::legendre(&neg_nrd_9, &n_9) != 1 {
                 continue;
             }
 
             // a = √(-nrd(γ)) mod N.
-            let a = match BigInt::<30>::modular_sqrt_w::<30>(&neg_nrd, n) {
-                Some(s) => s,
+            let a = match BigInt::<9>::modular_sqrt(&neg_nrd_9, &n_9) {
+                Some(s) => s.widen::<30>(),
                 None => continue,
             };
 
