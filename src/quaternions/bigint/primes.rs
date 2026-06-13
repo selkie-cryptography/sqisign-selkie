@@ -48,6 +48,34 @@ impl<const N: usize> BigInt<N> {
             return false;
         }
 
+        // Small-prime trial-division pre-screen, matching the reference's
+        // mini-gmp `mpz_probab_prime_p`, which rejects any candidate
+        // sharing a factor with `GMP_PRIME_PRODUCT = 3*5*7*11*13*17*19*23*29`
+        // (`0xc0cfd797`) before its BPSW/Miller-Rabin chain. A candidate
+        // divisible by one of these primes (and larger than it) is
+        // composite, so the witness exponentiation below would reject it
+        // too: the accept/reject decision, and every downstream signature,
+        // is unchanged. The win is rejecting the bulk of random composites
+        // with one `ct_mod` plus nine `u64` remainders instead of building
+        // a `MontReducer` (the `R^2` setup) and running a modular
+        // exponentiation.
+        //
+        // `PRIMORIAL = 3*5*...*29` fits in `u32`, so `r = self mod PRIMORIAL`
+        // carries `self mod p` for every small prime `p` (each divides
+        // `PRIMORIAL`), recovered as `r % p`. The `self != p` guard keeps
+        // the predicate correct when `self` is itself one of these primes.
+        const SMALL_PRIMES: [u64; 9] = [3, 5, 7, 11, 13, 17, 19, 23, 29];
+        const PRIMORIAL: u64 = 3_234_846_615;
+        let r = self.ct_mod(&Self::from_u64(PRIMORIAL)).as_limbs()[0];
+        let mut i = 0;
+        while i < SMALL_PRIMES.len() {
+            let p = SMALL_PRIMES[i];
+            if r.is_multiple_of(p) && *self != Self::from_u64(p) {
+                return false;
+            }
+            i += 1;
+        }
+
         // Build the Montgomery context once and delegate. (Per the CT
         // note on `MontReducer`: this within-function context is safe even
         // when `self` is a secret-derived prime candidate.)
