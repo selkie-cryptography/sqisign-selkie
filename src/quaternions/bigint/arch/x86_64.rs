@@ -203,3 +203,95 @@ pub(in super::super) fn mag_sqr_4_adx(a: &[u64; 4]) -> [u64; 4] {
 
     [r0, r1, r2, r3]
 }
+
+/// Column-scanning (Comba) truncated schoolbook multiply: returns the
+/// low `N` limbs of `a * b`.
+///
+/// For the wide widths (`N = 30`, `N = 60`) the result cannot live in
+/// registers, so the dual-chain [`mag_mul_4_adx`] form (which needs a
+/// register-resident accumulator, and whose `adcx`/`adox` cannot target
+/// memory) does not apply. Comba instead keeps a 192-bit accumulator
+/// (`acc0:acc1:acc2`) in three registers across the whole product,
+/// independent of `N`: each column sums its partial products into the
+/// accumulator with one `mulx` plus an `add`/`adc`/`adc` chain, stores
+/// one output limb, then shifts the accumulator down. The chain
+/// completes within each product (one CF chain), so the inner loop uses
+/// ordinary `cmp`/branch control. Versus the portable `u128` row form
+/// this drops the `setb` carry-materialization and the per-product
+/// result load/store, cutting the per-product instruction count.
+///
+/// # Safety
+///
+/// `target_feature = "adx"` and `"bmi2"` are cfg-required (`mulx`).
+/// Reads `N` `u64` from each of `a` and `b`, writes `N` `u64` to the
+/// output. No stack use. `N >= 1`.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "adx",
+    target_feature = "bmi2",
+))]
+#[inline]
+pub(in super::super) fn mag_mul_comba<const N: usize>(a: &[u64; N], b: &[u64; N]) -> [u64; N] {
+    const { assert!(N >= 1, "mag_mul_comba: N >= 1") };
+    let mut out = [0u64; N];
+
+    // SAFETY: cfg-gated on +adx,+bmi2. `ap`/`bp` are read for `N` limbs;
+    // `ocur` (initialized to the output pointer) is written for `N`
+    // limbs. Loop bounds are pointer comparisons over those `N`-limb
+    // ranges (a width, not data). nostack: no spills.
+    unsafe {
+        asm!(
+            // bcol = &b[0] (column-0 start); oend = &out[N]; acc = 0.
+            "mov   {bcol}, {bp}",
+            "lea   {oend}, [{ocur} + {nb}]",
+            "xor   {a0:e}, {a0:e}",
+            "xor   {a1:e}, {a1:e}",
+            "xor   {a2:e}, {a2:e}",
+
+            // Column k: ai = &a[0], bj = &b[k] (i ascends, j descends).
+            "2:",
+            "mov   {ai}, {ap}",
+            "mov   {bj}, {bcol}",
+
+            // Inner: acc += a[i] * b[j] for j = k..0.
+            "3:",
+            "mov   rdx, [{ai}]",
+            "add   {ai}, 8",
+            "mulx  {hi}, {lo}, qword ptr [{bj}]",
+            "add   {a0}, {lo}",
+            "adc   {a1}, {hi}",
+            "adc   {a2}, 0",
+            "sub   {bj}, 8",
+            "cmp   {bj}, {bp}",
+            "jae   3b",
+
+            // Emit out[k] = acc0, shift the accumulator down one limb.
+            "mov   [{ocur}], {a0}",
+            "mov   {a0}, {a1}",
+            "mov   {a1}, {a2}",
+            "xor   {a2:e}, {a2:e}",
+            "add   {ocur}, 8",
+            "add   {bcol}, 8",
+            "cmp   {ocur}, {oend}",
+            "jne   2b",
+
+            ap = in(reg) a.as_ptr(),
+            bp = in(reg) b.as_ptr(),
+            ocur = inout(reg) out.as_mut_ptr() => _,
+            nb = const N * 8,
+            bcol = out(reg) _,
+            oend = out(reg) _,
+            ai = out(reg) _,
+            bj = out(reg) _,
+            a0 = out(reg) _,
+            a1 = out(reg) _,
+            a2 = out(reg) _,
+            lo = out(reg) _,
+            hi = out(reg) _,
+            out("rdx") _,
+            options(nostack),
+        );
+    }
+
+    out
+}
