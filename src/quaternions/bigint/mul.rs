@@ -5,7 +5,7 @@
 
 use core::ops::Mul;
 
-use super::{BigInt, widening_mul};
+use super::BigInt;
 
 impl<const N: usize> BigInt<N> {
     /// Schoolbook multiplication of magnitudes, truncated to `N` limbs.
@@ -46,11 +46,14 @@ impl<const N: usize> BigInt<N> {
             let mut carry: u64 = 0;
             let mut j = 0;
             while j < N - i {
-                let (lo, hi) = widening_mul(a[i], b[j]);
-                let (s1, c1) = result[i + j].overflowing_add(lo);
-                let (s2, c2) = s1.overflowing_add(carry);
-                result[i + j] = s2;
-                carry = hi + (c1 as u64) + (c2 as u64);
+                // Single-`u128` multiply-accumulate: `result + a*b + carry`
+                // fits in 128 bits (max is `2^128 - 1`), so the high half is
+                // the carry. LLVM lowers this to `mul`/`umulh` + an `adds`/
+                // `adcs` carry chain, avoiding the `cset`-per-limb the
+                // `widening_mul` + double-`overflowing_add` form emits.
+                let prod = result[i + j] as u128 + a[i] as u128 * b[j] as u128 + carry as u128;
+                result[i + j] = prod as u64;
+                carry = (prod >> 64) as u64;
                 j += 1;
             }
             i += 1;
