@@ -115,6 +115,121 @@ pub(in super::super) fn mag_mul_4_adx(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
     [r0, r1, r2, r3]
 }
 
+/// Runs the `N` Montgomery-reduction rounds in place on `t` (initialized
+/// by the caller to the low half of the `2N`-limb input), sliding in the
+/// high half `hi`, and returns the overflow limb `t_n`.
+///
+/// Each round picks `m = t[0] * n_inv (mod 2^64)`, adds `m*n` with a
+/// `mulx` + `add`/`adc` chain, and shifts the window down one limb; the
+/// caller does the final conditional subtract (using the returned
+/// `t_n`), matching the portable `reduce_wide`. The accumulator `t` is
+/// memory-resident, so this uses a single CF chain (`adcx`/`adox` cannot
+/// target memory); the win over the portable form is dropping the
+/// per-limb `setb` carry-materialization and the redundant scalar
+/// spills. Requires `N >= 2`.
+///
+/// # Safety
+///
+/// `target_feature = "adx"` and `"bmi2"` are cfg-required (`mulx`).
+/// Reads/writes `N` `u64` through `t`, reads `N` `u64` from each of `hi`
+/// and `n`. No stack use.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "adx",
+    target_feature = "bmi2",
+))]
+#[inline]
+pub(in super::super) fn mont_redc<const N: usize>(
+    t: &mut [u64; N],
+    hi: &[u64; N],
+    n: &[u64; N],
+    n_inv: u64,
+) -> u64 {
+    const { assert!(N >= 2, "mont_redc: N >= 2") };
+
+    // Precompute the slide source `&hi[2]` and the initial window high
+    // limbs in Rust, so the asm needs neither an `hi` base pointer nor an
+    // end pointer (x86 register budget): `t_np1 = hi[round+2]` is gated
+    // on `round < N-2` against a const, and `hs` advances each round.
+    let hs0 = hi.as_ptr().wrapping_add(2);
+    let t_n: u64;
+
+    // SAFETY: cfg-gated +adx,+bmi2. `tp` read+written for `N` limbs;
+    // `np` read for `N` limbs; `hs` reads `hi[2..N]` while `round < N-2`.
+    unsafe {
+        asm!(
+            "xor   {rc:e}, {rc:e}",                  // round = 0
+
+            // Round rc: rdx = m = t[0]*n_inv; c = (t[0] + m*n[0]) >> 64.
+            "2:",
+            "mov   rdx, [{tp}]",
+            "imul  rdx, {ninv}",
+            "mulx  {hi_p}, {lo}, qword ptr [{np}]",
+            "mov   {c}, [{tp}]",
+            "add   {c}, {lo}",                       // low limb cancels; take CF
+            "mov   {c}, {hi_p}",
+            "adc   {c}, 0",
+
+            // Inner j = 1..N: t[j-1] = t[j] + m*n[j] + c; c = high.
+            "mov   {jb}, 8",
+            "3:",
+            "cmp   {jb}, {nb}",
+            "jae   4f",
+            "mulx  {hi_p}, {lo}, qword ptr [{np} + {jb}]",
+            "mov   {tmp}, [{tp} + {jb}]",
+            "add   {tmp}, {c}",
+            "adc   {hi_p}, 0",
+            "add   {tmp}, {lo}",
+            "adc   {hi_p}, 0",
+            "mov   {c}, {hi_p}",
+            "mov   [{tp} + {jb} - 8], {tmp}",
+            "add   {jb}, 8",
+            "jmp   3b",
+
+            // t[N-1] = (t_n + c) low; t_n = t_np1 + carry; slide t_np1.
+            "4:",
+            "add   {tn}, {c}",
+            "mov   [{tp} + {nbm8}], {tn}",
+            "adc   {tnp1}, 0",
+            "mov   {tn}, {tnp1}",
+            "cmp   {rc:e}, {nm2}",
+            "jae   5f",
+            "mov   {tnp1}, [{hs}]",
+            "jmp   6f",
+            "5:",
+            "xor   {tnp1:e}, {tnp1:e}",
+            "6:",
+            "add   {hs}, 8",
+
+            // rc += 1; loop while rc < N.
+            "add   {rc:e}, 1",
+            "cmp   {rc:e}, {ncount}",
+            "jb    2b",
+
+            tp = in(reg) t.as_mut_ptr(),
+            np = in(reg) n.as_ptr(),
+            ninv = in(reg) n_inv,
+            nb = const N * 8,
+            nbm8 = const (N - 1) * 8,
+            ncount = const N,
+            nm2 = const N - 2,
+            hs = inout(reg) hs0 => _,
+            tn = inout(reg) hi[0] => t_n,
+            tnp1 = inout(reg) hi[1] => _,
+            rc = out(reg) _,
+            c = out(reg) _,
+            lo = out(reg) _,
+            hi_p = out(reg) _,
+            tmp = out(reg) _,
+            jb = out(reg) _,
+            out("rdx") _,
+            options(nostack),
+        );
+    }
+
+    t_n
+}
+
 /// 4-limb truncated squaring via dual-chain ADX, exploiting cross-term
 /// symmetry `a[i]·a[j] == a[j]·a[i]`.
 ///
