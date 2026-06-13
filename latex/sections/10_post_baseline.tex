@@ -122,6 +122,35 @@ one or two digits) and double only $64N$ further steps to reach $R^2$,
 halving the ladder.  Output byte-identical.  Instruction-count A/B
 (Apple M4): $-0.7\%$ on key generation, $-0.6\%$ on signing.
 
+\paragraph{Multiply-accumulate form for the truncated big-integer
+multiply.}
+The schoolbook \texttt{mag\_mul} (the truncated $N$-limb product
+underlying all quaternion-side arithmetic) accumulated each column with
+a separate-halves \texttt{widening\_mul} and two carrying additions,
+which the compiler lowers to a carry-materialization (\texttt{cset})
+per limb.  Rewriting the inner step as a single $128$-bit
+multiply-accumulate, $\texttt{result} + a_i b_j + \texttt{carry}$
+(whose sum cannot exceed $2^{128}-1$, so the high half is the next
+carry), lets the compiler emit a straight \texttt{mul}/\texttt{umulh}
+plus an add-with-carry chain.  Portable across targets, output
+byte-identical.  Instruction-count A/B (Apple M4): $-7.0\%$ on key
+generation, $-2.7\%$ on signing.
+
+\paragraph{Column-scanning multiply on Apple Silicon.}
+On Apple Silicon the wide lattice multiplies ($N = 30$, $N = 60$) are
+bound by memory traffic, not issue width: the row-scanning multiply
+above loads and stores each result limb once per partial product.  An
+\texttt{aarch64} assembly kernel reorganizes the schoolbook into
+column (Comba) order, holding a $192$-bit column accumulator in
+registers and storing one output limb per column, which removes those
+per-product round trips.  It is gated to \texttt{aarch64}, so the
+instruction-count grade on \texttt{x86\_64} (which keeps the portable
+multiply-accumulate above) is unchanged; the kernel trades a few more
+register additions for far fewer loads and stores, so it is measured in
+cycles rather than instructions.  Output byte-identical (verified
+against an independent multi-width reference in addition to the KATs).
+Cycle A/B (Apple M4): $-9\%$ on key generation, $-24.6\%$ on signing.
+
 \paragraph{Hardware AES on aarch64.}
 The AES-CTR-DRBG that drives every random draw in key generation and
 signing (roughly $3000$ block encryptions per signature) was running
