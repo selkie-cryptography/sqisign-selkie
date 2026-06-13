@@ -915,6 +915,68 @@ proptest! {
     }
 }
 
+// Direct reference oracle for the truncated `mag_mul` across the wide
+// widths the lattice multiplies hit (N = 30, 60), where the aarch64
+// build routes `ct_mul` through the column-scanning Comba `asm!`. The
+// reference is an independent row-scanning u128 schoolbook, so it
+// exercises a different code path (scan order, Rust vs asm) than the
+// implementation under test. Deterministic splitmix64 inputs plus an
+// all-ones edge case stress the carry chain.
+#[test]
+fn mag_mul_matches_reference_multi_width() {
+    fn reference<const N: usize>(a: &[u64; N], b: &[u64; N]) -> [u64; N] {
+        let mut r = [0u64; N];
+        let mut i = 0;
+        while i < N {
+            let mut carry: u128 = 0;
+            let mut j = 0;
+            while j < N - i {
+                let t = r[i + j] as u128 + a[i] as u128 * b[j] as u128 + carry;
+                r[i + j] = t as u64;
+                carry = t >> 64;
+                j += 1;
+            }
+            i += 1;
+        }
+        r
+    }
+
+    fn check<const N: usize>(seed: &mut u64) {
+        let mut next = || {
+            *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = *seed;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+
+        for _ in 0..200 {
+            let a: [u64; N] = core::array::from_fn(|_| next());
+            let b: [u64; N] = core::array::from_fn(|_| next());
+
+            let got = BigInt::<N>::from_limbs(a) * BigInt::<N>::from_limbs(b);
+            assert_eq!(*got.as_limbs(), reference(&a, &b), "N={N} random mismatch");
+        }
+
+        // All-ones * all-ones: maximal carry propagation.
+        let ones = [u64::MAX; N];
+        let got = BigInt::<N>::from_limbs(ones) * BigInt::<N>::from_limbs(ones);
+        assert_eq!(
+            *got.as_limbs(),
+            reference(&ones, &ones),
+            "N={N} all-ones mismatch"
+        );
+    }
+
+    let mut seed = 0x1234_5678_9ABC_DEF0u64;
+    check::<4>(&mut seed);
+    check::<5>(&mut seed);
+    check::<8>(&mut seed);
+    check::<9>(&mut seed);
+    check::<30>(&mut seed);
+    check::<60>(&mut seed);
+}
+
 #[test]
 fn bigint_sqr_zero() {
     let z = BigInt::<4>::ZERO;

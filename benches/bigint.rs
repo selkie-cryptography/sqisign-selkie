@@ -61,6 +61,34 @@ fn mul(bencher: divan::Bencher) {
     bencher.bench(|| divan::black_box(a) * divan::black_box(b));
 }
 
+/// Fills `N` limbs from an LCG so the wide-`mul` benches exercise full
+/// limbs (the lattice/HNF widths the Comba multiply targets).
+fn sample_wide<const N: usize>(seed: u64) -> BigInt<N> {
+    let mut limbs = [0u64; N];
+    let mut s = seed;
+    for limb in &mut limbs {
+        s = s
+            .wrapping_mul(0x5851_F42D_4C95_7F2D)
+            .wrapping_add(0x1405_7B7E_F767_814F);
+        *limb = s;
+    }
+    BigInt::from_limbs(limbs)
+}
+
+#[divan::bench]
+fn mul_w30(bencher: divan::Bencher) {
+    let a = sample_wide::<30>(0x1111);
+    let b = sample_wide::<30>(0x2222);
+    bencher.bench(|| divan::black_box(a) * divan::black_box(b));
+}
+
+#[divan::bench]
+fn mul_w60(bencher: divan::Bencher) {
+    let a = sample_wide::<60>(0x3333);
+    let b = sample_wide::<60>(0x4444);
+    bencher.bench(|| divan::black_box(a) * divan::black_box(b));
+}
+
 #[divan::bench]
 fn div_rem(bencher: divan::Bencher) {
     let a = sample_a();

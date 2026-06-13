@@ -18,47 +18,59 @@ impl<const N: usize> BigInt<N> {
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
     pub(super) fn mag_mul(a: &[u64; N], b: &[u64; N]) -> [u64; N] {
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_feature = "adx",
-            target_feature = "bmi2",
-        ))]
-        if N == 4 {
-            // SAFETY: const-N == 4, so the casts are between
-            // `&[u64; 4]` and `&[u64; N]` with identical layouts.
-            let r4 = unsafe {
-                super::arch::x86_64::mag_mul_4_adx(
-                    &*(a.as_ptr().cast::<[u64; 4]>()),
-                    &*(b.as_ptr().cast::<[u64; 4]>()),
-                )
-            };
-            let mut out = [0u64; N];
-            // SAFETY: same const-N == 4.
-            unsafe {
-                core::ptr::copy_nonoverlapping(r4.as_ptr(), out.as_mut_ptr(), 4);
-            }
-            return out;
+        // aarch64: column-scanning Comba multiply (register-held column
+        // accumulator, no per-product result load/store). Wins on the
+        // wide lattice multiplies; see `super::arch::aarch64`.
+        #[cfg(target_arch = "aarch64")]
+        {
+            super::arch::aarch64::mag_mul_comba(a, b)
         }
 
-        let mut result = [0u64; N];
-        let mut i = 0;
-        while i < N {
-            let mut carry: u64 = 0;
-            let mut j = 0;
-            while j < N - i {
-                // Single-`u128` multiply-accumulate: `result + a*b + carry`
-                // fits in 128 bits (max is `2^128 - 1`), so the high half is
-                // the carry. LLVM lowers this to `mul`/`umulh` + an `adds`/
-                // `adcs` carry chain, avoiding the `cset`-per-limb the
-                // `widening_mul` + double-`overflowing_add` form emits.
-                let prod = result[i + j] as u128 + a[i] as u128 * b[j] as u128 + carry as u128;
-                result[i + j] = prod as u64;
-                carry = (prod >> 64) as u64;
-                j += 1;
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            #[cfg(all(
+                target_arch = "x86_64",
+                target_feature = "adx",
+                target_feature = "bmi2",
+            ))]
+            if N == 4 {
+                // SAFETY: const-N == 4, so the casts are between
+                // `&[u64; 4]` and `&[u64; N]` with identical layouts.
+                let r4 = unsafe {
+                    super::arch::x86_64::mag_mul_4_adx(
+                        &*(a.as_ptr().cast::<[u64; 4]>()),
+                        &*(b.as_ptr().cast::<[u64; 4]>()),
+                    )
+                };
+                let mut out = [0u64; N];
+                // SAFETY: same const-N == 4.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(r4.as_ptr(), out.as_mut_ptr(), 4);
+                }
+                return out;
             }
-            i += 1;
+
+            let mut result = [0u64; N];
+            let mut i = 0;
+            while i < N {
+                let mut carry: u64 = 0;
+                let mut j = 0;
+                while j < N - i {
+                    // Single-`u128` multiply-accumulate: `result + a*b +
+                    // carry` fits in 128 bits (max is `2^128 - 1`), so the
+                    // high half is the carry. LLVM lowers this to `mul`/
+                    // `umulh` + an `adds`/`adcs` carry chain, avoiding the
+                    // `cset`-per-limb the `widening_mul` + double-
+                    // `overflowing_add` form emits.
+                    let prod = result[i + j] as u128 + a[i] as u128 * b[j] as u128 + carry as u128;
+                    result[i + j] = prod as u64;
+                    carry = (prod >> 64) as u64;
+                    j += 1;
+                }
+                i += 1;
+            }
+            result
         }
-        result
     }
 
     /// Constant-time signed multiplication.
