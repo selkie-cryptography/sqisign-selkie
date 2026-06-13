@@ -11,7 +11,7 @@ name: C reference cross-check
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
     paths:
       - 'src/**'
       - 'tests/cref_xtest.rs'
@@ -56,11 +56,12 @@ env:
   XTEST_COUNT: ${{ github.event.inputs.xtest_count || (github.event_name == 'schedule' && '1024' || '256') }}
 
 jobs:
-  # Cron fallback: skip the scheduled firing if any non-cron run on
-  # main has fired in the last 7d. With `src/**` triggering most
-  # pushes, the weekly cron is a fallback for quiet weeks only.
+  # Cron fallback: skip the scheduled firing if any non-cron run on a
+  # protected branch (main or next) has fired in the last 7d. With
+  # `src/**` triggering most pushes, the weekly cron is a fallback for
+  # quiet weeks only.
   cron-gate:
-    name: Cron gate (skip if recent run on main)
+    name: Cron gate (skip if recent run on main/next)
     if: github.event_name == 'schedule'
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 2
@@ -70,12 +71,13 @@ jobs:
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
-      - name: Look for non-cron runs on main in last 7d
+      - name: Look for non-cron runs on main/next in last 7d
         id: check
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         with:
           script: |
             const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const branches = ['main', 'next'];
             const { data } = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -85,13 +87,13 @@ jobs:
             const recent = data.workflow_runs.filter(r =>
               r.id !== context.runId &&
               r.event !== 'schedule' &&
-              r.head_branch === 'main' &&
+              branches.includes(r.head_branch) &&
               r.created_at >= cutoff
             ).length;
             core.setOutput('skip', recent > 0 ? 'true' : 'false');
             core.info(recent > 0
-              ? `Found ${recent} non-cron c-ref-cross-check run(s) on main since ${cutoff}; skipping this cron firing.`
-              : `No non-cron c-ref-cross-check runs on main since ${cutoff}; proceeding with cron firing.`);
+              ? `Found ${recent} non-cron c-ref-cross-check run(s) on main/next since ${cutoff}; skipping this cron firing.`
+              : `No non-cron c-ref-cross-check runs on main/next since ${cutoff}; proceeding with cron firing.`);
 
   c-ref-cross-check:
     name: C reference cross-check
