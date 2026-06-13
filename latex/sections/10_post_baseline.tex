@@ -151,6 +151,25 @@ cycles rather than instructions.  Output byte-identical (verified
 against an independent multi-width reference in addition to the KATs).
 Cycle A/B (Apple M4): $-9\%$ on key generation, $-24.6\%$ on signing.
 
+\paragraph{Small-prime trial-division before Miller--Rabin.}
+The norm-equation prime search tests a stream of random candidates, the
+large majority of which are composite.  Each test was building a
+\texttt{MontReducer} (the $R^2$ setup above) and running a modular
+exponentiation, even for a candidate divisible by $3$.  The reference's
+mini-gmp \texttt{mpz\_probab\_prime\_p} guards its Miller--Rabin chain
+with a trial-division pre-screen: it rejects any candidate sharing a
+factor with the product $3 \cdot 5 \cdot 7 \cdot 11 \cdot 13 \cdot 17
+\cdot 19 \cdot 23 \cdot 29$ before any exponentiation.  We add the same
+step, recovering each residue $n \bmod p$ from a single reduction of $n$
+modulo that product.  A candidate caught by the pre-screen is composite
+and the witness exponentiation would reject it too, so the accept/reject
+decision, and every downstream signature, is unchanged; matching the
+reference's prime set exactly makes this a step the reference already
+performs rather than an independent argument about which composites the
+exponentiation rejects.  Output byte-identical (all KATs green).
+Instruction-count A/B (Apple M4): $-6.4\%$ on key generation, $-4.6\%$
+on signing.  Key generation gains the most because its prime search
+issues far more candidate tests per operation than signing does.
 \paragraph{Hardware AES on aarch64.}
 The AES-CTR-DRBG that drives every random draw in key generation and
 signing (roughly $3000$ block encryptions per signature) was running
