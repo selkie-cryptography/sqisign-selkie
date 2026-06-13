@@ -520,20 +520,32 @@ impl<const N: usize> MontReducer<N> {
     /// [`Self::to_montgomery`] to convert canonical-form values into
     /// Montgomery form via a single multiply.
     ///
-    /// Computed by `128·N` rounds of doubling-and-conditional-subtract
-    /// (`O(N²)` time, one-shot per modulus). `const fn` so callers
-    /// embedding a fixed modulus can fold the entire setup into
-    /// compile-time constant evaluation. The conditional subtract is
-    /// driven by
-    /// `mag_sub`'s borrow flag rather than `mag_cmp` because
-    /// `mag_cmp` returns `Ordering`, which isn't `const`-callable in
-    /// this crate's `MSRV` window — the borrow flag tells us
-    /// `x >= n` for free.
-    const fn compute_r_squared(n: &[u64; N]) -> [u64; N] {
-        let mut x = [0u64; N];
-        x[0] = 1;
+    /// First computes `R mod n = ((2^{64N} - 1) mod n) + 1` with one
+    /// [`mag_div_rem`](BigInt::mag_div_rem) on the all-ones limb pattern
+    /// (cheap: the dividend and divisor are both `N` limbs, so the
+    /// quotient is one or two digits), then reaches `R^2 = 2^{128N} mod
+    /// n` by `64*N` rounds of doubling-and-conditional-subtract. This
+    /// halves the `128*N` doublings of the naive `1 -> R^2` ladder, which
+    /// dominated `MontReducer::new` in the per-candidate primality loop.
+    /// The conditional subtract reads `mag_sub`'s borrow flag (`borrow ==
+    /// 0` means `x >= n`).
+    fn compute_r_squared(n: &[u64; N]) -> [u64; N] {
+        // R mod n = ((2^{64N} - 1) mod n) + 1, then reduced. (2^{64N} mod
+        // n is never 0 for odd n > 1, so the +1 stays below n; the
+        // conditional subtract only fires for the degenerate n = 1.)
+        let ones = [u64::MAX; N];
+        let (_, rem) = BigInt::<N>::mag_div_rem(&ones, n);
+        let mut one = [0u64; N];
+        one[0] = 1;
+        let (mut x, _) = BigInt::<N>::mag_add(&rem, &one);
+        let (sub, borrow) = BigInt::<N>::mag_sub(&x, n);
+        if borrow == 0 {
+            x = sub;
+        }
+
+        // Double `R mod n` another 64*N times to reach 2^{128N} mod n.
         let mut iter = 0;
-        let target = 128u32 * N as u32;
+        let target = 64u32 * N as u32;
         while iter < target {
             // x := 2x; if x >= n or carried out, x -= n.
             let mut carry: u64 = 0;
@@ -544,9 +556,6 @@ impl<const N: usize> MontReducer<N> {
                 x[i] = new;
                 i += 1;
             }
-            // Try the subtraction unconditionally; `borrow == 0` means
-            // `x >= n`. Combined with `carry == 1` (overflowed past
-            // `2^{64N}`), we always want to subtract in those cases.
             let (sub, borrow) = BigInt::<N>::mag_sub(&x, n);
             if carry == 1 || borrow == 0 {
                 x = sub;
