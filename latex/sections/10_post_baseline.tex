@@ -110,6 +110,18 @@ generation, $-0.5\%$ on signing; key generation gains the most because
 it builds the secret ideal here, whereas signing samples only the
 commitment.
 
+\paragraph{Halving the Montgomery setup ladder.}
+Building a \texttt{MontReducer} for a fresh modulus computes $R^2 \bmod n$
+(with $R = 2^{64N}$), the constant that converts values into Montgomery
+form.  This is done once per modulus, and the prime search builds one
+per candidate, so it is a recurring cost.  The naive computation doubles
+$1$ up to $2^{128N} \bmod n$ in $128N$ steps; instead we obtain $R \bmod
+n = ((2^{64N} - 1) \bmod n) + 1$ with a single division (cheap, since the
+all-ones dividend and the modulus are both $N$ limbs, so the quotient is
+one or two digits) and double only $64N$ further steps to reach $R^2$,
+halving the ladder.  Output byte-identical.  Instruction-count A/B
+(Apple M4): $-0.7\%$ on key generation, $-0.6\%$ on signing.
+
 \paragraph{Hardware AES on aarch64.}
 The AES-CTR-DRBG that drives every random draw in key generation and
 signing (roughly $3000$ block encryptions per signature) was running
