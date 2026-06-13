@@ -50,26 +50,46 @@ impl<const N: usize> BigInt<N> {
                 return out;
             }
 
-            let mut result = [0u64; N];
-            let mut i = 0;
-            while i < N {
-                let mut carry: u64 = 0;
-                let mut j = 0;
-                while j < N - i {
-                    // Single-`u128` multiply-accumulate: `result + a*b +
-                    // carry` fits in 128 bits (max is `2^128 - 1`), so the
-                    // high half is the carry. LLVM lowers this to `mul`/
-                    // `umulh` + an `adds`/`adcs` carry chain, avoiding the
-                    // `cset`-per-limb the `widening_mul` + double-
-                    // `overflowing_add` form emits.
-                    let prod = result[i + j] as u128 + a[i] as u128 * b[j] as u128 + carry as u128;
-                    result[i + j] = prod as u64;
-                    carry = (prod >> 64) as u64;
-                    j += 1;
-                }
-                i += 1;
+            // x86 with ADX: column-scanning Comba (3-register accumulator,
+            // `mulx` + `add`/`adc`/`adc`). Wins on the wide lattice
+            // multiplies, where the result is memory-resident and the
+            // register-result dual-chain (`mag_mul_4_adx`) does not apply.
+            #[cfg(all(
+                target_arch = "x86_64",
+                target_feature = "adx",
+                target_feature = "bmi2",
+            ))]
+            {
+                super::arch::x86_64::mag_mul_comba(a, b)
             }
-            result
+
+            // Portable single-`u128` multiply-accumulate (no ADX, or
+            // non-x86 non-aarch64 targets): `result + a*b + carry` fits in
+            // 128 bits (max `2^128 - 1`), so the high half is the carry,
+            // which lowers to a tight `mul`/`adc` chain without the
+            // `widening_mul` + double-`overflowing_add` per-limb `cset`.
+            #[cfg(not(all(
+                target_arch = "x86_64",
+                target_feature = "adx",
+                target_feature = "bmi2",
+            )))]
+            {
+                let mut result = [0u64; N];
+                let mut i = 0;
+                while i < N {
+                    let mut carry: u64 = 0;
+                    let mut j = 0;
+                    while j < N - i {
+                        let prod =
+                            result[i + j] as u128 + a[i] as u128 * b[j] as u128 + carry as u128;
+                        result[i + j] = prod as u64;
+                        carry = (prod >> 64) as u64;
+                        j += 1;
+                    }
+                    i += 1;
+                }
+                result
+            }
         }
     }
 
