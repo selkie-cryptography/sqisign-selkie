@@ -5,7 +5,7 @@
 
 use core::ops::Mul;
 
-use super::BigInt;
+use super::{BigInt, widening_mul};
 
 impl<const N: usize> BigInt<N> {
     /// Schoolbook multiplication of magnitudes, truncated to `N` limbs.
