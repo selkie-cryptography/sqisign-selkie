@@ -48,32 +48,42 @@ impl<const N: usize> BigInt<N> {
             return false;
         }
 
-        // Small-prime trial-division pre-screen, matching the reference's
-        // mini-gmp `mpz_probab_prime_p`, which rejects any candidate
-        // sharing a factor with `GMP_PRIME_PRODUCT = 3*5*7*11*13*17*19*23*29`
-        // (`0xc0cfd797`) before its BPSW/Miller-Rabin chain. A candidate
-        // divisible by one of these primes (and larger than it) is
-        // composite, so the witness exponentiation below would reject it
-        // too: the accept/reject decision, and every downstream signature,
-        // is unchanged. The win is rejecting the bulk of random composites
-        // with one `ct_mod` plus nine `u64` remainders instead of building
-        // a `MontReducer` (the `R^2` setup) and running a modular
-        // exponentiation.
+        // Small-prime trial-division pre-screen. A candidate divisible by a
+        // small prime (and larger than it) is composite, so the witness
+        // exponentiation below would reject it too: the accept/reject
+        // decision, and every downstream signature, is unchanged. Trial
+        // division is verdict-preserving for any prime set, so we extend
+        // past the reference's mini-gmp `mpz_probab_prime_p` (which screens
+        // only `3*5*...*29 = 0xc0cfd797` to fit `u32`); real GMP screens a
+        // far larger table for the same reason. The win is rejecting the
+        // bulk of random composites with a single-limb `ct_mod` per word
+        // plus a few `u64` remainders, instead of building a `MontReducer`
+        // (the `R^2` setup) and running a modular exponentiation.
         //
-        // `PRIMORIAL = 3*5*...*29` fits in `u32`, so `r = self mod PRIMORIAL`
-        // carries `self mod p` for every small prime `p` (each divides
-        // `PRIMORIAL`), recovered as `r % p`. The `self != p` guard keeps
-        // the predicate correct when `self` is itself one of these primes.
-        const SMALL_PRIMES: [u64; 9] = [3, 5, 7, 11, 13, 17, 19, 23, 29];
-        const PRIMORIAL: u64 = 3_234_846_615;
-        let r = self.ct_mod(&Self::from_u64(PRIMORIAL)).as_limbs()[0];
-        let mut i = 0;
-        while i < SMALL_PRIMES.len() {
-            let p = SMALL_PRIMES[i];
-            if r.is_multiple_of(p) && *self != Self::from_u64(p) {
-                return false;
+        // Each word is the product of its primes and fits in `u64`, so
+        // `r = self mod word` carries `self mod p` for every prime `p` in
+        // that word (each divides it), recovered as `r % p`. Primes 3..29
+        // catch ~68% of odd composites; adding 31..73 reaches ~75%. The
+        // second word runs only on candidates the first did not reject.
+        // The `self != p` guard keeps the predicate correct when `self` is
+        // itself one of these primes.
+        const TRIAL_WORDS: [(u64, &[u64]); 2] = [
+            (
+                3 * 5 * 7 * 11 * 13 * 17 * 19 * 23 * 29,
+                &[3, 5, 7, 11, 13, 17, 19, 23, 29],
+            ),
+            (
+                31u64 * 37 * 41 * 43 * 47 * 53 * 59 * 61 * 67 * 71 * 73,
+                &[31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73],
+            ),
+        ];
+        for (word, primes) in TRIAL_WORDS {
+            let r = self.ct_mod(&Self::from_u64(word)).as_limbs()[0];
+            for &p in primes {
+                if r.is_multiple_of(p) && *self != Self::from_u64(p) {
+                    return false;
+                }
             }
-            i += 1;
         }
 
         // Build the Montgomery context once and delegate. (Per the CT

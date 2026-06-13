@@ -159,17 +159,21 @@ exponentiation, even for a candidate divisible by $3$.  The reference's
 mini-gmp \texttt{mpz\_probab\_prime\_p} guards its Miller--Rabin chain
 with a trial-division pre-screen: it rejects any candidate sharing a
 factor with the product $3 \cdot 5 \cdot 7 \cdot 11 \cdot 13 \cdot 17
-\cdot 19 \cdot 23 \cdot 29$ before any exponentiation.  We add the same
-step, recovering each residue $n \bmod p$ from a single reduction of $n$
-modulo that product.  A candidate caught by the pre-screen is composite
-and the witness exponentiation would reject it too, so the accept/reject
-decision, and every downstream signature, is unchanged; matching the
-reference's prime set exactly makes this a step the reference already
-performs rather than an independent argument about which composites the
-exponentiation rejects.  Output byte-identical (all KATs green).
-Instruction-count A/B (Apple M4): $-6.4\%$ on key generation, $-4.6\%$
-on signing.  Key generation gains the most because its prime search
-issues far more candidate tests per operation than signing does.
+\cdot 19 \cdot 23 \cdot 29$ before any exponentiation, recovering each
+residue $n \bmod p$ from a single reduction of $n$ modulo that product
+(mini-gmp caps the product at primes $\le 29$ so it fits a $32$-bit
+word; full GMP screens a much larger table).  A candidate caught by the
+pre-screen is composite and the witness exponentiation would reject it
+too, so the accept/reject decision, and every downstream signature, is
+unchanged for any prime set.  We screen two $64$-bit words, primes $3$
+through $29$ then $31$ through $73$, which catch roughly $68\%$ and then
+$75\%$ of odd composites; the second word's reduction runs only on
+candidates the first did not reject.  Output byte-identical (all KATs
+green).  Cumulative instruction-count A/B (Apple M4): $-7.0\%$ on key
+generation, $-5.2\%$ on signing.  Key generation gains the most because
+its prime search issues far more candidate tests per operation than
+signing does.
+
 \paragraph{Hardware AES on aarch64.}
 The AES-CTR-DRBG that drives every random draw in key generation and
 signing (roughly $3000$ block encryptions per signature) was running
