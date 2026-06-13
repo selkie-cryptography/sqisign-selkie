@@ -32,6 +32,13 @@ Cargo.lock
 # test runs (worktree root by default).
 /zeroize-report.json
 
+# Allocation report written by `tests/alloc_budget.rs`.
+/alloc-report.json
+
+# Compiled C-reference cross-test oracle (built on demand by
+# tools/cref_xtest/build.sh; the source is tracked, the binary is not).
+/tools/cref_xtest/oracle
+
 # LaTeX
 **/*.toc
 
