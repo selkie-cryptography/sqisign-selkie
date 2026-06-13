@@ -94,7 +94,10 @@ pub mod deuring;
 pub(crate) mod hash;
 
 // AES256-CTR-DRBG (SP 800-90A) used by _derand entry points
+#[cfg(not(feature = "expose-internals"))]
 pub(crate) mod drbg;
+#[cfg(feature = "expose-internals")]
+pub mod drbg;
 
 // Symbol shims for the `llvm-mca` static-analysis tool (`mca` feature,
 // off by default; x86_64 only, since the tool analyzes x86 asm).  Not

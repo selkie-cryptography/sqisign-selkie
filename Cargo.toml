@@ -151,6 +151,10 @@ name = "cross_kat_verify"
 required-features = ["expose-internals"]
 
 [[test]]
+name = "cref_xtest"
+required-features = ["expose-internals"]
+
+[[test]]
 name = "bigint_fault_simulation"
 required-features = ["expose-internals"]
 

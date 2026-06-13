@@ -39,7 +39,7 @@ const BLOCKLEN: usize = 16;
 pub(crate) const SEEDLEN: usize = KEYLEN + BLOCKLEN;
 
 /// AES256-CTR-DRBG state: 32-byte Key + 16-byte V counter.
-pub(crate) struct Aes256CtrDrbg {
+pub struct Aes256CtrDrbg {
     /// 32-byte AES-256 key (`Key` in SP 800-90A §10.2.1).
     key: [u8; KEYLEN],
     /// 16-byte counter (`V` in SP 800-90A §10.2.1).
@@ -76,7 +76,7 @@ impl Aes256CtrDrbg {
     /// Matches `randombytes_init(entropy_input, NULL, 256)` in the
     /// NIST reference code: start from an all-zero Key/V, then run
     /// CTR_DRBG_Update with `entropy_input` as the provided data.
-    pub(crate) fn new(seed: &[u8; SEEDLEN]) -> Self {
+    pub fn new(seed: &[u8; SEEDLEN]) -> Self {
         let mut d = Self {
             key: [0u8; KEYLEN],
             v: [0u8; BLOCKLEN],

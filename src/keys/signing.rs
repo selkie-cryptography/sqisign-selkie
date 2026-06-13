@@ -270,7 +270,7 @@ impl SigningKey {
     /// its own AES-CTR-DRBG. Used by the keygen-then-sign cross-check
     /// path, which threads a single DRBG through both phases so its
     /// byte consumption pattern matches the SQIsign C reference.
-    pub(crate) fn generate_with_rng<R: rand_core::CryptoRngCore>(
+    pub fn generate_with_rng<R: rand_core::CryptoRngCore>(
         rng: &mut R,
     ) -> Result<SigningKey, SignatureError> {
         // Bound the retry loop. Each iteration may fail in
@@ -586,7 +586,7 @@ impl SigningKey {
     /// byte-consumption pattern (one DRBG seeded via
     /// `randombytes_init`, consumed by `crypto_sign_keypair` and
     /// then `crypto_sign` in order).
-    pub(crate) fn sign_with_rng<R: rand_core::CryptoRngCore>(
+    pub fn sign_with_rng<R: rand_core::CryptoRngCore>(
         &self,
         msg: &[u8],
         rng: &mut R,
