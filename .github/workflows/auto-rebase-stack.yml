@@ -9,10 +9,6 @@ name: Auto-rebase branch stack
 # remote is left untouched and the run goes red; resolve manually and the
 # next run continues.
 #
-# Trigger model: push to `main` rebases the whole stack immediately; the
-# 30-minute schedule is the fallback that also catches human pushes to
-# `next` (whose scaoilte rebase has no push trigger of its own).
-#
 # Caveat: pushes made with the default GITHUB_TOKEN do not start new
 # workflow runs, so an auto-rebased `next`/`scaoilte` does NOT re-run CI on
 # its PR until the next human push or a manual CI dispatch. To re-run CI on
@@ -20,7 +16,7 @@ name: Auto-rebase branch stack
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
