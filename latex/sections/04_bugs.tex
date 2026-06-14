@@ -917,7 +917,7 @@ level-2 theta null point on a product abelian surface
 $E_1 \times E_2$.  Multiple projective representatives exist for
 the same abstract surface, related by the symplectic-modular-group
 action.  The spec's \textsc{SplittingIsomorphism}
-(Algorithm~8.42)~\cite{spec:sqisign-v2} picks one specific
+(Algorithm~8.42)~\cite{sqisign-spec-v2.0.1} picks one specific
 representative deterministically from the chain's terminal theta
 null---but that choice is a function of the secret kernel, so the
 emitted projective representative leaks information about the
@@ -1538,7 +1538,7 @@ pairing is trivial), but they cause the
 (Algorithm~8.36) requires inverting~$\delta$; when $\delta = 0$ the
 formulas silently produce wrong output.  We confirmed this by
 running the same kernels through the DMPR24 reference SageMath
-implementation~\cite{DMPR24}, which also fails with a
+implementation~\cite{AC:DMPR24}, which also fails with a
 \texttt{ZeroDivisionError} in the same batched inversion.
 
 The specification does not document the nonvanishing-$\delta$

@@ -1,7 +1,7 @@
 \section{Introduction}
 \label{sec:intro}
 
-SQIsign~\cite{sqisign-spec} is the only isogeny-based signature scheme
+SQIsign~\cite{sqisign-spec-v2.0.1} is the only isogeny-based signature scheme
 in Round~2 of NIST's additional signature standardization process.
 Its 148-byte signatures and 65-byte public keys at NIST-I are smaller
 than any other post-quantum scheme under consideration.  But that
@@ -9,7 +9,7 @@ compactness comes at a cost: implementing SQIsign requires quaternion
 algebras, the Deuring correspondence, dimension-2 theta-coordinate
 isogenies, and a signing algorithm that touches all of them.
 
-The specification~\cite{sqisign-spec} is mathematically precise but
+The specification~\cite{sqisign-spec-v2.0.1} is mathematically precise but
 leaves many implementation choices unstated.  The C reference
 implementation fills in those choices---but they are embedded in code,
 not documented.  An implementor working from the spec alone will make
