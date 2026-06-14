@@ -19,7 +19,10 @@ use super::{bigint::BigInt, lattice::ExtremalOrder};
 /// Number of precomputed extremal orders.
 pub const NUM_EXTREMAL_ORDERS: usize = 7;
 
-/// The prime p = 5 · 2²⁴⁸ − 1 as a [`BigInt<4>`].
+/// The prime p = 5 · 2²⁴⁸ − 1 as a [`BigInt<4>`]. Only the quaternion
+/// reduced-norm test helpers consume this `BigInt<4>` form of `p`; the
+/// production norm paths carry `p` through other constants.
+#[cfg(test)]
 pub const P: BigInt<4> = BigInt::from_limbs([
     0xFFFFFFFFFFFFFFFF,
     0xFFFFFFFFFFFFFFFF,
