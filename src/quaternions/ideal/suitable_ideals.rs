@@ -76,6 +76,21 @@ pub(crate) struct SuitableIdealResult<const N: usize> {
     pub(crate) factor2: IdealFactor<N>,
 }
 
+/// Storage width for a [`ShortVector`]'s quaternion coordinates.
+///
+/// Width 8 (512 bits), not 4: for the response-phase intersection
+/// ideal (`nrd(I) ≈ 2^385`) a short vector has `nrd(β) ≈ 2^511`, so
+/// its `(a, b)` coordinates reach ~2^256 and overflow [`BigInt<4>`].
+/// The C reference keeps β at unbounded `ibz` width and never drops a
+/// short vector here; narrowing to width 4 emptied our special-order
+/// (`t = 0`) list for response ideals and made [`suitable_ideals`]
+/// return `None` where the reference's `find_uv` succeeds. Width 8
+/// holds every NIST-I short vector with margin; the commitment-path β
+/// (`nrd(I) ≈ 2^126`) fits trivially.
+///
+/// [`suitable_ideals`]: LeftIdeal::suitable_ideals
+const SHORT_VECTOR_WIDTH: usize = 8;
+
 /// A candidate from the short-vector enumeration, retaining its
 /// degree both as a membership invariant and as the sort key.
 ///
@@ -87,7 +102,10 @@ pub(crate) struct SuitableIdealResult<const N: usize> {
 /// [`try_find_uv`].
 struct ShortVectorCandidate {
     /// Quaternion element β, a linear combination of the reduced basis.
-    elem: Element<4>,
+    ///
+    /// Stored at [`SHORT_VECTOR_WIDTH`]; see that constant for why
+    /// width 4 is insufficient for response-phase short vectors.
+    elem: Element<SHORT_VECTOR_WIDTH>,
     /// Degree: `nrd(β) / nrd(parent_ideal)`, a positive odd integer.
     degree: IsogenyDegree,
 }
@@ -109,9 +127,9 @@ struct ShortVectorBatch<const N: usize> {
 
 /// A quaternion element that is a short vector in some ideal lattice.
 ///
-/// Wraps an [`Element<4>`] with a stronger contract than a bare
-/// algebra element: a `ShortVector` was produced by the
-/// short-vector enumeration inside [`LeftIdeal::suitable_ideals`]
+/// Wraps an [`Element`] (at [`SHORT_VECTOR_WIDTH`]) with a stronger
+/// contract than a bare algebra element: a `ShortVector` was produced
+/// by the short-vector enumeration inside [`LeftIdeal::suitable_ideals`]
 /// and lives in a specific [`LeftIdeal<4>`] (tracked by the
 /// consumer via [`IdealFactor::parent_ideal`]) with norm on the
 /// order of `√nrd(parent_ideal)`.
@@ -121,16 +139,20 @@ struct ShortVectorBatch<const N: usize> {
 /// that the enumeration has already validated the underlying
 /// element.
 ///
-/// The inner [`Element<4>`] is reachable through [`Deref`], so any
-/// site that wants `&Element<4>` (for example `action_matrix` in
-/// the deuring module) works by deref coercion.
+/// The inner [`Element`] is reachable through [`Deref`], so any site
+/// that wants `&Element<SHORT_VECTOR_WIDTH>` (for example
+/// `EndomorphismAction::apply` in the deuring module) works by deref
+/// coercion.
+///
+/// Stored at [`SHORT_VECTOR_WIDTH`] so response-phase short vectors
+/// fit; see [`ShortVectorCandidate`].
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ShortVector(Element<4>);
+pub(crate) struct ShortVector(Element<SHORT_VECTOR_WIDTH>);
 
 impl Deref for ShortVector {
-    type Target = Element<4>;
+    type Target = Element<SHORT_VECTOR_WIDTH>;
 
-    fn deref(&self) -> &Element<4> {
+    fn deref(&self) -> &Element<SHORT_VECTOR_WIDTH> {
         &self.0
     }
 }
@@ -358,9 +380,9 @@ impl<const W: usize> NrdBasis<W> {
         let denom_sq = lattice_denom.ct_mul(lattice_denom);
         let divisor = ideal_norm.ct_mul(&denom_sq);
 
-        // Verify the lattice denom fits in BigInt<4> — we only check
-        // existence here (not actually used below) to mirror the
-        // pre-generic invariant.
+        // The lattice denom is small (typically 2); narrow to BigInt<4>
+        // and then widen to the width the candidate `elem` stores. Bail
+        // if it somehow exceeds BigInt<4>.
         let Some(den_4) = lattice_denom.narrow_to::<4>() else {
             return Vec::new();
         };
@@ -374,6 +396,7 @@ impl<const W: usize> NrdBasis<W> {
         // dozen survivors) -- the single largest heap site in signing.
         let candidates = enumerate_hypercube(m, need_remove_symmetry);
         let mut vectors = Vec::with_capacity(candidates.len());
+        let den_sv: BigInt<SHORT_VECTOR_WIDTH> = den_4.widen();
 
         for [x_i, y_i, z_i, w_i] in candidates {
             let x = [
@@ -412,21 +435,22 @@ impl<const W: usize> NrdBasis<W> {
                 })
             });
 
-            // Narrow coordinates to BigInt<4>. After L2 reduction
-            // with small coefficients this should always succeed.
-            let narrow: [Option<BigInt<4>>; 4] =
-                core::array::from_fn(|i| coords[i].narrow_to::<4>());
+            // Narrow coordinates to the candidate storage width; see
+            // SHORT_VECTOR_WIDTH for why BigInt<4> would drop response
+            // intersection short vectors (coords ~2^256).
+            let narrow: [Option<BigInt<SHORT_VECTOR_WIDTH>>; 4] =
+                core::array::from_fn(|i| coords[i].narrow_to::<SHORT_VECTOR_WIDTH>());
             let [Some(a), Some(b), Some(c), Some(d)] = narrow else {
                 continue;
             };
 
             vectors.push(ShortVectorCandidate {
-                elem: Element::<4>::new(
+                elem: Element::<SHORT_VECTOR_WIDTH>::new(
                     Coordinate::from_bigint(a),
                     Coordinate::from_bigint(b),
                     Coordinate::from_bigint(c),
                     Coordinate::from_bigint(d),
-                    Denominator::from_bigint_unchecked(den_4),
+                    Denominator::from_bigint_unchecked(den_sv),
                 ),
                 degree,
             });
@@ -963,21 +987,23 @@ impl<const N: usize> LeftIdeal<N> {
                                 let denom_pp = denom_self_w2.ct_mul(k_norm);
                                 delta_pp.denom = Denominator::from_bigint_unchecked(denom_pp);
 
-                                let transform = |beta4: &Element<4>| -> Option<Element<4>> {
+                                let transform = |beta: &Element<SHORT_VECTOR_WIDTH>| -> Option<
+                                    Element<SHORT_VECTOR_WIDTH>,
+                                > {
                                     let beta_w = Element::<W2>::new(
-                                        Coordinate::from_bigint(beta4.a.as_bigint().widen::<W2>()),
-                                        Coordinate::from_bigint(beta4.b.as_bigint().widen::<W2>()),
-                                        Coordinate::from_bigint(beta4.c.as_bigint().widen::<W2>()),
-                                        Coordinate::from_bigint(beta4.d.as_bigint().widen::<W2>()),
+                                        Coordinate::from_bigint(beta.a.as_bigint().widen::<W2>()),
+                                        Coordinate::from_bigint(beta.b.as_bigint().widen::<W2>()),
+                                        Coordinate::from_bigint(beta.c.as_bigint().widen::<W2>()),
+                                        Coordinate::from_bigint(beta.d.as_bigint().widen::<W2>()),
                                         Denominator::from_bigint_unchecked(
-                                            BigInt::<4>::from(beta4.denom).widen::<W2>(),
+                                            beta.denom.as_bigint().widen::<W2>(),
                                         ),
                                     );
                                     let prod = delta_pp.mul_direct(&beta_w);
                                     let mut prod = prod;
                                     prod.normalize();
                                     let conjugated = prod.conjugate();
-                                    conjugated.narrow_to::<4>()
+                                    conjugated.narrow_to::<SHORT_VECTOR_WIDTH>()
                                 };
 
                                 if s != 0 {

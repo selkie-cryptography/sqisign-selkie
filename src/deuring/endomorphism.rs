@@ -228,9 +228,9 @@ impl EndomorphismAction {
     /// is inlined at the call site.
     ///
     /// [Alg. 3.14]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.14
-    pub(crate) fn apply(
+    pub(crate) fn apply<const M: usize>(
         &self,
-        alpha: &Element<4>,
+        alpha: &Element<M>,
         f: TorsionExponent,
     ) -> Option<EndomorphismMatrix> {
         // Decompose at width 20 — for p-extremal orders with `q ≥ 5`
@@ -246,7 +246,7 @@ impl EndomorphismAction {
             Coordinate::from_bigint(alpha.b.as_bigint().widen::<20>()),
             Coordinate::from_bigint(alpha.c.as_bigint().widen::<20>()),
             Coordinate::from_bigint(alpha.d.as_bigint().widen::<20>()),
-            Denominator::from_bigint_unchecked(BigInt::<4>::from(alpha.denom).widen::<20>()),
+            Denominator::from_bigint_unchecked(alpha.denom.as_bigint().widen::<20>()),
         );
         let order_w: Lattice<20> = {
             let basis4 = self.order.basis();
@@ -260,32 +260,36 @@ impl EndomorphismAction {
         };
 
         let coords_w = order_w.decompose(&elem_w)?;
-        let coords: [BigInt<4>; 4] = [
-            coords_w[0].narrow_to::<4>()?,
-            coords_w[1].narrow_to::<4>()?,
-            coords_w[2].narrow_to::<4>()?,
-            coords_w[3].narrow_to::<4>()?,
-        ];
 
-        // Reduce all coefficients mod 2^f. For negative coefficients,
-        // ct_mod returns a negative remainder (truncated division),
-        // so add the modulus to get the canonical representative in
-        // [0, 2^f).
-        let modulus = BigInt::<4>::ONE << f.value();
-        let reduce = |c: &BigInt<4>| -> Scalar {
-            let r = c.ct_mod(&modulus);
-            if bool::from(r.is_negative()) {
-                Scalar::from(r.ct_add(&modulus))
+        // Reduce each O₀-coordinate mod 2^f at the *wide* width before
+        // narrowing. For response-phase β (`nrd(β) ≈ 2^511`) the
+        // O₀-coordinates reach ~2^256 and do not fit `BigInt<4>`;
+        // narrowing first would drop the whole short vector (returning
+        // None, then a spurious sign retry). The matrix action only
+        // depends on the coordinates mod 2^f, and `2^f < 2^256`, so
+        // reducing first lands every coordinate in `[0, 2^f)`, which
+        // always fits `BigInt<4>`. For negative coordinates `ct_mod`
+        // returns a negative remainder (truncated division), so add the
+        // modulus to land in the canonical range.
+        let modulus_w = BigInt::<20>::ONE << f.value();
+        let reduce = |c: &BigInt<20>| -> Scalar {
+            let r = c.ct_mod(&modulus_w);
+            let r = if bool::from(r.is_negative()) {
+                r.ct_add(&modulus_w)
             } else {
-                Scalar::from(r)
-            }
+                r
+            };
+            Scalar::from(
+                r.narrow_to::<4>()
+                    .expect("coordinate reduced mod 2^f fits in BigInt<4>"),
+            )
         };
 
-        let c0_scalar = reduce(&coords[0]);
+        let c0_scalar = reduce(&coords_w[0]);
         let mut result = EndomorphismMatrix::new(c0_scalar, Scalar::ZERO, Scalar::ZERO, c0_scalar);
 
         for k in 0..3 {
-            let s = reduce(&coords[k + 1]);
+            let s = reduce(&coords_w[k + 1]);
             let other = &self.generators[k];
             let fv = f.value();
             result = EndomorphismMatrix::new(
