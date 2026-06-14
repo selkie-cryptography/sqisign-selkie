@@ -529,77 +529,28 @@ impl LeftIdeal<4> {
                 Denominator::from_bigint_unchecked(denom_4),
             );
 
-            // Re-check the ideal-norm coprimality post-reduction.
+            // Build the ideal `O_0·α + O_0·N` from the reduced
+            // generator. The first `β` accepted by the pre-product
+            // `gcd(nrd(β), N) = 1` check is the one returned, matching
+            // the C reference's `quat_sampling_random_ideal_O0_given_norm`
+            // (`quaternion/ref/generic/normeq.c`), whose rerandomization
+            // loop only checks `gcd(nrd(gen_rerand), norm) = 1` before
+            // committing.
             //
-            // `γβ` had `nrd = m · N · nrd(β)` with `gcd(m · nrd(β),
-            // N) = 1` by the earlier check, so `gcd(nrd(γβ)/N, N) =
-            // 1` held for the *un-reduced* product. Reducing each
-            // coordinate mod `N·denom` preserves `N | nrd(α)` but
-            // shifts `nrd(α)/N` by an arbitrary integer `M` —
-            // `new_nrd/N = old_nrd/N + M`. For composite `N`, `M`
-            // has ~`Σ 1/p_i` probability of landing `new_nrd/N`
-            // into a residue with a common factor with some `p_i |
-            // N`. When that happens the constructed lattice is a
-            // valid ideal of norm `N / gcd`, not `N`, and the
-            // stored norm `self.norm = N` is wrong. Verify the
-            // invariant holds before committing; otherwise
-            // resample.
-            let (nrd_num_4, nrd_den_4) = gamma_beta.norm();
-            let (nrd_val_4, rem_nrd) = nrd_num_4.div_rem(&nrd_den_4);
-            if !bool::from(rem_nrd.is_zero()) {
-                continue;
-            }
-            // `nrd(α) ≤ 4·(N·denom)² + p·... ≲ 2^{260}`, so `nrd/N ≤
-            // 2^{256}` — within `BigInt<8>`'s 512-bit budget.
-            let (nrd_over_n, rem_n) = nrd_val_4.div_rem(&n_wide);
-            if !bool::from(rem_n.is_zero()) {
-                // Should not occur — `mod-reduction` preserves `N |
-                // nrd`. Skip defensively.
-                continue;
-            }
-            let coprime_check: BigInt<8> = nrd_over_n.gcd(&n_wide);
-            if coprime_check != BigInt::<8>::ONE {
-                continue;
-            }
-
-            // Verify the constructed lattice really is an
-            // `O_0`-ideal of norm `N`: every basis column of the
-            // HNF must have `nrd` divisible by `N · denom²`. This
-            // is a stronger invariant than the coprimality check
-            // above — certain `α` pass `gcd(nrd(α)/N, N) = 1` yet
-            // produce an HNF whose (1,1)-block or similar row
-            // slots a lattice element outside `O_0·α + O_0·N`
-            // (probably due to width/denom handling in
-            // `LeftIdeal::<4>::new`'s `sum_mod<16>`). Until the
-            // underlying construction is fully bulletproof for
-            // every `α`, re-verify each sample and resample on
-            // failure.
-            let candidate = Self::new(&gamma_beta, n, order.order());
-            let cand_lat: Lattice<4> = (*candidate.lattice()).into();
-            let cand_denom = *cand_lat.denom();
-            let cand_denom_sq = cand_denom.ct_mul(&cand_denom);
-            let n_times_denom_sq = n.ct_mul(&cand_denom_sq);
-            let n_times_denom_sq_8: BigInt<8> = n_times_denom_sq.widen();
-            let p4 = crate::quaternions::precomputed::P;
-            let mut valid = true;
-            for j in 0..4 {
-                let col = cand_lat.basis().columns()[j];
-                let nrd_col_4 = col[0]
-                    .ct_mul(&col[0])
-                    .ct_add(&col[1].ct_mul(&col[1]))
-                    .ct_add(&p4.ct_mul(&col[2].ct_mul(&col[2]).ct_add(&col[3].ct_mul(&col[3]))));
-                let nrd_col_8: BigInt<8> = nrd_col_4.widen();
-                let (_, rem_col) = nrd_col_8.div_rem(&n_times_denom_sq_8);
-                if !bool::from(rem_col.is_zero()) {
-                    valid = false;
-                    break;
-                }
-            }
-            if !valid {
-                continue;
-            }
-
-            return Some(candidate);
+            // # Divergence (byte-interop)
+            //
+            // An earlier version recomputed `gcd(nrd(α mod N·denom)/N, N)`
+            // and a per-HNF-column nrd-divisibility predicate after
+            // reduction, resampling `β` on failure. Those predicates are
+            // mathematically vacuous: `α → α mod (N·denom)` shifts `α` by
+            // a member of `N·O_0` (since `1, i, j, k ∈ O_0`), so
+            // `O_0·α + O_0·N` is unchanged and always has norm exactly
+            // `N` — yet `nrd(α mod N·denom)/N (mod N)` is arbitrary and
+            // frequently shares a factor with composite `N`. The spurious
+            // rejection consumed extra DRBG bytes resampling `β`, landing
+            // on a different (still valid) ideal than the C reference and
+            // producing byte-different `E_aux`/`M_chl`/`hint_aux`.
+            return Some(Self::new(&gamma_beta, n, order.order()));
         }
 
         None
