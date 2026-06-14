@@ -2004,10 +2004,10 @@ $\mathtt{BigInt\langle 4\rangle}$, but a $q \geq 5$ order with
 $\mathrm{nrd}(\gamma) \approx 2^{271}$ (a commitment-path fixed-degree
 isogeny on a cross-order pick) has $\{1, i\}$ coordinates near
 $2^{259}$; returning $\gamma$ at width~8 recovers two more KATs, for
-$93$.  The remaining seven divergences are not width-related: the
-response-phase $(2,2)$-isogeny chain on theta surfaces produces a
-Montgomery model that differs from the reference's
-(\S\ref{sec:status}).
+$93$.  The remaining seven divergences were not width-related at all;
+they had a separate root in the even-response kernel
+(\S\ref{sec:bug-biscalar-2torsion}), which closed the last gap to
+byte equality on all $100$ signing KATs.
 
 \paragraph{Catching this earlier.}  The verify-only signing KAT gate
 hid this for weeks: it asserted only that produced signatures verify,
@@ -2016,6 +2016,43 @@ keygen KAT gate had always byte-compared \texttt{pk}/\texttt{sk}.  A
 byte-interop cross-test harness (\S\ref{sec:testing}) over fresh seeds
 surfaced the gap; the signing KAT gate now byte-compares the produced
 signature.
+
+\subsection{Even-response kernel: biscalar multiplication at
+  \texttt{kbits} $= 1$}
+\label{sec:bug-biscalar-2torsion}
+
+This was the last gap to full sign byte-equality, and it masqueraded as
+a $(2,2)$-chain bug. For the seven KATs whose response takes the
+split-auxiliary path with $r_{\mathrm{rsp}} = 1$, the response curve
+$E'$ differed from the reference's, so the natural suspect was the
+$(2,2)$-isogeny chain on theta surfaces. Cross-implementation tracing
+refuted that: the split-auxiliary chain is byte-identical to the
+reference (same $j$-invariants for both split factors). The divergence
+is one step later, in the \emph{even response}.
+
+\paragraph{Symptom.} The even-response kernel is $K = [s]P + [t]Q$ on
+$E[2^{r_{\mathrm{rsp}}}]$. For $r_{\mathrm{rsp}} = 1$ the scalars reduce
+to single parity bits ($\texttt{kbits} = 1$) and every operand is
+$2$-torsion, so the difference point feeding the $x$-only biladder is
+$(0 : 1)$, which is itself $2$-torsion, and differential additions are
+ill-defined there. Selkie's \texttt{TorsionBasis::biscalar\_mul} ran
+the general biladder unconditionally and returned $P - Q$ where the
+kernel should be $Q$ (the decomposition $(s, t) = (0, 1)$ itself matched
+the reference). The wrong kernel gave the wrong even-response codomain,
+so $j(e')$ missed $j(\mathit{curve\_chl})$ at iteration~0, the sign loop
+retried, and it emitted a valid but byte-different signature.
+
+\paragraph{Fix.} The C reference's \texttt{ec\_biscalar\_mul}
+(\texttt{ec.c:637--655}) carries an explicit $\texttt{kbits} = 1$ case
+for exactly this reason, returning one of $\{O, P, Q, P-Q\}$ by a parity
+lookup on the two scalars. Selkie now mirrors it, selecting the result
+with constant-time \texttt{ConditionallySelectable} swaps over the
+parity bits (the path is secret-derived in the even response, so this
+keeps the function's CT posture). The case is reached only from
+\texttt{EvenResponseKernel::from\_quaternion} with $r_{\mathrm{rsp}} =
+1$; every other caller passes a full or endomorphism-sized exponent.
+Fixing it closed the last seven KATs ($18, 34, 50, 67, 71, 79, 94$),
+bringing signatures to byte-identical with the reference on all $100$.
 
 \subsection{Cross-order $\beta$ post-processing missing in
   \textsc{SuitableIdeals}}

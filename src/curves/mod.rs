@@ -547,6 +547,29 @@ impl TorsionBasis {
         let PmQ = &self.Q;
         let curve = P.curve();
 
+        // kbits == 1 special case. The general biladder relies on
+        // differential additions, which misbehave when the difference
+        // point is 2-torsion `(0 : 1)`, and for `kbits == 1` every
+        // operand is 2-torsion. Mirror C-ref's `ec_biscalar_mul`
+        // (`ec.c:637-655`): with both scalars reduced to their parity
+        // bit, the result is one of `{O, P, Q, P-Q}` by direct lookup.
+        // The lookup keys off the scalar parities (secret-derived in
+        // the even-response path) and so is done with constant-time
+        // selection to match the rest of this function's CT posture.
+        //
+        // Reached only with `e = r_rsp = 1` from the even response
+        // ([`EvenResponseKernel::from_quaternion`]); every other caller
+        // passes a full or endomorphism-sized exponent.
+        if kbits == 1 {
+            let bit_m = subtle::Choice::from(m.to_le_bytes()[0] & 1);
+            let bit_n = subtle::Choice::from(n.to_le_bytes()[0] & 1);
+            let identity = ProjectiveXOnlyPoint::identity(curve);
+            // (0,0) -> O, (1,0) -> P, (0,1) -> Q, (1,1) -> P-Q.
+            let r0 = ProjectiveXOnlyPoint::conditional_select(&identity, P, bit_m);
+            let r1 = ProjectiveXOnlyPoint::conditional_select(Q, PmQ, bit_m);
+            return ProjectiveXOnlyPoint::conditional_select(&r0, &r1, bit_n);
+        }
+
         // Convert to bytes for the recoding stage.
         let m_bytes = m.to_le_bytes();
         let n_bytes = n.to_le_bytes();
