@@ -396,6 +396,16 @@ impl<const N: usize> MontReducer<N> {
     /// the Montgomery-form result without round-tripping through the
     /// canonical domain.
     fn pow_mont(&self, base: &BigInt<N>, exp: &BigInt<N>) -> [u64; N] {
+        // Base 2 is the first and by far most-executed Miller-Rabin
+        // witness (it rejects most composites that survive trial
+        // division). Its square-and-multiply needs no window table and
+        // multiplies by 2 with a doubling rather than a Montgomery
+        // multiply, so dispatch to the specialized routine. (`n` is odd
+        // and `> 2` for every MontReducer, so the base is `< n`.)
+        if base.limbs[0] == 2 && base.limbs[1..].iter().all(|&l| l == 0) {
+            return self.pow2_mont(exp);
+        }
+
         // Reduce base mod n then convert to Mont form.
         let base_red = BigInt::<N>::mag_div_rem(&base.limbs, &self.n).1;
         let base_m = self.to_montgomery(&base_red);
@@ -467,6 +477,63 @@ impl<const N: usize> MontReducer<N> {
         }
 
         result
+    }
+
+    /// Returns `2^exp mod n` in **Montgomery form**, exploiting the
+    /// fixed base 2: left-to-right binary square-and-multiply where each
+    /// "multiply by 2" is a Montgomery-domain doubling
+    /// ([`Self::double_mod`], an `O(N)` modular add) rather than an
+    /// `O(N^2)` Montgomery multiply, and no `base^i` window table is
+    /// built. The result is identical to [`Self::pow_mont`]`(&2, exp)`.
+    ///
+    /// Same variable-time-on-exponent class as [`Self::pow_mont`] (the
+    /// bit scan branches on the exponent); used only where that is
+    /// already acceptable (Miller-Rabin on the variable-time prime
+    /// search).
+    fn pow2_mont(&self, exp: &BigInt<N>) -> [u64; N] {
+        // result = 1 in Montgomery form = R mod n.
+        let mut one = [0u64; N];
+        one[0] = 1;
+        let mut result = self.mul(&self.r_squared, &one);
+
+        let bs = exp.bitsize();
+        let mut i = bs;
+        while i > 0 {
+            i -= 1;
+            result = self.square(&result);
+
+            let li = (i / 64) as usize;
+            let bo = i % 64;
+            if (exp.limbs[li] >> bo) & 1 == 1 {
+                result = self.double_mod(&result);
+            }
+        }
+
+        result
+    }
+
+    /// Returns `2x mod n` for `x` in `[0, n)`. The operation is a
+    /// modular add, so it is domain-agnostic (correct for canonical or
+    /// Montgomery-form `x`); [`Self::pow2_mont`] uses it to multiply by
+    /// the base 2. Mirrors [`Self::reduce_wide`]'s final reduction: at
+    /// most one subtraction of `n`, since `2x < 2n`.
+    fn double_mod(&self, x: &[u64; N]) -> [u64; N] {
+        let mut t = [0u64; N];
+        let mut carry: u64 = 0;
+        let mut i = 0;
+        while i < N {
+            let s = (x[i] as u128) + (x[i] as u128) + (carry as u128);
+            t[i] = s as u64;
+            carry = (s >> 64) as u64;
+            i += 1;
+        }
+
+        if carry != 0 || BigInt::<N>::mag_cmp(&t, &self.n) != Ordering::Less {
+            let (sub, _) = BigInt::<N>::mag_sub(&t, &self.n);
+            t = sub;
+        }
+
+        t
     }
 
     /// Returns `true` if `n` (the modulus this reducer was built for) is
