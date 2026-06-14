@@ -486,10 +486,11 @@ impl<const N: usize> MontReducer<N> {
     /// `O(N^2)` Montgomery multiply, and no `base^i` window table is
     /// built. The result is identical to [`Self::pow_mont`]`(&2, exp)`.
     ///
-    /// Same variable-time-on-exponent class as [`Self::pow_mont`] (the
-    /// bit scan branches on the exponent); used only where that is
-    /// already acceptable (Miller-Rabin on the variable-time prime
-    /// search).
+    /// Constant-time on the exponent bit values, matching
+    /// [`Self::pow_mont`]: each step squares and computes the doubling,
+    /// then selects between them with [`ct_select_u64`] on the bit, so
+    /// nothing branches on the secret exponent (the loop bound is the
+    /// exponent's bit length, as in `pow_mont`).
     fn pow2_mont(&self, exp: &BigInt<N>) -> [u64; N] {
         // result = 1 in Montgomery form = R mod n.
         let mut one = [0u64; N];
@@ -502,35 +503,48 @@ impl<const N: usize> MontReducer<N> {
             i -= 1;
             result = self.square(&result);
 
+            // result := result * 2 iff this exponent bit is set, selected
+            // obliviously (no branch on the secret bit).
+            let doubled = self.double_mod(&result);
             let li = (i / 64) as usize;
             let bo = i % 64;
-            if (exp.limbs[li] >> bo) & 1 == 1 {
-                result = self.double_mod(&result);
+            let bit = (exp.limbs[li] >> bo) & 1;
+            let mut k = 0;
+            while k < N {
+                result[k] = ct_select_u64(result[k], doubled[k], bit);
+                k += 1;
             }
         }
 
         result
     }
 
-    /// Returns `2x mod n` for `x` in `[0, n)`. The operation is a
-    /// modular add, so it is domain-agnostic (correct for canonical or
-    /// Montgomery-form `x`); [`Self::pow2_mont`] uses it to multiply by
-    /// the base 2. Mirrors [`Self::reduce_wide`]'s final reduction: at
-    /// most one subtraction of `n`, since `2x < 2n`.
+    /// Returns `2x mod n` for `x` in `[0, n)`, constant-time. The
+    /// operation is a modular add, so it is domain-agnostic (correct for
+    /// canonical or Montgomery-form `x`); [`Self::pow2_mont`] uses it to
+    /// multiply by the base 2. Mirrors [`Self::compute_r_squared`]'s
+    /// branchless doubling: double the limbs, then a `ct_select_u64`
+    /// conditional subtract of `n` (fires iff the doubling carried out or
+    /// `x >= n`, since `2x < 2n`).
     fn double_mod(&self, x: &[u64; N]) -> [u64; N] {
         let mut t = [0u64; N];
         let mut carry: u64 = 0;
         let mut i = 0;
         while i < N {
-            let s = (x[i] as u128) + (x[i] as u128) + (carry as u128);
-            t[i] = s as u64;
-            carry = (s >> 64) as u64;
+            let new = (x[i] << 1) | carry;
+            carry = x[i] >> 63;
+            t[i] = new;
             i += 1;
         }
 
-        if carry != 0 || BigInt::<N>::mag_cmp(&t, &self.n) != Ordering::Less {
-            let (sub, _) = BigInt::<N>::mag_sub(&t, &self.n);
-            t = sub;
+        let (sub, borrow) = BigInt::<N>::mag_sub(&t, &self.n);
+        let carry_nz = (carry | carry.wrapping_neg()) >> 63;
+        let ge_n = 1 ^ ((borrow | borrow.wrapping_neg()) >> 63);
+        let need = carry_nz | ge_n;
+        let mut k = 0;
+        while k < N {
+            t[k] = ct_select_u64(t[k], sub[k], need);
+            k += 1;
         }
 
         t
