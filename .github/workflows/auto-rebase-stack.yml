@@ -46,8 +46,8 @@ jobs:
 
       - name: Configure committer identity
         run: |
-          git config user.name "selkie-rebase-bot"
-          git config user.email "selkie-rebase-bot@users.noreply.github.com"
+          git config user.name "Deirdre Connolly"
+          git config user.email "durumcrustulum@gmail.com"
 
       - name: Rebase the stack
         run: |
