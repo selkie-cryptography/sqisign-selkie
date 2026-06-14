@@ -128,7 +128,8 @@ fn cref_xtest_differential() {
     let references = run_oracle(&oracle, &seeds);
 
     let mut sig_byte_eq = 0usize;
-    let mut sig_mismatch_seeds = Vec::new();
+    // (seed, our signature, reference signature), all hex, per diverging seed.
+    let mut mismatches: Vec<(String, String, String)> = Vec::new();
 
     for (i, (seed, reference)) in seeds.iter().zip(references).enumerate() {
         // One DRBG threaded keygen -> sign, like the oracle.
@@ -164,22 +165,29 @@ fn cref_xtest_differential() {
         if sig.to_bytes().as_slice() == ref_sig.as_slice() {
             sig_byte_eq += 1;
         } else {
-            sig_mismatch_seeds.push(i);
+            mismatches.push((
+                hex::encode(seed),
+                hex::encode(sig.to_bytes()),
+                hex::encode(&ref_sig),
+            ));
         }
     }
 
     println!(
-        "cross-test {count} seeds: keygen byte-identical (pk+sk) and all signatures verify; \
-         signature byte-identical {sig_byte_eq}/{count}"
+        "cross-test {count} seeds, message {}: keygen byte-identical (pk+sk) and all \
+         signatures verify; signature byte-identical {sig_byte_eq}/{count}",
+        hex::encode(XTEST_MSG)
     );
+    // Dump the diverging signatures (capped) so a failure is diagnosable.
+    for (seed, ours, cref) in mismatches.iter().take(8) {
+        println!("  seed {seed}\n    ours: {ours}\n    cref: {cref}");
+    }
 
     // Strict byte gate (like sign_kat_derand_NNN): fails until sign
     // byte-interop is complete.
     assert!(
-        sig_mismatch_seeds.is_empty(),
-        "signature not byte-identical to the C reference on {}/{count} seeds; \
-         divergent seed indices (first 16): {:?}",
-        sig_mismatch_seeds.len(),
-        sig_mismatch_seeds.iter().take(16).collect::<Vec<_>>()
+        mismatches.is_empty(),
+        "signature not byte-identical to the C reference on {}/{count} seeds",
+        mismatches.len(),
     );
 }
