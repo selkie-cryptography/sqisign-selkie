@@ -1,4 +1,4 @@
-//! Differential cross-test against the C reference, beyond the 100
+//! Byte-interop cross-test against the C reference, beyond the 100
 //! fixed NIST KAT vectors.
 //!
 //! Drives the C reference and this crate over arbitrary seeds via a prebuilt

@@ -1,11 +1,11 @@
 name: C reference cross-check
 
-# C-reference differential tests. Two jobs:
+# C-reference byte-interop tests. Two jobs:
 #   - c-ref-cross-check: baked-vector tests (basis, all-bases, KAT
 #     verification) via plain `cargo test`; no live C ref needed.
-#   - randomized-differential: builds a live C ref (mini-gmp) and drives
+#   - randomized-byte-interop: builds a live C ref (mini-gmp) and drives
 #     keygen+sign over fresh seeds beyond the 100 baked KATs, comparing
-#     byte-for-byte (asserts keygen byte-identity; reports sign).
+#     byte-for-byte (asserts keygen and signature byte-identity).
 # Split out of ci.yml so this is its own status check rather than a
 # gated Tier-3 job on the main CI run.
 
@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       xtest_count:
-        description: "Randomized differential cross-check: number of fresh seeds"
+        description: "Randomized byte-interop cross-check: number of fresh seeds"
         required: false
         default: "256"
 
@@ -47,10 +47,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   # C reference pinned to a commit byte-compatible with our KATs (keygen
-  # is byte-identical; the differential job asserts that over fresh seeds).
+  # is byte-identical; the byte-interop job asserts that over fresh seeds).
   CREF_REPO: SQIsign/the-sqisign
   CREF_REF: dd133d7aca576c361a270c8e6434832535b42ecc
-  # Fresh seeds for the randomized differential. 256 spans a broad set of
+  # Fresh seeds for the randomized byte-interop. 256 spans a broad set of
   # keygen/sign rejection trajectories (~3 min after the cached C-ref
   # build); weekly cron sweeps more. Override via workflow_dispatch.
   XTEST_COUNT: ${{ github.event.inputs.xtest_count || (github.event_name == 'schedule' && '1024' || '256') }}
@@ -120,13 +120,13 @@ jobs:
       - name: Run C ref KAT verification cross-check
         run: cargo test c_ref_kat_cross_check -- --ignored
 
-  # Randomized differential: drive a live C reference and this crate over
+  # Randomized byte-interop: drive a live C reference and this crate over
   # fresh seeds (beyond the 100 baked KATs) and compare byte-for-byte.
-  # Asserts keygen byte-identity (pk+sk) and that every signature
-  # verifies; reports the rate at which the signature is byte-identical
-  # to the reference (partial today -- see tests/cref_xtest.rs).
-  randomized-differential:
-    name: Randomized differential cross-check
+  # Asserts keygen and signature byte-identity (and that signatures
+  # verify); fails until sign byte-interop is complete -- see
+  # tests/cref_xtest.rs.
+  randomized-byte-interop:
+    name: Randomized byte-interop cross-check
     needs: [cron-gate]
     if: |
       !cancelled() &&
@@ -205,7 +205,7 @@ jobs:
             tools/cref_xtest/build.sh)
           echo "ORACLE=$ORACLE" >> "$GITHUB_ENV"
 
-      - name: Run randomized differential cross-check
+      - name: Run randomized byte-interop cross-check
         run: |
           SELKIE_XTEST_ORACLE="$ORACLE" SELKIE_XTEST_COUNT="${XTEST_COUNT}" \
             cargo test --release --test cref_xtest --features expose-internals \
