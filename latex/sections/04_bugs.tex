@@ -1998,9 +1998,16 @@ response-phase $\beta$.  Since the matrix action depends only on the
 coordinates mod $2^f$ (and $2^f < 2^{256}$), reducing at the wide
 width~20 first and narrowing the reduced residue is both correct and
 always in range.  Together these raise byte equality from $64$ to $91$
-of the $100$ signing KATs; the residual divergences are independent,
-in the commitment-path \texttt{represent\_integer} search and the dim-2
-\textsc{FindUV} pair choice (\S\ref{sec:status}).
+of the $100$ signing KATs.  A third site of the same hazard sits one
+level deeper: \textsc{RepresentInteger} narrowed its output $\gamma$ to
+$\mathtt{BigInt\langle 4\rangle}$, but a $q \geq 5$ order with
+$\mathrm{nrd}(\gamma) \approx 2^{271}$ (a commitment-path fixed-degree
+isogeny on a cross-order pick) has $\{1, i\}$ coordinates near
+$2^{259}$; returning $\gamma$ at width~8 recovers two more KATs, for
+$93$.  The remaining seven divergences are not width-related: the
+response-phase $(2,2)$-isogeny chain on theta surfaces produces a
+Montgomery model that differs from the reference's
+(\S\ref{sec:status}).
 
 \paragraph{Catching this earlier.}  The verify-only signing KAT gate
 hid this for weeks: it asserted only that produced signatures verify,

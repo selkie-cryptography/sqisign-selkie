@@ -146,10 +146,13 @@ fn represent_integer_q1() {
 
     let result = order.represent_integer(&m, false, &mut OsRng);
     if let Some(gamma) = result {
-        let (nrd_num, nrd_den) = gamma.norm();
+        // `represent_integer` returns `Element<8>`; compute nrd at a
+        // wide width (coords reach ~2^259 for q ≥ 5 orders, so the
+        // square + p factor needs ~770 bits).
+        let (nrd_num, nrd_den) = gamma.norm_w::<16>();
         let (nrd, rem) = nrd_num.div_rem(&nrd_den);
         assert!(bool::from(rem.is_zero()), "nrd not integer");
-        assert_eq!(nrd, m, "nrd(γ) should equal M");
+        assert_eq!(nrd, m.widen::<16>(), "nrd(γ) should equal M");
     }
 }
 
@@ -161,10 +164,10 @@ fn represent_integer_any_order_verifies_norm() {
 
     let result = ExtremalOrder::<8>::represent_integer_any(&m, &mut OsRng);
     if let Some(gamma) = result {
-        let (nrd_num, nrd_den) = gamma.norm();
+        let (nrd_num, nrd_den) = gamma.norm_w::<16>();
         let (nrd, rem) = nrd_num.div_rem(&nrd_den);
         assert!(bool::from(rem.is_zero()), "nrd not integer");
-        assert_eq!(nrd, m, "nrd(γ) should equal M");
+        assert_eq!(nrd, m.widen::<16>(), "nrd(γ) should equal M");
     }
 }
 

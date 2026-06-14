@@ -498,9 +498,11 @@ impl LeftIdeal<4> {
                     Denominator::from_bigint_unchecked(e.denom.as_bigint().widen::<8>()),
                 )
             };
-            let gamma_8 = widen_elem_4_to_8(&gamma);
+            // `gamma` is already `Element<8>` (RepresentInteger returns
+            // width 8 so q ≥ 5 orders' ~2^259 coordinates survive);
+            // only `beta` needs widening.
             let beta_8 = widen_elem_4_to_8(&beta);
-            let gamma_beta_8 = gamma_8.mul_direct(&beta_8);
+            let gamma_beta_8 = gamma.mul_direct(&beta_8);
 
             // Reduce each numerator coord mod `N · denom`. For
             // α = (a, b, c, d) / denom, subtracting `k · N · denom`

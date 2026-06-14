@@ -28,7 +28,7 @@ impl ExtremalOrder<8> {
     /// TODO(ct): Make constant-time before production use. Called on
     /// secret-derived norms during signing (via FixedDegreeIsogeny,
     /// Algorithm 4.2 lines 21–24).
-    pub fn represent_integer_any<R: RngCore>(m: &BigInt<8>, rng: &mut R) -> Option<Element<4>> {
+    pub fn represent_integer_any<R: RngCore>(m: &BigInt<8>, rng: &mut R) -> Option<Element<8>> {
         for order in &EXTREMAL_ORDERS {
             let order_wide = ExtremalOrder::<8>::from(*order);
             if let Some(gamma) = order_wide.represent_integer(m, false, rng) {
@@ -79,7 +79,7 @@ impl ExtremalOrder<8> {
         m: &BigInt<8>,
         isogeny_cond: bool,
         rng: &mut R,
-    ) -> Option<Element<4>> {
+    ) -> Option<Element<8>> {
         let p: BigInt<8> = P_WIDE;
         let q_val = self.q();
         let q = BigInt::<8>::from_u64(q_val as u64);
@@ -422,21 +422,28 @@ impl ExtremalOrder<8> {
                     }
                 }
 
-                // Narrow to `Element<4>` for the return. Skip if the
-                // result doesn't fit (extremely rare: the result
-                // norm equals the caller's `m`, which fits in
-                // `BigInt<4>` for FDI inputs).
-                let r0 = result_coords_w[0].narrow_to::<4>()?;
-                let r1 = result_coords_w[1].narrow_to::<4>()?;
-                let r2 = result_coords_w[2].narrow_to::<4>()?;
-                let r3 = result_coords_w[3].narrow_to::<4>()?;
-                let denom4 = denom_w.narrow_to::<4>()?;
-                let result = Element::<4>::new(
+                // Narrow to `Element<8>` for the return. A q ≥ 5 order
+                // with `nrd(γ) = M ≈ 2^271` (commitment-path FDI on a
+                // cross-order pick) produces γ whose `{1, i}` coordinates
+                // reach ~2^259, past `BigInt<4>`'s 256-bit budget.
+                // Narrowing to width 4 here returned `None` on a valid γ,
+                // aborting the whole search and forcing a spurious sign
+                // retry that diverged the signature bytes from the C
+                // reference. Width 8 (512 bits) holds every NIST-I γ with
+                // margin; the downstream `EndomorphismAction::apply` is
+                // generic over the storage width and widens internally, so
+                // a wider return is free.
+                let r0 = result_coords_w[0].narrow_to::<8>()?;
+                let r1 = result_coords_w[1].narrow_to::<8>()?;
+                let r2 = result_coords_w[2].narrow_to::<8>()?;
+                let r3 = result_coords_w[3].narrow_to::<8>()?;
+                let denom8 = denom_w.narrow_to::<8>()?;
+                let result = Element::<8>::new(
                     Coordinate::from_bigint(r0),
                     Coordinate::from_bigint(r1),
                     Coordinate::from_bigint(r2),
                     Coordinate::from_bigint(r3),
-                    Denominator::from_bigint_unchecked(denom4),
+                    Denominator::from_bigint_unchecked(denom8),
                 );
 
                 return Some(result);

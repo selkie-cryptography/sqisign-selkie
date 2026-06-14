@@ -7,11 +7,11 @@ produces byte-identical key pairs on every \emph{known-answer test}
 (KAT) vector at the NIST-I parameter set ($103$ key-generation
 vectors), and signatures that verify on every signing KAT ($100$
 vectors).  Signature \emph{byte}-equality with the reference holds on
-$91$ of the $100$ signing KATs; raising it to all $100$ is in progress,
+$93$ of the $100$ signing KATs; raising it to all $100$ is in progress,
 driven by a byte-interop cross-test harness against the C reference.
-The remaining divergences sit in the suitable-ideal short-vector
-selection: the commitment-path \texttt{represent\_integer} search and
-the dim-2 auxiliary \texttt{find\_uv} pair choice.  The implementation
+The remaining divergences are in the response-phase $(2,2)$-isogeny
+chain on theta surfaces, whose Montgomery model differs from the
+reference's.  The implementation
 exercises the full pipeline
 end-to-end: quaternion ideal arithmetic, the Deuring correspondence,
 the $(2,2)$-isogeny chain on theta surfaces, and Montgomery-curve
