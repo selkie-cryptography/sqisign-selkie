@@ -1959,6 +1959,57 @@ overflow is silent because \texttt{BigInt} wraps on multiply;
 test \texttt{decompose} with synthetic elements at every
 extremal order's full width.
 
+\subsection{Width-4 silent overflow in short-vector enumeration and
+  endomorphism action}
+\label{sec:bug-short-vector-width}
+
+A third instance of the same width-4 truncation hazard
+(\S\ref{sec:bug-decompose-width}, \S\ref{sec:bug-random-norm-narrow})
+hid in the signing-side short-vector path, and was the dominant cause
+of sign \emph{byte}-divergence from the C reference: with it present,
+signatures matched the reference on $64$ of the $100$ signing KATs;
+fixing it raised that to $91$.
+
+\paragraph{Symptom.}  \textsc{SuitableIdeals} enumerates short vectors
+$\beta$ of an ideal lattice and feeds the chosen pair to
+\textsc{FindUV}.  For the response-phase auxiliary intersection ideal
+$I_{\mathrm{inter}}$ ($\mathrm{nrd}(I) \approx 2^{385}$) a short vector
+satisfies $\mathrm{nrd}(\beta) \approx 2^{511}$, so its $\{1, i\}$
+coordinates reach $\sim\!2^{256}$, one bit past the capacity of
+$\mathtt{BigInt\langle 4\rangle}$.  Storing $\beta$ at width~4 made
+\texttt{narrow\_to::<4>} return \texttt{None} and silently drop every
+such vector, shrinking the enumerated list (24 of 57 survivors for one
+KAT) and selecting a different $(\beta_s, \beta_t)$ pair than the
+reference, whose \texttt{ibz} arithmetic never truncates.  The
+codomain of \texttt{i\_inter.to\_isogeny()} then had the correct
+$j$-invariant but a different Montgomery~$A$, so the auxiliary
+signature bytes diverged; in the worst case enumeration emptied the
+special-order list and \textsc{SuitableIdeals} returned \texttt{None},
+forcing a full sign retry that re-rolled the challenge.
+
+\paragraph{Fix.}  Store the enumerated $\beta$ at width~8 (512 bits,
+constant \texttt{SHORT\_VECTOR\_WIDTH}), which holds every NIST-I short
+vector with margin; commitment-path vectors ($\mathrm{nrd}(I) \approx
+2^{126}$) fit trivially and stay byte-identical.  A second truncation
+sat one level deeper: \texttt{EndomorphismAction::apply} narrowed the
+$\mathcal{O}_0$-coordinates of $\beta$ to $\mathtt{BigInt\langle
+4\rangle}$ \emph{before} reducing them mod $2^f$, again dropping
+response-phase $\beta$.  Since the matrix action depends only on the
+coordinates mod $2^f$ (and $2^f < 2^{256}$), reducing at the wide
+width~20 first and narrowing the reduced residue is both correct and
+always in range.  Together these raise byte equality from $64$ to $91$
+of the $100$ signing KATs; the residual divergences are independent,
+in the commitment-path \texttt{represent\_integer} search and the dim-2
+\textsc{FindUV} pair choice (\S\ref{sec:status}).
+
+\paragraph{Catching this earlier.}  The verify-only signing KAT gate
+hid this for weeks: it asserted only that produced signatures verify,
+never that they are byte-identical to the reference, even though the
+keygen KAT gate had always byte-compared \texttt{pk}/\texttt{sk}.  A
+byte-interop cross-test harness (\S\ref{sec:testing}) over fresh seeds
+surfaced the gap; the signing KAT gate now byte-compares the produced
+signature.
+
 \subsection{Cross-order $\beta$ post-processing missing in
   \textsc{SuitableIdeals}}
 \label{sec:bug-cross-order-pp}
