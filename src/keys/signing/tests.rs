@@ -661,7 +661,7 @@ fn sign_kat_zero_only() {
 /// SAME starting point as keygen — so its first prime sample equalled
 /// keygen's `N(I_sk)` instead of C-ref's `N(I_com)`.
 fn sign_kat_idx_probe_inner(kat_idx: usize) {
-    let (seed_hex, pk_hex, sk_hex, msg_hex, _) = crate::keys::kat_data::KAT_VECTORS[kat_idx];
+    let (seed_hex, pk_hex, sk_hex, msg_hex, sm_hex) = crate::keys::kat_data::KAT_VECTORS[kat_idx];
     let seed_bytes = hex::decode(seed_hex).expect("valid hex");
     let seed: [u8; 48] = seed_bytes.as_slice().try_into().expect("seed is 48 bytes");
     let sk_bytes_kat = hex::decode(sk_hex).expect("valid hex");
@@ -694,6 +694,19 @@ fn sign_kat_idx_probe_inner(kat_idx: usize) {
     let elapsed = t0.elapsed();
     vk.verify(&msg, &sig)
         .unwrap_or_else(|e| panic!("KAT[{kat_idx}] verify failed: {e:?}"));
+
+    // Strict byte-interop gate: the produced signature must be
+    // byte-identical to the C reference's, not merely valid. Keygen has
+    // always byte-checked pk+sk; sign must too. The fifth KAT field is
+    // the NIST signed message `sm = signature || msg`, so the reference
+    // signature is its first `SIGNATURE_BYTES`.
+    let sm = hex::decode(sm_hex).expect("valid hex");
+    assert_eq!(
+        sig.to_bytes().as_slice(),
+        &sm[..crate::SIGNATURE_BYTES],
+        "KAT[{kat_idx}]: signature is not byte-identical to the C reference"
+    );
+
     crate::selkie_trace!("sign_kat_derand_{kat_idx:03}: sign={elapsed:?}");
 }
 
