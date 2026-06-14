@@ -6,8 +6,9 @@ name: Auto-rebase branch stack
 # standing PRs (next -> main, scaoilte -> main) in place.
 #
 # On a rebase conflict the step fails before pushing, so the branch on the
-# remote is left untouched and the run goes red; resolve manually and the
-# next run continues.
+# remote is left untouched and the run goes red. Resolve it manually and
+# push the fixed branch: a push to any stack branch re-triggers this job,
+# which then succeeds and clears the red.
 #
 # Caveat: pushes made with the default GITHUB_TOKEN do not start new
 # workflow runs, so an auto-rebased `next`/`scaoilte` does NOT re-run CI on
@@ -16,7 +17,7 @@ name: Auto-rebase branch stack
 
 on:
   push:
-    branches: [main, next]
+    branches: [main, next, scaoilte]
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
