@@ -1,26 +1,16 @@
 //! Differential cross-test against the C reference, beyond the 100
 //! fixed NIST KAT vectors.
 //!
-//! The baked `KAT_VECTORS` pin byte-identity at exactly 100 seeds. This
-//! harness drives the C reference (`the-sqisign`) and this crate over
-//! *arbitrary* seeds via a prebuilt oracle and compares byte-for-byte.
-//! Both sides thread one DRBG keygen -> sign (the NIST KAT consumption
-//! pattern: sign reads the stream mid-flight after keygen), and sign the
-//! same fixed 32-byte message (bytes 0x00..0x1f) the oracle compiles in.
+//! Drives the C reference and this crate over arbitrary seeds via a prebuilt
+//! oracle, comparing byte-for-byte: the unbounded analog of the baked
+//! `sign_kat_derand_NNN` byte gate. Both sides thread one DRBG keygen -> sign
+//! (sign reads the stream mid-flight after keygen) and sign the same fixed
+//! 32-byte message the oracle compiles in.
 //!
-//! What it asserts vs reports:
-//!
-//! - **Asserts** the verifying key and secret key are byte-identical to the
-//!   reference (the keygen byte-identity guarantee, extended from 100 seeds to
-//!   unbounded), and that every produced signature verifies.
-//! - **Reports** the rate at which the *signature* is byte-identical to the
-//!   reference. SQIsign signing is randomized; this crate reproduces the
-//!   reference's signature bytes only when the two consume the shared DRBG
-//!   along the same rejection-sampling trajectory. That holds for a subset of
-//!   inputs (e.g. baked KATs 0,1,2,7,8,12 but not 3,4,5,6,...), so signature
-//!   byte-identity is partial and is surfaced here rather than asserted. The
-//!   baked sign KATs only ever assert verification, which is why this gap was
-//!   previously invisible.
+//! Asserts pk, sk, and signature are byte-identical and that signatures
+//! verify. Sign byte-identity is currently partial (signing is randomized;
+//! the bytes match only when both walk the shared DRBG identically), so the
+//! test FAILS on divergent seeds by design and prints the rate.
 //!
 //! Requires the prebuilt oracle (`tools/cref_xtest/build.sh`); point
 //! `SELKIE_XTEST_ORACLE` at it. `#[ignore]`d because it needs that
@@ -141,8 +131,7 @@ fn cref_xtest_differential() {
     let mut sig_mismatch_seeds = Vec::new();
 
     for (i, (seed, reference)) in seeds.iter().zip(references).enumerate() {
-        // One DRBG, keygen then sign, mirroring the oracle's
-        // randombytes_init(seed) -> keypair -> sign.
+        // One DRBG threaded keygen -> sign, like the oracle.
         let mut drbg = Aes256CtrDrbg::new(seed);
         let sk = match SigningKey::generate_with_rng(&mut drbg) {
             Ok(sk) => sk,
@@ -160,13 +149,12 @@ fn cref_xtest_differential() {
             Reference::Fail => panic!("seed {i}: reference failed but Rust keygen succeeded"),
         };
 
-        // Keygen byte-identity: asserted (the strong, unbounded guarantee).
+        // Keygen byte-identity.
         let vk = sk.verifying_key();
         assert_eq!(vk.to_bytes().as_slice(), ref_pk, "seed {i}: pk mismatch");
         assert_eq!(sk.to_bytes().as_slice(), ref_sk, "seed {i}: sk mismatch");
 
-        // Sign: must verify (asserted); byte-identity vs the reference is
-        // reported, not asserted (see module docs).
+        // Sign must verify; byte-equality is tallied here, asserted after the loop.
         let sig = sk
             .sign_with_rng(&XTEST_MSG, &mut drbg)
             .unwrap_or_else(|e| panic!("seed {i}: Rust sign failed: {e:?}"));
@@ -184,8 +172,14 @@ fn cref_xtest_differential() {
         "cross-test {count} seeds: keygen byte-identical (pk+sk) and all signatures verify; \
          signature byte-identical {sig_byte_eq}/{count}"
     );
-    if !sig_mismatch_seeds.is_empty() {
-        let shown: Vec<_> = sig_mismatch_seeds.iter().take(16).collect();
-        println!("  signature-divergent seed indices (first 16): {shown:?}");
-    }
+
+    // Strict byte gate (like sign_kat_derand_NNN): fails until sign
+    // byte-interop is complete.
+    assert!(
+        sig_mismatch_seeds.is_empty(),
+        "signature not byte-identical to the C reference on {}/{count} seeds; \
+         divergent seed indices (first 16): {:?}",
+        sig_mismatch_seeds.len(),
+        sig_mismatch_seeds.iter().take(16).collect::<Vec<_>>()
+    );
 }
