@@ -1187,21 +1187,66 @@ impl SigningKey {
             // Lines 34–35: even response.
             //
             // `compute_even_response` constructs the ideal
-            // `I = O₀·α + O₀·(2^r_rsp)` internally. Two elements that
-            // differ by a member of `2^r_rsp · O₀` generate the same
-            // ideal, so we can replace `α_rsp` with
-            // `α_rsp mod (2^r_rsp · O₀)` — coordinate-wise reduction
-            // mod `2^r_rsp` — and then narrow to `Element<4>`.
-            // For `r_rsp ≤ 126`, the reduced coordinates fit easily.
+            // `I = O₀·conj(α) + O₀·(2^r_rsp)` internally. Two elements
+            // that differ by a member of `2^r_rsp · O₀` generate the
+            // same ideal, so `α_rsp` can be replaced with any element
+            // congruent to it mod `2^r_rsp · O₀` before narrowing to
+            // `Element<4>`.
+            //
+            // # Divergences
+            //
+            // The reduction MUST be taken in O₀'s integral basis, not
+            // coordinate-wise in the standard `(1, i, j, k)` basis.
+            // O₀ properly contains `Z⟨1, i, j, k⟩` (it has the
+            // half-integral generators `(i + j)/2` and `(1 + k)/2`),
+            // so reducing the raw `(1, i, j, k)` coordinates mod
+            // `2^r_rsp` lands α in a different coset of `2^r_rsp · O₀`
+            // and yields a different ideal `O₀·conj(α) + O₀·2^r_rsp`,
+            // hence a different small generator (the kernel of
+            // `α | E[2^r_rsp]` depends on the specific generator, not
+            // just the ideal) and a different `j(E_chl)`. The C
+            // reference (`sign.c` -> `quat_lideal_create`) builds the
+            // ideal from the full-width α, which is congruent to the
+            // O₀-basis reduction but not to the standard-basis one.
+            // Decompose α in O₀'s basis, reduce those coordinates mod
+            // `2^r_rsp`, and reconstruct `α' = Σ cᵢ·bᵢ` with
+            // `α' ≡ α (mod 2^r_rsp · O₀)`.
             if r_rsp_val > 0 {
                 let two_to_r: BigInt<N_RESP> = BigInt::<N_RESP>::ONE << r_rsp_val;
-                let mod_coord = |c: &BigInt<N_RESP>| c.ct_mod(&two_to_r);
+                let o0_lat: Lattice<N_RESP> = *o0_w.order().lattice();
+                let o0_coords = match o0_lat.decompose(&alpha_rsp_w) {
+                    Some(c) => c,
+                    None => {
+                        continue;
+                    }
+                };
+                // Canonicalize each O₀-coordinate to `[0, 2^r_rsp)`.
+                // `ct_mod` truncates toward zero, so a negative
+                // coordinate gives a negative remainder — add the
+                // modulus to land in the canonical range.
+                let reduce_o0 = |c: &BigInt<N_RESP>| -> BigInt<N_RESP> {
+                    let r = c.ct_mod(&two_to_r);
+                    if bool::from(r.is_negative()) {
+                        r.ct_add(&two_to_r)
+                    } else {
+                        r
+                    }
+                };
+                let mut num = [BigInt::<N_RESP>::ZERO; 4];
+                for (j, cj) in o0_coords.iter().enumerate() {
+                    let cj_red = reduce_o0(cj);
+                    let col = o0_lat.basis_elem(j);
+                    num[0] = num[0].ct_add(&cj_red.ct_mul(col.a.as_bigint()));
+                    num[1] = num[1].ct_add(&cj_red.ct_mul(col.b.as_bigint()));
+                    num[2] = num[2].ct_add(&cj_red.ct_mul(col.c.as_bigint()));
+                    num[3] = num[3].ct_add(&cj_red.ct_mul(col.d.as_bigint()));
+                }
                 let reduced_w = Element::<N_RESP>::new(
-                    Coordinate::from_bigint(mod_coord(alpha_rsp_w.a.as_bigint())),
-                    Coordinate::from_bigint(mod_coord(alpha_rsp_w.b.as_bigint())),
-                    Coordinate::from_bigint(mod_coord(alpha_rsp_w.c.as_bigint())),
-                    Coordinate::from_bigint(mod_coord(alpha_rsp_w.d.as_bigint())),
-                    alpha_rsp_w.denom,
+                    Coordinate::from_bigint(num[0]),
+                    Coordinate::from_bigint(num[1]),
+                    Coordinate::from_bigint(num[2]),
+                    Coordinate::from_bigint(num[3]),
+                    Denominator::from_bigint_unchecked(*o0_lat.denom()),
                 );
                 let alpha_narrow = match reduced_w.narrow_to::<4>() {
                     Some(a) => a,

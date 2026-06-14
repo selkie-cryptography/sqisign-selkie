@@ -3,12 +3,18 @@
 
 \emph{Baseline interoperability} with the SQIsign v2.0.1 specification
 and the reference C implementation is achieved.  The implementation
-produces byte-identical key pairs and signatures on every
-\emph{known-answer test} (KAT) vector at the NIST-I parameter set
-($100$ signing KATs, $103$ key-generation KATs) and exercises the full
-pipeline end-to-end: quaternion ideal arithmetic, the Deuring
-correspondence, the $(2,2)$-isogeny chain on theta surfaces, and
-Montgomery-curve verification.  This baseline is the foundation that
+produces byte-identical key pairs on every \emph{known-answer test}
+(KAT) vector at the NIST-I parameter set ($103$ key-generation
+vectors), and signatures that verify on every signing KAT ($100$
+vectors).  Signature \emph{byte}-equality with the reference holds on
+the subset of signing trajectories whose pseudorandom consumption
+matches it; raising it to every signing KAT is in progress, driven by a
+differential cross-test harness against the C reference (the remaining
+divergences are in the even-response ideal reduction and the dim-2
+auxiliary isogeny).  The implementation exercises the full pipeline
+end-to-end: quaternion ideal arithmetic, the Deuring correspondence,
+the $(2,2)$-isogeny chain on theta surfaces, and Montgomery-curve
+verification.  This baseline is the foundation that
 the rest of this paper documents reaching: the bugs surfaced from
 specification ambiguity (\S\ref{sec:bugs}), the type-level invariants
 that prevented entire bug classes (\S\ref{sec:types}), and the test
