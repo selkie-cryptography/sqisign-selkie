@@ -1115,3 +1115,94 @@ proptest! {
         prop_assert_eq!(n.is_probable_prime_auto::<30>(12), n.is_probable_prime_w::<30>(12));
     }
 }
+
+// x86_64 ADX fused add-and-subtract asm vs portable equivalence. The
+// gate for the dual-chain `addsub_n_adx`: its four outputs (sum, diff,
+// sum-carry, `a_lt_b`) must equal the portable `mag_add` / `mag_sub`
+// pair for every width and every random input. x86_64-only -- aarch64
+// has no add/sub asm at all (the portable chains LLVM lowers to
+// `adcs`/`sbcs` are the whole story there).
+//
+// `vec_to_array::<N>` packs a proptest-generated `Vec<u64>` of length
+// `>= N` into a `[u64; N]`.
+#[cfg(target_arch = "x86_64")]
+mod arch_asm_eq {
+    use super::*;
+
+    fn vec_to_array<const N: usize>(v: &[u64]) -> [u64; N] {
+        let mut a = [0u64; N];
+        a.copy_from_slice(&v[..N]);
+        a
+    }
+
+    /// The fused `addsub_n_adx` agrees with the portable `mag_add` /
+    /// `mag_sub` pair for width `N`: matching sum, difference, sum-carry,
+    /// and `a_lt_b == 1` iff the subtraction borrowed.
+    fn check_addsub<const N: usize>(a: &[u64; N], b: &[u64; N]) -> Result<(), TestCaseError> {
+        let (want_sum, want_carry) = BigInt::<N>::mag_add(a, b);
+        let (want_diff, want_borrow) = BigInt::<N>::mag_sub(a, b);
+
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "adx",
+            target_feature = "bmi2",
+        ))]
+        let (sum, diff, carry, a_lt_b) = arch::x86_64::addsub_n_adx(a, b);
+
+        // No ADX-capable x86 build: compare the portable pair against
+        // itself so the harness shape still type-checks and runs.
+        #[cfg(all(
+            target_arch = "x86_64",
+            not(all(target_feature = "adx", target_feature = "bmi2")),
+        ))]
+        let (sum, diff, carry, a_lt_b) = (want_sum, want_diff, want_carry, want_borrow);
+
+        prop_assert_eq!(sum, want_sum);
+        prop_assert_eq!(diff, want_diff);
+        prop_assert_eq!(carry, want_carry);
+        prop_assert_eq!(a_lt_b, want_borrow);
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn prop_arch_addsub_eq_portable(
+            a in prop::collection::vec(any::<u64>(), 20),
+            b in prop::collection::vec(any::<u64>(), 20),
+        ) {
+            check_addsub::<4>(&vec_to_array(&a), &vec_to_array(&b))?;
+            check_addsub::<8>(&vec_to_array(&a), &vec_to_array(&b))?;
+            check_addsub::<12>(&vec_to_array(&a), &vec_to_array(&b))?;
+            check_addsub::<20>(&vec_to_array(&a), &vec_to_array(&b))?;
+        }
+
+        // Carry-boundary stressors: all-ones against one, and a seeded
+        // near-overflow pattern where a carry (and a borrow) propagates
+        // the full width on both chains at once.
+        #[test]
+        fn prop_arch_addsub_carry_edges(seed in any::<u64>()) {
+            let ones = [u64::MAX; 20];
+            let one = {
+                let mut o = [0u64; 20];
+                o[0] = 1;
+                o
+            };
+            check_addsub::<4>(&vec_to_array(&ones), &vec_to_array(&one))?;
+            check_addsub::<8>(&vec_to_array(&ones), &vec_to_array(&one))?;
+            check_addsub::<12>(&vec_to_array(&ones), &vec_to_array(&one))?;
+            check_addsub::<20>(&vec_to_array(&ones), &vec_to_array(&one))?;
+            check_addsub::<20>(&vec_to_array(&one), &vec_to_array(&ones))?;
+
+            let mut a = [0u64; 20];
+            let mut b = [0u64; 20];
+            for i in 0..20 {
+                a[i] = u64::MAX.wrapping_sub(seed.wrapping_add(i as u64));
+                b[i] = seed.wrapping_mul(i as u64 + 1);
+            }
+            check_addsub::<20>(&a, &b)?;
+            check_addsub::<20>(&b, &a)?;
+        }
+    }
+}

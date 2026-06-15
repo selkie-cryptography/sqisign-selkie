@@ -315,6 +315,37 @@ to make worse register-allocation and inlining choices in the MLLL and
 lattice-product inner loops than the per-unit default.  Output is
 byte-identical; the regression is pure codegen.  Not adopted.
 
+\paragraph{Hand-written carry-chain assembly for add and subtract.}
+The magnitude add and subtract underlying signed \texttt{ct\_add} were
+given hand-written \texttt{asm!} backends, an \texttt{adcs} carry chain
+and an \texttt{sbcs} borrow chain, on the theory that matching GMP's
+hand-tuned \texttt{mpn} assembly would close part of the gap to the C
+reference.  On Apple~M4 the assembly regressed both hot operations
+against the portable
+\texttt{overflowing\_add}/\texttt{overflowing\_sub} chains it replaced,
+by roughly $+1.0\%$ on signing and $+4.8\%$ on key generation.  The
+assembly ran a runtime-counted loop inside one opaque \texttt{asm!}
+block, which prevents the compiler from unrolling and scheduling across
+the limbs, whereas the portable \texttt{const fn} chain is fully
+unrolled and lowered to a tight \texttt{adcs}/\texttt{sbcs} sequence
+with no loop overhead.  This is the same effect already seen in the
+rejected runtime-loop Montgomery multiply and the per-call NEON
+$\mathbb{F}_p$ backend: for a single straight carry chain, the
+compiler's lowering equals or beats hand assembly on this target.  A
+subtler form of the same lesson followed.  Even routing add and
+subtract through a compile-time dispatch wrapper (portable on
+\texttt{aarch64}, assembly on \texttt{x86\_64}), with no assembly
+executed on \texttt{aarch64} at all, regressed key generation by
+$+0.35\%$ and signing by $+0.14\%$ against the verbatim \texttt{const
+fn} bodies, so the magnitude routines are kept as those bodies
+unchanged on every target.  The one add-and-subtract form the compiler
+cannot express, the fused two-output pass that runs the sum on one flag
+chain and the difference on a second, independent chain over a single
+sweep of the limbs (\texttt{x86\_64} \texttt{adcx}/\texttt{adox}), is
+retained as \texttt{addsub\_n\_adx} on the \texttt{ct\_add} path and
+gated to \texttt{x86\_64}~+~ADX; its effect awaits confirmation on the
+instruction-count CI, since Valgrind has no Apple~Silicon port.
+
 \paragraph{Byte-identical micro-optimizations with no wall-clock
 effect.}
 Three byte-identical changes measured neutral (within run-to-run noise)

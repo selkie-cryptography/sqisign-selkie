@@ -12,7 +12,10 @@ impl<const N: usize> BigInt<N> {
     /// borrow)`. Borrow is 1 if `a < b` (unsigned).
     ///
     /// Same `b1 | b2` simplification as in [`Self::mag_add`] for tighter
-    /// `sbcs` chain codegen.
+    /// `sbcs` chain codegen. LLVM lowers this to a fully-unrolled
+    /// `sbb`/`sbcs` chain on both x86_64 and aarch64, so there is no
+    /// separate single-chain asm path; the only hand-written subtract is
+    /// the fused dual-chain in [`Self::ct_add`].
     #[inline(always)]
     pub(super) const fn mag_sub(a: &[u64; N], b: &[u64; N]) -> ([u64; N], u64) {
         let mut result = [0u64; N];

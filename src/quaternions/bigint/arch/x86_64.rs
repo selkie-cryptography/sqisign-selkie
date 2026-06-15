@@ -295,3 +295,102 @@ pub(in super::super) fn mag_mul_comba<const N: usize>(a: &[u64; N], b: &[u64; N]
 
     out
 }
+
+/// Fused magnitude add-and-subtract via dual-chain ADX.
+///
+/// Computes `sum = a + b` on the CF chain (`adcx`) and `diff = a - b`
+/// on the OF chain (`adox`, via the two's-complement identity
+/// `a - b = a + ~b + 1` with the OF carry seeded to 1) in a single
+/// pass over `N` limbs. The two chains live on independent flags, so
+/// one read of each operand feeds both results -- replacing the
+/// separate add and subtract passes a signed `ct_add` would otherwise
+/// run. GMP's `mpn_add_n_sub_n` is the same fuse-both-in-one-pass
+/// idea; the dual-flag ADX form is the x86_64 realization.
+///
+/// Returns `(sum, diff, sum_carry, a_lt_b)`, where `a_lt_b == 1` iff
+/// `a < b` (the subtraction borrowed). Matches the pair of portable
+/// [`mag_add`] / [`mag_sub`] results.
+///
+/// Constant-time: data-independent ops and addressing; `loop`, `lea`,
+/// and `not` preserve both flag chains across the iteration.
+///
+/// [`mag_add`]: super::super::BigInt::mag_add
+/// [`mag_sub`]: super::super::BigInt::mag_sub
+///
+/// # Safety
+///
+/// `target_feature = "adx"` and `"bmi2"` are cfg-required. Reads `N`
+/// `u64` from each of `a` and `b`, writes `N` `u64` to each of `sum`
+/// and `diff`. No stack use. `N >= 1`.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "adx",
+    target_feature = "bmi2",
+))]
+#[inline]
+pub(in super::super) fn addsub_n_adx<const N: usize>(
+    a: &[u64; N],
+    b: &[u64; N],
+) -> ([u64; N], [u64; N], u64, u64) {
+    const { assert!(N >= 1, "addsub_n_adx: N >= 1") };
+    let mut sum = [0u64; N];
+    let mut diff = [0u64; N];
+    let scarry: u64;
+    let dnb: u64;
+
+    // SAFETY: cfg-gated on +adx,+bmi2. `ap`/`bp` are read for `N`
+    // limbs; `sp`/`dp` written for `N` limbs. The loop is `loop`-counted
+    // by `N` (a width, not data); `adcx` (CF chain) and `adox` (OF
+    // chain) ride independent flags, and `not`/`lea`/`loop` preserve
+    // both. nostack.
+    unsafe {
+        asm!(
+            // Seed CF = 0 (sum carry-in) and OF = 1 (the +1 of the
+            // diff's two's complement). `inc al` (0x7f -> 0x80) sets OF
+            // without touching CF.
+            "xor eax, eax",
+            "mov al, 0x7f",
+            "inc al",
+            "mov rcx, {n}",
+
+            "2:",
+            "mov {tb}, qword ptr [{bp}]",
+            "mov {ta}, qword ptr [{ap}]",
+            "mov {ts}, {ta}",
+            "adcx {ts}, {tb}",                    // CF chain: a + b
+            "mov qword ptr [{sp}], {ts}",
+            "not {tb}",                           // ~b (preserves CF/OF)
+            "adox {ta}, {tb}",                    // OF chain: a + ~b
+            "mov qword ptr [{dp}], {ta}",
+            "lea {ap}, [{ap} + 8]",               // flag-preserving advance
+            "lea {bp}, [{bp} + 8]",
+            "lea {sp}, [{sp} + 8]",
+            "lea {dp}, [{dp} + 8]",
+            "loop 2b",
+
+            // Capture the final carries before any flag-clobbering op.
+            "setc {sc:l}",
+            "movzx {sc:e}, {sc:l}",
+            "seto {db:l}",                        // OF set == no borrow
+            "movzx {db:e}, {db:l}",
+
+            ap = inout(reg) a.as_ptr() => _,
+            bp = inout(reg) b.as_ptr() => _,
+            sp = inout(reg) sum.as_mut_ptr() => _,
+            dp = inout(reg) diff.as_mut_ptr() => _,
+            n = in(reg) N,
+            ta = out(reg) _,
+            tb = out(reg) _,
+            ts = out(reg) _,
+            sc = out(reg) scarry,
+            db = out(reg) dnb,
+            out("rax") _,
+            out("rcx") _,
+            options(nostack),
+        );
+    }
+
+    // `dnb == 1` iff the subtract did not borrow (a >= b); invert to the
+    // `a < b` borrow flag the portable `mag_sub` returns.
+    (sum, diff, scarry, 1 - dnb)
+}
