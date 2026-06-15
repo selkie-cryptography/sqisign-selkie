@@ -13,6 +13,28 @@ use super::{
 };
 use crate::{curves::TorsionExponent, drbg::Aes256CtrDrbg, params::QUAT_PRIME_COFACTOR};
 
+/// Returns the reduced norm `a² + b² + p·(c² + d²)` of a quaternion
+/// basis column `[a, b, c, d]` (numerators over the lattice denom),
+/// computed at [`BigInt<8>`] so it cannot truncate.
+///
+/// The naive `BigInt<4>` form overflows: `p ≈ 2^250`, so a column
+/// with `c² + d² ≥ 52` (i.e. `|c|` or `|d| ≳ 8`, common in a reduced
+/// O_0-ideal basis) pushes `p·(c² + d²)` past 256 bits and silently
+/// loses the high limb. That made the divisibility check below
+/// spuriously fail on the unlucky `OsRng` draws that produce such a
+/// basis — a flaky test, not a flaky `random_norm`. Widening every
+/// operand to 8 limbs (512 bits) leaves ~250 bits of headroom.
+fn nrd_column_wide(col: &Vector<4>) -> BigInt<8> {
+    let a = col[0].widen::<8>();
+    let b = col[1].widen::<8>();
+    let c = col[2].widen::<8>();
+    let d = col[3].widen::<8>();
+    let p8 = P_WIDE;
+    a.ct_mul(&a)
+        .ct_add(&b.ct_mul(&b))
+        .ct_add(&p8.ct_mul(&c.ct_mul(&c).ct_add(&d.ct_mul(&d))))
+}
+
 /// Miller-Rabin width check: `pow_mod_w<W>` requires
 /// `64·W ≥ 2·bits(modulus) − 1`. For 379-bit moduli (aux-path
 /// `represent_integer`) we need `W ≥ 12`. Running at `W = 9`
@@ -275,15 +297,10 @@ fn random_prime_norm_lattice_actually_has_norm() {
     let denom = *lat.denom();
     let denom_sq = denom.ct_mul(&denom);
     let n_times_denom_sq = n.ct_mul(&denom_sq);
-    let p4 = crate::quaternions::precomputed::P;
 
     for j in 0..4 {
         let col = lat.basis().columns()[j];
-        let nrd_col_4 = col[0]
-            .ct_mul(&col[0])
-            .ct_add(&col[1].ct_mul(&col[1]))
-            .ct_add(&p4.ct_mul(&col[2].ct_mul(&col[2]).ct_add(&col[3].ct_mul(&col[3]))));
-        let nrd_col_8: BigInt<8> = nrd_col_4.widen();
+        let nrd_col_8 = nrd_column_wide(&col);
         let divisor_8: BigInt<8> = n_times_denom_sq.widen();
         let (_, rem) = nrd_col_8.div_rem(&divisor_8);
         assert!(
@@ -297,41 +314,53 @@ fn random_prime_norm_lattice_actually_has_norm() {
 /// `random_norm(N)` produces a valid O_0-ideal for composite N:
 /// every basis element has nrd divisible by N.
 ///
-/// Fixed (Task #28) by computing γ·β at `Element<8>` in
-/// `random_norm` — `Element<4>::mul` silently truncates when
-/// product coords reach ~2^388 (γ has coords ~2^129 from
-/// `represent_integer`) — then reducing each numerator coord
-/// mod `N · denom` to fit the result back in `BigInt<4>`. The
-/// reduction preserves the ideal `O·α + O·N` since the
-/// difference lives in `N · Z<1,i,j,k> ⊂ N · O_0 = O · N`.
+/// The `random_norm` correctness fix (Task #28): compute γ·β at
+/// `Element<8>` (`Element<4>::mul` truncates once product coords
+/// reach ~2^388, since γ has coords ~2^129 from `represent_integer`),
+/// then reduce each numerator coord mod `N · denom` to fit back in
+/// `BigInt<4>`. The reduction preserves the ideal `O·α + O·N` since
+/// the difference lives in `N · Z<1,i,j,k> ⊂ N · O_0 = O · N`.
+///
+/// The check itself uses [`nrd_column_wide`]: an earlier version
+/// computed the reduced norm in `BigInt<4>`, which overflows once a
+/// reduced basis column has `c² + d² ≥ 52` (since `p ≈ 2^250`). That
+/// is common across `OsRng` draws, so the test flaked (passed only on
+/// draws whose reduced basis kept the j/k coords small) while
+/// `random_norm` was always correct.
 #[test]
 fn random_norm_lattice_actually_has_norm() {
     let n = BigInt::<4>::from_u64(143);
-    let Some(ideal) = LeftIdeal::random_norm(&n, &EXTREMAL_ORDERS[0], &mut OsRng) else {
-        return;
-    };
 
-    let lat: Lattice<4> = (*ideal.lattice()).into();
-    let denom = *lat.denom();
-    let denom_sq = denom.ct_mul(&denom);
-    let n_times_denom_sq = n.ct_mul(&denom_sq);
-    let p4 = crate::quaternions::precomputed::P;
+    // Draw many ideals: the invariant must hold on *every* `OsRng`
+    // trajectory, not just a lucky one. With the old `BigInt<4>` nrd
+    // check this loop tripped within a handful of iterations (most
+    // reduced bases have a column with `c² + d² ≥ 52`).
+    let mut built = 0usize;
+    for _ in 0..300 {
+        let Some(ideal) = LeftIdeal::random_norm(&n, &EXTREMAL_ORDERS[0], &mut OsRng) else {
+            continue;
+        };
+        built += 1;
 
-    for j in 0..4 {
-        let col = lat.basis().columns()[j];
-        let nrd_col_4 = col[0]
-            .ct_mul(&col[0])
-            .ct_add(&col[1].ct_mul(&col[1]))
-            .ct_add(&p4.ct_mul(&col[2].ct_mul(&col[2]).ct_add(&col[3].ct_mul(&col[3]))));
-        let nrd_col_8: BigInt<8> = nrd_col_4.widen();
-        let divisor_8: BigInt<8> = n_times_denom_sq.widen();
-        let (_, rem) = nrd_col_8.div_rem(&divisor_8);
-        assert!(
-            bool::from(rem.is_zero()),
-            "random_norm(143) basis[{j}] nrd not divisible by 143·denom² — \
-             lattice is not an O_0-ideal of norm 143"
-        );
+        let lat: Lattice<4> = (*ideal.lattice()).into();
+        let denom = *lat.denom();
+        let denom_sq = denom.ct_mul(&denom);
+        let divisor_8: BigInt<8> = n.ct_mul(&denom_sq).widen();
+
+        for j in 0..4 {
+            let col = lat.basis().columns()[j];
+            let nrd_col_8 = nrd_column_wide(&col);
+            let (_, rem) = nrd_col_8.div_rem(&divisor_8);
+            assert!(
+                bool::from(rem.is_zero()),
+                "random_norm(143) basis[{j}] nrd not divisible by 143·denom² — \
+                 lattice is not an O_0-ideal of norm 143"
+            );
+        }
     }
+    // `random_norm(143)` should succeed often enough that the loop
+    // exercised real draws; if it never built one, the test is vacuous.
+    assert!(built > 0, "random_norm(143) never produced an ideal");
 }
 
 /// `suitable_ideals` on an ideal with composite norm (product
