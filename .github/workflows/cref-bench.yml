@@ -1,9 +1,12 @@
-name: C ref baseline (mini-gmp + ref GF)
+name: C ref baseline (system GMP + ref GF)
 
-# Apples-to-apples comparison: build the SQIsign C reference with the
-# bundled mini-gmp (no asm) and the portable ref GF backend (no asm
-# Fp), then run keypair/sign/verify against our Rust crate's
-# benches/sqisign.rs on the same runner.
+# Comparison against the real bar: build the SQIsign C reference with
+# system GMP (the default the published sqisign.org numbers use, with
+# GMP's hand-tuned `mpn` assembly for the quaternion bignum) and the
+# portable ref GF backend, then run keypair/sign/verify against our Rust
+# crate's benches/sqisign.rs on the same runner. This matches upstream's
+# "pure C" configuration (system GMP + ref GF), so the gap to our
+# hand-rolled BigInt is GMP's bignum asm, not a no-asm strawman.
 #
 # Runs on self-hosted Fly (shared-cpu-4x). The comparison is on the
 # same runner so relative C-vs-Rust signal is preserved even with
@@ -42,7 +45,7 @@ env:
 
 # The C side is pinned by CREF_REF, so its build artifacts are
 # reproducible across runs. Cache the build tree to skip clone +
-# patch + configure + compile on every push.
+# configure + compile on every push.
 #
 # Cache miss happens when CREF_REF changes (manual dispatch with a
 # new pin, or future bump of the default), or when the cache key's
@@ -63,7 +66,7 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: cref/build
-          key: cref-build-${{ runner.os }}-${{ env.CREF_REF }}-mini-gmp-ref-v1
+          key: cref-build-${{ runner.os }}-${{ env.CREF_REF }}-system-gmp-ref-v1
 
       - name: Clone C reference at pinned commit
         if: steps.cref-cache.outputs.cache-hit != 'true'
@@ -71,41 +74,20 @@ jobs:
           git clone --no-checkout "https://github.com/${CREF_REPO}.git" cref
           git -C cref checkout "${CREF_REF}"
 
-      - name: Patch stray unconditional gmp.h include
-        # ibz_division.c includes <gmp.h> unconditionally, bypassing
-        # the MINI_GMP toggle that intbig.h uses. Mirror the toggle so
-        # the build can find the right type definitions when system
-        # libgmp is absent.
-        if: steps.cref-cache.outputs.cache-hit != 'true'
-        run: |
-          set -o pipefail
-          file=cref/src/quaternion/ref/generic/hnf/ibz_division.c
-          test -f "$file"
-          # Replace the line with the conditional block.
-          python3 - <<'PY'
-          import pathlib
-          p = pathlib.Path("cref/src/quaternion/ref/generic/hnf/ibz_division.c")
-          src = p.read_text()
-          old = "#include <gmp.h>\n"
-          new = (
-              "#if defined(MINI_GMP)\n"
-              "#include <mini-gmp.h>\n"
-              "#include <mini-gmp-extra.h>\n"
-              "#else\n"
-              "#include <gmp.h>\n"
-              "#endif\n"
-          )
-          assert src.count(old) == 1, "expected exactly one unconditional include"
-          p.write_text(src.replace(old, new, 1))
-          PY
-          grep -A4 'MINI_GMP' "$file" | head -8
+      - name: Install system GMP
+        # SYSTEM GMP dynamically links libgmp, so its headers are needed
+        # at build time and libgmp.so at run time -- even on a cache hit,
+        # the cached binary loads it -- so install unconditionally. (The
+        # mini-gmp gmp.h-include patch is gone: with system GMP the
+        # unconditional `#include <gmp.h>` in ibz_division.c is correct.)
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
 
-      - name: Configure C ref (mini-gmp + ref GF, NIST-I, Release)
+      - name: Configure C ref (system GMP + ref GF, NIST-I, Release)
         if: steps.cref-cache.outputs.cache-hit != 'true'
         run: |
           cmake -S cref -B cref/build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DGMP_LIBRARY=MINI \
+            -DGMP_LIBRARY=SYSTEM \
             -DSQISIGN_BUILD_TYPE=ref \
             -DENABLE_TESTS=OFF \
             -DENABLE_STRICT=OFF
@@ -118,7 +100,7 @@ jobs:
         run: |
           set -o pipefail
           {
-            echo "## C reference (mini-gmp + ref GF, NIST-I)"
+            echo "## C reference (system GMP + ref GF, NIST-I)"
             echo
             echo '```'
             ./cref/build/apps/benchmark_lvl1 -i "${VERIFY_REPS}" 2>&1 | tee cref-bench.txt
