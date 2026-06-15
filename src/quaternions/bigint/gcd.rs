@@ -6,7 +6,7 @@ use core::cmp::Ordering;
 
 use subtle::ConstantTimeEq;
 
-use super::BigInt;
+use super::{BigInt, ct_select_u64};
 
 impl<const N: usize> BigInt<N> {
     /// Greatest common divisor via Stein's binary algorithm.
@@ -221,25 +221,34 @@ impl<const N: usize> BigInt<N> {
 
         loop {
             // Halve u while the invariant holds; adjust cofactors.
+            //
+            // The cofactor updates mutate `aa`/`bb` in place so the
+            // per-iteration return-by-value copies disappear. The
+            // `add_then_halve_even` / `sub_then_halve_even` paths fold the
+            // signed add/subtract and the subsequent halving into one pass,
+            // eliding the intermediate `BigInt` that `(aa + &y)` would
+            // otherwise materialize before `halve_even` copied it again. The
+            // dataflow (and hence the branch structure) is identical to the
+            // by-value form.
             while u[0] & 1 == 0 {
                 u = Self::mag_shr(&u, 1);
                 if (aa.limbs[0] | bb.limbs[0]) & 1 == 0 {
-                    aa = Self::halve_even(&aa);
-                    bb = Self::halve_even(&bb);
+                    aa.halve_even_assign();
+                    bb.halve_even_assign();
                 } else {
-                    aa = Self::halve_even(&(aa + &y));
-                    bb = Self::halve_even(&(bb - &x));
+                    aa.add_then_halve_even(&y);
+                    bb.sub_then_halve_even(&x);
                 }
             }
             // Halve v likewise.
             while v[0] & 1 == 0 {
                 v = Self::mag_shr(&v, 1);
                 if (cc.limbs[0] | dd.limbs[0]) & 1 == 0 {
-                    cc = Self::halve_even(&cc);
-                    dd = Self::halve_even(&dd);
+                    cc.halve_even_assign();
+                    dd.halve_even_assign();
                 } else {
-                    cc = Self::halve_even(&(cc + &y));
-                    dd = Self::halve_even(&(dd - &x));
+                    cc.add_then_halve_even(&y);
+                    dd.sub_then_halve_even(&x);
                 }
             }
 
@@ -248,13 +257,13 @@ impl<const N: usize> BigInt<N> {
             if Self::mag_cmp(&u, &v) != Ordering::Less {
                 let (new_u, _) = Self::mag_sub(&u, &v);
                 u = new_u;
-                aa = aa - &cc;
-                bb = bb - &dd;
+                aa.ct_sub_assign(&cc);
+                bb.ct_sub_assign(&dd);
             } else {
                 let (new_v, _) = Self::mag_sub(&v, &u);
                 v = new_v;
-                cc = cc - &aa;
-                dd = dd - &bb;
+                cc.ct_sub_assign(&aa);
+                dd.ct_sub_assign(&bb);
             }
 
             if Self::mag_is_zero(&u) == 1 {
@@ -284,17 +293,94 @@ impl<const N: usize> BigInt<N> {
         (g, x_co, y_co)
     }
 
-    /// Halves a value known to be even. Sign preserved (no floor-vs-trunc
-    /// issue since we only halve even values).
+    /// Halves a value known to be even, in place. Sign preserved (no
+    /// floor-vs-trunc issue since we only halve even values), and
+    /// re-canonicalized to sign 0 when the result is zero.
+    ///
+    /// In-place counterpart to the by-value halving the binary xgcd used
+    /// to do; the cofactor loop calls this once per halving step, so
+    /// avoiding the return-value copy matters.
     #[inline]
-    fn halve_even(a: &Self) -> Self {
-        debug_assert!(a.limbs[0] & 1 == 0, "halve_even on odd value");
-        let limbs = Self::mag_shr(&a.limbs, 1);
-        let zero = Self::mag_is_zero(&limbs) == 1;
-        Self {
-            sign: if zero { 0 } else { a.sign },
-            limbs,
-        }
+    fn halve_even_assign(&mut self) {
+        debug_assert!(self.limbs[0] & 1 == 0, "halve_even on odd value");
+        self.limbs = Self::mag_shr(&self.limbs, 1);
+        let zero = Self::mag_is_zero(&self.limbs);
+        self.sign &= 1 - zero;
+    }
+
+    /// In-place signed add: `self += rhs`. Branch-free sign-and-magnitude
+    /// merge identical to [`Self::ct_add`], writing the result into `self`
+    /// rather than returning a fresh [`BigInt`].
+    ///
+    /// Used by the binary xgcd cofactor loop, where folding the add into
+    /// the destination removes one per-iteration copy.
+    #[inline]
+    fn ct_add_assign(&mut self, rhs: &Self) {
+        self.ct_add_assign_signed(&rhs.limbs, rhs.sign);
+    }
+
+    /// In-place signed subtract: `self -= rhs`. Equivalent to adding the
+    /// negation of `rhs`, but passes the flipped sign straight through to
+    /// [`Self::ct_add_assign_signed`] so no negated temporary is built.
+    #[inline]
+    fn ct_sub_assign(&mut self, rhs: &Self) {
+        // Negate rhs's sign, clamping the canonical-zero invariant (a zero
+        // magnitude stays sign 0) exactly as [`Self::wrapping_neg`] does.
+        let rhs_is_zero = Self::mag_is_zero(&rhs.limbs);
+        let neg_sign = (rhs.sign ^ 1) & (1 - rhs_is_zero);
+        self.ct_add_assign_signed(&rhs.limbs, neg_sign);
+    }
+
+    /// In-place core of the signed add/subtract: `self += sign(rhs_sign) ·
+    /// |rhs_limbs|`. Mirrors [`Self::ct_add`] limb-for-limb (same
+    /// `mag_add` / `mag_sub` / `mag_select` dataflow and branch structure),
+    /// so it is constant-time-neutral and bit-for-bit identical to the
+    /// by-value path; it only writes into `self` instead of allocating a
+    /// result.
+    #[inline]
+    fn ct_add_assign_signed(&mut self, rhs_limbs: &[u64; N], rhs_sign: u64) {
+        let same_sign = ((self.sign ^ rhs_sign) == 0) as u64;
+
+        // Case 1: same sign -> add magnitudes, keep sign.
+        let (sum, _carry) = Self::mag_add(&self.limbs, rhs_limbs);
+
+        // Case 2: different signs -> subtract the smaller magnitude from the
+        // larger. `mag_sub`'s borrow is the ordering, and the reverse
+        // difference is the two's-complement negation of the forward one.
+        let (diff_a, borrow) = Self::mag_sub(&self.limbs, rhs_limbs);
+        let self_ge = 1 - borrow;
+        let diff_b = Self::mag_negate(&diff_a);
+
+        let diff_mag = Self::mag_select(&diff_b, &diff_a, self_ge);
+        let diff_sign = ct_select_u64(rhs_sign, self.sign, self_ge);
+
+        let result_limbs = Self::mag_select(&diff_mag, &sum, same_sign);
+        let result_sign = ct_select_u64(diff_sign, self.sign, same_sign);
+
+        // Canonicalize: if result is zero, sign must be 0.
+        let is_zero = Self::mag_is_zero(&result_limbs);
+
+        self.limbs = result_limbs;
+        self.sign = result_sign & (1 - is_zero);
+    }
+
+    /// In-place fused `self = (self + rhs) / 2`, where the sum is known
+    /// even. One signed add followed by an even-halving, both writing into
+    /// `self`. Replaces `halve_even(&(self + rhs))`, whose intermediate
+    /// `BigInt` from `self + rhs` and second copy in `halve_even` the
+    /// compiler cannot elide.
+    #[inline]
+    fn add_then_halve_even(&mut self, rhs: &Self) {
+        self.ct_add_assign(rhs);
+        self.halve_even_assign();
+    }
+
+    /// In-place fused `self = (self - rhs) / 2`, where the difference is
+    /// known even. Subtraction counterpart to [`Self::add_then_halve_even`].
+    #[inline]
+    fn sub_then_halve_even(&mut self, rhs: &Self) {
+        self.ct_sub_assign(rhs);
+        self.halve_even_assign();
     }
 
     /// Modular inverse: returns `self^{-1} mod modulus`, or `None` if

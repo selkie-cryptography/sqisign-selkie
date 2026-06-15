@@ -212,6 +212,24 @@ green).  Profiled on an Apple M4, the key-schedule self-time in key
 generation fell from about $1.05\%$ to $0.50\%$ of the total, with the
 generate-loop encryption falling below the sampling threshold.
 
+\paragraph{In-place cofactor updates in the binary GCD.}
+The extended binary GCD (\texttt{xgcd\_binary}, the workhorse of modular
+inversion and lattice reduction) reassigned its six working integers
+($u$, $v$, and the four cofactors) by value on every iteration, over
+hundreds of iterations. The cofactor halvings were the worst case:
+\texttt{halve\_even(\&(aa + \&y))} materializes an intermediate big
+integer for the signed add (which RVO cannot elide) and then copies it
+again inside the halving. Folding each into an in-place fused
+operation (signed add or subtract written directly into the destination,
+followed by an in-place even-halving) and mutating the cofactors in
+place removes those copies. The signed-merge logic is bit-for-bit the
+by-value \texttt{ct\_add} (same branch-free \texttt{mag\_select}
+dataflow and branch structure), so it is constant-time-neutral and
+output-identical; the GCD's existing data-dependent branches (the
+accepted variable-time debt on the quaternion side) are unchanged. All
+KATs byte-identical. Instruction-count A/B (Apple M4): $-1.5\%$ on
+signing, $-1.6\%$ on key generation.
+
 \subsection{Tried approaches that did not land}
 \label{sec:tried-rejected}
 
