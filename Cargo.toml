@@ -65,6 +65,16 @@ crabgrind = "0.2"
 regex = "1"
 reqwest = { version = "0.13", features = ["blocking"] }
 
+# x86_64-only: the `cycles` bench (rdtsc megacycles, compared against the
+# C reference's `cpucycles()` in cref-bench). criterion-cycles-per-byte
+# builds only on x86/x86_64 -- its aarch64 path is broken upstream
+# (0.8.0 emits a compile_error), and rdtsc has no unprivileged aarch64
+# peer anyway -- so the deps and the bench body (benches/cycles.rs) are
+# both confined to x86_64; elsewhere the bench compiles to a skip stub.
+[target.'cfg(target_arch = "x86_64")'.dev-dependencies]
+criterion = "0.8"
+criterion-cycles-per-byte = "0.8"
+
 [[bench]]
 name = "sqisign"
 harness = false
@@ -168,6 +178,14 @@ required-features = ["expose-internals"]
 
 [[bench]]
 name = "instructions"
+harness = false
+required-features = ["expose-internals"]
+
+# rdtsc cycle counts for keygen/sign/verify, in megacycles, to compare
+# directly against the C reference's `cpucycles()` output (cref-bench).
+# x86_64-only at runtime; compiles to a skip stub elsewhere.
+[[bench]]
+name = "cycles"
 harness = false
 required-features = ["expose-internals"]
 

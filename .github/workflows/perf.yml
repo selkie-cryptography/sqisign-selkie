@@ -1,0 +1,713 @@
+name: Perf
+
+# Unified performance + resource-cost measurement. Merges the former
+# Profile (gungraun instructions), Benchmarks (divan wall-clock), Perf
+# metrics (size / alloc / stack), and the manual C-ref cross-check into
+# one workflow so they share triggers, one concurrency group, and the
+# same reporting path.
+#
+# Jobs (parallel, independent):
+#   instructions -> gungraun   deterministic Valgrind/callgrind counts
+#                              (Ir, est-cycles, cache, branch) -- the
+#                              low-noise grade. Sharded, then aggregated.
+#   benchmark                  divan wall-clock medians (perf-2x runner).
+#   size / alloc / stack       binary size, heap budget, peak stack.
+#   flamegraphs                sampled call-stack SVGs (perf cpu-clock).
+#   mca                        llvm-mca static pipeline estimate.
+#   cref                       C reference (system GMP) vs Rust, both in
+#                              megacycles (rdtsc). Manual dispatch only.
+#
+# Metric kinds, so the redundancy is intentional, not accidental:
+#   instructions = deterministic counts (the grade); benchmark/cref =
+#   machine-bound time/cycles (trend + cross-impl); size/alloc/stack =
+#   deterministic resource costs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'tests/**'
+      - 'examples/profile_sign.rs'
+      - 'Cargo.toml'
+      - '.github/workflows/perf.yml'
+      - '.github/actions/ci-upload/**'
+      - '.github/actions/ci-pr-report/**'
+      - '.github/scripts/instructions-report.rs'
+      - '.github/scripts/divan-to-json.rs'
+      - '.github/scripts/bench-compare.rs'
+      - '.github/scripts/size-report.rs'
+      - '.github/scripts/alloc-report.rs'
+      - '.github/scripts/stack-depth.rs'
+      - '.github/scripts/ci-scratch.rs'
+      - '.github/scripts/ci-signal.rs'
+      - '.github/scripts/mca.rs'
+  pull_request:
+    branches: [main, next]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'tests/**'
+      - 'examples/profile_sign.rs'
+      - 'Cargo.toml'
+      - '.github/workflows/perf.yml'
+      - '.github/actions/ci-upload/**'
+      - '.github/actions/ci-pr-report/**'
+      - '.github/scripts/instructions-report.rs'
+      - '.github/scripts/divan-to-json.rs'
+      - '.github/scripts/bench-compare.rs'
+      - '.github/scripts/size-report.rs'
+      - '.github/scripts/alloc-report.rs'
+      - '.github/scripts/stack-depth.rs'
+      - '.github/scripts/ci-scratch.rs'
+      - '.github/scripts/ci-signal.rs'
+      - '.github/scripts/mca.rs'
+  workflow_dispatch:
+    inputs:
+      cref_ref:
+        description: 'C ref commit for the cref job (overrides default pin)'
+        required: false
+        default: ''
+      verify_reps:
+        description: 'cref verify iterations (default 100)'
+        required: false
+        default: ''
+
+# Supersede in-flight PR runs; never cancel a main run mid-upload.
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: write  # sticky comparison comments on PRs
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------- gungraun: deterministic instruction counts -----------
+  # Sharded across six matrix jobs -- one per bench group (field, curves,
+  # parsing) and one per slow `sqisign::kat_*` bench -- so wall-clock is
+  # bounded by the longest single bench (kat_sign) instead of the sum.
+  # Each shard ships its `target/gungraun/` to Tigris scratch; the
+  # `gungraun` aggregate job merges them and posts the comment.
+  instructions:
+    name: gungraun (${{ matrix.shard }})
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 90
+    env:
+      # See gate (ci.yml) for the empty-RUSTC_WRAPPER rationale --
+      # dependabot / fork PRs don't receive repo secrets, so without this
+      # guard the sccache-action would skip installing the binary and
+      # `cargo metadata` (used by Install gungraun-runner) would exit 101.
+      RUSTC_WRAPPER: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID != '' && 'sccache' || '' }}
+      SCCACHE_BUCKET: selkie-ci-sccache
+      SCCACHE_ENDPOINT: https://fly.storage.tigris.dev
+      SCCACHE_REGION: auto
+      AWS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SCCACHE_SECRET_ACCESS_KEY }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Glob patterns over the gungraun bench module path
+          # (`FILENAME::GROUP::FUNCTION::ID`). Wildcards are required;
+          # plain substrings don't match.
+          - shard: field
+            filter: '*::field::*'
+          - shard: curves
+            filter: '*::curves::*'
+          - shard: parsing
+            filter: '*::parsing::*'
+          - shard: keygen
+            filter: '*::kat_keygen*'
+          - shard: sign
+            filter: '*::kat_sign*'
+          - shard: verify
+            filter: '*::kat_verify*'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e  # v0.0.10
+        if: env.RUSTC_WRAPPER == 'sccache'
+
+      # gungraun-runner refuses on lib/runner version skew; install the
+      # version cargo actually resolved.
+      - name: Install gungraun-runner
+        run: |
+          set -euo pipefail
+          ver=$(cargo metadata --format-version 1 \
+            | jq -r '.packages[] | select(.name=="gungraun") | .version' \
+            | head -1)
+          if [ -z "$ver" ]; then
+            echo "::error::could not resolve gungraun version from cargo metadata"; exit 1
+          fi
+          cargo install gungraun-runner --version "$ver" --locked
+
+      # Cache + branch simulation is on by default in benches/instructions.rs,
+      # so every run produces estimated_cycles, L1/LL misses, and branch
+      # mispredicts alongside the headline Ir. The positional filter
+      # restricts this shard to its slice of benches.
+      - name: Run gungraun (${{ matrix.shard }})
+        run: |
+          set -euo pipefail  # so a bench failure isn't masked by `tee` exit 0
+          cargo bench --bench instructions --features expose-internals -- \
+            '${{ matrix.filter }}' --save-summary=json 2>&1 \
+            | tee profile-output-${{ matrix.shard }}.txt
+          # Guard: gungraun-runner reports "0 benchmarks finished" when the
+          # filter matched nothing instead of failing. Catch that here so we
+          # don't tar an empty directory and silently swallow a filter typo.
+          if [ ! -d target/gungraun ] || [ -z "$(ls -A target/gungraun 2>/dev/null)" ]; then
+            echo "::error::no gungraun output for shard '${{ matrix.shard }}' (filter '${{ matrix.filter }}' matched nothing?)" >&2
+            exit 1
+          fi
+
+      - name: Build ci-scratch
+        run: env -u RUSTC_WRAPPER rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+
+      # Tarball the shard's gungraun output and ship to Tigris scratch.
+      # ci-scratch appends `.json` to the bucket key; the aggregator
+      # untars the file regardless of suffix.
+      - name: Ship gungraun output to Tigris scratch
+        env:
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          tar -czf gungraun-shard.tar.gz -C target gungraun
+          /tmp/ci-scratch put gungraun-shards "${{ github.sha }}" \
+            "${{ matrix.shard }}" gungraun-shard.tar.gz
+
+      - name: sccache stats
+        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
+        run: sccache --show-stats
+
+  # Merges every shard's output into one combined report and posts the
+  # sticky comment. Job name `gungraun` is the headline perf check.
+  gungraun:
+    name: gungraun
+    needs: instructions
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+
+      - name: Build ci-scratch
+        run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
+
+      - name: Pull all shards from Tigris scratch
+        env:
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+        run: |
+          mkdir -p /tmp/gungraun-shards
+          /tmp/ci-scratch get gungraun-shards "${{ github.sha }}" /tmp/gungraun-shards/
+
+      # Each shard's tarball has `gungraun/` as the top-level entry (it was
+      # created from `target/`), so untarring into `target/` reconstructs
+      # the combined layout. Per-bench subdirectories are disjoint across
+      # shards, so no collisions.
+      - name: Merge shards into target/gungraun/
+        run: |
+          set -euo pipefail
+          mkdir -p target
+          for f in /tmp/gungraun-shards/*.json; do
+            tar -xzf "$f" -C target
+          done
+          echo "Merged layout:"
+          find target/gungraun -maxdepth 4 -type d | sort
+
+      - name: Generate JSON
+        run: |
+          # Skip sccache for this standalone compile.
+          env -u RUSTC_WRAPPER rustc -O .github/scripts/instructions-report.rs -o /tmp/instructions-report
+          /tmp/instructions-report target/gungraun "${{ github.sha }}" > instructions.json
+
+      - name: Verify profile payload has data
+        run: jq -e '.total > 0 and (.results | length > 0)' instructions.json > /dev/null || { echo "::error::instructions.json has no benchmark results"; cat instructions.json >&2; exit 1; }
+
+      # PR comparison baseline: restore main's payload for this PR's
+      # merge-base from the actions cache (populated by the main-push save
+      # below). A hit lets Report compare in-job with no dashboard fetch; a
+      # miss leaves the file absent and ci-pr-report falls back to the fetch.
+      # The cache is read-only from PRs and reliable, unlike the Fly fetch.
+      - name: Restore main baseline (PRs)
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: baseline/instructions.json
+          key: perf-baseline-instructions-${{ github.event.pull_request.base.sha }}
+
+      # Upload the data payload only from main: a PR or branch dispatch
+      # must not clobber main's stored baseline.
+      - name: Upload to CI site
+        if: github.ref == 'refs/heads/main'
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: instructions
+          payload: instructions.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+      # Stash this main commit's payload in the actions cache, keyed by
+      # SHA, so PRs based on it restore it above instead of fetching Fly.
+      - name: Stage main baseline (main only)
+        if: github.ref == 'refs/heads/main'
+        run: mkdir -p baseline && cp instructions.json baseline/instructions.json
+      - name: Save main baseline cache (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: baseline/instructions.json
+          key: perf-baseline-instructions-${{ github.sha }}
+
+      # Job summary always; sticky comment on same-repo PRs. On PRs the
+      # baseline path is the cache-restored payload (absent on a miss, so
+      # ci-pr-report fetches); on push it is empty (this run is the baseline).
+      - name: Report
+        uses: ./.github/actions/ci-pr-report
+        with:
+          kind: instructions
+          payload: instructions.json
+          baseline: ${{ github.event_name == 'pull_request' && 'baseline/instructions.json' || '' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Hygiene: drop the per-shard scratch entries now that we've consumed
+      # them. Bucket lifecycle auto-expires at 7 days as a backstop.
+      - name: Clean Tigris scratch
+        if: ${{ !cancelled() }}
+        env:
+          TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
+          TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
+        run: /tmp/ci-scratch clean gungraun-shards "${{ github.sha }}"
+
+  # ---------------- divan wall-clock ----------------
+  # Dedicated `perf-2x` vCPUs, lower-noise than shared but still
+  # wall-clock. Catches gross regressions and trends on the dashboard;
+  # the deterministic counterpart is `gungraun` above.
+  benchmark:
+    name: Performance benchmarks
+    runs-on: [self-hosted, fly, linux, perf-2x]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Signal running
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: rustc -O .github/scripts/ci-signal.rs -o /tmp/ci-signal && /tmp/ci-signal bench running "${{ github.sha }}"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: bench
+
+      - name: Run benchmarks
+        run: |
+          rustc -O .github/scripts/divan-to-json.rs -o /tmp/divan-to-json
+          cargo build --release --benches --features expose-internals
+          # Pin the measured process to the last core so the scheduler
+          # stops migrating it mid-run -- the main controllable source of
+          # wall-clock variance. The build above stays unpinned. Falls back
+          # to unpinned if taskset is unavailable.
+          pin=()
+          command -v taskset >/dev/null 2>&1 && pin=(taskset -c "$(( $(nproc) - 1 ))")
+          : > bench-raw.txt
+          for bin in ./target/release/deps/*-????????????????; do
+            [ -x "$bin" ] || continue
+            # Skip non-divan binaries: CT + gungraun + cycles benches run
+            # in their own jobs and have incompatible CLIs.
+            case "$(basename "$bin")" in
+              dudect-*|tacet-*|instructions-*|cycles-*) continue ;;
+            esac
+            echo "=== Running $(basename "$bin") ===" >&2
+            # `--bench` is the flag cargo passes via `cargo bench`; without
+            # it, divan prints only the tree and exits without running.
+            timeout 300 "${pin[@]}" "$bin" --bench --color never >> bench-raw.txt 2>&1 || true
+          done
+          /tmp/divan-to-json < bench-raw.txt > bench-output.json
+
+      - name: Build grouped payload
+        run: |
+          mkdir -p bench-out
+          jq -n --arg sha "${{ github.sha }}" --argjson benches "$(cat bench-output.json)" '{
+            sha: $sha,
+            updated_at: (now | todate),
+            groups: (
+              $benches
+              | group_by(.name | split("::")[0])
+              | map({
+                  name: (.[0].name | split("::")[0]),
+                  benchmarks: map({
+                    name: (.name | split("::")[1:] | join("::")),
+                    time_ns: .median_ns,
+                    median_ns, fastest_ns, slowest_ns, mean_ns, samples, iters
+                  })
+                })
+            ),
+            summary: {
+              keygen_ns:        ([$benches[] | select(.name == "sqisign::keygen")        | .median_ns] | first),
+              keygen_derand_ns: ([$benches[] | select(.name == "sqisign::keygen_derand") | .median_ns] | first),
+              sign_ns:          ([$benches[] | select(.name == "sqisign::sign")          | .median_ns] | first),
+              sign_derand_ns:   ([$benches[] | select(.name == "sqisign::sign_derand")   | .median_ns] | first),
+              verify_ns:        ([$benches[] | select(.name == "sqisign::verify")        | .median_ns] | first)
+            }
+          }' > bench-out/bench.json
+
+      - name: Verify payload is non-empty
+        run: |
+          groups=$(jq '.groups | length' bench-out/bench.json)
+          benches=$(jq '[.groups[].benchmarks[]] | length' bench-out/bench.json)
+          echo "bench-out/bench.json: $groups groups, $benches benchmarks."
+          if [ "$groups" -eq 0 ] || [ "$benches" -eq 0 ]; then
+            echo "::error::bench-out/bench.json has no benchmark data."
+            cat bench-out/bench.json >&2 || true
+            head -200 bench-raw.txt >&2 || true
+            exit 1
+          fi
+
+      # Restore main's wall-clock baseline for this PR's merge-base from
+      # the actions cache (see the gungraun job for the rationale).
+      - name: Restore main baseline (PRs)
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: baseline/bench.json
+          key: perf-baseline-bench-${{ github.event.pull_request.base.sha }}
+
+      - name: Upload benchmarks to CI site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: bench
+          payload: bench-out/bench.json
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Stage main baseline (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: mkdir -p baseline && cp bench-out/bench.json baseline/bench.json
+      - name: Save main baseline cache (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: baseline/bench.json
+          key: perf-baseline-bench-${{ github.sha }}
+
+      - name: Report (summary + PR comment)
+        uses: ./.github/actions/ci-pr-report
+        with:
+          kind: bench
+          payload: bench-out/bench.json
+          baseline: ${{ github.event_name == 'pull_request' && 'baseline/bench.json' || '' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------- resource costs: binary size ----------------
+  size:
+    name: Binary size
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912
+        with:
+          tool: cargo-bloat
+
+      - name: Build release and collect sizes
+        run: |
+          cargo build --release
+          rustc -O .github/scripts/size-report.rs -o /tmp/size-report
+          /tmp/size-report "${{ github.sha }}" > size.json
+
+      - name: Verify size payload has data
+        run: jq -e '.binary.total_bytes > 0' size.json > /dev/null || { echo "::error::size.json missing binary.total_bytes"; cat size.json >&2; exit 1; }
+      - name: Upload
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: size
+          payload: size.json
+          pr-only: ${{ github.event_name == 'pull_request' }}
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+  # ---------------- resource costs: allocation budget ----------------
+  alloc:
+    name: Allocation budget
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Run allocation tests
+        run: |
+          if cargo test --profile release-checked --test alloc_budget --features expose-internals 2>&1; then
+            STATUS=pass
+          else
+            STATUS=fail
+          fi
+          rustc -O .github/scripts/alloc-report.rs -o /tmp/alloc-report
+          /tmp/alloc-report "${{ github.sha }}" "$STATUS" alloc-report.json > alloc.json
+
+      - name: Verify alloc payload has data
+        run: jq -e '.status != null and .status != ""' alloc.json > /dev/null || { echo "::error::alloc.json missing status field"; cat alloc.json >&2; exit 1; }
+      - name: Upload
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: alloc
+          payload: alloc.json
+          pr-only: ${{ github.event_name == 'pull_request' }}
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+  # ---------------- resource costs: stack depth ----------------
+  stack:
+    name: Stack depth
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+
+      - name: Measure stack depth
+        run: |
+          rustc -O .github/scripts/stack-depth.rs -o /tmp/stack-depth
+          /tmp/stack-depth "${{ github.sha }}" > stack.json
+
+      - name: Verify stack payload has data
+        run: jq -e '.peak_stack_bytes > 0' stack.json > /dev/null || { echo "::error::stack.json has zero peak_stack_bytes"; cat stack.json >&2; exit 1; }
+      - name: Upload
+        uses: ./.github/actions/ci-upload
+        with:
+          kind: stack
+          payload: stack.json
+          pr-only: ${{ github.event_name == 'pull_request' }}
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+  # ---------------- sampled flamegraphs ----------------
+  # Runs the deterministic `profile_sign` workload natively under perf
+  # (seconds vs minutes under callgrind) and renders one SVG per mode at
+  # the path the instructions report links. Fly Machines (Firecracker)
+  # expose no PMU, so sampling uses the software clock (`-e cpu-clock`)
+  # with DWARF unwinding from the profiling profile's debuginfo.
+  flamegraphs:
+    name: flamegraphs
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 30
+    env:
+      RUSTC_WRAPPER: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID != '' && 'sccache' || '' }}
+      SCCACHE_BUCKET: selkie-ci-sccache
+      SCCACHE_ENDPOINT: https://fly.storage.tigris.dev
+      SCCACHE_REGION: auto
+      AWS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SCCACHE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: mozilla-actions/sccache-action@1583d6b38d7be47f593cb472781bbb21cab4321e  # v0.0.10
+        if: env.RUSTC_WRAPPER == 'sccache'
+
+      - name: Install perf and cargo-flamegraph
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends linux-tools-generic
+          cargo install flamegraph --locked
+
+      - name: Record flamegraphs
+        run: |
+          set -euo pipefail
+          sudo sysctl -w kernel.perf_event_paranoid=1
+          # Ubuntu's /usr/bin/perf shim dispatches on `uname -r`, which
+          # never matches a linux-tools package on Fly's kernel; point
+          # cargo-flamegraph at the versioned binary directly.
+          PERF=$(echo /usr/lib/linux-tools/*/perf)
+          export PERF
+          mkdir -p flamegraphs
+          for mode in keygen sign verify; do
+            cargo flamegraph --profile profiling --example profile_sign \
+              --deterministic \
+              -c "record -F 997 -e cpu-clock --call-graph dwarf,16384 -g" \
+              -o "flamegraphs/sqisign__kat_${mode}.svg" -- "$mode"
+          done
+
+      # Best-effort: a failed upload must not fail the run (URLs just 404
+      # until the next success). Skipped on fork PRs (no Fly token).
+      - name: Host flamegraphs
+        continue-on-error: true
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/ci-upload
+        with:
+          assets: flamegraphs
+          remote-subdir: instructions/flamegraphs/${{ github.sha }}
+          fly-api-token: ${{ secrets.FLY_API_TOKEN }}
+
+  # ---------------- static pipeline estimate (llvm-mca) ----------------
+  # No execution -- llvm-mca models port pressure and throughput from the
+  # emitted instruction stream alone. Informational only; the
+  # "fewer mulx but more instructions" non-win signal benches can miss.
+  mca:
+    name: llvm-mca
+    runs-on: [self-hosted, fly, linux, x64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Ensure llvm-mca
+        run: |
+          set -euo pipefail
+          if ! command -v llvm-mca >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y llvm
+          fi
+          llvm-mca --version | head -2
+
+      - name: Run llvm-mca on hot kernels
+        env:
+          MCA_CPU: native
+          MCA_CARGO: cargo
+        run: |
+          set -euo pipefail
+          rustc -O .github/scripts/mca.rs -o /tmp/mca
+          {
+            echo "## llvm-mca static estimate (\`-mcpu=native\`)"
+            echo
+            /tmp/mca
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # ---------------- C reference cross-check (manual) ----------------
+  # Build the SQIsign C reference with system GMP (GMP's hand-tuned `mpn`
+  # bignum asm, the config the published numbers use) and the portable
+  # ref GF backend, then run keypair/sign/verify against our Rust crate's
+  # rdtsc cycle bench on the same runner. Both report megacycles, so the
+  # gap to our hand-rolled BigInt is GMP's asm, not a no-asm strawman or
+  # a unit mismatch. Manual dispatch only -- it clones and builds upstream
+  # C, which is too heavy for every push/PR. Interop is covered by the
+  # KAT gate; this is an ad-hoc relative snapshot.
+  cref:
+    name: C ref vs Rust (NIST-I)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, fly, linux, perf-2x]
+    timeout-minutes: 60
+    env:
+      # Pin upstream so timing comparisons are reproducible; overridable
+      # per-run via the workflow_dispatch input.
+      CREF_REPO: SQIsign/the-sqisign
+      CREF_REF: ${{ inputs.cref_ref || 'dd133d7aca576c361a270c8e6434832535b42ecc' }}
+      # Sign + keygen are slow and rejection-sampled, so a handful of
+      # repetitions; verify is ~ms-scale, run more.
+      KEYGEN_REPS: "5"
+      SIGN_REPS: "5"
+      VERIFY_REPS: ${{ inputs.verify_reps || '100' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+
+      # ---------------- C reference ----------------
+      - name: Restore C ref build cache
+        id: cref-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: cref/build
+          key: cref-build-${{ runner.os }}-${{ env.CREF_REF }}-system-gmp-ref-v1
+
+      - name: Clone C reference at pinned commit
+        if: steps.cref-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --no-checkout "https://github.com/${CREF_REPO}.git" cref
+          git -C cref checkout "${CREF_REF}"
+
+      - name: Install system GMP
+        # SYSTEM GMP dynamically links libgmp, so its headers are needed
+        # at build time and libgmp.so at run time -- even on a cache hit,
+        # the cached binary loads it -- so install unconditionally.
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
+
+      - name: Configure C ref (system GMP + ref GF, NIST-I, Release)
+        if: steps.cref-cache.outputs.cache-hit != 'true'
+        run: |
+          cmake -S cref -B cref/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGMP_LIBRARY=SYSTEM \
+            -DSQISIGN_BUILD_TYPE=ref \
+            -DENABLE_TESTS=OFF \
+            -DENABLE_STRICT=OFF
+
+      - name: Build C ref benchmark
+        if: steps.cref-cache.outputs.cache-hit != 'true'
+        run: cmake --build cref/build -j --target benchmark_lvl1
+
+      - name: Run C ref benchmark
+        run: |
+          set -o pipefail
+          # `tee -a`, not `>>`: also emit to the step's console log, so the
+          # numbers are pullable via `gh run view --log` and not trapped in
+          # the web-only step summary.
+          {
+            echo "## C reference (system GMP + ref GF, NIST-I) -- megacycles"
+            echo
+            echo '```'
+            ./cref/build/apps/benchmark_lvl1 -i "${VERIFY_REPS}" 2>&1 | tee cref-bench.txt
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # ---------------- Rust ----------------
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: cref-bench-baseline
+
+      - name: Run Rust benchmark (megacycles via rdtsc)
+        run: |
+          set -o pipefail
+          # The `cycles` bench measures keygen/sign/verify in CPU cycles
+          # via rdtsc (criterion-cycles-per-byte) -- the same unit the C
+          # reference's cpucycles() reports -- so the two are directly
+          # comparable. Criterion writes each bench's per-iteration
+          # estimates to target/criterion/<id>/new/estimates.json.
+          cargo bench --bench cycles --features expose-internals 2>&1 | tee rust-bench.txt
+          {
+            echo "## Rust crate (sqisign-selkie, NIST-I) -- megacycles via rdtsc"
+            echo
+            echo '```'
+            for op in keygen sign verify; do
+              f="target/criterion/sqisign/$op/new/estimates.json"
+              if [ -f "$f" ]; then
+                printf '%-10s | median %10.3f | mean %10.3f | stddev %8.3f  (megacycles)\n' \
+                  "$op" \
+                  "$(jq '.median.point_estimate / 1e6' "$f")" \
+                  "$(jq '.mean.point_estimate / 1e6' "$f")" \
+                  "$(jq '.std_dev.point_estimate / 1e6' "$f")"
+              else
+                printf '%-10s | (no estimates.json)\n' "$op"
+              fi
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
