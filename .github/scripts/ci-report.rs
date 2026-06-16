@@ -286,42 +286,62 @@ fn render_instructions(
     let base_ir_total: u64 = base_ir.values().sum();
     let cur_cyc_total: u64 = cur_cyc.values().sum();
     let base_cyc_total: u64 = base_cyc.values().sum();
-    if base_ir_total > 0 {
+    // Headline: estimated cycles first. It adds cache- and branch-miss
+    // penalties on top of the instruction count, so it tracks real cost
+    // better than raw instructions (exact, but blind to memory traffic
+    // and instruction-level parallelism). Instructions stay shown as the
+    // exact deterministic counterpart.
+    if base_cyc_total > 0 {
         out.push_str(&format!(
-            "**Total: {} instructions ({} vs `main`)",
-            fmt_int(cur_ir_total),
-            signed_pct(cur_ir_total as f64, base_ir_total as f64)
+            "**Total: {} estimated cycles ({} vs `main`)",
+            fmt_int(cur_cyc_total),
+            signed_pct(cur_cyc_total as f64, base_cyc_total as f64)
         ));
-        if base_cyc_total > 0 {
+        if base_ir_total > 0 {
             out.push_str(&format!(
-                "; {} estimated cycles ({} vs `main`).",
-                fmt_int(cur_cyc_total),
-                signed_pct(cur_cyc_total as f64, base_cyc_total as f64)
+                "; {} instructions ({} vs `main`).",
+                fmt_int(cur_ir_total),
+                signed_pct(cur_ir_total as f64, base_ir_total as f64)
             ));
         } else {
             out.push_str(".");
         }
         out.push_str("**\n\n");
+    } else if base_ir_total > 0 {
+        out.push_str(&format!(
+            "**Total: {} instructions ({} vs `main`).**\n\n",
+            fmt_int(cur_ir_total),
+            signed_pct(cur_ir_total as f64, base_ir_total as f64)
+        ));
     }
 
-    // Two stacked ```diff blocks for the sqisign top-level ops --- one for
-    // instructions, one for estimated cycles.  GitHub colors `-` rows red
-    // (slower) and `+` rows green (faster); the █ bar is proportional to
-    // magnitude.  Threshold matches bench (0.5%) for visual consistency.
-    out.push_str(&diff_block("instructions", &base_ir, &cur_ir));
+    out.push_str(
+        "_Estimated cycles (instructions plus cache/branch-miss penalties) \
+         is the headline: it tracks real cost better than the raw \
+         instruction count, which ignores memory and instruction-level \
+         parallelism._\n\n",
+    );
+
+    // Two stacked ```diff blocks for the sqisign top-level ops, estimated
+    // cycles first (the headline) then instructions.  GitHub colors `-`
+    // rows red (slower) and `+` rows green (faster); the █ bar is
+    // proportional to magnitude.  Threshold matches bench (0.5%).
     if !cur_cyc.is_empty() {
         out.push_str(&diff_block("estimated cycles", &base_cyc, &cur_cyc));
     }
+    out.push_str(&diff_block("instructions", &base_ir, &cur_ir));
 
-    let mut ir_rows = String::new();
-    let mut increased = 0usize;
+    // Primary table: estimated cycles (absolute main/PR + delta), the
+    // headline metric. Count benchmarks whose cycles rose for the warning.
+    let mut cyc_rows = String::new();
+    let mut cyc_increased = 0usize;
 
-    for (name, &cur_v) in &cur_ir {
-        let (base_cell, delta) = match base_ir.get(name) {
+    for (name, &cur_v) in &cur_cyc {
+        let (base_cell, delta) = match base_cyc.get(name) {
             Some(&b) if b > 0 => {
                 let pct = (cur_v as f64 / b as f64 - 1.0) * 100.0;
                 let mark = if cur_v > b {
-                    increased += 1;
+                    cyc_increased += 1;
                     " ⚠️"
                 } else if cur_v < b {
                     " ✅"
@@ -333,15 +353,31 @@ fn render_instructions(
             _ => ("—".to_string(), "new".to_string()),
         };
 
-        ir_rows.push_str(&format!(
+        cyc_rows.push_str(&format!(
             "| `{name}` | {base_cell} | {} | {delta} |\n",
             fmt_int(cur_v)
         ));
     }
 
-    if increased > 0 {
+    // Instruction increases get a secondary note: more instructions with
+    // no cycle rise usually means the extra work was offset by fewer cache
+    // misses (the raw count is blind to that).
+    let ir_increased = cur_ir
+        .iter()
+        .filter(|(name, &c)| base_ir.get(*name).is_some_and(|&b| b > 0 && c > b))
+        .count();
+
+    if cyc_increased > 0 {
         out.push_str(&format!(
-            "⚠️ **{increased} benchmark(s) with more instructions than `main`** (deterministic --- real, not noise).\n\n"
+            "⚠️ **{cyc_increased} benchmark(s) with more estimated cycles than `main`** (deterministic --- real, not runner noise)."
+        ));
+        if ir_increased > 0 {
+            out.push_str(&format!(" {ir_increased} also run more instructions."));
+        }
+        out.push_str("\n\n");
+    } else if ir_increased > 0 {
+        out.push_str(&format!(
+            "✅ No benchmark rose in estimated cycles; {ir_increased} run more instructions (offset by fewer cache misses).\n\n"
         ));
     }
 
@@ -351,29 +387,28 @@ fn render_instructions(
     }
 
     out.push_str(&format!(
-        "<details><summary>{} benchmarks (instructions)</summary>\n\n\
-         | Benchmark | `main` | PR | Δ |\n|---|--:|--:|--:|\n{ir_rows}\n</details>\n",
-        cur_ir.len()
+        "<details><summary>{} benchmarks (estimated cycles)</summary>\n\n\
+         | Benchmark | `main` | PR | Δ |\n|---|--:|--:|--:|\n{cyc_rows}\n</details>\n",
+        cur_cyc.len()
     ));
 
-    // Sibling table for cycles + cache + branch metrics, shown as Δs to
-    // stay narrow.  Each benchmark from the instructions table appears
-    // here with whatever metrics callgrind reported for it (most have
-    // all four; some fast-path benches may be missing branch counts).
-    if !cur_cyc.is_empty() || !cur_l1.is_empty() || !cur_br.is_empty() {
+    // Sibling table: instructions + cache + branch metrics as Δ% to stay
+    // narrow. Each benchmark appears with whatever callgrind reported (most
+    // have all four; some fast-path benches lack branch counts).
+    if !cur_ir.is_empty() || !cur_l1.is_empty() || !cur_br.is_empty() {
         let mut sec_rows = String::new();
-        for name in cur_ir.keys() {
+        for name in cur_cyc.keys() {
             sec_rows.push_str(&format!(
                 "| `{name}` | {} | {} | {} | {} |\n",
-                pct_cell(base_cyc.get(name).copied(), cur_cyc.get(name).copied()),
+                pct_cell(base_ir.get(name).copied(), cur_ir.get(name).copied()),
                 pct_cell(base_l1.get(name).copied(), cur_l1.get(name).copied()),
                 pct_cell(base_ll.get(name).copied(), cur_ll.get(name).copied()),
                 pct_cell(base_br.get(name).copied(), cur_br.get(name).copied()),
             ));
         }
         out.push_str(&format!(
-            "\n<details><summary>cycles + cache + branches (Δ%)</summary>\n\n\
-             | Benchmark | Δ EstCyc | Δ L1m | Δ LLm | Δ BrMis |\n\
+            "\n<details><summary>instructions + cache + branches (Δ%)</summary>\n\n\
+             | Benchmark | Δ Ir | Δ L1m | Δ LLm | Δ BrMis |\n\
              |---|--:|--:|--:|--:|\n{sec_rows}\n</details>\n"
         ));
     }
