@@ -489,6 +489,242 @@ fn xgcd_negative() {
     assert_eq!(lhs, g);
 }
 
+// Regression: the exact N=500 input from sign KAT 082 that exposed the
+// cofactor-matrix both-non-negative row bug (Lehmer collapsed the odd
+// part of the gcd, returning a 1507-bit value for a 3143-bit gcd). Both
+// operands share a 1506-bit power-of-two factor and differ in length.
+#[test]
+fn lehmer_gcd_n500_kat082_regression() {
+    let mut al = [0u64; 500];
+    let a_tail = [
+        16020870146050490368u64,
+        6441575464503925197,
+        10438403543318052669,
+        6273953587472686692,
+        12669500009644519806,
+        13575231851056910516,
+        16531505793299612324,
+        12147896820382623561,
+        12201412089280309712,
+        13363937555882238624,
+        7483082758042540783,
+        4296080171076512387,
+        2105985607161184141,
+        11921311919214306120,
+        6281329449158348896,
+        7352118625919954864,
+        3682704103088376909,
+        3630503677488505233,
+        16620472580358968276,
+        803929341612212748,
+        13936204271398113154,
+        12340270009885320974,
+        7151593045736592073,
+        8365807683319818920,
+        1181258786873885634,
+        16748251176927411295,
+        11801211617407249874,
+        17678181516158542043,
+        8618148130326644574,
+        15683597732090426596,
+        3805116,
+    ];
+    al[23..23 + a_tail.len()].copy_from_slice(&a_tail);
+    let mut bl = [0u64; 500];
+    let b_tail = [
+        11942447858049089536u64,
+        13902625029327768126,
+        11663097056482124493,
+        13807830429925569945,
+        14883174261547469373,
+        4615077038402999884,
+        10885811495559111387,
+        10259729562784726163,
+        18015543830526546403,
+        14011716040121428515,
+        2474928486255298158,
+        8955743019246365953,
+        4203068231206608123,
+        3454630796943493064,
+        17976048411414720379,
+        17419681015382949383,
+        2672584484290635119,
+        10060937796968091305,
+        12343821835388960437,
+        14865773467022516500,
+        869165700745454735,
+        17782786244527104436,
+        15078561100211413377,
+        5542193020527508586,
+        1629344405830098200,
+        15379494206881480743,
+        5884110446339506177,
+        17121702374425667366,
+        15956447681082510272,
+        9304185429433213149,
+        452,
+    ];
+    bl[31..31 + b_tail.len()].copy_from_slice(&b_tail);
+    let a = BigInt::<500>::from_sign_and_limbs(0, al);
+    let b = BigInt::<500>::from_sign_and_limbs(0, bl);
+    assert_eq!(a.gcd_lehmer(&b), a.gcd_stein(&b));
+    assert_eq!(a.gcd_lehmer(&b).bitsize(), 3143);
+}
+
+// Full-width byte-identity probe: gcd_lehmer vs Stein on operands that
+// fill ALL N limbs (no headroom), the case real W-wide gcd callers hit.
+#[test]
+fn lehmer_gcd_full_width_probe() {
+    use proptest::test_runner::{Config, TestRunner};
+    fn probe<const N: usize>(runner: &mut TestRunner) {
+        let strat = prop::collection::vec(any::<u64>(), 2 * N);
+        runner
+            .run(&strat, |raw| {
+                let mut al = [0u64; N];
+                let mut bl = [0u64; N];
+                al.copy_from_slice(&raw[..N]);
+                bl.copy_from_slice(&raw[N..]);
+                let a = BigInt::<N>::from_sign_and_limbs(0, al);
+                let b = BigInt::<N>::from_sign_and_limbs(0, bl);
+                prop_assert_eq!(a.gcd_lehmer(&b), a.gcd_stein(&b));
+                Ok(())
+            })
+            .unwrap();
+    }
+    // Mixed-length probe: independently random significant lengths for a
+    // and b (including 0 and 1), stressing the single-word finish and the
+    // division-step fallback that uniform full-width inputs never reach.
+    fn probe_mixed<const N: usize>(runner: &mut TestRunner) {
+        let strat = (
+            prop::collection::vec(any::<u64>(), N),
+            prop::collection::vec(any::<u64>(), N),
+            0usize..=N,
+            0usize..=N,
+        );
+        runner
+            .run(&strat, |(ra, rb, la, lb)| {
+                let mut al = [0u64; N];
+                let mut bl = [0u64; N];
+                al[..la].copy_from_slice(&ra[..la]);
+                bl[..lb].copy_from_slice(&rb[..lb]);
+                let a = BigInt::<N>::from_sign_and_limbs(0, al);
+                let b = BigInt::<N>::from_sign_and_limbs(0, bl);
+                prop_assert_eq!(a.gcd_lehmer(&b), a.gcd_stein(&b));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    // Signed probe: random signs on both operands, exercising the
+    // abs()/canonical-zero edges the gcd callers (e.g. det1.gcd(det2))
+    // reach with negative inputs.
+    fn probe_signed<const N: usize>(runner: &mut TestRunner) {
+        let strat = (
+            prop::collection::vec(any::<u64>(), N),
+            prop::collection::vec(any::<u64>(), N),
+            any::<bool>(),
+            any::<bool>(),
+            0usize..=N,
+            0usize..=N,
+        );
+        runner
+            .run(&strat, |(ra, rb, sa, sb, la, lb)| {
+                let mut al = [0u64; N];
+                let mut bl = [0u64; N];
+                al[..la].copy_from_slice(&ra[..la]);
+                bl[..lb].copy_from_slice(&rb[..lb]);
+                let a = BigInt::<N>::from_sign_and_limbs(u64::from(sa), al);
+                let b = BigInt::<N>::from_sign_and_limbs(u64::from(sb), bl);
+                prop_assert_eq!(a.gcd_lehmer(&b), a.gcd_stein(&b));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    // Shifted probe: both operands share a large power-of-two factor
+    // (their nonzero limbs sit in a high window, low limbs all zero) and
+    // have independent, often-unequal effective lengths. This is the
+    // signing-lattice input class (gcd of scaled determinants) that
+    // tripped the cofactor-matrix both-non-negative row bug.
+    fn probe_shifted<const N: usize>(runner: &mut TestRunner) {
+        let strat = (
+            prop::collection::vec(any::<u64>(), N),
+            prop::collection::vec(any::<u64>(), N),
+            0usize..N,
+            0usize..N,
+            0usize..N,
+        );
+        runner
+            .run(&strat, |(ra, rb, base, la, lb)| {
+                let mut al = [0u64; N];
+                let mut bl = [0u64; N];
+                let enda = (base + la).min(N);
+                let endb = (base + lb).min(N);
+                al[base..enda].copy_from_slice(&ra[..enda - base]);
+                bl[base..endb].copy_from_slice(&rb[..endb - base]);
+                let a = BigInt::<N>::from_sign_and_limbs(0, al);
+                let b = BigInt::<N>::from_sign_and_limbs(0, bl);
+                prop_assert_eq!(a.gcd_lehmer(&b), a.gcd_stein(&b));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    let mut runner = TestRunner::new(Config::with_cases(3000));
+    probe::<8>(&mut runner);
+    probe::<16>(&mut runner);
+    probe::<30>(&mut runner);
+    probe_mixed::<8>(&mut runner);
+    probe_mixed::<16>(&mut runner);
+    probe_mixed::<30>(&mut runner);
+    probe_mixed::<60>(&mut runner);
+    probe_mixed::<150>(&mut runner);
+    probe_signed::<8>(&mut runner);
+    probe_signed::<30>(&mut runner);
+    probe_shifted::<16>(&mut runner);
+    probe_shifted::<60>(&mut runner);
+    probe_shifted::<150>(&mut runner);
+}
+
+// Exhaustive small-value byte-identity of gcd_lehmer vs Stein gcd, plus
+// a few wide structured cases that stress the cofactor-matrix update.
+#[test]
+fn lehmer_gcd_small_exhaustive() {
+    for a in 0u64..=200 {
+        for b in 0u64..=200 {
+            let av = I256::from_limbs([a, 0, 0, 0]);
+            let bv = I256::from_limbs([b, 0, 0, 0]);
+            let stein = av.gcd(&bv);
+            let lehmer = av.gcd_lehmer(&bv);
+            assert_eq!(stein, lehmer, "gcd({a},{b}) stein != lehmer");
+        }
+    }
+    // A few wide structured cases.
+    let cases = [
+        (
+            [0xFFFF_FFFF_FFFF_FFFFu64, 0xFFFF_FFFF, 0, 0],
+            [0x1_0000_0000u64, 1, 0, 0],
+        ),
+        (
+            [0xDEAD_BEEF_CAFE_BABEu64, 0x1234_5678, 0xABCD, 0],
+            [0xFEDC_BA98u64, 0x9999, 0, 0],
+        ),
+        (
+            [u64::MAX, u64::MAX, u64::MAX, 0],
+            [u64::MAX, u64::MAX, 0, 0],
+        ),
+    ];
+    for (al, bl) in cases {
+        let av = I256::from_limbs(al);
+        let bv = I256::from_limbs(bl);
+        assert_eq!(
+            av.gcd(&bv),
+            av.gcd_lehmer(&bv),
+            "wide gcd mismatch {al:?} {bl:?}"
+        );
+    }
+}
+
 #[test]
 fn invert_mod_basic() {
     // 3^{-1} mod 7 = 5, since 3*5 = 15 = 1 mod 7.
@@ -1076,6 +1312,31 @@ proptest! {
             .ct_mul(&x.widen::<610>())
             .ct_add(&b.widen::<610>().ct_mul(&y.widen::<610>()));
         prop_assert_eq!(lhs, g.widen::<610>());
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
+
+    // Lehmer gcd must be byte-identical to Stein gcd at every width.
+    #[test]
+    fn prop_lehmer_gcd_matches_stein_4(a in arb_bigint4(), b in arb_bigint4()) {
+        prop_assert_eq!(a.gcd_lehmer(&b), a.gcd_stein(&b));
+    }
+
+    #[test]
+    fn prop_lehmer_gcd_matches_stein_8(a in arb_wide_bigint::<8>(), b in arb_wide_bigint::<8>()) {
+        prop_assert_eq!(a.gcd_lehmer(&b), a.gcd_stein(&b));
+    }
+
+    #[test]
+    fn prop_lehmer_gcd_matches_stein_30(a in arb_wide_bigint::<30>(), b in arb_wide_bigint::<30>()) {
+        prop_assert_eq!(a.gcd_lehmer(&b), a.gcd_stein(&b));
+    }
+
+    #[test]
+    fn prop_lehmer_gcd_matches_stein_60(a in arb_wide_bigint::<60>(), b in arb_wide_bigint::<60>()) {
+        prop_assert_eq!(a.gcd_lehmer(&b), a.gcd_stein(&b));
     }
 }
 

@@ -9,18 +9,30 @@ use subtle::ConstantTimeEq;
 use super::BigInt;
 
 impl<const N: usize> BigInt<N> {
-    /// Greatest common divisor via Stein's binary algorithm.
+    /// Greatest common divisor. Returns a non-negative value.
     ///
-    /// Returns a non-negative value. Replaces division with shifts and
-    /// subtractions: each iteration strips trailing zeros from the
-    /// smaller operand and subtracts. Total iterations are bounded by
-    /// `2·BITS` and each does O(N) limb work, so total cost is O(N²·64)
-    /// — versus O(BITS²·N) for Euclidean.
+    /// Dispatches by storage width: `gcd_stein` (binary GCD) for
+    /// `N < 8`, [`Self::gcd_lehmer`] for `N >= 8`. Both produce identical
+    /// values; the crossover (microbenched on M4) lands between `N = 4`
+    /// (Stein wins narrowly) and `N = 8` (Lehmer ~2.7x), widening with
+    /// `N` because Lehmer's per-iteration cost tracks operand magnitude
+    /// rather than Stein's `O(N^2 * 64)` bit-step count.
     ///
-    /// **Variable-time.** Iteration count, shift amounts, and the
-    /// swap-on-greater branch all leak information about the inputs.
-    /// Constant-time GCD will be reintroduced in a separate pass.
+    /// **Variable-time.** Both backends leak operand structure (iteration
+    /// count, shift amounts / quotient values, the swap branch). Mirrors
+    /// the `main` track's GMP-equivalent posture; CT GCD lives elsewhere.
     pub fn gcd(&self, other: &Self) -> Self {
+        if N >= 8 {
+            return self.gcd_lehmer(other);
+        }
+        self.gcd_stein(other)
+    }
+
+    /// Stein's binary GCD, retained as the differential oracle the Lehmer
+    /// path is validated against (see the `lehmer_gcd_*` proptests) and
+    /// the `N < 8` fast path where its bit-stepping still beats Lehmer's
+    /// per-word batching.
+    pub(super) fn gcd_stein(&self, other: &Self) -> Self {
         let mut a = self.abs().limbs;
         let mut b = other.abs().limbs;
 
@@ -63,6 +75,241 @@ impl<const N: usize> BigInt<N> {
             sign: 0,
             limbs: Self::mag_shl(&a, shift),
         }
+    }
+
+    /// Greatest common divisor via Lehmer's algorithm (HAC 14.57).
+    ///
+    /// Returns a non-negative value, byte-identical to `gcd_stein`
+    /// on every input (proptested at N=4/8/16/30/60/150 plus the N=500
+    /// signing-lattice regression). Where Stein replaces division with
+    /// shifts, Lehmer batches many Euclidean quotient steps into a single
+    /// multi-precision update:
+    /// it extracts the leading 64-bit words of the two operands, runs
+    /// single-word Euclid on them while the quotient is unambiguous,
+    /// accumulating a 2x2 integer transform `[[a00, a01], [a10, a11]]`,
+    /// then applies that transform to the full-width operands in one
+    /// pass. When the leading words can't disambiguate the next quotient
+    /// (the cofactor matrix would still be the identity), it falls back
+    /// to one full-width Euclidean division step. Each outer iteration
+    /// retires roughly a full word of both operands, so total cost is
+    /// O(n) word-divisions plus O(n) full-width updates of O(n) work,
+    /// i.e. O(n^2) word operations versus Stein's O(n^2 * 64) bit-steps.
+    ///
+    /// **Variable-time.** Quotient values, iteration count, and the
+    /// leading-word disambiguation branch all leak operand structure.
+    /// This is the `main`-track Lehmer that mirrors GMP's var-time
+    /// posture; the CT GCD lives elsewhere.
+    pub fn gcd_lehmer(&self, other: &Self) -> Self {
+        let mut a = self.abs().limbs;
+        let mut b = other.abs().limbs;
+
+        if Self::mag_is_zero(&a) == 1 {
+            return Self { sign: 0, limbs: b };
+        }
+        if Self::mag_is_zero(&b) == 1 {
+            return Self { sign: 0, limbs: a };
+        }
+
+        // Keep a >= b throughout.
+        if Self::mag_cmp(&a, &b) == Ordering::Less {
+            core::mem::swap(&mut a, &mut b);
+        }
+
+        loop {
+            let len_b = Self::mag_effective_len(&b);
+            if len_b == 0 {
+                break;
+            }
+            // Once b fits in a single word, finish with plain u64 Euclid:
+            // reduce a mod b[0], then run single-precision gcd.
+            if len_b == 1 {
+                let d = b[0];
+                let mut r: u128 = 0;
+                let len_a = Self::mag_effective_len(&a);
+                let mut i = len_a;
+                while i > 0 {
+                    i -= 1;
+                    r = ((r << 64) | a[i] as u128) % d as u128;
+                }
+                let mut g = d;
+                let mut rr = r as u64;
+                while rr != 0 {
+                    let t = g % rr;
+                    g = rr;
+                    rr = t;
+                }
+                let mut limbs = [0u64; N];
+                limbs[0] = g;
+                a = limbs;
+                break;
+            }
+
+            // Extract the top words of a and b aligned to a's top limb.
+            // `s` left-normalizes a's MSB to bit 63; b is taken from the
+            // same limb position so the windows are comparable.
+            let len_a = Self::mag_effective_len(&a);
+            let s = a[len_a - 1].leading_zeros();
+            let a_hat = Self::top_word(&a, len_a, s);
+            let b_hat = Self::top_word(&b, len_a, s);
+
+            // Single-word Lehmer inner loop on (u, v) = (a_hat, b_hat),
+            // following Knuth TAOCP 4.5.2 Algorithm L. The 2x2 cofactor
+            // matrix [[a00, a01], [a10, a11]] tracks the transform mapping
+            // the original (a, b) windows to (u, v): the entries carry
+            // their own signs (a00, a11 stay non-negative; a01, a10 stay
+            // non-positive). A step is accepted only while the single-word
+            // quotient estimate is unambiguous (low and high bounds agree).
+            let (mut u, mut v) = (a_hat, b_hat);
+            let (mut a00, mut a01, mut a10, mut a11) = (1i128, 0i128, 0i128, 1i128);
+            let mut steps = 0u32;
+            loop {
+                let denom_c = (v as i128) + a10;
+                let denom_d = (v as i128) + a11;
+                if denom_c == 0 || denom_d == 0 {
+                    break;
+                }
+                let q = ((u as i128) + a00) / denom_c;
+                let q2 = ((u as i128) + a01) / denom_d;
+                if q != q2 {
+                    break;
+                }
+                // Apply quotient q: (u, v) <- (v, u - q*v) with the matrix
+                // rows updated likewise.
+                let new_v = (u as i128) - q * (v as i128);
+                u = v;
+                v = new_v as u64;
+                let n0 = a00 - q * a10;
+                let n1 = a01 - q * a11;
+                a00 = a10;
+                a01 = a11;
+                a10 = n0;
+                a11 = n1;
+                steps += 1;
+            }
+
+            if steps == 0 {
+                // Leading words couldn't disambiguate: one full Euclid step.
+                let (_, r) = Self::mag_div_rem(&a, &b);
+                a = b;
+                b = r;
+            } else {
+                // Apply the cofactor matrix to the full-width operands:
+                // (a, b) <- (a00*a + a01*b, a10*a + a11*b), all non-negative.
+                let (new_a, new_b) = Self::apply_cofactor_matrix(&a, &b, a00, a01, a10, a11);
+                a = new_a;
+                b = new_b;
+                if Self::mag_cmp(&a, &b) == Ordering::Less {
+                    core::mem::swap(&mut a, &mut b);
+                }
+            }
+        }
+
+        Self { sign: 0, limbs: a }
+    }
+
+    /// Extracts the top 64-bit window of magnitude `a` left-normalized by
+    /// `s` bits, where `len` is `a`'s effective limb length and `s` is the
+    /// leading-zero count of `a`'s top limb (so the window's MSB lands at
+    /// bit 63 when read from `a`'s leading limb).
+    ///
+    /// `a` is read at limb index `len - 1`; the same `s` and limb index
+    /// are used for `b` so [`Self::gcd_lehmer`]'s two single-word windows
+    /// share a bit alignment and their quotient estimates are comparable.
+    #[inline]
+    fn top_word(a: &[u64; N], len: usize, s: u32) -> u64 {
+        let hi = a[len - 1];
+        if s == 0 {
+            return hi;
+        }
+        let lo = if len >= 2 { a[len - 2] } else { 0 };
+        (hi << s) | (lo >> (64 - s))
+    }
+
+    /// Computes `(a00*a + a01*b, a10*a + a11*b)` for the signed
+    /// single-word cofactors produced by [`Self::gcd_lehmer`]'s inner
+    /// loop. Each row's value is a non-negative Euclid remainder smaller
+    /// than `max(a, b)`, so it fits in `N` limbs even though the
+    /// individual products `|c|*a` may not. The two coefficients are
+    /// never both negative (that would give a negative result); the three
+    /// remaining sign cases reduce to one fused multiply-add (both
+    /// non-negative) or a fused multiply-subtract (mixed signs), neither
+    /// of which materializes the oversized product.
+    fn apply_cofactor_matrix(
+        a: &[u64; N],
+        b: &[u64; N],
+        a00: i128,
+        a01: i128,
+        a10: i128,
+        a11: i128,
+    ) -> ([u64; N], [u64; N]) {
+        let row = |c0: i128, c1: i128| -> [u64; N] {
+            match (c0 >= 0, c1 >= 0) {
+                (true, true) => Self::fused_mul_add(a, c0 as u64, b, c1 as u64),
+                (true, false) => Self::fused_mul_sub(a, c0 as u64, b, c1.unsigned_abs() as u64),
+                (false, true) => Self::fused_mul_sub(b, c1 as u64, a, c0.unsigned_abs() as u64),
+                // Both negative would yield a negative combination, which
+                // the Euclid remainder invariant rules out; only (0, 0)
+                // reaches here and produces zero.
+                (false, false) => [0u64; N],
+            }
+        };
+        (row(a00, a01), row(a10, a11))
+    }
+
+    /// Computes `p*pw + m*mw` over magnitudes, truncated to `N` limbs.
+    /// The caller guarantees the true sum fits, so the top carry is zero.
+    ///
+    /// The two products are accumulated in separate carry chains so no
+    /// single `u128` ever has to hold their full sum (which would need 129
+    /// bits): `p*pw` runs in `carry_p`, `m*mw` in `carry_m`, and the two
+    /// low limbs plus a small running `add_carry` are combined per limb.
+    #[inline]
+    fn fused_mul_add(p: &[u64; N], pw: u64, m: &[u64; N], mw: u64) -> [u64; N] {
+        let mut out = [0u64; N];
+        let mut carry_p: u64 = 0;
+        let mut carry_m: u64 = 0;
+        let mut add_carry: u64 = 0;
+        let mut i = 0;
+        while i < N {
+            let prod_p = p[i] as u128 * pw as u128 + carry_p as u128;
+            carry_p = (prod_p >> 64) as u64;
+            let prod_m = m[i] as u128 * mw as u128 + carry_m as u128;
+            carry_m = (prod_m >> 64) as u64;
+
+            let sum = prod_p as u64 as u128 + prod_m as u64 as u128 + add_carry as u128;
+            out[i] = sum as u64;
+            add_carry = (sum >> 64) as u64;
+            i += 1;
+        }
+        out
+    }
+
+    /// Computes `p*pw - m*mw` over magnitudes, where the true result is
+    /// known to be non-negative and to fit in `N` limbs. The product and
+    /// difference are interleaved per limb so the (possibly oversized)
+    /// intermediate `p*pw` is never stored, only its running low limbs.
+    /// Returns the `N`-limb magnitude.
+    #[inline]
+    fn fused_mul_sub(p: &[u64; N], pw: u64, m: &[u64; N], mw: u64) -> [u64; N] {
+        let mut out = [0u64; N];
+        let mut add_carry: u64 = 0;
+        let mut sub_borrow: u64 = 0;
+        let mut i = 0;
+        while i < N {
+            let prod = p[i] as u128 * pw as u128 + add_carry as u128;
+            add_carry = (prod >> 64) as u64;
+            let plo = prod as u64;
+
+            let sub = m[i] as u128 * mw as u128 + sub_borrow as u128;
+            sub_borrow = (sub >> 64) as u64;
+            let slo = sub as u64;
+
+            let (diff, borrow) = plo.overflowing_sub(slo);
+            out[i] = diff;
+            sub_borrow += borrow as u64;
+            i += 1;
+        }
+        out
     }
 
     /// Extended GCD: returns `(gcd, x, y)` such that
