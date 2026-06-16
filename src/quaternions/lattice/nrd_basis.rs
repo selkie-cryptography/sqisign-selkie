@@ -107,13 +107,17 @@ impl<const N: usize> NrdBasis<N> {
     /// Evaluate the quadratic form `c^T · G · c`.
     #[must_use]
     pub fn eval_quadratic_form(&self, c: &[BigInt<N>; D]) -> BigInt<N> {
-        let mut result = BigInt::<N>::ZERO;
+        // Carry-save MAC: form the D*D signed product terms, then sum
+        // them with a single sign-and-magnitude merge instead of one
+        // `ct_add` per term. Byte-identical: the widened width holds the
+        // exact sum. See `BigInt::mac_sum`.
+        let mut terms = [BigInt::<N>::ZERO; D * D];
         for i in 0..D {
             for j in 0..D {
-                result = result.ct_add(&c[i].ct_mul(&c[j]).ct_mul(&self.gram[i][j]));
+                terms[i * D + j] = c[i].ct_mul(&c[j]).ct_mul(&self.gram[i][j]);
             }
         }
-        result
+        BigInt::mac_sum(&terms)
     }
 
     /// L² reduction with DPE-based GSO ([Alg. 3.3]).

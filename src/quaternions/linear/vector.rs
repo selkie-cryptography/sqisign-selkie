@@ -29,11 +29,16 @@ impl<const N: usize> Vector<N> {
 
     /// Dot product: `sum_i self[i]*other[i]`.
     pub fn dot(&self, other: &Self) -> BigInt<N> {
-        let mut acc = self.0[0].ct_mul(&other.0[0]);
-        acc = acc.ct_add(&self.0[1].ct_mul(&other.0[1]));
-        acc = acc.ct_add(&self.0[2].ct_mul(&other.0[2]));
-        acc = acc.ct_add(&self.0[3].ct_mul(&other.0[3]));
-        acc
+        // Carry-save MAC over the four signed products (see
+        // `BigInt::mac_sum`): one sign-and-magnitude merge instead of
+        // three `ct_add`s. Byte-identical when the sum fits in `N`.
+        let terms = [
+            self.0[0].ct_mul(&other.0[0]),
+            self.0[1].ct_mul(&other.0[1]),
+            self.0[2].ct_mul(&other.0[2]),
+            self.0[3].ct_mul(&other.0[3]),
+        ];
+        BigInt::mac_sum(&terms)
     }
 
     /// Widen each component from `BigInt<N>` to `BigInt<W>`.
