@@ -12,6 +12,17 @@ inputs:
   payload:
     description: Path to the current payload JSON this run produced.
     required: true
+  baseline:
+    description: >-
+      Optional path to a locally-produced baseline payload JSON (same
+      shape as the dashboard's stored baseline). When set and non-empty
+      it is used directly and the dashboard fetch is skipped -- the
+      reliable in-job comparison path (the caller restores main's payload
+      from an actions/cache keyed by the merge-base SHA). When unset or
+      the file is missing/empty, main's baseline is fetched from the CI
+      site as before.
+    required: false
+    default: ''
   github-token:
     description: Token with pull-requests:write, for the PR comment.
     required: true
@@ -23,16 +34,20 @@ runs:
       shell: bash
       run: |
         site=https://sqisign-selkie-ci.fly.dev
-        # Retry on transient errors (408/429/5xx via default --retry,
-        # plus connection-refused).  Legitimate 404 (no baseline yet
-        # for this kind) still falls through to the `{}` fallback,
-        # which `ci-report.rs` renders as a current-only report.
-        # Without retries, a single network blip at fetch time
-        # produces a spurious "No baseline on `main` yet" comment
-        # even when the dashboard has data.
         fetch=(curl -sf --retry 3 --retry-delay 2 --retry-connrefused --max-time 30)
-        "${fetch[@]}" "$site/${{ inputs.kind }}/latest.json" -o /tmp/ci-baseline.json \
-          || echo '{}' > /tmp/ci-baseline.json
+        # Prefer a locally-produced baseline (restored from an
+        # actions/cache keyed by the merge-base SHA) over the dashboard
+        # fetch: the cache is reliable, whereas a single network blip on
+        # the fetch silently falls back to `{}` and renders every
+        # benchmark as "new" even when the dashboard has data. The fetch
+        # stays as the cache-miss fallback.
+        if [ -n "${{ inputs.baseline }}" ] && [ -s "${{ inputs.baseline }}" ]; then
+          cp "${{ inputs.baseline }}" /tmp/ci-baseline.json
+          echo "::notice::using in-job baseline ${{ inputs.baseline }} (no dashboard fetch)"
+        else
+          "${fetch[@]}" "$site/${{ inputs.kind }}/latest.json" -o /tmp/ci-baseline.json \
+            || echo '{}' > /tmp/ci-baseline.json
+        fi
         # For instructions, also pull alloc/stack PR-sha + main-latest so the
         # report can surface PR-vs-main resource deltas (perf-metrics jobs
         # write /<kind>/<sha>.json on PRs via ci-upload --pr-only).
