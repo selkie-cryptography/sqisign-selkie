@@ -711,3 +711,35 @@ jobs:
               fi
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: C-ref vs Rust comparison (megacycles)
+        run: |
+          set -o pipefail
+          # Compute the actual C-vs-Rust ratio so the comparison this job
+          # exists for is shown directly, not left to eyeball two tables.
+          # C medians come from benchmark_lvl1 (cref-bench.txt; C names
+          # keygen "keypair"); Rust medians from criterion's estimates.json.
+          # Both are rdtsc megacycles on the same runner -> apples-to-apples.
+          cmed() { awk -v k="$1" '$1==k { for (i=1;i<=NF;i++) if ($i=="median") { print $(i+1); exit } }' cref-bench.txt; }
+          rmed() { jq '.median.point_estimate / 1e6' "target/criterion/sqisign/$1/new/estimates.json"; }
+          # row <c-op-name> <rust-op-name>
+          row() {
+            local c r
+            c=$(cmed "$1"); r=$(rmed "$2")
+            if [ -n "$c" ] && [ -n "$r" ]; then
+              printf '%-8s | %12.3f | %12.3f | %s\n' "$2" "$c" "$r" \
+                "$(awk -v r="$r" -v c="$c" 'BEGIN { if (c > 0) printf "%.2fx", r / c; else print "n/a" }')"
+            else
+              printf '%-8s | %12s | %12s | n/a\n' "$2" "${c:-n/a}" "${r:-n/a}"
+            fi
+          }
+          {
+            echo "## C ref vs Rust (NIST-I) -- megacycles, Rust/C ratio"
+            echo
+            echo '```'
+            printf '%-8s | %12s | %12s | %s\n' op 'C (Mcyc)' 'Rust (Mcyc)' 'Rust/C'
+            row keypair keygen
+            row sign sign
+            row verify verify
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
