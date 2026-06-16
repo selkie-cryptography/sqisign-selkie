@@ -70,6 +70,23 @@ impl<const N: usize> BigInt<N> {
             self.vt_add(&rhs.wrapping_neg())
         }
     }
+
+    /// In-place constant-time signed subtraction: `self -= rhs`.
+    ///
+    /// Same merge as [`Self::ct_sub`] (negate `rhs`, add) without the
+    /// return-value copy; CT-neutral.
+    #[inline]
+    pub fn ct_sub_assign(&mut self, rhs: &Self) {
+        let neg_rhs = rhs.wrapping_neg();
+        self.ct_add_assign(&neg_rhs);
+    }
+}
+
+impl<const N: usize> core::ops::SubAssign<&BigInt<N>> for BigInt<N> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: &BigInt<N>) {
+        self.ct_sub_assign(rhs);
+    }
 }
 
 impl<const N: usize> Sub for BigInt<N> {
