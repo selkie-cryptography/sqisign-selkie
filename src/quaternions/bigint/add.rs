@@ -192,6 +192,48 @@ impl<const N: usize> BigInt<N> {
             limbs: result_limbs,
         }
     }
+
+    /// In-place constant-time signed addition: `self += rhs`.
+    ///
+    /// Branch-free sign-and-magnitude merge identical to [`Self::ct_add`],
+    /// writing the result into `self` rather than returning a fresh
+    /// [`BigInt`]. The dataflow (and hence the side-channel profile) is
+    /// the same; only the destination differs, so this stays CT-neutral
+    /// while avoiding the return-value copy that matters at large `N`.
+    #[inline]
+    pub fn ct_add_assign(&mut self, rhs: &Self) {
+        let same_sign = ((self.sign ^ rhs.sign) == 0) as u64;
+
+        // Case 1: same sign -> add magnitudes, keep sign.
+        let (sum, _carry) = Self::mag_add(&self.limbs, &rhs.limbs);
+
+        // Case 2: different signs -> subtract the smaller magnitude from
+        // the larger.  `mag_sub`'s borrow is the ordering (borrow == 1
+        // iff self < rhs), so no separate `mag_cmp`; and the reverse
+        // difference is the two's-complement negation of the forward
+        // one, so no second `mag_sub`.
+        let (diff_a, borrow) = Self::mag_sub(&self.limbs, &rhs.limbs);
+        let self_ge = 1 - borrow;
+        let diff_b = Self::mag_negate(&diff_a);
+
+        let diff_mag = Self::mag_select(&diff_b, &diff_a, self_ge);
+        let diff_sign = ct_select_u64(rhs.sign, self.sign, self_ge);
+
+        let result_limbs = Self::mag_select(&diff_mag, &sum, same_sign);
+        let result_sign = ct_select_u64(diff_sign, self.sign, same_sign);
+
+        // Canonicalize: if result is zero, sign must be 0.
+        let is_zero = Self::mag_is_zero(&result_limbs);
+        self.sign = result_sign & (1 - is_zero);
+        self.limbs = result_limbs;
+    }
+}
+
+impl<const N: usize> core::ops::AddAssign<&BigInt<N>> for BigInt<N> {
+    #[inline]
+    fn add_assign(&mut self, rhs: &BigInt<N>) {
+        self.ct_add_assign(rhs);
+    }
 }
 
 impl<const N: usize> Add for BigInt<N> {
