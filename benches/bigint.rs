@@ -103,6 +103,15 @@ fn gcd(bencher: divan::Bencher) {
     bencher.bench(|| divan::black_box(&a).gcd(divan::black_box(&b)));
 }
 
+// Lehmer-vs-Stein A/B at N=4. The remaining `lehmer_*` benches below
+// pair with `gcd`/`gcd_wide`/`gcd_30` for the per-width comparison.
+#[divan::bench]
+fn gcd_lehmer(bencher: divan::Bencher) {
+    let a = sample_a();
+    let b = sample_b();
+    bencher.bench(|| divan::black_box(&a).gcd_lehmer(divan::black_box(&b)));
+}
+
 #[divan::bench]
 fn xgcd(bencher: divan::Bencher) {
     let a = sample_a();
@@ -256,6 +265,13 @@ fn gcd_wide(bencher: divan::Bencher) {
 }
 
 #[divan::bench]
+fn gcd_lehmer_wide(bencher: divan::Bencher) {
+    let a = sample_a_8();
+    let b = sample_b_8();
+    bencher.bench(|| divan::black_box(&a).gcd_lehmer(divan::black_box(&b)));
+}
+
+#[divan::bench]
 fn xgcd_wide(bencher: divan::Bencher) {
     let a = sample_a_8();
     let b = sample_b_8();
@@ -315,6 +331,46 @@ fn gcd_30(bencher: divan::Bencher) {
     let a = sample_a_30();
     let b = sample_b_30();
     bencher.bench(|| divan::black_box(&a).gcd(divan::black_box(&b)));
+}
+
+#[divan::bench(sample_count = 5)]
+fn gcd_lehmer_30(bencher: divan::Bencher) {
+    let a = sample_a_30();
+    let b = sample_b_30();
+    bencher.bench(|| divan::black_box(&a).gcd_lehmer(divan::black_box(&b)));
+}
+
+// N=60 A/B: widest width in the spike's validation matrix; the
+// response-phase intersection lattice reaches this size.
+fn sample_a_60() -> BigInt<60> {
+    let mut limbs = [0u64; 60];
+    for (i, l) in limbs.iter_mut().enumerate() {
+        *l = 0xDEAD_BEEF_CAFE_BABE ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    BigInt::from_limbs(limbs)
+}
+
+fn sample_b_60() -> BigInt<60> {
+    let mut limbs = [0u64; 60];
+    for (i, l) in limbs.iter_mut().enumerate() {
+        *l = 0xAAAA_BBBB_CCCC_DDDD ^ (i as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    }
+    limbs[0] |= 1;
+    BigInt::from_limbs(limbs)
+}
+
+#[divan::bench(sample_count = 5)]
+fn gcd_60(bencher: divan::Bencher) {
+    let a = sample_a_60();
+    let b = sample_b_60();
+    bencher.bench(|| divan::black_box(&a).gcd(divan::black_box(&b)));
+}
+
+#[divan::bench(sample_count = 5)]
+fn gcd_lehmer_60(bencher: divan::Bencher) {
+    let a = sample_a_60();
+    let b = sample_b_60();
+    bencher.bench(|| divan::black_box(&a).gcd_lehmer(divan::black_box(&b)));
 }
 
 #[divan::bench(sample_count = 20)]
