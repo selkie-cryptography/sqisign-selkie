@@ -248,13 +248,13 @@ impl<const N: usize> BigInt<N> {
             if Self::mag_cmp(&u, &v) != Ordering::Less {
                 let (new_u, _) = Self::mag_sub(&u, &v);
                 u = new_u;
-                aa = aa - &cc;
-                bb = bb - &dd;
+                aa -= &cc;
+                bb -= &dd;
             } else {
                 let (new_v, _) = Self::mag_sub(&v, &u);
                 v = new_v;
-                cc = cc - &aa;
-                dd = dd - &bb;
+                cc -= &aa;
+                dd -= &bb;
             }
 
             if Self::mag_is_zero(&u) == 1 {
