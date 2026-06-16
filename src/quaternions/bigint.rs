@@ -21,6 +21,7 @@ mod div;
 mod encoding;
 mod from;
 mod gcd;
+mod mac;
 mod modular;
 mod mul;
 mod neg;
