@@ -93,6 +93,48 @@ impl<const N: usize> BigInt<N> {
         }
     }
 
+    /// Variable-time schoolbook product over the operands' effective
+    /// limb lengths `la`, `lb`, truncated to `N` limbs.
+    ///
+    /// Byte-identical to [`mag_mul`](Self::mag_mul): the skipped limbs
+    /// (`a[la..]`, `b[lb..]`) are zero and contribute nothing. The loop
+    /// bounds depend on operand magnitude, hence variable-time; reached
+    /// via [`vt_mul`](Self::vt_mul) when `la * lb` is well below `N * N`,
+    /// where it beats the full-width arch kernels.
+    #[cfg(feature = "vartime")]
+    fn mag_mul_short(a: &[u64; N], b: &[u64; N], la: usize, lb: usize) -> [u64; N] {
+        let mut result = [0u64; N];
+
+        let mut i = 0;
+        while i < la {
+            let mut carry: u64 = 0;
+            let jmax = core::cmp::min(lb, N - i);
+
+            let mut j = 0;
+            while j < jmax {
+                let prod = result[i + j] as u128 + a[i] as u128 * b[j] as u128 + carry as u128;
+                result[i + j] = prod as u64;
+                carry = (prod >> 64) as u64;
+                j += 1;
+            }
+
+            // b[j >= lb] are zero, so the remainder of the row is pure
+            // carry propagation, truncated at N (matching mag_mul's drop
+            // of limbs past N).
+            let mut k = i + jmax;
+            while carry != 0 && k < N {
+                let s = result[k] as u128 + carry as u128;
+                result[k] = s as u64;
+                carry = (s >> 64) as u64;
+                k += 1;
+            }
+
+            i += 1;
+        }
+
+        result
+    }
+
     /// Constant-time signed multiplication.
     ///
     /// Sign is XOR of input signs (Table 1, §3.1 of [Kouider et
@@ -111,6 +153,42 @@ impl<const N: usize> BigInt<N> {
         Self {
             sign: result_sign,
             limbs: result_limbs,
+        }
+    }
+
+    /// Variable-time-permitted signed multiplication: returns exactly
+    /// what [`ct_mul`](Self::ct_mul) does, but under the `vartime`
+    /// feature skips leading-zero limbs (looping over the operands'
+    /// effective lengths) where that beats the full-width kernels.
+    /// Without the feature it *is* `ct_mul`.
+    ///
+    /// Use only where constant-time is not required -- the `main`
+    /// track's quaternion and lattice arithmetic. On the constant-time
+    /// `next` build (feature off) every call site compiles to `ct_mul`.
+    pub fn vt_mul(&self, rhs: &Self) -> Self {
+        #[cfg(not(feature = "vartime"))]
+        {
+            self.ct_mul(rhs)
+        }
+
+        #[cfg(feature = "vartime")]
+        {
+            let la = Self::mag_effective_len(&self.limbs);
+            let lb = Self::mag_effective_len(&rhs.limbs);
+            let result_limbs = if la * lb * 4 < N * N {
+                Self::mag_mul_short(&self.limbs, &rhs.limbs, la, lb)
+            } else {
+                Self::mag_mul(&self.limbs, &rhs.limbs)
+            };
+
+            let result_sign = self.sign ^ rhs.sign;
+            let is_zero = Self::mag_is_zero(&result_limbs);
+            let result_sign = result_sign & (1 - is_zero);
+
+            Self {
+                sign: result_sign,
+                limbs: result_limbs,
+            }
         }
     }
 }

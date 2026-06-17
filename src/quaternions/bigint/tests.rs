@@ -1280,6 +1280,26 @@ fn arb_wide_bigint<const N: usize>() -> impl Strategy<Value = BigInt<N>> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
 
+    // vt_mul returns exactly what ct_mul does, at every width and
+    // occupancy. arb_wide_bigint sweeps the significant-limb count from 0
+    // to N-2, so under `--features vartime` this covers both the
+    // len-tracking short path (low occupancy) and the full-width fallback
+    // (high occupancy). Without the feature vt_mul is ct_mul.
+    #[test]
+    fn prop_vt_mul_matches_ct_mul_8(a in arb_wide_bigint::<8>(), b in arb_wide_bigint::<8>()) {
+        prop_assert_eq!(a.vt_mul(&b), a.ct_mul(&b));
+    }
+
+    #[test]
+    fn prop_vt_mul_matches_ct_mul_16(a in arb_wide_bigint::<16>(), b in arb_wide_bigint::<16>()) {
+        prop_assert_eq!(a.vt_mul(&b), a.ct_mul(&b));
+    }
+
+    #[test]
+    fn prop_vt_mul_matches_ct_mul_60(a in arb_wide_bigint::<60>(), b in arb_wide_bigint::<60>()) {
+        prop_assert_eq!(a.vt_mul(&b), a.ct_mul(&b));
+    }
+
     // xgcd narrows wide-N operands to a tight working width before
     // running the binary algorithm; the result must equal running at the
     // full storage width. Cross-check the gcd against the independent

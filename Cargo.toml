@@ -18,6 +18,12 @@ exclude = [
 default = ["zeroize"]
 zeroize = ["dep:zeroize"]
 expose-internals = []
+# Variable-time len-tracking on BigInt arithmetic: hot ops loop to the
+# operands' effective limb length instead of the full storage width N,
+# skipping leading-zero padding. The loop bounds leak operand magnitude,
+# so this is for the `main` track only (which matches the variable-time C
+# reference); the constant-time `next` track must NOT enable it.
+vartime = []
 # Exposes `#[no_mangle] mca_*` shims around the inlined hot field
 # kernels so `.github/scripts/mca.rs` can isolate them as standalone
 # asm symbols for `llvm-mca`.  x86_64-only; cfg's out elsewhere.
