@@ -362,7 +362,7 @@ fn shr_across_limbs() {
 fn div_rem_basic() {
     let a = I256::from(17i64);
     let b = I256::from(5i64);
-    let (q, r) = a.div_rem(&b);
+    let (q, r) = a.vt_div_rem(&b);
     assert_eq!(q, I256::from(3i64));
     assert_eq!(r, I256::from(2i64));
 }
@@ -371,7 +371,7 @@ fn div_rem_basic() {
 fn div_rem_exact() {
     let a = I256::from(42i64);
     let b = I256::from(6i64);
-    let (q, r) = a.div_rem(&b);
+    let (q, r) = a.vt_div_rem(&b);
     assert_eq!(q, I256::from(7i64));
     assert_eq!(r, I256::ZERO);
 }
@@ -381,7 +381,7 @@ fn div_rem_negative_dividend() {
     // Euclidean: -17 = (-4) * 5 + 3
     let a = I256::from(-17i64);
     let b = I256::from(5i64);
-    let (q, r) = a.div_rem(&b);
+    let (q, r) = a.vt_div_rem(&b);
     assert_eq!(q, I256::from(-4i64));
     assert_eq!(r, I256::from(3i64));
     assert!(bool::from(r.is_positive()) || bool::from(r.is_zero()));
@@ -392,7 +392,7 @@ fn div_rem_negative_divisor() {
     // 17 = (-3) * (-5) + 2
     let a = I256::from(17i64);
     let b = I256::from(-5i64);
-    let (q, r) = a.div_rem(&b);
+    let (q, r) = a.vt_div_rem(&b);
     assert_eq!(q, I256::from(-3i64));
     assert_eq!(r, I256::from(2i64));
 }
@@ -402,7 +402,7 @@ fn div_rem_both_negative() {
     // -17 = 4 * (-5) + 3
     let a = I256::from(-17i64);
     let b = I256::from(-5i64);
-    let (q, r) = a.div_rem(&b);
+    let (q, r) = a.vt_div_rem(&b);
     assert_eq!(q, I256::from(4i64));
     assert_eq!(r, I256::from(3i64));
 }
@@ -410,11 +410,11 @@ fn div_rem_both_negative() {
 #[test]
 fn ct_mod_basic() {
     assert_eq!(
-        I256::from(17i64).ct_mod(&I256::from(5i64)),
+        I256::from(17i64).vt_mod(&I256::from(5i64)),
         I256::from(2i64)
     );
     assert_eq!(
-        I256::from(-17i64).ct_mod(&I256::from(5i64)),
+        I256::from(-17i64).vt_mod(&I256::from(5i64)),
         I256::from(3i64)
     );
 }
@@ -437,10 +437,10 @@ fn pow_tests() {
 }
 
 #[test]
-fn divides_tests() {
-    assert!(bool::from(I256::from(3i64).divides(&I256::from(12i64))));
-    assert!(!bool::from(I256::from(5i64).divides(&I256::from(12i64))));
-    assert!(bool::from(I256::from(1i64).divides(&I256::from(7i64))));
+fn vt_divides_tests() {
+    assert!(bool::from(I256::from(3i64).vt_divides(&I256::from(12i64))));
+    assert!(!bool::from(I256::from(5i64).vt_divides(&I256::from(12i64))));
+    assert!(bool::from(I256::from(1i64).vt_divides(&I256::from(7i64))));
 }
 
 #[test]
@@ -744,7 +744,7 @@ fn invert_mod_verify() {
     let a = I256::from(11i64);
     let m = I256::from(23i64);
     let inv = a.invert_mod(&m).expect("inverse should exist");
-    let product = a.ct_mul(&inv).ct_mod(&m);
+    let product = a.ct_mul(&inv).vt_mod(&m);
     assert_eq!(product, I256::ONE);
 }
 
@@ -782,7 +782,7 @@ fn modular_sqrt_3mod4() {
     // 4 is a QR mod 7 (7 ≡ 3 mod 4). sqrt(4) mod 7 = 2.
     let r = I256::modular_sqrt(&I256::from(4i64), &I256::from(7i64));
     let r = r.expect("4 is a QR mod 7");
-    assert_eq!(r.ct_mul(&r).ct_mod(&I256::from(7i64)), I256::from(4i64));
+    assert_eq!(r.ct_mul(&r).vt_mod(&I256::from(7i64)), I256::from(4i64));
 }
 
 #[test]
@@ -790,7 +790,7 @@ fn modular_sqrt_5mod8() {
     // 3 is a QR mod 13 (13 ≡ 5 mod 8). Check sqrt(3)² ≡ 3 mod 13.
     let r = I256::modular_sqrt(&I256::from(3i64), &I256::from(13i64));
     let r = r.expect("3 is a QR mod 13");
-    assert_eq!(r.ct_mul(&r).ct_mod(&I256::from(13i64)), I256::from(3i64));
+    assert_eq!(r.ct_mul(&r).vt_mod(&I256::from(13i64)), I256::from(3i64));
 }
 
 #[test]
@@ -838,7 +838,7 @@ fn modular_sqrt_w_dmix_roundtrip() {
     // n or D_mix − n.
     use crate::params::D_MIX;
     let n = BigInt::<9>::from_u64(12345);
-    let n_sq = n.ct_mul(&n).ct_mod(&D_MIX);
+    let n_sq = n.ct_mul(&n).vt_mod(&D_MIX);
     let r = BigInt::<9>::modular_sqrt_w::<18>(&n_sq, &D_MIX).expect("n² is a QR mod D_mix");
     assert!(r == n || r == D_MIX.ct_sub(&n));
 }
@@ -1049,14 +1049,14 @@ proptest! {
     fn prop_bigint_div_rem_identity(a in arb_small_bigint4(), d in arb_small_bigint4()) {
         // a = q * d + r, with 0 <= r < |d|.
         prop_assume!(!bool::from(d.is_zero()));
-        let (q, r) = a.div_rem(&d);
+        let (q, r) = a.vt_div_rem(&d);
         prop_assert_eq!(q * d + r, a);
     }
 
     #[test]
     fn prop_bigint_div_rem_remainder_nonnegative(a in arb_small_bigint4(), d in arb_small_bigint4()) {
         prop_assume!(!bool::from(d.is_zero()));
-        let (_, r) = a.div_rem(&d);
+        let (_, r) = a.vt_div_rem(&d);
         prop_assert!(!bool::from(r.is_negative()));
     }
 
@@ -1069,8 +1069,8 @@ proptest! {
     fn prop_bigint_gcd_divides_both(a in arb_small_bigint4(), b in arb_small_bigint4()) {
         let g = a.gcd(&b);
         if !bool::from(g.is_zero()) {
-            let (_, ra) = a.div_rem(&g);
-            let (_, rb) = b.div_rem(&g);
+            let (_, ra) = a.vt_div_rem(&g);
+            let (_, rb) = b.vt_div_rem(&g);
             prop_assert!(bool::from(ra.is_zero()), "gcd does not divide a");
             prop_assert!(bool::from(rb.is_zero()), "gcd does not divide b");
         }
@@ -1277,6 +1277,26 @@ fn arb_wide_bigint<const N: usize>() -> impl Strategy<Value = BigInt<N>> {
         })
 }
 
+/// Like `arb_wide_bigint` but guarantees a nonzero magnitude in exactly
+/// `sig` low limbs (`1..=cap`), so the divisor's effective length is
+/// controlled. Used to exercise `vt_div_rem` over both the single-limb
+/// fast path (`sig == 1`) and the multi-limb Knuth core (`sig > 1`).
+fn arb_wide_divisor<const N: usize>(cap: usize) -> impl Strategy<Value = BigInt<N>> {
+    (
+        any::<bool>(),
+        1usize..=cap,
+        prop::collection::vec(1u64.., N),
+    )
+        .prop_map(|(neg, sig, raw)| {
+            let mut limbs = [0u64; N];
+            for (i, limb) in raw.iter().enumerate().take(sig) {
+                limbs[i] = *limb;
+            }
+
+            BigInt::from_sign_and_limbs(u64::from(neg), limbs)
+        })
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
 
@@ -1298,6 +1318,33 @@ proptest! {
     #[test]
     fn prop_vt_mul_matches_ct_mul_60(a in arb_wide_bigint::<60>(), b in arb_wide_bigint::<60>()) {
         prop_assert_eq!(a.vt_mul(&b), a.ct_mul(&b));
+    }
+
+    // vt_add / vt_sub return exactly what ct_add / ct_sub do, at every
+    // width and occupancy. arb_wide_bigint sweeps the significant-limb
+    // count from 0 to N-2 over both signs, so under `--features vartime`
+    // this covers the length-bounded short path (low occupancy, both
+    // same-sign and differing-sign with either operand the larger), the
+    // borrow-propagating two's-complement case, and the full-width
+    // fallback (high occupancy). Without the feature vt_add is ct_add.
+    #[test]
+    fn prop_vt_add_matches_ct_add_8(a in arb_wide_bigint::<8>(), b in arb_wide_bigint::<8>()) {
+        prop_assert_eq!(a.vt_add(&b), a.ct_add(&b));
+    }
+
+    #[test]
+    fn prop_vt_add_matches_ct_add_60(a in arb_wide_bigint::<60>(), b in arb_wide_bigint::<60>()) {
+        prop_assert_eq!(a.vt_add(&b), a.ct_add(&b));
+    }
+
+    #[test]
+    fn prop_vt_sub_matches_ct_sub_8(a in arb_wide_bigint::<8>(), b in arb_wide_bigint::<8>()) {
+        prop_assert_eq!(a.vt_sub(&b), a.ct_sub(&b));
+    }
+
+    #[test]
+    fn prop_vt_sub_matches_ct_sub_60(a in arb_wide_bigint::<60>(), b in arb_wide_bigint::<60>()) {
+        prop_assert_eq!(a.vt_sub(&b), a.ct_sub(&b));
     }
 
     // xgcd narrows wide-N operands to a tight working width before
@@ -1332,6 +1379,43 @@ proptest! {
             .ct_mul(&x.widen::<610>())
             .ct_add(&b.widen::<610>().ct_mul(&y.widen::<610>()));
         prop_assert_eq!(lhs, g.widen::<610>());
+    }
+
+    // vt_div_rem's Euclidean identity at wide N with low-occupancy
+    // dividends. arb_wide_bigint sweeps the dividend's significant-limb
+    // count from 0 up, so under `--features vartime` this exercises the
+    // len-tracked normalization short path (m_a < N) alongside the
+    // single-limb (sig == 1) and multi-limb (sig > 1) divisor paths. The
+    // identity `a == q*b + r` with `0 <= r < |b|` is checked at double
+    // width so `q*b` cannot truncate.
+    #[test]
+    fn prop_vt_div_rem_euclidean_16(
+        a in arb_wide_bigint::<16>(),
+        b in arb_wide_divisor::<16>(8),
+    ) {
+        let (q, r) = a.vt_div_rem(&b);
+
+        // 0 <= r < |b|.
+        prop_assert!(!bool::from(r.is_negative()));
+        prop_assert!(r < b.abs());
+
+        // a == q*b + r, widened so the product does not truncate.
+        let lhs = q.widen::<33>().ct_mul(&b.widen::<33>()).ct_add(&r.widen::<33>());
+        prop_assert_eq!(lhs, a.widen::<33>());
+    }
+
+    #[test]
+    fn prop_vt_div_rem_euclidean_60(
+        a in arb_wide_bigint::<60>(),
+        b in arb_wide_divisor::<60>(20),
+    ) {
+        let (q, r) = a.vt_div_rem(&b);
+
+        prop_assert!(!bool::from(r.is_negative()));
+        prop_assert!(r < b.abs());
+
+        let lhs = q.widen::<121>().ct_mul(&b.widen::<121>()).ct_add(&r.widen::<121>());
+        prop_assert_eq!(lhs, a.widen::<121>());
     }
 }
 

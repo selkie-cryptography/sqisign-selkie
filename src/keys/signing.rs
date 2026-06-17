@@ -886,12 +886,12 @@ impl SigningKey {
                 };
                 let (alpha_norm, n_bt_try) = alpha_try.compute_backtracking();
                 let (num_w, den_sq_w) = alpha_norm.norm_w::<N_RESP>();
-                let (q1, r1) = num_w.div_rem(&den_sq_w);
+                let (q1, r1) = num_w.vt_div_rem(&den_sq_w);
                 if !bool::from(r1.is_zero()) {
                     continue;
                 }
                 let lc_post: BigInt<N_RESP> = lattice_content_r >> n_bt_try;
-                let (_q2, r2) = q1.div_rem(&lc_post);
+                let (_q2, r2) = q1.vt_div_rem(&lc_post);
                 if !bool::from(r2.is_zero()) {
                     continue;
                 }
@@ -949,11 +949,11 @@ impl SigningKey {
             let lattice_content: BigInt<N_RESP> = lattice_content_r >> n_bt;
 
             let d_rsp_wide = {
-                let (q1, r1) = nrd_num_w.div_rem(&nrd_den_w);
+                let (q1, r1) = nrd_num_w.vt_div_rem(&nrd_den_w);
                 if !bool::from(r1.is_zero()) {
                     continue;
                 }
-                let (q2, r2) = q1.div_rem(&lattice_content);
+                let (q2, r2) = q1.vt_div_rem(&lattice_content);
                 if !bool::from(r2.is_zero()) {
                     continue;
                 }
@@ -1221,11 +1221,11 @@ impl SigningKey {
                     }
                 };
                 // Canonicalize each O₀-coordinate to `[0, 2^r_rsp)`.
-                // `ct_mod` truncates toward zero, so a negative
+                // `vt_mod` truncates toward zero, so a negative
                 // coordinate gives a negative remainder — add the
                 // modulus to land in the canonical range.
                 let reduce_o0 = |c: &BigInt<N_RESP>| -> BigInt<N_RESP> {
-                    let r = c.ct_mod(&two_to_r);
+                    let r = c.vt_mod(&two_to_r);
                     if bool::from(r.is_negative()) {
                         r.ct_add(&two_to_r)
                     } else {

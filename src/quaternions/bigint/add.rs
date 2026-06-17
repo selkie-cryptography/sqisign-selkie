@@ -30,6 +30,83 @@ impl<const N: usize> BigInt<N> {
         (result, carry)
     }
 
+    /// Variable-time unsigned addition of magnitudes over the operands'
+    /// effective limb lengths. Returns `(limbs, carry)`.
+    ///
+    /// Byte-identical to [`mag_add`](Self::mag_add): the skipped limbs
+    /// (`a[la..]`, `b[lb..]`) are zero, so the columns past
+    /// `max(la, lb)` are pure carry propagation, and once the carry
+    /// clears the remaining limbs stay zero. The loop bounds depend on
+    /// operand magnitude, hence variable-time; reached via
+    /// [`vt_add`](Self::vt_add) when both operands sit well below full
+    /// width, where skipping the high zero limbs beats the full-width
+    /// `adcs` chain.
+    #[cfg(feature = "vartime")]
+    fn mag_add_short(a: &[u64; N], b: &[u64; N], la: usize, lb: usize) -> ([u64; N], u64) {
+        let mut result = [0u64; N];
+        let lmax = core::cmp::max(la, lb);
+
+        let mut carry: u64 = 0;
+        let mut i = 0;
+        while i < lmax {
+            let (s1, c1) = a[i].overflowing_add(b[i]);
+            let (s2, c2) = s1.overflowing_add(carry);
+            result[i] = s2;
+            carry = (c1 | c2) as u64;
+            i += 1;
+        }
+
+        // Columns past lmax have both operands zero, so they are pure
+        // carry propagation; once the carry clears, the rest stay zero
+        // (matching mag_add's full-width result).
+        while carry != 0 && i < N {
+            let (s, c) = result[i].overflowing_add(carry);
+            result[i] = s;
+            carry = c as u64;
+            i += 1;
+        }
+
+        (result, carry)
+    }
+
+    /// Variable-time unsigned subtraction of magnitudes over the
+    /// operands' effective limb lengths. Returns `(limbs, borrow)`,
+    /// borrow == 1 iff `a < b` (unsigned).
+    ///
+    /// Byte-identical to [`mag_sub`](Self::mag_sub): the skipped limbs
+    /// are zero, so columns past `max(la, lb)` are pure borrow
+    /// propagation. When the borrow is still set after the operand
+    /// limbs (i.e. `a < b`), the result is the two's-complement
+    /// negation, whose high limbs are all-ones; this loop fills them
+    /// explicitly so the output matches the full-width result exactly.
+    #[cfg(feature = "vartime")]
+    fn mag_sub_short(a: &[u64; N], b: &[u64; N], la: usize, lb: usize) -> ([u64; N], u64) {
+        let mut result = [0u64; N];
+        let lmax = core::cmp::max(la, lb);
+
+        let mut borrow: u64 = 0;
+        let mut i = 0;
+        while i < lmax {
+            let (d1, b1) = a[i].overflowing_sub(b[i]);
+            let (d2, b2) = d1.overflowing_sub(borrow);
+            result[i] = d2;
+            borrow = (b1 | b2) as u64;
+            i += 1;
+        }
+
+        // Columns past lmax have both operands zero, so they reduce to
+        // `0 - borrow`: while a borrow is outstanding each yields
+        // `0xFFFF_FFFF_FFFF_FFFF` and re-borrows, exactly as the
+        // full-width mag_sub produces for the `a < b` two's-complement
+        // case. Once (if) the borrow clears, the rest stay zero.
+        while borrow != 0 && i < N {
+            result[i] = 0u64.wrapping_sub(borrow);
+            i += 1;
+        }
+
+        (result, borrow)
+    }
+
     /// Constant-time signed addition.
     ///
     /// If signs match: add magnitudes.
@@ -64,6 +141,65 @@ impl<const N: usize> BigInt<N> {
         Self {
             sign: result_sign,
             limbs: result_limbs,
+        }
+    }
+
+    /// Variable-time-permitted signed addition: returns exactly what
+    /// [`ct_add`](Self::ct_add) does, but under the `vartime` feature
+    /// skips leading-zero limbs (looping over the operands' effective
+    /// lengths) where that beats the full-width sign-and-magnitude
+    /// merge. Without the feature it *is* `ct_add`.
+    ///
+    /// Use only where constant-time is not required -- the `main`
+    /// track's quaternion and lattice arithmetic. On the constant-time
+    /// `next` build (feature off) every call site compiles to `ct_add`.
+    #[inline]
+    pub fn vt_add(&self, rhs: &Self) -> Self {
+        #[cfg(not(feature = "vartime"))]
+        {
+            self.ct_add(rhs)
+        }
+
+        #[cfg(feature = "vartime")]
+        {
+            let la = Self::mag_effective_len(&self.limbs);
+            let lb = Self::mag_effective_len(&rhs.limbs);
+
+            // Gate: only take the short path when both operands sit well
+            // below full width, so the saved high-limb adds outweigh the
+            // two O(N) effective-length scans plus the irreducible result
+            // memset. K = 4 (same family as vt_mul's `la * lb * 4 < N*N`).
+            if core::cmp::max(la, lb) * 4 >= N {
+                return self.ct_add(rhs);
+            }
+
+            // Same sign-and-magnitude algorithm as ct_add, length-bounded.
+            // Being variable-time, the differing-sign branch picks the
+            // larger magnitude directly via the borrow rather than the
+            // negate + two selects ct_add needs to stay branchless.
+            let (result_sign, result_limbs) = if (self.sign ^ rhs.sign) == 0 {
+                let (sum, _carry) = Self::mag_add_short(&self.limbs, &rhs.limbs, la, lb);
+                (self.sign, sum)
+            } else {
+                let (diff, borrow) = Self::mag_sub_short(&self.limbs, &rhs.limbs, la, lb);
+                if borrow == 0 {
+                    // self >= rhs: keep self's sign and the forward difference.
+                    (self.sign, diff)
+                } else {
+                    // self < rhs: magnitude is rhs - self, sign is rhs's.
+                    let (rdiff, _b) = Self::mag_sub_short(&rhs.limbs, &self.limbs, lb, la);
+                    (rhs.sign, rdiff)
+                }
+            };
+
+            // Canonicalize: if result is zero, sign must be 0.
+            let is_zero = Self::mag_is_zero(&result_limbs);
+            let result_sign = result_sign & (1 - is_zero);
+
+            Self {
+                sign: result_sign,
+                limbs: result_limbs,
+            }
         }
     }
 }

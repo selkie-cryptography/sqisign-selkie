@@ -12,6 +12,17 @@ bit count; \texttt{subtle::ConstantTimeEq} guards secret comparisons);
 the quaternion-arithmetic layer is the primary remaining variable-time
 surface, and the entries below describe its progressive hardening.
 
+The variable-time C reference (\texttt{the-sqisign}, NIST-I, reference
+field backend, system GMP) is the wall-clock baseline the \texttt{main}
+(variable-time) track aims at.  Built and benchmarked on the same Apple
+M4 as the Rust measurements here (\texttt{clock\_gettime} wall-clock, as
+the M4 exposes no userspace cycle counter), it runs key generation in
+$11.4$~ms, signing in $25.3$~ms, and verification in $1.6$~ms.  With the
+variable-time arithmetic below, the Rust implementation runs $24.3$,
+$93.4$, and $2.1$~ms ($2.13\times$, $3.69\times$, and $1.30\times$ the C
+reference); closing the quaternion-heavy key-generation and signing gaps
+is the aim of the variable-time arithmetic work.
+
 The remainder of this section is two running logs --- one of
 experiments that landed, one of experiments that did not.  Recording
 the second is as important as recording the first: each entry that
@@ -150,6 +161,42 @@ register additions for far fewer loads and stores, so it is measured in
 cycles rather than instructions.  Output byte-identical (verified
 against an independent multi-width reference in addition to the KATs).
 Cycle A/B (Apple M4): $-9\%$ on key generation, $-24.6\%$ on signing.
+
+\paragraph{Variable-time length tracking on the big-integer multiply.}
+The fixed-width \texttt{BigInt} does $N^2$ limb work per multiply
+regardless of operand magnitude.  An occupancy measurement over the
+signing and key-generation workloads found the wide buffers run at
+$5$--$25\%$ occupancy, the lattice-intersection widths ($N = 500, 200,
+150$ in signing, $N = 60$ in key generation) dominating the multiply
+work at a few percent occupancy.  A new \texttt{vt\_mul} skips the
+leading-zero limbs, looping over the operands' effective lengths
+$\ell_a \ell_b$ instead of $N^2$ when that clearly wins
+($4\,\ell_a \ell_b < N^2$, so small well-occupied operands stay on the
+tuned assembly kernels above).  The loop bounds leak operand magnitude,
+so it is gated to a \texttt{vartime} build feature: on the \texttt{main}
+track it is variable-time, matching the variable-time C reference (whose
+\texttt{mpz} multiply is itself variable-time), and on the
+constant-time \texttt{next} track the feature is off and \texttt{vt\_mul}
+is exactly \texttt{ct\_mul}.  The quaternion- and lattice-side multiply
+call sites and the \texttt{*} operator route to \texttt{vt\_mul};
+\texttt{ct\_mul} is retained as the pinned constant-time primitive.
+Output byte-identical (a \texttt{vt\_mul == ct\_mul} property test plus
+the KATs).  Wall-clock A/B (Apple M4, \texttt{vartime} off vs.\ on):
+$-25\%$ on key generation, $-44\%$ on signing.  Against the same-machine
+variable-time C-reference baseline (\S\ref{sec:post-baseline}), this
+narrows the gap from $2.88\times$ to $2.17\times$ on key generation and
+from $6.67\times$ to $3.75\times$ on signing.
+
+\paragraph{Variable-time length tracking on addition and subtraction.}
+\texttt{vt\_add} and \texttt{vt\_sub} apply the same leading-zero-limb
+skipping to the linear operations.  Because add and subtract are $O(N)$,
+the read-only effective-length scan saves only the high-limb
+read-modify-writes: it halves the wide, low-occupancy case ($-57\%$ on a
+$500$-limb add at four significant limbs), but these operations are a
+small fraction of signing, so the end-to-end gain is modest.  Output
+byte-identical (\texttt{vt\_add == ct\_add}, \texttt{vt\_sub == ct\_sub}
+property tests).  Wall-clock A/B (Apple M4) over the multiply alone:
+$-1.9\%$ key generation, $-1.4\%$ signing.
 
 \paragraph{Small-prime trial-division before Miller--Rabin.}
 The norm-equation prime search tests a stream of random candidates, the
@@ -329,6 +376,19 @@ to $(x \ll 250) + (x \ll 248) - x$ (using $p = 5\cdot 2^{248} - 1$),
 which at the $110$-limb response-phase width is no faster than the
 length-aware schoolbook multiply by the four-limb constant it
 replaced.
+
+\paragraph{Length-bounded dividend normalization in division.}
+\texttt{mag\_div\_rem}'s Knuth quotient loop is already bounded to the
+operands' effective lengths; the one remaining $N$-wide step is the
+dividend normalization shift.  A \texttt{vartime}-gated variant bounding
+that shift to the dividend's effective length (byte-identical, since the
+skipped high limbs are zero) measured within run-to-run noise on an
+Apple M4: the quotient loop already dominates, and the $N$-limb
+working-array zeroing is irreducible at fixed width.  The honest rename
+of the division and modular-reduction entry points to
+\texttt{vt\_div\_rem} / \texttt{vt\_mod} (they are variable-time, so the
+former \texttt{ct\_mod} name was a misnomer) landed; the normalization
+micro-optimization did not.
 
 \subsection{Next steps}
 \label{sec:next}

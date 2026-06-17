@@ -172,7 +172,7 @@ fn represent_integer_q1() {
         // wide width (coords reach ~2^259 for q ≥ 5 orders, so the
         // square + p factor needs ~770 bits).
         let (nrd_num, nrd_den) = gamma.norm_w::<16>();
-        let (nrd, rem) = nrd_num.div_rem(&nrd_den);
+        let (nrd, rem) = nrd_num.vt_div_rem(&nrd_den);
         assert!(bool::from(rem.is_zero()), "nrd not integer");
         assert_eq!(nrd, m.widen::<16>(), "nrd(γ) should equal M");
     }
@@ -187,7 +187,7 @@ fn represent_integer_any_order_verifies_norm() {
     let result = ExtremalOrder::<8>::represent_integer_any(&m, &mut OsRng);
     if let Some(gamma) = result {
         let (nrd_num, nrd_den) = gamma.norm_w::<16>();
-        let (nrd, rem) = nrd_num.div_rem(&nrd_den);
+        let (nrd, rem) = nrd_num.vt_div_rem(&nrd_den);
         assert!(bool::from(rem.is_zero()), "nrd not integer");
         assert_eq!(nrd, m.widen::<16>(), "nrd(γ) should equal M");
     }
@@ -302,7 +302,7 @@ fn random_prime_norm_lattice_actually_has_norm() {
         let col = lat.basis().columns()[j];
         let nrd_col_8 = nrd_column_wide(&col);
         let divisor_8: BigInt<8> = n_times_denom_sq.widen();
-        let (_, rem) = nrd_col_8.div_rem(&divisor_8);
+        let (_, rem) = nrd_col_8.vt_div_rem(&divisor_8);
         assert!(
             bool::from(rem.is_zero()),
             "random_prime_norm(7) basis[{j}] nrd not divisible by 7·denom² — \
@@ -350,7 +350,7 @@ fn random_norm_lattice_actually_has_norm() {
         for j in 0..4 {
             let col = lat.basis().columns()[j];
             let nrd_col_8 = nrd_column_wide(&col);
-            let (_, rem) = nrd_col_8.div_rem(&divisor_8);
+            let (_, rem) = nrd_col_8.vt_div_rem(&divisor_8);
             assert!(
                 bool::from(rem.is_zero()),
                 "random_norm(143) basis[{j}] nrd not divisible by 143·denom² — \

@@ -56,7 +56,7 @@ impl<const N: usize> BigInt<N> {
         // past the reference's mini-gmp `mpz_probab_prime_p` (which screens
         // only `3*5*...*29 = 0xc0cfd797` to fit `u32`); real GMP screens a
         // far larger table for the same reason. The win is rejecting the
-        // bulk of random composites with a single-limb `ct_mod` per word
+        // bulk of random composites with a single-limb `vt_mod` per word
         // plus a few `u64` remainders, instead of building a `MontReducer`
         // (the `R^2` setup) and running a modular exponentiation.
         //
@@ -78,7 +78,7 @@ impl<const N: usize> BigInt<N> {
             ),
         ];
         for (word, primes) in TRIAL_WORDS {
-            let r = self.ct_mod(&Self::from_u64(word)).as_limbs()[0];
+            let r = self.vt_mod(&Self::from_u64(word)).as_limbs()[0];
             for &p in primes {
                 if r.is_multiple_of(p) && *self != Self::from_u64(p) {
                     return false;

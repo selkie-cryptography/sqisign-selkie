@@ -1,10 +1,34 @@
-//! Constant-time arbitrary-precision signed integer arithmetic.
+//! Arbitrary-precision signed integer arithmetic over a fixed-width
+//! sign+magnitude representation, for quaternion-algebra computation.
 //!
-//! Fixed-width sign+magnitude representation for use in quaternion
-//! algebra computations. Constant-time algorithms adapted from
-//! [Kouider, Mukherjee, Jacquemin, and Kutas][ct-bigint].
+//! # Constant-time vs variable-time (`ct_` / `vt_`)
 //!
-//! API patterns modeled after [RustCrypto `crypto-bigint`][cb].
+//! Arithmetic comes in two families, distinguished by prefix:
+//!
+//! - `ct_*` ([`ct_add`](BigInt::ct_add), [`ct_sub`](BigInt::ct_sub),
+//!   [`ct_mul`](BigInt::ct_mul), [`ct_sqr`](BigInt::ct_sqr)) are
+//!   **constant-time on every build**: data-independent control flow. `grep
+//!   ct_` enumerates the constant-time surface.
+//! - `vt_*` ([`vt_mul`](BigInt::vt_mul), [`vt_div_rem`](BigInt::vt_div_rem),
+//!   [`vt_mod`](BigInt::vt_mod), [`vt_divides`](BigInt::vt_divides)) are
+//!   **variable-time permitted**: a call site that does not require constant
+//!   time. `grep vt_` is the variable-time (CT-debt) ledger.
+//!
+//! The split maps onto the project's two tracks via the `vartime` cargo
+//! feature:
+//!
+//! - **`main`** (feature on): `vt_*` take a variable-time fast path that skips
+//!   leading-zero limbs, matching the variable-time C reference.
+//! - **`next`** (feature off): [`vt_mul`](BigInt::vt_mul) is exactly
+//!   [`ct_mul`](BigInt::ct_mul), hence constant-time.
+//!   [`vt_div_rem`](BigInt::vt_div_rem) / [`vt_mod`](BigInt::vt_mod) stay
+//!   variable-time on both tracks for now -- a known CT gap (`TODO(ct)`) to be
+//!   closed by a constant-time divider ([Kouider et al.][ct-bigint]).
+//!
+//! Operators route to the build default: `*` is
+//! [`vt_mul`](BigInt::vt_mul). The `mag_*` helpers are the unsigned
+//! limb-array kernels beneath both families; their timing is documented
+//! per helper. API patterns follow [RustCrypto `crypto-bigint`][cb].
 //!
 //! [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
 //! [cb]: https://github.com/RustCrypto/crypto-bigint

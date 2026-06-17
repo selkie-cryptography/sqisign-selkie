@@ -164,9 +164,9 @@ proptest! {
     #[test]
     fn oracle_div_rem(a in arb_small_bigint4(), b in arb_small_bigint4()) {
         prop_assume!(!bool::from(b.is_zero()));
-        let (q_ours, r_ours) = a.div_rem(&b);
+        let (q_ours, r_ours) = a.vt_div_rem(&b);
 
-        // `BigInt::div_rem` is Euclidean (`r >= 0`); `num_bigint` is
+        // `BigInt::vt_div_rem` is Euclidean (`r >= 0`); `num_bigint` is
         // truncated. Lift the quotient and remainder by hand.
         let na = to_num(a);
         let nb = to_num(b);

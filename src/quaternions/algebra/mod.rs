@@ -397,11 +397,11 @@ impl<const N: usize> Element<N> {
         g = g.gcd(&self.denom.0.abs());
 
         if !bool::from(g.is_zero()) && g != BigInt::ONE {
-            let (qa, _) = self.a.0.div_rem(&g);
-            let (qb, _) = self.b.0.div_rem(&g);
-            let (qc, _) = self.c.0.div_rem(&g);
-            let (qd, _) = self.d.0.div_rem(&g);
-            let (qr, _) = self.denom.0.div_rem(&g);
+            let (qa, _) = self.a.0.vt_div_rem(&g);
+            let (qb, _) = self.b.0.vt_div_rem(&g);
+            let (qc, _) = self.c.0.vt_div_rem(&g);
+            let (qd, _) = self.d.0.vt_div_rem(&g);
+            let (qr, _) = self.denom.0.vt_div_rem(&g);
             self.a = Coordinate(qa);
             self.b = Coordinate(qb);
             self.c = Coordinate(qc);
@@ -559,7 +559,7 @@ impl<const N: usize> Element<N> {
         let tmp = if bool::from(g_scaled.is_zero()) {
             BigInt::<N>::ZERO
         } else {
-            let (q, _rem) = g_scaled.div_rem(r);
+            let (q, _rem) = g_scaled.vt_div_rem(r);
             q
         };
 
@@ -848,11 +848,11 @@ impl Element<4> {
 
         let (mut wa, mut wb, mut wc, mut wd, mut wr) = (a, b, c, d, r);
         if !bool::from(g.is_zero()) && g != BigInt::<8>::ONE {
-            let (qa, _) = a.div_rem(&g);
-            let (qb, _) = b.div_rem(&g);
-            let (qc, _) = c.div_rem(&g);
-            let (qd, _) = d.div_rem(&g);
-            let (qr, _) = r.div_rem(&g);
+            let (qa, _) = a.vt_div_rem(&g);
+            let (qb, _) = b.vt_div_rem(&g);
+            let (qc, _) = c.vt_div_rem(&g);
+            let (qd, _) = d.vt_div_rem(&g);
+            let (qr, _) = r.vt_div_rem(&g);
             wa = qa;
             wb = qb;
             wc = qc;

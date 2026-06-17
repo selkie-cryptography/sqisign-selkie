@@ -108,28 +108,28 @@ impl<const N: usize> Matrix<N> {
                     .vt_mul(
                         &m[r1][c1]
                             .vt_mul(&m[r2][c2])
-                            .ct_sub(&m[r1][c2].vt_mul(&m[r2][c1])),
+                            .vt_sub(&m[r1][c2].vt_mul(&m[r2][c1])),
                     )
-                    .ct_sub(
+                    .vt_sub(
                         &m[r0][c1].vt_mul(
                             &m[r1][c0]
                                 .vt_mul(&m[r2][c2])
-                                .ct_sub(&m[r1][c2].vt_mul(&m[r2][c0])),
+                                .vt_sub(&m[r1][c2].vt_mul(&m[r2][c0])),
                         ),
                     )
-                    .ct_add(
+                    .vt_add(
                         &m[r0][c2].vt_mul(
                             &m[r1][c0]
                                 .vt_mul(&m[r2][c1])
-                                .ct_sub(&m[r1][c1].vt_mul(&m[r2][c0])),
+                                .vt_sub(&m[r1][c1].vt_mul(&m[r2][c0])),
                         ),
                     )
             };
         m[0][0]
             .vt_mul(&minor(1, 2, 3, 1, 2, 3))
-            .ct_sub(&m[0][1].vt_mul(&minor(1, 2, 3, 0, 2, 3)))
-            .ct_add(&m[0][2].vt_mul(&minor(1, 2, 3, 0, 1, 3)))
-            .ct_sub(&m[0][3].vt_mul(&minor(1, 2, 3, 0, 1, 2)))
+            .vt_sub(&m[0][1].vt_mul(&minor(1, 2, 3, 0, 2, 3)))
+            .vt_add(&m[0][2].vt_mul(&minor(1, 2, 3, 0, 1, 3)))
+            .vt_sub(&m[0][3].vt_mul(&minor(1, 2, 3, 0, 1, 2)))
     }
 
     /// Determinant of the 3x3 minor on rows `r` and columns `c`.
@@ -142,20 +142,20 @@ impl<const N: usize> Matrix<N> {
             .vt_mul(
                 &m[r[1]][c[1]]
                     .vt_mul(&m[r[2]][c[2]])
-                    .ct_sub(&m[r[1]][c[2]].vt_mul(&m[r[2]][c[1]])),
+                    .vt_sub(&m[r[1]][c[2]].vt_mul(&m[r[2]][c[1]])),
             )
-            .ct_sub(
+            .vt_sub(
                 &m[r[0]][c[1]].vt_mul(
                     &m[r[1]][c[0]]
                         .vt_mul(&m[r[2]][c[2]])
-                        .ct_sub(&m[r[1]][c[2]].vt_mul(&m[r[2]][c[0]])),
+                        .vt_sub(&m[r[1]][c[2]].vt_mul(&m[r[2]][c[0]])),
                 ),
             )
-            .ct_add(
+            .vt_add(
                 &m[r[0]][c[2]].vt_mul(
                     &m[r[1]][c[0]]
                         .vt_mul(&m[r[2]][c[1]])
-                        .ct_sub(&m[r[1]][c[1]].vt_mul(&m[r[2]][c[0]])),
+                        .vt_sub(&m[r[1]][c[1]].vt_mul(&m[r[2]][c[0]])),
                 ),
             )
     }
@@ -200,99 +200,99 @@ impl<const N: usize> Matrix<N> {
         let m = &self.0;
 
         // 2x2 minors of rows (0,1) over each column pair.
-        let s01 = m[0][0].vt_mul(&m[1][1]).ct_sub(&m[0][1].vt_mul(&m[1][0]));
-        let s02 = m[0][0].vt_mul(&m[1][2]).ct_sub(&m[0][2].vt_mul(&m[1][0]));
-        let s03 = m[0][0].vt_mul(&m[1][3]).ct_sub(&m[0][3].vt_mul(&m[1][0]));
-        let s12 = m[0][1].vt_mul(&m[1][2]).ct_sub(&m[0][2].vt_mul(&m[1][1]));
-        let s13 = m[0][1].vt_mul(&m[1][3]).ct_sub(&m[0][3].vt_mul(&m[1][1]));
-        let s23 = m[0][2].vt_mul(&m[1][3]).ct_sub(&m[0][3].vt_mul(&m[1][2]));
+        let s01 = m[0][0].vt_mul(&m[1][1]).vt_sub(&m[0][1].vt_mul(&m[1][0]));
+        let s02 = m[0][0].vt_mul(&m[1][2]).vt_sub(&m[0][2].vt_mul(&m[1][0]));
+        let s03 = m[0][0].vt_mul(&m[1][3]).vt_sub(&m[0][3].vt_mul(&m[1][0]));
+        let s12 = m[0][1].vt_mul(&m[1][2]).vt_sub(&m[0][2].vt_mul(&m[1][1]));
+        let s13 = m[0][1].vt_mul(&m[1][3]).vt_sub(&m[0][3].vt_mul(&m[1][1]));
+        let s23 = m[0][2].vt_mul(&m[1][3]).vt_sub(&m[0][3].vt_mul(&m[1][2]));
 
         // 2x2 minors of rows (2,3) over each column pair.
-        let t01 = m[2][0].vt_mul(&m[3][1]).ct_sub(&m[2][1].vt_mul(&m[3][0]));
-        let t02 = m[2][0].vt_mul(&m[3][2]).ct_sub(&m[2][2].vt_mul(&m[3][0]));
-        let t03 = m[2][0].vt_mul(&m[3][3]).ct_sub(&m[2][3].vt_mul(&m[3][0]));
-        let t12 = m[2][1].vt_mul(&m[3][2]).ct_sub(&m[2][2].vt_mul(&m[3][1]));
-        let t13 = m[2][1].vt_mul(&m[3][3]).ct_sub(&m[2][3].vt_mul(&m[3][1]));
-        let t23 = m[2][2].vt_mul(&m[3][3]).ct_sub(&m[2][3].vt_mul(&m[3][2]));
+        let t01 = m[2][0].vt_mul(&m[3][1]).vt_sub(&m[2][1].vt_mul(&m[3][0]));
+        let t02 = m[2][0].vt_mul(&m[3][2]).vt_sub(&m[2][2].vt_mul(&m[3][0]));
+        let t03 = m[2][0].vt_mul(&m[3][3]).vt_sub(&m[2][3].vt_mul(&m[3][0]));
+        let t12 = m[2][1].vt_mul(&m[3][2]).vt_sub(&m[2][2].vt_mul(&m[3][1]));
+        let t13 = m[2][1].vt_mul(&m[3][3]).vt_sub(&m[2][3].vt_mul(&m[3][1]));
+        let t23 = m[2][2].vt_mul(&m[3][3]).vt_sub(&m[2][3].vt_mul(&m[3][2]));
 
         // Cofactors of rows 0,1 from the rows-(2,3) minors `t`.
         let c00 = m[1][1]
             .vt_mul(&t23)
-            .ct_sub(&m[1][2].vt_mul(&t13))
-            .ct_add(&m[1][3].vt_mul(&t12));
+            .vt_sub(&m[1][2].vt_mul(&t13))
+            .vt_add(&m[1][3].vt_mul(&t12));
         let c01 = m[1][2]
             .vt_mul(&t03)
-            .ct_sub(&m[1][0].vt_mul(&t23))
-            .ct_sub(&m[1][3].vt_mul(&t02));
+            .vt_sub(&m[1][0].vt_mul(&t23))
+            .vt_sub(&m[1][3].vt_mul(&t02));
         let c02 = m[1][0]
             .vt_mul(&t13)
-            .ct_sub(&m[1][1].vt_mul(&t03))
-            .ct_add(&m[1][3].vt_mul(&t01));
+            .vt_sub(&m[1][1].vt_mul(&t03))
+            .vt_add(&m[1][3].vt_mul(&t01));
         let c03 = m[1][1]
             .vt_mul(&t02)
-            .ct_sub(&m[1][0].vt_mul(&t12))
-            .ct_sub(&m[1][2].vt_mul(&t01));
+            .vt_sub(&m[1][0].vt_mul(&t12))
+            .vt_sub(&m[1][2].vt_mul(&t01));
 
         let c10 = m[0][2]
             .vt_mul(&t13)
-            .ct_sub(&m[0][1].vt_mul(&t23))
-            .ct_sub(&m[0][3].vt_mul(&t12));
+            .vt_sub(&m[0][1].vt_mul(&t23))
+            .vt_sub(&m[0][3].vt_mul(&t12));
         let c11 = m[0][0]
             .vt_mul(&t23)
-            .ct_sub(&m[0][2].vt_mul(&t03))
-            .ct_add(&m[0][3].vt_mul(&t02));
+            .vt_sub(&m[0][2].vt_mul(&t03))
+            .vt_add(&m[0][3].vt_mul(&t02));
         let c12 = m[0][1]
             .vt_mul(&t03)
-            .ct_sub(&m[0][0].vt_mul(&t13))
-            .ct_sub(&m[0][3].vt_mul(&t01));
+            .vt_sub(&m[0][0].vt_mul(&t13))
+            .vt_sub(&m[0][3].vt_mul(&t01));
         let c13 = m[0][0]
             .vt_mul(&t12)
-            .ct_sub(&m[0][1].vt_mul(&t02))
-            .ct_add(&m[0][2].vt_mul(&t01));
+            .vt_sub(&m[0][1].vt_mul(&t02))
+            .vt_add(&m[0][2].vt_mul(&t01));
 
         // Cofactors of rows 2,3 from the rows-(0,1) minors `s`.
         let c20 = m[3][1]
             .vt_mul(&s23)
-            .ct_sub(&m[3][2].vt_mul(&s13))
-            .ct_add(&m[3][3].vt_mul(&s12));
+            .vt_sub(&m[3][2].vt_mul(&s13))
+            .vt_add(&m[3][3].vt_mul(&s12));
         let c21 = m[3][2]
             .vt_mul(&s03)
-            .ct_sub(&m[3][0].vt_mul(&s23))
-            .ct_sub(&m[3][3].vt_mul(&s02));
+            .vt_sub(&m[3][0].vt_mul(&s23))
+            .vt_sub(&m[3][3].vt_mul(&s02));
         let c22 = m[3][0]
             .vt_mul(&s13)
-            .ct_sub(&m[3][1].vt_mul(&s03))
-            .ct_add(&m[3][3].vt_mul(&s01));
+            .vt_sub(&m[3][1].vt_mul(&s03))
+            .vt_add(&m[3][3].vt_mul(&s01));
         let c23 = m[3][1]
             .vt_mul(&s02)
-            .ct_sub(&m[3][0].vt_mul(&s12))
-            .ct_sub(&m[3][2].vt_mul(&s01));
+            .vt_sub(&m[3][0].vt_mul(&s12))
+            .vt_sub(&m[3][2].vt_mul(&s01));
 
         let c30 = m[2][2]
             .vt_mul(&s13)
-            .ct_sub(&m[2][1].vt_mul(&s23))
-            .ct_sub(&m[2][3].vt_mul(&s12));
+            .vt_sub(&m[2][1].vt_mul(&s23))
+            .vt_sub(&m[2][3].vt_mul(&s12));
         let c31 = m[2][0]
             .vt_mul(&s23)
-            .ct_sub(&m[2][2].vt_mul(&s03))
-            .ct_add(&m[2][3].vt_mul(&s02));
+            .vt_sub(&m[2][2].vt_mul(&s03))
+            .vt_add(&m[2][3].vt_mul(&s02));
         let c32 = m[2][1]
             .vt_mul(&s03)
-            .ct_sub(&m[2][0].vt_mul(&s13))
-            .ct_sub(&m[2][3].vt_mul(&s01));
+            .vt_sub(&m[2][0].vt_mul(&s13))
+            .vt_sub(&m[2][3].vt_mul(&s01));
         let c33 = m[2][0]
             .vt_mul(&s12)
-            .ct_sub(&m[2][1].vt_mul(&s02))
-            .ct_add(&m[2][2].vt_mul(&s01));
+            .vt_sub(&m[2][1].vt_mul(&s02))
+            .vt_add(&m[2][2].vt_mul(&s01));
 
         // det = sum over complementary column-pair blocks.
         let det = s01
             .vt_mul(&t23)
-            .ct_sub(&s02.vt_mul(&t13))
-            .ct_add(&s03.vt_mul(&t12))
-            .ct_add(&s12.vt_mul(&t03))
-            .ct_sub(&s13.vt_mul(&t02))
-            .ct_add(&s23.vt_mul(&t01));
+            .vt_sub(&s02.vt_mul(&t13))
+            .vt_add(&s03.vt_mul(&t12))
+            .vt_add(&s12.vt_mul(&t03))
+            .vt_sub(&s13.vt_mul(&t02))
+            .vt_add(&s23.vt_mul(&t01));
 
         let cofactor = Self::from_rows(
             Vector::new(c00, c01, c02, c03),
@@ -313,7 +313,7 @@ impl<const N: usize> Matrix<N> {
         while i < 4 {
             let mut j = 0;
             while j < 4 {
-                let (q, r) = self.0[i][j].div_rem(scalar);
+                let (q, r) = self.0[i][j].vt_div_rem(scalar);
                 if !bool::from(r.is_zero()) {
                     return None;
                 }

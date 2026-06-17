@@ -90,10 +90,10 @@ fn mul_w60(bencher: divan::Bencher) {
 }
 
 #[divan::bench]
-fn div_rem(bencher: divan::Bencher) {
+fn vt_div_rem(bencher: divan::Bencher) {
     let a = sample_a();
     let b = BigInt::<4>::from_limbs([0x1234_5678, 0, 0, 0]);
-    bencher.bench(|| divan::black_box(&a).div_rem(divan::black_box(&b)));
+    bencher.bench(|| divan::black_box(&a).vt_div_rem(divan::black_box(&b)));
 }
 
 #[divan::bench]
@@ -206,7 +206,7 @@ fn div_rem_wide(bencher: divan::Bencher) {
         0,
         0,
     ]);
-    bencher.bench(|| divan::black_box(&a).div_rem(divan::black_box(&b)));
+    bencher.bench(|| divan::black_box(&a).vt_div_rem(divan::black_box(&b)));
 }
 
 // `BigInt<8>` is the dominant width on the signing hot path (quaternion
@@ -376,4 +376,152 @@ fn gcd_lehmer_60(bencher: divan::Bencher) {
 #[divan::bench(sample_count = 20)]
 fn is_probable_prime_d_mix(bencher: divan::Bencher) {
     bencher.bench(|| divan::black_box(&D_MIX_W18).is_probable_prime(8));
+}
+
+// vt_add/vt_sub vs ct_add/ct_sub A/B at the wide signing widths (N=60,
+// N=500) under both low occupancy (~4 significant limbs, the common
+// lattice/ideal case) and full occupancy (all N limbs nonzero, the
+// fallback). The decisive cell is vt_add vs ct_add at N=500, low
+// occupancy: the saved high-limb adds against the two effective-length
+// scans and the irreducible `[u64; N]` result memset. Build with
+// `--features vartime` so vt_* takes the length-bounded path; without
+// the feature vt_* is ct_*, so the pairs read equal (a sanity check).
+
+/// `N` limbs filled from an LCG (full occupancy: every limb nonzero).
+fn full_occupancy<const N: usize>(seed: u64) -> BigInt<N> {
+    let mut limbs = [0u64; N];
+    let mut s = seed;
+    for limb in &mut limbs {
+        s = s
+            .wrapping_mul(0x5851_F42D_4C95_7F2D)
+            .wrapping_add(0x1405_7B7E_F767_814F);
+        *limb = s | 1;
+    }
+    BigInt::from_limbs(limbs)
+}
+
+/// Four significant limbs from an LCG, the rest zero (low occupancy:
+/// the typical wide-storage / few-significant-limbs lattice operand).
+fn low_occupancy<const N: usize>(seed: u64) -> BigInt<N> {
+    let mut limbs = [0u64; N];
+    let mut s = seed;
+    for limb in limbs.iter_mut().take(4) {
+        s = s
+            .wrapping_mul(0x5851_F42D_4C95_7F2D)
+            .wrapping_add(0x1405_7B7E_F767_814F);
+        *limb = s | 1;
+    }
+    BigInt::from_limbs(limbs)
+}
+
+#[divan::bench]
+fn add_ct_w60_full(bencher: divan::Bencher) {
+    let a = full_occupancy::<60>(0xA1);
+    let b = full_occupancy::<60>(0xB2);
+    bencher.bench(|| divan::black_box(&a).ct_add(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn add_vt_w60_full(bencher: divan::Bencher) {
+    let a = full_occupancy::<60>(0xA1);
+    let b = full_occupancy::<60>(0xB2);
+    bencher.bench(|| divan::black_box(&a).vt_add(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn add_ct_w60_low(bencher: divan::Bencher) {
+    let a = low_occupancy::<60>(0xA1);
+    let b = low_occupancy::<60>(0xB2);
+    bencher.bench(|| divan::black_box(&a).ct_add(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn add_vt_w60_low(bencher: divan::Bencher) {
+    let a = low_occupancy::<60>(0xA1);
+    let b = low_occupancy::<60>(0xB2);
+    bencher.bench(|| divan::black_box(&a).vt_add(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn add_ct_w500_full(bencher: divan::Bencher) {
+    let a = full_occupancy::<500>(0xA1);
+    let b = full_occupancy::<500>(0xB2);
+    bencher.bench(|| divan::black_box(&a).ct_add(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn add_vt_w500_full(bencher: divan::Bencher) {
+    let a = full_occupancy::<500>(0xA1);
+    let b = full_occupancy::<500>(0xB2);
+    bencher.bench(|| divan::black_box(&a).vt_add(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn add_ct_w500_low(bencher: divan::Bencher) {
+    let a = low_occupancy::<500>(0xA1);
+    let b = low_occupancy::<500>(0xB2);
+    bencher.bench(|| divan::black_box(&a).ct_add(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn add_vt_w500_low(bencher: divan::Bencher) {
+    let a = low_occupancy::<500>(0xA1);
+    let b = low_occupancy::<500>(0xB2);
+    bencher.bench(|| divan::black_box(&a).vt_add(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn sub_ct_w60_full(bencher: divan::Bencher) {
+    let a = full_occupancy::<60>(0xA1);
+    let b = full_occupancy::<60>(0xB2);
+    bencher.bench(|| divan::black_box(&a).ct_sub(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn sub_vt_w60_full(bencher: divan::Bencher) {
+    let a = full_occupancy::<60>(0xA1);
+    let b = full_occupancy::<60>(0xB2);
+    bencher.bench(|| divan::black_box(&a).vt_sub(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn sub_ct_w60_low(bencher: divan::Bencher) {
+    let a = low_occupancy::<60>(0xA1);
+    let b = low_occupancy::<60>(0xB2);
+    bencher.bench(|| divan::black_box(&a).ct_sub(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn sub_vt_w60_low(bencher: divan::Bencher) {
+    let a = low_occupancy::<60>(0xA1);
+    let b = low_occupancy::<60>(0xB2);
+    bencher.bench(|| divan::black_box(&a).vt_sub(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn sub_ct_w500_full(bencher: divan::Bencher) {
+    let a = full_occupancy::<500>(0xA1);
+    let b = full_occupancy::<500>(0xB2);
+    bencher.bench(|| divan::black_box(&a).ct_sub(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn sub_vt_w500_full(bencher: divan::Bencher) {
+    let a = full_occupancy::<500>(0xA1);
+    let b = full_occupancy::<500>(0xB2);
+    bencher.bench(|| divan::black_box(&a).vt_sub(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn sub_ct_w500_low(bencher: divan::Bencher) {
+    let a = low_occupancy::<500>(0xA1);
+    let b = low_occupancy::<500>(0xB2);
+    bencher.bench(|| divan::black_box(&a).ct_sub(divan::black_box(&b)));
+}
+
+#[divan::bench]
+fn sub_vt_w500_low(bencher: divan::Bencher) {
+    let a = low_occupancy::<500>(0xA1);
+    let b = low_occupancy::<500>(0xB2);
+    bencher.bench(|| divan::black_box(&a).vt_sub(divan::black_box(&b)));
 }

@@ -329,7 +329,7 @@ impl<const N: usize> MontReducer<N> {
     /// back via REDC with no truncation. Result is canonical, in
     /// `[0, n)`.
     ///
-    /// Unlike `a.ct_mul(&b).ct_mod(n)` this is correct whenever `a` and
+    /// Unlike `a.ct_mul(&b).vt_mod(n)` this is correct whenever `a` and
     /// `b` fit in `N` limbs (and are `< n`), with no `64*N >= 2*bits`
     /// floor: it is what lets [`modular_sqrt`](BigInt::modular_sqrt) run
     /// its Tonelli-Shanks multiplies at the candidate's own width rather
@@ -570,15 +570,21 @@ impl<const N: usize> BigInt<N> {
     /// Modular reduction: `self mod modulus`. Returns a value in
     /// `[0, |modulus|)`.
     ///
-    /// Uses Euclidean division (Knuth Algorithm D) — see
-    /// [`div_rem`](Self::div_rem) for the underlying routine.
+    /// Uses Euclidean division (Knuth Algorithm D), see
+    /// [`vt_div_rem`](Self::vt_div_rem) for the underlying routine.
+    ///
+    /// The `vt_` prefix marks this as variable-time-permitted: it inherits
+    /// `vt_div_rem`'s data-dependent branching and is not constant-time.
+    /// `TODO(ct)`: a future `ct_mod` over the constant-time `ct_div_rem`
+    /// (Kouider et al. 2025/832) replaces this on the `next` track before
+    /// any secret-derived caller ships.
     ///
     /// # Panics
     ///
     /// Panics if `modulus` is zero.
     #[inline]
-    pub fn ct_mod(&self, modulus: &Self) -> Self {
-        let (_, r) = self.div_rem(modulus);
+    pub fn vt_mod(&self, modulus: &Self) -> Self {
+        let (_, r) = self.vt_div_rem(modulus);
         r
     }
 
@@ -587,7 +593,7 @@ impl<const N: usize> BigInt<N> {
     /// Uses Montgomery arithmetic when the modulus is odd (the common
     /// case): conversion in/out plus square-and-multiply with CIOS
     /// Montgomery multiplication, no per-step division. Falls back to
-    /// schoolbook square-and-multiply (`ct_mul` + `ct_mod`) for even
+    /// schoolbook square-and-multiply (`ct_mul` + `vt_mod`) for even
     /// moduli, where Montgomery doesn't apply.
     ///
     /// # Width requirement
@@ -614,12 +620,12 @@ impl<const N: usize> BigInt<N> {
         let mut i = bs;
         while i > 0 {
             i -= 1;
-            result = result.ct_mul(&result).ct_mod(modulus);
+            result = result.ct_mul(&result).vt_mod(modulus);
             let limb_idx = (i / 64) as usize;
             let bit_idx = i % 64;
             let bit = (exp.limbs[limb_idx] >> bit_idx) & 1;
             if bit == 1 {
-                result = result.ct_mul(base).ct_mod(modulus);
+                result = result.ct_mul(base).vt_mod(modulus);
             }
         }
         result
@@ -674,12 +680,12 @@ impl<const N: usize> BigInt<N> {
     /// [`MontReducer::mul_mod`]), so the `2N`-limb products fold back
     /// through REDC with no truncation. Correct whenever `m` fits in `N`
     /// limbs; there is no `64*N >= 2*bits(m)` floor. (An even `m` takes
-    /// the schoolbook `ct_mul`/`ct_mod` fallback, which does carry that
+    /// the schoolbook `ct_mul`/`vt_mod` fallback, which does carry that
     /// floor, but `m` is required to be an odd prime.)
     ///
     /// [Alg. 3.1]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.1
     pub fn modular_sqrt(n: &Self, m: &Self) -> Option<Self> {
-        let n_mod = n.ct_mod(m);
+        let n_mod = n.vt_mod(m);
         if bool::from(n_mod.is_zero()) {
             return Some(Self::ZERO);
         }
@@ -709,11 +715,11 @@ impl<const N: usize> BigInt<N> {
 
         // Helper: a·b mod m. Montgomery via the cached ctx (no
         // truncation, correct at the candidate's own width); schoolbook
-        // ct_mul/ct_mod fallback for even m. Mirrors `pow`.
+        // ct_mul/vt_mod fallback for even m. Mirrors `pow`.
         let mul_mod = |a: &Self, b: &Self| -> Self {
             match &ctx {
                 Some(c) => c.mul_mod(a, b),
-                None => a.ct_mul(b).ct_mod(m),
+                None => a.ct_mul(b).vt_mod(m),
             }
         };
 
@@ -818,7 +824,7 @@ impl<const N: usize> BigInt<N> {
     /// whenever `p` fits in `N` limbs; there is no `64*N >= 2*bits(p)`
     /// floor.
     pub fn legendre(a: &Self, p: &Self) -> i32 {
-        let a_mod = a.ct_mod(p);
+        let a_mod = a.vt_mod(p);
         if bool::from(a_mod.is_zero()) {
             return 0;
         }
@@ -867,8 +873,8 @@ mod tests {
         let Some(ctx) = MontReducer::<N>::new(n) else {
             return; // even modulus: Montgomery doesn't apply
         };
-        let x_red = x.ct_mod(n);
-        let y_red = y.ct_mod(n);
+        let x_red = x.vt_mod(n);
+        let y_red = y.vt_mod(n);
 
         let xm = ctx.to_montgomery(&x_red.limbs);
         let ym = ctx.to_montgomery(&y_red.limbs);
@@ -879,7 +885,7 @@ mod tests {
         let xw: BigInt<N2> = x_red.widen();
         let yw: BigInt<N2> = y_red.widen();
         let nw: BigInt<N2> = n.widen();
-        let via_oracle = (xw.ct_mul(&yw).ct_mod(&nw))
+        let via_oracle = (xw.ct_mul(&yw).vt_mod(&nw))
             .narrow_to::<N>()
             .expect("product mod n < n < 2^(64N) fits in N limbs");
         assert_eq!(via_mont, via_oracle);

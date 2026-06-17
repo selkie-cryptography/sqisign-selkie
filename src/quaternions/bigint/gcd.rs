@@ -554,7 +554,7 @@ impl<const N: usize> BigInt<N> {
             return None;
         }
         // x might be negative; reduce mod |modulus|.
-        let result = x.ct_mod(modulus);
+        let result = x.vt_mod(modulus);
         Some(result)
     }
 }

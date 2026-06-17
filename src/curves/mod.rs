@@ -413,19 +413,19 @@ impl TorsionBasis {
         // θ = j + (1+k)/2, so M_θ = M_j + M_gen4.
         let (jc1, jc2) = m_j.eval_mod(c1, c2, f.value());
         let (gc1, gc2) = m_gen4.eval_mod(c1, c2, f.value());
-        let d1 = jc1.ct_add(&gc1).ct_mod(&modulus);
-        let d2 = jc2.ct_add(&gc2).ct_mod(&modulus);
+        let d1 = jc1.ct_add(&gc1).vt_mod(&modulus);
+        let d2 = jc2.ct_add(&gc2).vt_mod(&modulus);
 
         // Step 2–3: [a, b]^T = M^{-1} · M_i · [c1, c2]^T mod 2^f.
         let (e1, e2) = m_i.eval_mod(c1, c2, f.value());
-        let det = c1.ct_mul(&d2).ct_sub(&d1.ct_mul(c2)).ct_mod(&modulus);
+        let det = c1.ct_mul(&d2).ct_sub(&d1.ct_mul(c2)).vt_mod(&modulus);
         let det_inv = det.invert_mod(&modulus)?;
         let a = det_inv
             .ct_mul(&d2.ct_mul(&e1).ct_sub(&d1.ct_mul(&e2)))
-            .ct_mod(&modulus);
+            .vt_mod(&modulus);
         let b = det_inv
             .ct_mul(&c1.ct_mul(&e2).ct_sub(&c2.ct_mul(&e1)))
-            .ct_mod(&modulus);
+            .vt_mod(&modulus);
 
         // Step 4: α = a + b·(j + (1+k)/2) − i.
         // In {1, i, j, k} with denom 2: (2a+b, −2, 2b, b)/2.

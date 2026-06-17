@@ -129,7 +129,7 @@ impl<const N: usize> BigInt<N> {
     /// Constant-time bitsize of a magnitude array.
     // reason: only caller is the cfg(any())-gated
     // `mag_div_rem_bitwise` reference impl in `div.rs`. Kept paired
-    // with that reference for the eventual CT div_rem pass.
+    // with that reference for the eventual constant-time `ct_div_rem` pass.
     #[allow(dead_code)]
     pub(super) fn mag_bitsize(a: &[u64; N]) -> u32 {
         let mut k: u32 = 0;

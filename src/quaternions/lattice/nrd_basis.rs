@@ -68,11 +68,11 @@ impl<const N: usize> NrdBasis<N> {
             for j in i..D {
                 let scalar = cols[i][0]
                     .vt_mul(&cols[j][0])
-                    .ct_add(&cols[i][1].vt_mul(&cols[j][1]));
+                    .vt_add(&cols[i][1].vt_mul(&cols[j][1]));
                 let jk = cols[i][2]
                     .vt_mul(&cols[j][2])
-                    .ct_add(&cols[i][3].vt_mul(&cols[j][3]));
-                let val = scalar.ct_add(&p.vt_mul(&jk));
+                    .vt_add(&cols[i][3].vt_mul(&cols[j][3]));
+                let val = scalar.vt_add(&p.vt_mul(&jk));
                 gram[i][j] = val;
                 if i != j {
                     gram[j][i] = val;
@@ -267,17 +267,17 @@ impl<const N: usize> NrdBasis<N> {
                         let old_bi = &lo[ii];
                         let tgt = &mut hi[0];
                         for row in 0..D {
-                            tgt[row] = tgt[row].ct_sub(&x_big.vt_mul(&old_bi[row]));
+                            tgt[row] = tgt[row].vt_sub(&x_big.vt_mul(&old_bi[row]));
                         }
 
                         // Update Gram matrix symmetrically.
                         for j in 0..D {
                             let update = x_big.vt_mul(&gram[ii][j]);
-                            gram[k][j] = gram[k][j].ct_sub(&update);
+                            gram[k][j] = gram[k][j].vt_sub(&update);
                         }
                         for j in 0..D {
                             let update = x_big.vt_mul(&gram[j][ii]);
-                            gram[j][k] = gram[j][k].ct_sub(&update);
+                            gram[j][k] = gram[j][k].vt_sub(&update);
                         }
 
                         // Update μ incrementally.
