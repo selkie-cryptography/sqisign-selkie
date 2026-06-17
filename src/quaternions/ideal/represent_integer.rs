@@ -83,7 +83,7 @@ impl ExtremalOrder<8> {
         let p: BigInt<8> = P_WIDE;
         let q_val = self.q();
         let q = BigInt::<8>::from_u64(q_val as u64);
-        let four_m = BigInt::<8>::from_u64(4).ct_mul(m);
+        let four_m = BigInt::<8>::from_u64(4).vt_mul(m);
 
         // M must be positive and odd for solutions to exist.
         if bool::from(m.is_negative()) || bool::from(m.is_zero()) || bool::from(m.is_even()) {
@@ -121,7 +121,7 @@ impl ExtremalOrder<8> {
             return None;
         }
         let counter_big = {
-            let qp2 = q.ct_mul(&p).ct_mul(&p);
+            let qp2 = q.vt_mul(&p).vt_mul(&p);
             let qp2_sqrt = qp2.sqrt_floor()?;
             if bool::from(qp2_sqrt.is_zero()) {
                 return None;
@@ -175,28 +175,28 @@ impl ExtremalOrder<8> {
 
             let z = BigInt::<8>::rand_interval(rng, &one_big, &z_max_big);
 
-            let pz_sq = p.ct_mul(&z.ct_mul(&z));
+            let pz_sq = p.vt_mul(&z.vt_mul(&z));
             if four_m <= pz_sq {
                 continue;
             }
             let remaining = four_m.ct_sub(&pz_sq);
             // `t_max = floor(sqrt((4M − p·z²) / (q·p)))`, exact
             // integer (mirrors C ref `normeq.c:151-155`).
-            let qp = q.ct_mul(&p);
+            let qp = q.vt_mul(&p);
             if bool::from(qp.is_zero()) {
                 continue;
             }
             let (rem_div_qp, _) = remaining.div_rem(&qp);
             let t_max_big = rem_div_qp.sqrt_floor()?;
-            let z_sq = z.ct_mul(&z);
+            let z_sq = z.vt_mul(&z);
             if bool::from(t_max_big.is_zero()) {
                 continue;
             }
             let t = BigInt::<8>::rand_interval(rng, &one_big, &t_max_big);
             {
-                let t_sq = t.ct_mul(&t);
-                let inner = z_sq.ct_add(&q.ct_mul(&t_sq));
-                let m_prime = four_m.ct_sub(&p.ct_mul(&inner));
+                let t_sq = t.vt_mul(&t);
+                let inner = z_sq.ct_add(&q.vt_mul(&t_sq));
+                let m_prime = four_m.ct_sub(&p.vt_mul(&inner));
 
                 if bool::from(m_prime.is_zero()) || bool::from(m_prime.is_negative()) {
                     continue;
@@ -279,7 +279,7 @@ impl ExtremalOrder<8> {
                     omega_j.d.wide(),
                 ];
                 let oj_d = omega_j.denom.wide();
-                let common_d = omega_d.ct_mul(&oj_d);
+                let common_d = omega_d.vt_mul(&oj_d);
 
                 let scale_omega = oj_d;
                 let scale_omega_j = omega_d;
@@ -289,18 +289,18 @@ impl ExtremalOrder<8> {
                 let mut gamma_coords = [BigInt::<8>::ZERO; 4];
                 for k in 0..4 {
                     let x_term = if k == 0 {
-                        x_use.ct_mul(&common_d)
+                        x_use.vt_mul(&common_d)
                     } else {
                         BigInt::ZERO
                     };
-                    let y_term = y_use.ct_mul(&scale_omega).ct_mul(&omega_coords[k]);
+                    let y_term = y_use.vt_mul(&scale_omega).vt_mul(&omega_coords[k]);
                     let z_term = if k == 2 {
-                        z.ct_mul(&common_d)
+                        z.vt_mul(&common_d)
                     } else {
                         BigInt::ZERO
                     };
                     // j·ω·t (C ref order: order->t * temp * order->z)
-                    let t_term = t.ct_mul(&scale_omega_j).ct_mul(&oj_coords[k]);
+                    let t_term = t.vt_mul(&scale_omega_j).vt_mul(&oj_coords[k]);
                     gamma_coords[k] = x_term.ct_add(&y_term).ct_add(&z_term).ct_add(&t_term);
                 }
 
@@ -418,7 +418,7 @@ impl ExtremalOrder<8> {
                 for j in 0..4 {
                     for k in 0..4 {
                         result_coords_w[j] =
-                            result_coords_w[j].ct_add(&final_coeffs[k].ct_mul(&basis[j][k]));
+                            result_coords_w[j].ct_add(&final_coeffs[k].vt_mul(&basis[j][k]));
                     }
                 }
 

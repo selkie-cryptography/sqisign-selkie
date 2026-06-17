@@ -67,12 +67,12 @@ impl<const N: usize> NrdBasis<N> {
         for i in 0..D {
             for j in i..D {
                 let scalar = cols[i][0]
-                    .ct_mul(&cols[j][0])
-                    .ct_add(&cols[i][1].ct_mul(&cols[j][1]));
+                    .vt_mul(&cols[j][0])
+                    .ct_add(&cols[i][1].vt_mul(&cols[j][1]));
                 let jk = cols[i][2]
-                    .ct_mul(&cols[j][2])
-                    .ct_add(&cols[i][3].ct_mul(&cols[j][3]));
-                let val = scalar.ct_add(&p.ct_mul(&jk));
+                    .vt_mul(&cols[j][2])
+                    .ct_add(&cols[i][3].vt_mul(&cols[j][3]));
+                let val = scalar.ct_add(&p.vt_mul(&jk));
                 gram[i][j] = val;
                 if i != j {
                     gram[j][i] = val;
@@ -114,7 +114,7 @@ impl<const N: usize> NrdBasis<N> {
         let mut terms = [BigInt::<N>::ZERO; D * D];
         for i in 0..D {
             for j in 0..D {
-                terms[i * D + j] = c[i].ct_mul(&c[j]).ct_mul(&self.gram[i][j]);
+                terms[i * D + j] = c[i].vt_mul(&c[j]).vt_mul(&self.gram[i][j]);
             }
         }
         BigInt::mac_sum(&terms)
@@ -267,16 +267,16 @@ impl<const N: usize> NrdBasis<N> {
                         let old_bi = &lo[ii];
                         let tgt = &mut hi[0];
                         for row in 0..D {
-                            tgt[row] = tgt[row].ct_sub(&x_big.ct_mul(&old_bi[row]));
+                            tgt[row] = tgt[row].ct_sub(&x_big.vt_mul(&old_bi[row]));
                         }
 
                         // Update Gram matrix symmetrically.
                         for j in 0..D {
-                            let update = x_big.ct_mul(&gram[ii][j]);
+                            let update = x_big.vt_mul(&gram[ii][j]);
                             gram[k][j] = gram[k][j].ct_sub(&update);
                         }
                         for j in 0..D {
-                            let update = x_big.ct_mul(&gram[j][ii]);
+                            let update = x_big.vt_mul(&gram[j][ii]);
                             gram[j][k] = gram[j][k].ct_sub(&update);
                         }
 

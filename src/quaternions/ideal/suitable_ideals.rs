@@ -377,8 +377,8 @@ impl<const W: usize> NrdBasis<W> {
         lattice_denom: &BigInt<W>,
     ) -> Vec<ShortVectorCandidate> {
         let m = crate::params::FINDUV_BOX_SIZE;
-        let denom_sq = lattice_denom.ct_mul(lattice_denom);
-        let divisor = ideal_norm.ct_mul(&denom_sq);
+        let denom_sq = lattice_denom.vt_mul(lattice_denom);
+        let divisor = ideal_norm.vt_mul(&denom_sq);
 
         // The lattice denom is small (typically 2); narrow to BigInt<4>
         // and then widen to the width the candidate `elem` stores. Bail
@@ -431,7 +431,7 @@ impl<const W: usize> NrdBasis<W> {
             // β = Σ x_k · col_k.
             let coords: [BigInt<W>; 4] = core::array::from_fn(|row| {
                 (0..4).fold(BigInt::<W>::ZERO, |acc, k| {
-                    acc.ct_add(&x[k].ct_mul(&self.cols()[k][row]))
+                    acc.ct_add(&x[k].vt_mul(&self.cols()[k][row]))
                 })
             });
 
@@ -565,10 +565,10 @@ fn try_find_uv<const N: usize>(
     // both directions terminate, but they pick different `(u, v)` —
     // so on KAT-aligned DRBG the chosen `(β_s, β_t)` diverges.
     let d2_inv = d2_w.invert_mod(&d1_w)?;
-    let v0 = two_f.ct_mul(&d2_inv).ct_mod(&d1_w);
+    let v0 = two_f.vt_mul(&d2_inv).ct_mod(&d1_w);
     let mut v = v0;
     let mut u = {
-        let vd2 = v.ct_mul(&d2_w);
+        let vd2 = v.vt_mul(&d2_w);
         if vd2 >= *two_f {
             return None;
         }
@@ -759,7 +759,7 @@ impl<const N: usize> LeftIdeal<N> {
                     .widen::<W2>();
                 let j_t_lat: Lattice<W2> = (*j_t.lattice()).into();
                 let j_t_norm: BigInt<W2> = *j_t.norm();
-                let prod_norm = k_norm.ct_mul(&j_t_norm);
+                let prod_norm = k_norm.vt_mul(&j_t_norm);
                 // Use `Lattice::product`'s built-in `det(first 4 cols)`
                 // modulus rather than the precomputed
                 // `1024 · N^4 · (k·N_J)²` covolume formula. The precomputed
@@ -821,12 +821,12 @@ impl<const N: usize> LeftIdeal<N> {
             let nrd_pre = NrdBasis::new(cols_w);
             let class_gram = {
                 let two = BigInt::<W>::from_u64(2);
-                let denom_sq = denom_w.ct_mul(&denom_w);
-                let class_divisor = denom_sq.ct_mul(&norm_w);
+                let denom_sq = denom_w.vt_mul(&denom_w);
+                let class_divisor = denom_sq.vt_mul(&norm_w);
                 let mut g = Matrix::<W>::ZERO;
                 for i in 0..4 {
                     for j in 0..4 {
-                        let traced = nrd_pre.gram()[i][j].ct_mul(&two);
+                        let traced = nrd_pre.gram()[i][j].vt_mul(&two);
                         let (q, _rem) = traced.div_rem(&class_divisor);
                         g[i][j] = q;
                     }
@@ -877,13 +877,13 @@ impl<const N: usize> LeftIdeal<N> {
 
                 // nrd(δ_num) = dx² + dy² + p·(dz² + dw²).
                 let nrd_delta_num = dx
-                    .ct_mul(&dx)
-                    .ct_add(&dy.ct_mul(&dy))
-                    .ct_add(&p_w2.ct_mul(&dz.ct_mul(&dz).ct_add(&dw.ct_mul(&dw))));
+                    .vt_mul(&dx)
+                    .ct_add(&dy.vt_mul(&dy))
+                    .ct_add(&p_w2.vt_mul(&dz.vt_mul(&dz).ct_add(&dw.vt_mul(&dw))));
 
                 // k = nrd(δ_num) / (denom² · N(self)). Integer for valid input.
-                let denom_sq = denom_t0_w2.ct_mul(&denom_t0_w2);
-                let div = denom_sq.ct_mul(&norm_t0_w2);
+                let denom_sq = denom_t0_w2.vt_mul(&denom_t0_w2);
+                let div = denom_sq.vt_mul(&norm_t0_w2);
                 let (k_norm, rem) = nrd_delta_num.div_rem(&div);
                 if !bool::from(rem.is_zero()) {
                     continue;
@@ -895,7 +895,7 @@ impl<const N: usize> LeftIdeal<N> {
                     Coordinate::from_bigint(dy.wrapping_neg()),
                     Coordinate::from_bigint(dz.wrapping_neg()),
                     Coordinate::from_bigint(dw.wrapping_neg()),
-                    Denominator::from_bigint_unchecked(denom_t0_w2.ct_mul(&norm_t0_w2)),
+                    Denominator::from_bigint_unchecked(denom_t0_w2.vt_mul(&norm_t0_w2)),
                 );
 
                 let self_lat_w2: Lattice<W2> = {
@@ -905,10 +905,10 @@ impl<const N: usize> LeftIdeal<N> {
 
                 // modulus_inner = (4N)^4·k²/4 = 64·N^4·k²
                 // (integer-col covolume of reduced_id at denom 4N).
-                let n_sq = norm_t0_w2.ct_mul(&norm_t0_w2);
-                let n4 = n_sq.ct_mul(&n_sq);
-                let k_sq = k_norm.ct_mul(&k_norm);
-                let modulus_inner = BigInt::<W2>::from_u64(64).ct_mul(&n4).ct_mul(&k_sq);
+                let n_sq = norm_t0_w2.vt_mul(&norm_t0_w2);
+                let n4 = n_sq.vt_mul(&n_sq);
+                let k_sq = k_norm.vt_mul(&k_norm);
+                let modulus_inner = BigInt::<W2>::from_u64(64).vt_mul(&n4).vt_mul(&k_sq);
 
                 let reduced_id_lat_hnf = self_lat_w2
                     .alg_elem_mul_with_modulus(&conj_delta, &modulus_inner)
@@ -984,7 +984,7 @@ impl<const N: usize> LeftIdeal<N> {
                                 // denom = denom_self · k_norm
                                 // (instead of denom_self · n_self).
                                 let mut delta_pp = *conj_delta;
-                                let denom_pp = denom_self_w2.ct_mul(k_norm);
+                                let denom_pp = denom_self_w2.vt_mul(k_norm);
                                 delta_pp.denom = Denominator::from_bigint_unchecked(denom_pp);
 
                                 let transform = |beta: &Element<SHORT_VECTOR_WIDTH>| -> Option<

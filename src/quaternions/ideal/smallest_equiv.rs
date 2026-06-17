@@ -150,7 +150,7 @@ impl LeftIdeal<4> {
         let product_denom: BigInt<8> = {
             let ld: BigInt<8> = lattice.denom().widen();
             let dd: BigInt<8> = delta.denom.as_bigint().widen();
-            ld.ct_mul(&dd).ct_mul(&norm_8)
+            ld.vt_mul(&dd).vt_mul(&norm_8)
         };
 
         // HNF at width 8, simplify by GCD, then narrow to 4.
@@ -261,14 +261,14 @@ impl<const N: usize> LeftIdeal<N> {
         // [Alg. 3.3]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.3
         let p_w: BigInt<W> = P_WIDE.widen::<W>();
         let nrd = NrdBasis::<W>::new(cols_w);
-        let denom_sq = denom_w.ct_mul(&denom_w);
+        let denom_sq = denom_w.vt_mul(&denom_w);
         let self_norm_w: BigInt<W> = self.norm().widen::<W>();
-        let class_divisor: BigInt<W> = denom_sq.ct_mul(&self_norm_w);
+        let class_divisor: BigInt<W> = denom_sq.vt_mul(&self_norm_w);
         let two_w = BigInt::<W>::from_u64(2);
         let mut class_gram = Matrix::<W>::ZERO;
         for i in 0..4 {
             for j in 0..4 {
-                let traced = nrd.gram()[i][j].ct_mul(&two_w);
+                let traced = nrd.gram()[i][j].vt_mul(&two_w);
                 let (q, _rem) = traced.div_rem(&class_divisor);
                 class_gram[i][j] = q;
             }
@@ -282,18 +282,18 @@ impl<const N: usize> LeftIdeal<N> {
             for (j, cj) in c.iter().enumerate() {
                 let cj_big = BigInt::<W>::from_i64(*cj);
                 for (k, vk) in v.iter_mut().enumerate() {
-                    *vk = vk.ct_add(&cj_big.ct_mul(&cols_w[j][k]));
+                    *vk = vk.ct_add(&cj_big.vt_mul(&cols_w[j][k]));
                 }
             }
             v
         };
         let nrd_of = |v: &[BigInt<W>; 4]| -> BigInt<W> {
             // nrd_num = a² + b² + p(c² + d²) at width W.
-            let a2 = v[0].ct_mul(&v[0]);
-            let b2 = v[1].ct_mul(&v[1]);
-            let c2 = v[2].ct_mul(&v[2]);
-            let d2 = v[3].ct_mul(&v[3]);
-            a2.ct_add(&b2).ct_add(&p_w.ct_mul(&c2.ct_add(&d2)))
+            let a2 = v[0].vt_mul(&v[0]);
+            let b2 = v[1].vt_mul(&v[1]);
+            let c2 = v[2].vt_mul(&v[2]);
+            let d2 = v[3].vt_mul(&v[3]);
+            a2.ct_add(&b2).ct_add(&p_w.vt_mul(&c2.ct_add(&d2)))
         };
         // Collect the top-K shortest δ candidates (by nrd). When the
         // absolute shortest fails to produce an equivalent ideal
@@ -426,11 +426,11 @@ impl<const N: usize> LeftIdeal<N> {
                 let p8 = P_WIDE;
                 p8.widen::<W>()
             };
-            a.ct_mul(a)
-                .ct_add(&b.ct_mul(b))
-                .ct_add(&p_w.ct_mul(&c.ct_mul(c).ct_add(&d.ct_mul(d))))
+            a.vt_mul(a)
+                .ct_add(&b.vt_mul(b))
+                .ct_add(&p_w.vt_mul(&c.vt_mul(c).ct_add(&d.vt_mul(d))))
         };
-        let delta_nrd_den = denom_w.ct_mul(&denom_w);
+        let delta_nrd_den = denom_w.vt_mul(&denom_w);
         let (new_norm_w, rem) = delta_nrd_num.div_rem(&delta_nrd_den);
         if !bool::from(rem.is_zero()) {
             return None;
@@ -478,20 +478,20 @@ impl<const N: usize> LeftIdeal<N> {
             let (a0, a1, a2, a3) = (&a[0], &a[1], &a[2], &a[3]);
             let (b0, b1, b2, b3) = (&b[0], &b[1], &b[2], &b[3]);
             [
-                a0.ct_mul(b0)
-                    .ct_sub(&a1.ct_mul(b1))
-                    .ct_sub(&p_w.ct_mul(&a2.ct_mul(b2).ct_add(&a3.ct_mul(b3)))),
-                a0.ct_mul(b1)
-                    .ct_add(&a1.ct_mul(b0))
-                    .ct_add(&p_w.ct_mul(&a2.ct_mul(b3).ct_sub(&a3.ct_mul(b2)))),
-                a0.ct_mul(b2)
-                    .ct_add(&a2.ct_mul(b0))
-                    .ct_sub(&a1.ct_mul(b3))
-                    .ct_add(&a3.ct_mul(b1)),
-                a0.ct_mul(b3)
-                    .ct_add(&a3.ct_mul(b0))
-                    .ct_add(&a1.ct_mul(b2))
-                    .ct_sub(&a2.ct_mul(b1)),
+                a0.vt_mul(b0)
+                    .ct_sub(&a1.vt_mul(b1))
+                    .ct_sub(&p_w.vt_mul(&a2.vt_mul(b2).ct_add(&a3.vt_mul(b3)))),
+                a0.vt_mul(b1)
+                    .ct_add(&a1.vt_mul(b0))
+                    .ct_add(&p_w.vt_mul(&a2.vt_mul(b3).ct_sub(&a3.vt_mul(b2)))),
+                a0.vt_mul(b2)
+                    .ct_add(&a2.vt_mul(b0))
+                    .ct_sub(&a1.vt_mul(b3))
+                    .ct_add(&a3.vt_mul(b1)),
+                a0.vt_mul(b3)
+                    .ct_add(&a3.vt_mul(b0))
+                    .ct_add(&a1.vt_mul(b2))
+                    .ct_sub(&a2.vt_mul(b1)),
             ]
         };
         let alpha_arr = [
@@ -513,7 +513,7 @@ impl<const N: usize> LeftIdeal<N> {
             let r = qmul(&e, &alpha_arr);
             *o_col = Vector::new(r[0], r[1], r[2], r[3]);
         }
-        let o_alpha_denom = order_denom.widen::<W>().ct_mul(&alpha_denom);
+        let o_alpha_denom = order_denom.widen::<W>().vt_mul(&alpha_denom);
 
         // Compute O₀·equiv_norm, rescaled to the shared denom
         // `order.denom · α.denom`.
@@ -528,18 +528,18 @@ impl<const N: usize> LeftIdeal<N> {
         });
         for col in &mut o_n_cols {
             for row in 0..4 {
-                col[row] = col[row].ct_mul(&equiv_norm_w).ct_mul(&alpha_denom);
+                col[row] = col[row].vt_mul(&equiv_norm_w).vt_mul(&alpha_denom);
             }
         }
 
         // Mod-HNF with modulus `4 · d⁴ · equiv_norm² · p` (a
         // multiple of the integer-column covolume for the O₀-ideal
         // of norm `equiv_norm` with denom `d_total`).
-        let d_sq = o_alpha_denom.ct_mul(&o_alpha_denom);
-        let d_fourth = d_sq.ct_mul(&d_sq);
-        let m_sq = equiv_norm_w.ct_mul(&equiv_norm_w);
+        let d_sq = o_alpha_denom.vt_mul(&o_alpha_denom);
+        let d_fourth = d_sq.vt_mul(&d_sq);
+        let m_sq = equiv_norm_w.vt_mul(&equiv_norm_w);
         let four = BigInt::<W>::from_u64(4);
-        let modulus = four.ct_mul(&d_fourth).ct_mul(&m_sq).ct_mul(&p_w);
+        let modulus = four.vt_mul(&d_fourth).vt_mul(&m_sq).vt_mul(&p_w);
 
         let all_cols = [
             o_alpha_cols[0],
