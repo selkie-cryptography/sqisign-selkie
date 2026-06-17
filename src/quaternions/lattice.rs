@@ -142,7 +142,7 @@ impl<const N: usize> Lattice<N> {
 
         for row in 0..4 {
             for col in 0..4 {
-                let scaled = self.denom.ct_mul(&dual_basis[row][col]);
+                let scaled = self.denom.vt_mul(&dual_basis[row][col]);
                 dual_basis[row][col] = scaled;
             }
         }
@@ -250,7 +250,7 @@ impl<const N: usize> Lattice<N> {
         // First 4 columns: d₂ · B₁ (top), identity cols 0-3 (bottom)
         for col in 0..4 {
             for row in 0..4 {
-                cols[col][row] = d2.ct_mul(&b1[row][col].widen::<W>());
+                cols[col][row] = d2.vt_mul(&b1[row][col].widen::<W>());
             }
             cols[col][4 + col] = BigInt::<W>::ONE;
         }
@@ -258,7 +258,7 @@ impl<const N: usize> Lattice<N> {
         // Last 4 columns: −d₁ · B₂ (top), identity cols 4-7 (bottom)
         for col in 0..4 {
             for row in 0..4 {
-                cols[4 + col][row] = d1.ct_mul(&b2[row][col].widen::<W>()).wrapping_neg();
+                cols[4 + col][row] = d1.vt_mul(&b2[row][col].widen::<W>()).wrapping_neg();
             }
             cols[4 + col][4 + 4 + col] = BigInt::<W>::ONE;
         }
@@ -295,10 +295,10 @@ impl<const N: usize> Lattice<N> {
                 let old_pc: [BigInt<W>; 12] = cols[pc];
                 let old_col: [BigInt<W>; 12] = cols[col];
                 for r in 0..12 {
-                    cols[pc][r] = u.ct_mul(&old_pc[r]).ct_add(&v.ct_mul(&old_col[r]));
+                    cols[pc][r] = u.vt_mul(&old_pc[r]).ct_add(&v.vt_mul(&old_col[r]));
                     cols[col][r] = piv_over_g
-                        .ct_mul(&old_col[r])
-                        .ct_sub(&entry_over_g.ct_mul(&old_pc[r]));
+                        .vt_mul(&old_col[r])
+                        .ct_sub(&entry_over_g.vt_mul(&old_pc[r]));
                 }
             }
             if pc == usize::MAX {
@@ -328,7 +328,7 @@ impl<const N: usize> Lattice<N> {
                 if !bool::from(q.is_zero()) {
                     let snap = cols[pc];
                     for r in 0..12 {
-                        cols[col][r] = cols[col][r].ct_sub(&q.ct_mul(&snap[r]));
+                        cols[col][r] = cols[col][r].ct_sub(&q.vt_mul(&snap[r]));
                     }
                 }
             }
@@ -356,7 +356,7 @@ impl<const N: usize> Lattice<N> {
             let mut v = [BigInt::<W>::ZERO; 4];
             for row in 0..4 {
                 for k in 0..4 {
-                    v[row] = v[row].ct_add(&b1[row][k].widen::<W>().ct_mul(&a[k]));
+                    v[row] = v[row].ct_add(&b1[row][k].widen::<W>().vt_mul(&a[k]));
                 }
             }
             inter_cols[i] = Vector::new(v[0], v[1], v[2], v[3]);
@@ -448,7 +448,7 @@ impl<const N: usize> Lattice<N> {
             let mut out = Matrix::<W>::ZERO;
             for r in 0..4 {
                 for c in 0..4 {
-                    out[r][c] = basis[r][c].ct_mul(&s);
+                    out[r][c] = basis[r][c].vt_mul(&s);
                 }
             }
             out
@@ -468,7 +468,7 @@ impl<const N: usize> Lattice<N> {
             tmp_b.column(2),
             tmp_b.column(3),
         ];
-        let common_denom = d1.denom().ct_mul(d2.denom());
+        let common_denom = d1.denom().vt_mul(d2.denom());
         let sum_basis = Matrix::<W>::from_hnf_columns_mod::<W>(&all_cols, &modulus);
         let sum_lat = Lattice::<W>::new(sum_basis, common_denom);
 
@@ -605,7 +605,7 @@ impl<const N: usize> Lattice<N> {
             }
         } else {
             // Scale to common denominator.
-            let common_denom = self.denom.ct_mul(&other.denom);
+            let common_denom = self.denom.vt_mul(&other.denom);
             let scale_a = other.denom;
             let scale_b = self.denom;
 
@@ -613,10 +613,10 @@ impl<const N: usize> Lattice<N> {
                 let cols = basis.columns();
                 array::from_fn(|idx| {
                     Vector::new(
-                        cols[idx][0].ct_mul(&s),
-                        cols[idx][1].ct_mul(&s),
-                        cols[idx][2].ct_mul(&s),
-                        cols[idx][3].ct_mul(&s),
+                        cols[idx][0].vt_mul(&s),
+                        cols[idx][1].vt_mul(&s),
+                        cols[idx][2].vt_mul(&s),
+                        cols[idx][3].vt_mul(&s),
                     )
                 })
             };
@@ -714,10 +714,10 @@ impl<const N: usize> Lattice<N> {
             let cols = basis.columns();
             array::from_fn(|idx| {
                 Vector::new(
-                    cols[idx][0].ct_mul(s),
-                    cols[idx][1].ct_mul(s),
-                    cols[idx][2].ct_mul(s),
-                    cols[idx][3].ct_mul(s),
+                    cols[idx][0].vt_mul(s),
+                    cols[idx][1].vt_mul(s),
+                    cols[idx][2].vt_mul(s),
+                    cols[idx][3].vt_mul(s),
                 )
             })
         };
@@ -743,7 +743,7 @@ impl<const N: usize> Lattice<N> {
         ];
         Some(HnfLattice {
             basis: Matrix::<N>::from_hnf_columns_mod_cref::<W>(&all_cols, modulus),
-            denom: self.denom.ct_mul(&other.denom),
+            denom: self.denom.vt_mul(&other.denom),
         })
     }
 }
@@ -785,7 +785,7 @@ impl<const N: usize> Lattice<N> {
         ];
         let mut rhs = [BigInt::<N>::ZERO; 4];
         for i in 0..4 {
-            let scaled = elem_coords[i].ct_mul(&self.denom);
+            let scaled = elem_coords[i].vt_mul(&self.denom);
             let (q, r) = scaled.div_rem(&ed);
             if !bool::from(r.is_zero()) {
                 return None;
@@ -804,7 +804,7 @@ impl<const N: usize> Lattice<N> {
         for i in 0..4 {
             let mut val = BigInt::<N>::ZERO;
             for (j, rhs_j) in rhs.iter().enumerate() {
-                val = val.ct_add(&adj[i][j].ct_mul(rhs_j));
+                val = val.ct_add(&adj[i][j].vt_mul(rhs_j));
             }
             let (q, r) = val.div_rem(&det);
             if !bool::from(r.is_zero()) {
@@ -861,7 +861,7 @@ impl<const N: usize> Lattice<N> {
             }
         }
 
-        let new_denom = self.denom.ct_mul(&other.denom);
+        let new_denom = self.denom.vt_mul(&other.denom);
 
         let first_block: [Vector<N>; 4] = [all_cols[0], all_cols[1], all_cols[2], all_cols[3]];
         let det_modulus = Matrix::<N>::from_columns(&first_block).det().abs();
@@ -908,7 +908,7 @@ impl<const N: usize> Lattice<N> {
             }
         }
 
-        let new_denom = self.denom.ct_mul(&other.denom);
+        let new_denom = self.denom.vt_mul(&other.denom);
         let basis = if bool::from(modulus.is_zero()) {
             Matrix::from_hnf_columns(&all_cols)
         } else {
@@ -944,7 +944,7 @@ impl<const N: usize> Lattice<N> {
                 *prod.d.as_bigint(),
             )
         });
-        let new_denom = self.denom.ct_mul(elem.denom.as_bigint());
+        let new_denom = self.denom.vt_mul(elem.denom.as_bigint());
 
         // Modular HNF with `|det(new_cols)|` as the bound, mirroring
         // the strategy in [`Lattice::product`]. Classical HNF on 4
@@ -982,7 +982,7 @@ impl<const N: usize> Lattice<N> {
                 *prod.d.as_bigint(),
             )
         });
-        let new_denom = self.denom.ct_mul(elem.denom.as_bigint());
+        let new_denom = self.denom.vt_mul(elem.denom.as_bigint());
         let basis = if bool::from(modulus.is_zero()) {
             Matrix::from_hnf_columns(&new_cols)
         } else {
@@ -1074,7 +1074,7 @@ impl<const N: usize> Lattice<N> {
             let mut g = *NrdBasis::new(cols_w).gram();
             for i in 0..4 {
                 for j in 0..4 {
-                    g[i][j] = g[i][j].ct_mul(&two);
+                    g[i][j] = g[i][j].vt_mul(&two);
                 }
             }
             g
@@ -1086,9 +1086,9 @@ impl<const N: usize> Lattice<N> {
         let denom_wide: BigInt<W> = self.denom.widen();
         let rad: BigInt<W> = radius
             .widen::<W>()
-            .ct_mul(&denom_wide)
-            .ct_mul(&denom_wide)
-            .ct_mul(&two);
+            .vt_mul(&denom_wide)
+            .vt_mul(&denom_wide)
+            .vt_mul(&two);
 
         // dualG = adj(G); det_g = det(G).
         let det_g = g_w.det();
@@ -1129,7 +1129,7 @@ impl<const N: usize> Lattice<N> {
             if bool::from(diag.is_zero()) || bool::from(det_g.is_zero()) {
                 continue;
             }
-            let prod = diag.ct_mul(&rad);
+            let prod = diag.vt_mul(&rad);
             let (quot, _) = prod.div_rem(&det_g);
             *bound = quot.sqrt_floor()?;
             if !bool::from(bound.is_zero()) {
@@ -1209,7 +1209,7 @@ impl<const N: usize> Lattice<N> {
             let mut nrd = BigInt::<W>::ZERO;
             for i in 0..4 {
                 for j in 0..4 {
-                    nrd = nrd.ct_add(&x[i].ct_mul(&x[j]).ct_mul(&g_w[i][j]));
+                    nrd = nrd.ct_add(&x[i].vt_mul(&x[j]).vt_mul(&g_w[i][j]));
                 }
             }
 
@@ -1246,7 +1246,7 @@ impl<const N: usize> Lattice<N> {
             let mut coords = [BigInt::<W>::ZERO; 4];
             for i in 0..4 {
                 for (k, coord) in coords.iter_mut().enumerate() {
-                    *coord = coord.ct_add(&x[i].ct_mul(&cols_w[i][k]));
+                    *coord = coord.ct_add(&x[i].vt_mul(&cols_w[i][k]));
                 }
             }
 
@@ -1420,7 +1420,7 @@ impl<const N: usize> HnfLattice<N> {
                 }
                 let col_piv = h[pivot];
                 for row in 0..4 {
-                    h[col][row] = h[col][row].ct_sub(&g.ct_mul(&col_piv[row]));
+                    h[col][row] = h[col][row].ct_sub(&g.vt_mul(&col_piv[row]));
                 }
             }
         }
@@ -1455,10 +1455,10 @@ impl<const N: usize> HnfLattice<N> {
 
         // rhs = elem.coord * self.denom / elem.denom
         let rhs = [
-            coords[0].ct_mul(&self.denom),
-            coords[1].ct_mul(&self.denom),
-            coords[2].ct_mul(&self.denom),
-            coords[3].ct_mul(&self.denom),
+            coords[0].vt_mul(&self.denom),
+            coords[1].vt_mul(&self.denom),
+            coords[2].vt_mul(&self.denom),
+            coords[3].vt_mul(&self.denom),
         ];
         let mut target = [BigInt::ZERO; 4];
         for idx in 0..4 {
@@ -1485,7 +1485,7 @@ impl<const N: usize> HnfLattice<N> {
             let mut val = target[row];
             let mut col = row + 1;
             while col < 4 {
-                val = val.ct_sub(&h[row][col].ct_mul(&x[col]));
+                val = val.ct_sub(&h[row][col].vt_mul(&x[col]));
                 col += 1;
             }
             let (q, r) = val.div_rem(&pivot);
@@ -1578,8 +1578,8 @@ impl<const N: usize> PartialEq for HnfLattice<N> {
             let mut equal = true;
             for row in 0..4 {
                 for col in 0..4 {
-                    let lhs = self.basis[row][col].ct_mul(&scale_a);
-                    let rhs = other.basis[row][col].ct_mul(&scale_b);
+                    let lhs = self.basis[row][col].vt_mul(&scale_a);
+                    let rhs = other.basis[row][col].vt_mul(&scale_b);
                     if lhs != rhs {
                         equal = false;
                     }

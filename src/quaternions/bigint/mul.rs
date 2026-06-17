@@ -193,11 +193,16 @@ impl<const N: usize> BigInt<N> {
     }
 }
 
+// The `*` operator routes to vt_mul, the build-default multiply: on the
+// `main` track (vartime feature) it is variable-time, matching the
+// variable-time C reference's mpz multiply; on `next` (feature off)
+// vt_mul is ct_mul, so `*` is constant-time. Code that must be
+// constant-time on both tracks calls ct_mul explicitly.
 impl<const N: usize> Mul for BigInt<N> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        self.ct_mul(&rhs)
+        self.vt_mul(&rhs)
     }
 }
 
@@ -205,7 +210,7 @@ impl<const N: usize> Mul<&BigInt<N>> for BigInt<N> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: &Self) -> Self {
-        self.ct_mul(rhs)
+        self.vt_mul(rhs)
     }
 }
 
@@ -213,6 +218,6 @@ impl<const N: usize> Mul<&BigInt<N>> for &BigInt<N> {
     type Output = BigInt<N>;
     #[inline]
     fn mul(self, rhs: &BigInt<N>) -> BigInt<N> {
-        self.ct_mul(rhs)
+        self.vt_mul(rhs)
     }
 }

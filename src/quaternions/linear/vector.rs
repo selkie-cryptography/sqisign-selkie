@@ -33,10 +33,10 @@ impl<const N: usize> Vector<N> {
         // `BigInt::mac_sum`): one sign-and-magnitude merge instead of
         // three `ct_add`s. Byte-identical when the sum fits in `N`.
         let terms = [
-            self.0[0].ct_mul(&other.0[0]),
-            self.0[1].ct_mul(&other.0[1]),
-            self.0[2].ct_mul(&other.0[2]),
-            self.0[3].ct_mul(&other.0[3]),
+            self.0[0].vt_mul(&other.0[0]),
+            self.0[1].vt_mul(&other.0[1]),
+            self.0[2].vt_mul(&other.0[2]),
+            self.0[3].vt_mul(&other.0[3]),
         ];
         BigInt::mac_sum(&terms)
     }

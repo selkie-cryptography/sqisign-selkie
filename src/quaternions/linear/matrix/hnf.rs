@@ -271,11 +271,11 @@ impl<const N: usize> Matrix<N> {
                 let old_j = a[j];
                 for r in 0..4 {
                     // u·a[k] + v·a[j] gives the new gcd col.
-                    let new_k_r = reduce(&u.ct_mul(&old_k[r]).ct_add(&v.ct_mul(&old_j[r])));
+                    let new_k_r = reduce(&u.vt_mul(&old_k[r]).ct_add(&v.vt_mul(&old_j[r])));
                     // coeff_k·a[j] - coeff_j·a[k] gives the orthogonal col
                     // (row-k entry zero).
                     let new_j_r =
-                        reduce(&coeff_k.ct_mul(&old_j[r]).ct_sub(&coeff_j.ct_mul(&old_k[r])));
+                        reduce(&coeff_k.vt_mul(&old_j[r]).ct_sub(&coeff_j.vt_mul(&old_k[r])));
                     a[k][r] = new_k_r;
                     a[j][r] = new_j_r;
                 }
@@ -327,7 +327,7 @@ impl<const N: usize> Matrix<N> {
                     if !bool::from(g.is_zero()) {
                         let col_piv = a[pivot];
                         for (r, col_piv_r) in col_piv.iter().enumerate().take(d) {
-                            let sub = g.ct_mul(col_piv_r);
+                            let sub = g.vt_mul(col_piv_r);
                             a[j][r] = reduce(&a[j][r].ct_sub(&sub));
                         }
                     }
@@ -345,7 +345,7 @@ impl<const N: usize> Matrix<N> {
                     if !bool::from(g.is_zero()) {
                         let col_piv = a[pivot];
                         for (row, col_piv_row) in col_piv.iter().enumerate().take(d) {
-                            let sub = g.ct_mul(col_piv_row);
+                            let sub = g.vt_mul(col_piv_row);
                             a[j][row] = reduce(&a[j][row].ct_sub(&sub));
                         }
                     }
@@ -442,10 +442,10 @@ impl<const N: usize> Matrix<N> {
                         v2: &[BigInt<W>; 4]|
          -> [BigInt<W>; 4] {
             [
-                c1.ct_mul(&v1[0]).ct_add(&c2.ct_mul(&v2[0])),
-                c1.ct_mul(&v1[1]).ct_add(&c2.ct_mul(&v2[1])),
-                c1.ct_mul(&v1[2]).ct_add(&c2.ct_mul(&v2[2])),
-                c1.ct_mul(&v1[3]).ct_add(&c2.ct_mul(&v2[3])),
+                c1.vt_mul(&v1[0]).ct_add(&c2.vt_mul(&v2[0])),
+                c1.vt_mul(&v1[1]).ct_add(&c2.vt_mul(&v2[1])),
+                c1.vt_mul(&v1[2]).ct_add(&c2.vt_mul(&v2[2])),
+                c1.vt_mul(&v1[3]).ct_add(&c2.vt_mul(&v2[3])),
             ]
         };
 
@@ -568,8 +568,8 @@ impl<const N: usize> Matrix<N> {
                 b = r;
                 let new_u_a = u_b;
                 let new_v_a = v_b;
-                let new_u_b = u_a.ct_sub(&q.ct_mul(&u_b));
-                let new_v_b = v_a.ct_sub(&q.ct_mul(&v_b));
+                let new_u_b = u_a.ct_sub(&q.vt_mul(&u_b));
+                let new_v_b = v_a.ct_sub(&q.vt_mul(&v_b));
                 u_a = new_u_a;
                 v_a = new_v_a;
                 u_b = new_u_b;
@@ -610,7 +610,7 @@ impl<const N: usize> Matrix<N> {
                 // adds ±y/d to u and ∓x/d to v, preserving the Bezout
                 // identity `u·x + v·y = d`.
                 if !bool::from(x.is_zero()) {
-                    let xy = x.ct_mul(y);
+                    let xy = x.vt_mul(y);
                     let neg = bool::from(xy.is_negative());
                     let (q_y_d_sgn, _) = trunc_div_rem(y, &d);
                     let q_y_d = if neg {
@@ -626,11 +626,11 @@ impl<const N: usize> Matrix<N> {
                     };
                     // First, run C-ref's "while u·x ≤ 0" loop to ensure
                     // u·x > 0. Each step: u += sign·y/d, v -= sign·x/d.
-                    let mut ux = x.ct_mul(&u);
+                    let mut ux = x.vt_mul(&u);
                     while !bool::from(ux.is_positive()) {
                         u = u.ct_add(&q_y_d);
                         v = v.ct_sub(&q_x_d);
-                        ux = x.ct_mul(&u);
+                        ux = x.vt_mul(&u);
                     }
                     // Then minimize |u|: while subtracting one offset
                     // (u -= sign·y/d) keeps ux > 0 AND reduces |u|, do
@@ -642,7 +642,7 @@ impl<const N: usize> Matrix<N> {
                     // different HNF mod result than C-ref.
                     loop {
                         let try_u = u.ct_sub(&q_y_d);
-                        let try_ux = x.ct_mul(&try_u);
+                        let try_ux = x.vt_mul(&try_u);
                         if !bool::from(try_ux.is_positive()) {
                             break;
                         }
@@ -776,7 +776,7 @@ impl<const N: usize> Matrix<N> {
             }
 
             // Output: positive mod (matches C-ref's `ibz_vec_4_scalar_mul_mod`).
-            let mul_k_u: [BigInt<W>; 4] = array::from_fn(|r| u.ct_mul(&a[k][r]));
+            let mul_k_u: [BigInt<W>; 4] = array::from_fn(|r| u.vt_mul(&a[k][r]));
             w[i as usize] = vec_positive_mod_m(&mul_k_u, &m);
 
             if bool::from(w[i as usize][i as usize].is_zero()) {
@@ -901,10 +901,10 @@ impl<const N: usize> Matrix<N> {
                         let old_i = a[pivot];
                         let old_j = a[j];
                         for r in 0..d {
-                            a[pivot][r] = u.ct_mul(&old_i[r]).ct_add(&v.ct_mul(&old_j[r]));
+                            a[pivot][r] = u.vt_mul(&old_i[r]).ct_add(&v.vt_mul(&old_j[r]));
                             a[j][r] = val_i_over_g
-                                .ct_mul(&old_j[r])
-                                .ct_sub(&val_j_over_g.ct_mul(&old_i[r]));
+                                .vt_mul(&old_j[r])
+                                .ct_sub(&val_j_over_g.vt_mul(&old_i[r]));
                         }
                     }
                 }
@@ -925,10 +925,10 @@ impl<const N: usize> Matrix<N> {
                         let old_i = a[pivot];
                         let old_j = a[j];
                         for r in 0..d {
-                            a[pivot][r] = u.ct_mul(&old_i[r]).ct_add(&v.ct_mul(&old_j[r]));
+                            a[pivot][r] = u.vt_mul(&old_i[r]).ct_add(&v.vt_mul(&old_j[r]));
                             a[j][r] = val_i_over_g
-                                .ct_mul(&old_j[r])
-                                .ct_sub(&val_j_over_g.ct_mul(&old_i[r]));
+                                .vt_mul(&old_j[r])
+                                .ct_sub(&val_j_over_g.vt_mul(&old_i[r]));
                         }
                     }
                     j += 1;
@@ -956,7 +956,7 @@ impl<const N: usize> Matrix<N> {
                     if !bool::from(g.is_zero()) {
                         let col_piv = a[pivot];
                         for (r, col_piv_r) in col_piv.iter().enumerate().take(d) {
-                            a[j][r] = a[j][r].ct_sub(&g.ct_mul(col_piv_r));
+                            a[j][r] = a[j][r].ct_sub(&g.vt_mul(col_piv_r));
                         }
                     }
                     j += 1;
@@ -976,7 +976,7 @@ impl<const N: usize> Matrix<N> {
                     if !bool::from(g.is_zero()) {
                         let col_piv = a[pivot];
                         for (row, col_piv_row) in col_piv.iter().enumerate().take(d) {
-                            a[j][row] = a[j][row].ct_sub(&g.ct_mul(col_piv_row));
+                            a[j][row] = a[j][row].ct_sub(&g.vt_mul(col_piv_row));
                         }
                     }
                     j += 1;

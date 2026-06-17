@@ -69,7 +69,7 @@ impl LeftIdeal<30> {
                 *product.d.as_bigint(),
             );
         }
-        let o_alpha_denom = order.denom().ct_mul(alpha.denom.as_bigint());
+        let o_alpha_denom = order.denom().vt_mul(alpha.denom.as_bigint());
         // Apply classical HNF to o_alpha (= 4 mul_direct cols),
         // mirroring C-ref's `quat_lattice_alg_elem_mul` which calls
         // `quat_lattice_hnf` after the multiplication. Without this,
@@ -136,16 +136,16 @@ impl LeftIdeal<30> {
         // With the shared denom = order_denom · α_denom, the
         // modulus needs to account for both: D = 4·d_total⁴·norm²·p.
         let d_total = o_alpha_denom;
-        let d_sq = d_total.ct_mul(&d_total);
-        let d_fourth = d_sq.ct_mul(&d_sq);
-        let norm_sq = norm.ct_mul(norm);
+        let d_sq = d_total.vt_mul(&d_total);
+        let d_fourth = d_sq.vt_mul(&d_sq);
+        let norm_sq = norm.vt_mul(norm);
         let four = BigInt::<30>::from_u64(4);
         // Mod-HNF modulus uses the spec/Selkie historic formula
         // `4 · d⁴ · norm² · p`.  An earlier diagnostic toggle compared
         // this against C-ref's `quat_lattice_add` `gcd(det1, det2)`
         // recipe; the two produced the same Z-module for the sign
         // path and the toggle has been retired.
-        let modulus = four.ct_mul(&d_fourth).ct_mul(&norm_sq).ct_mul(&p_wide);
+        let modulus = four.vt_mul(&d_fourth).vt_mul(&norm_sq).vt_mul(&p_wide);
 
         // ON denom may differ from o_alpha denom — pre-scale ON
         // basis so both share `o_alpha_denom` for `sum_mod` (which
@@ -154,7 +154,7 @@ impl LeftIdeal<30> {
         let mut o_n_for_sum = order.basis().columns();
         for col in &mut o_n_for_sum {
             for row in 0..4 {
-                col[row] = col[row].ct_mul(norm).ct_mul(&alpha_d);
+                col[row] = col[row].vt_mul(norm).vt_mul(&alpha_d);
             }
         }
         let o_n_scaled = Lattice::new(Matrix::from_columns(&o_n_for_sum), o_alpha_denom);
@@ -216,10 +216,10 @@ impl LeftIdeal<30> {
             // in the quaternion algebra B_{p,∞} = (-1, -p). With
             // g_i < 2^513 and p ≈ 2^256 the result is ≈ 2^1282 bits,
             // well within `BigInt<30>` (1920 bits).
-            let g1_sq = g1.ct_mul(&g1);
-            let g2_sq = g2.ct_mul(&g2);
-            let g3_sq = g3.ct_mul(&g3);
-            let nrd = g1_sq.ct_add(&p_wide.ct_mul(&g2_sq.ct_add(&g3_sq)));
+            let g1_sq = g1.vt_mul(&g1);
+            let g2_sq = g2.vt_mul(&g2);
+            let g3_sq = g3.vt_mul(&g3);
+            let nrd = g1_sq.ct_add(&p_wide.vt_mul(&g2_sq.ct_add(&g3_sq)));
 
             let nrd_mod = nrd.ct_mod(n);
             let neg_nrd = n.ct_sub(&nrd_mod);
@@ -265,9 +265,9 @@ impl LeftIdeal<30> {
                 let d2 = BigInt::<30>::rand_interval(rng, &one_big, n);
                 let d3 = BigInt::<30>::rand_interval(rng, &one_big, n);
                 let nrd_d = d0
-                    .ct_mul(&d0)
-                    .ct_add(&d1.ct_mul(&d1))
-                    .ct_add(&p_wide.ct_mul(&d2.ct_mul(&d2).ct_add(&d3.ct_mul(&d3))));
+                    .vt_mul(&d0)
+                    .ct_add(&d1.vt_mul(&d1))
+                    .ct_add(&p_wide.vt_mul(&d2.vt_mul(&d2).ct_add(&d3.vt_mul(&d3))));
                 let nrd_d_mod = nrd_d.ct_mod(n);
                 if nrd_d_mod.gcd(n) == BigInt::<30>::ONE {
                     Some([d0, d1, d2, d3])
@@ -314,8 +314,8 @@ impl LeftIdeal<30> {
             // For B_{p,∞} = (-1,-p): i²=-1, j²=-p, k=ij. These
             // `pg_i` products reach ≈ 2^769 and required the 1920-bit
             // storage width.
-            let pg2 = p_wide.ct_mul(&g2);
-            let pg3 = p_wide.ct_mul(&g3);
+            let pg2 = p_wide.vt_mul(&g2);
+            let pg3 = p_wide.vt_mul(&g3);
             let prod_1 = [a, g1, g2, g3];
             let prod_i = [g1.wrapping_neg(), a, g3.wrapping_neg(), g2];
             let prod_j = [pg2.wrapping_neg(), pg3, a, g1.wrapping_neg()];
@@ -337,10 +337,10 @@ impl LeftIdeal<30> {
                 ];
                 for row in 0..4 {
                     o_alpha_col[row] = e[0]
-                        .ct_mul(&prod_1[row])
-                        .ct_add(&e[1].ct_mul(&prod_i[row]))
-                        .ct_add(&e[2].ct_mul(&prod_j[row]))
-                        .ct_add(&e[3].ct_mul(&prod_k[row]));
+                        .vt_mul(&prod_1[row])
+                        .ct_add(&e[1].vt_mul(&prod_i[row]))
+                        .ct_add(&e[2].vt_mul(&prod_j[row]))
+                        .ct_add(&e[3].vt_mul(&prod_k[row]));
                 }
             }
 
@@ -348,7 +348,7 @@ impl LeftIdeal<30> {
             let mut o_n_cols = [Vector::<30>::ZERO; 4];
             for (col, o_n_col) in o_n_cols.iter_mut().enumerate() {
                 for row in 0..4 {
-                    o_n_col[row] = order_lat.basis()[row][col].ct_mul(n);
+                    o_n_col[row] = order_lat.basis()[row][col].vt_mul(n);
                 }
             }
 

@@ -158,7 +158,7 @@ impl LeftIdeal<4> {
                 *product.d.as_bigint(),
             );
         }
-        let o_alpha_denom_w = order_denom_w.ct_mul(&alpha.denom.as_bigint().widen::<12>());
+        let o_alpha_denom_w = order_denom_w.vt_mul(&alpha.denom.as_bigint().widen::<12>());
 
         // Compute ON: scale each basis vector of O by N, at `BigInt<12>`.
         let norm_w: BigInt<12> = norm.widen();
@@ -166,7 +166,7 @@ impl LeftIdeal<4> {
             array::from_fn(|j| widen_col_4_to_w(&order_basis_cols_4[j]));
         for col in &mut o_n_cols_w {
             for row in 0..4 {
-                col[row] = col[row].ct_mul(&norm_w);
+                col[row] = col[row].vt_mul(&norm_w);
             }
         }
         let o_n_denom_w = order_denom_w;
@@ -188,7 +188,7 @@ impl LeftIdeal<4> {
         let scale_cols_in_place_w = |cols: &mut [Vector<12>; 4], s: &BigInt<12>| {
             for col in cols.iter_mut() {
                 for row in 0..4 {
-                    col[row] = col[row].ct_mul(s);
+                    col[row] = col[row].vt_mul(s);
                 }
             }
         };
@@ -199,7 +199,7 @@ impl LeftIdeal<4> {
             let mut o_b = o_n_cols_w;
             scale_cols_in_place_w(&mut o_a, &o_n_denom_w);
             scale_cols_in_place_w(&mut o_b, &o_alpha_denom_w);
-            (o_alpha_denom_w.ct_mul(&o_n_denom_w), o_a, o_b)
+            (o_alpha_denom_w.vt_mul(&o_n_denom_w), o_a, o_b)
         };
         let o_alpha_w = Lattice::<12>::new(Matrix::from_columns(&o_alpha_cols_w), common_denom_w);
         let o_n_w = Lattice::<12>::new(Matrix::from_columns(&o_n_cols_w), common_denom_w);
@@ -209,13 +209,13 @@ impl LeftIdeal<4> {
         // intermediates xgcd produces during HNF reduction.
         let modulus_w: BigInt<12> = {
             let n_w: BigInt<12> = norm.widen();
-            let n_sq = n_w.ct_mul(&n_w);
+            let n_sq = n_w.vt_mul(&n_w);
             let p_w: BigInt<12> = crate::quaternions::precomputed::P_WIDE.widen::<12>();
-            let denom_sq = common_denom_w.ct_mul(&common_denom_w);
+            let denom_sq = common_denom_w.vt_mul(&common_denom_w);
             BigInt::<12>::from_u64(64)
-                .ct_mul(&n_sq)
-                .ct_mul(&p_w)
-                .ct_mul(&denom_sq)
+                .vt_mul(&n_sq)
+                .vt_mul(&p_w)
+                .vt_mul(&denom_sq)
         };
         let lattice_w = o_alpha_w
             .sum_mod::<24>(&o_n_w, &modulus_w)
@@ -403,7 +403,7 @@ impl LeftIdeal<4> {
             limbs[..4].copy_from_slice(n.as_limbs());
             limbs
         });
-        let mn = m.ct_mul(&n_wide);
+        let mn = m.vt_mul(&n_wide);
         let order_wide = ExtremalOrder::<8>::from(*order);
         let gamma = order_wide.represent_integer(&mn, false, rng)?;
 
@@ -512,7 +512,7 @@ impl LeftIdeal<4> {
             // (without the `· denom` factor) would leave a
             // half-integer residue for `denom = 2` and push α out
             // of O_0 entirely.
-            let n_times_denom_8 = n.widen::<8>().ct_mul(gamma_beta_8.denom.as_bigint());
+            let n_times_denom_8 = n.widen::<8>().vt_mul(gamma_beta_8.denom.as_bigint());
             let reduce_coord = |c: &BigInt<8>| -> BigInt<4> {
                 let r = c.ct_mod(&n_times_denom_8);
                 r.narrow_to::<4>()
@@ -608,10 +608,10 @@ impl LeftIdeal<4> {
                             let mut gamma_coords = [BigInt::<4>::ZERO; 4];
                             for row in 0..4 {
                                 gamma_coords[row] = a_big
-                                    .ct_mul(&basis[row][0])
-                                    .ct_add(&b_big.ct_mul(&basis[row][1]))
-                                    .ct_add(&c_big.ct_mul(&basis[row][2]))
-                                    .ct_add(&d_big.ct_mul(&basis[row][3]));
+                                    .vt_mul(&basis[row][0])
+                                    .ct_add(&b_big.vt_mul(&basis[row][1]))
+                                    .ct_add(&c_big.vt_mul(&basis[row][2]))
+                                    .ct_add(&d_big.vt_mul(&basis[row][3]));
                             }
                             let gamma = Element::<4>::new(
                                 Coordinate::from_bigint(gamma_coords[0]),
@@ -624,7 +624,7 @@ impl LeftIdeal<4> {
                             let (nrd_num, nrd_den) = gamma.norm();
                             // Widen n_i to BigInt<8> for division.
                             let n_i_wide: BigInt<8> = (*n_i).into();
-                            let (q, rem) = nrd_num.div_rem(&nrd_den.ct_mul(&n_i_wide));
+                            let (q, rem) = nrd_num.div_rem(&nrd_den.vt_mul(&n_i_wide));
                             if !bool::from(rem.is_zero()) {
                                 continue;
                             }

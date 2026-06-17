@@ -129,16 +129,16 @@ impl<const N: usize> LeftIdeal<N> {
         let det_i = i_basis_w.det();
         let det_o = o_basis_w.det();
 
-        let o_denom_sq = o_denom_w.ct_mul(&o_denom_w);
-        let o_denom_4 = o_denom_sq.ct_mul(&o_denom_sq);
-        let i_denom_sq = i_denom_w.ct_mul(&i_denom_w);
-        let i_denom_4 = i_denom_sq.ct_mul(&i_denom_sq);
+        let o_denom_sq = o_denom_w.vt_mul(&o_denom_w);
+        let o_denom_4 = o_denom_sq.vt_mul(&o_denom_sq);
+        let i_denom_sq = i_denom_w.vt_mul(&i_denom_w);
+        let i_denom_4 = i_denom_sq.vt_mul(&i_denom_sq);
 
         // Signed `num` and `den` may swap sign based on lattice
         // basis orientation. `[O:I]` is an absolute-value quantity,
         // so take absolute values before the divisibility check.
-        let num = o_denom_4.ct_mul(&det_i).abs();
-        let den = i_denom_4.ct_mul(&det_o).abs();
+        let num = o_denom_4.vt_mul(&det_i).abs();
+        let den = i_denom_4.vt_mul(&det_o).abs();
 
         if bool::from(den.is_zero()) {
             #[cfg(test)]
@@ -174,10 +174,10 @@ impl<const N: usize> LeftIdeal<N> {
 
         let n_sqrt = index.sqrt_floor()?;
         // Verify perfect square: n_sqrt² == index.
-        if n_sqrt.ct_mul(&n_sqrt) != index {
+        if n_sqrt.vt_mul(&n_sqrt) != index {
             #[cfg(test)]
             {
-                let sqr = n_sqrt.ct_mul(&n_sqrt);
+                let sqr = n_sqrt.vt_mul(&n_sqrt);
                 let diff = index.ct_sub(&sqr);
                 eprintln!(
                     "[refresh_norm] index is not a perfect square: index bits={}, sqrt_floor bits={}, index-sqrt² bits={}, det_i bits={}, det_o bits={}, i_denom bits={}, o_denom bits={}",
@@ -208,7 +208,7 @@ impl<const N: usize> LeftIdeal<N> {
     pub fn inverse(&self) -> HnfLattice<N> {
         let mut conj = self.lattice.conjugate();
         // Scale by 1/nrd(I) — multiply the denominator by nrd(I).
-        conj.denom = conj.denom.ct_mul(&self.norm);
+        conj.denom = conj.denom.vt_mul(&self.norm);
         conj
     }
 
@@ -284,14 +284,14 @@ impl<const N: usize> LeftIdeal<N> {
                 *product.d.as_bigint(),
             );
         }
-        let o_alpha_denom = order.denom().ct_mul(alpha.denom.as_bigint());
+        let o_alpha_denom = order.denom().vt_mul(alpha.denom.as_bigint());
         let o_alpha = Lattice::new(Matrix::from_columns(&o_alpha_cols), o_alpha_denom);
 
         // Compute ON: scale each basis vector of O by N.
         let mut o_n_cols = order.basis().columns();
         for col in &mut o_n_cols {
             for row in 0..4 {
-                col[row] = col[row].ct_mul(norm);
+                col[row] = col[row].vt_mul(norm);
             }
         }
         let o_n = Lattice::new(Matrix::from_columns(&o_n_cols), *order.denom());
@@ -490,8 +490,8 @@ where
         let nrd = NrdBasis::new(cols);
 
         let denom = self.lattice.denom();
-        let denom_sq = denom.ct_mul(denom);
-        let class_divisor = denom_sq.ct_mul(&self.norm);
+        let denom_sq = denom.vt_mul(denom);
+        let class_divisor = denom_sq.vt_mul(&self.norm);
 
         // The C reference's `quat_lattice_gram` computes the
         // *trace* bilinear form T(b_i, b_j) = 2·nrd_bilinear,
@@ -503,7 +503,7 @@ where
         let mut class_gram = Matrix::<N>::ZERO;
         for i in 0..4 {
             for j in 0..4 {
-                let traced = nrd.gram()[i][j].ct_mul(&two);
+                let traced = nrd.gram()[i][j].vt_mul(&two);
                 let (q, _rem) = traced.div_rem(&class_divisor);
                 class_gram[i][j] = q;
             }
@@ -536,7 +536,7 @@ where
                 let mut alpha = [BigInt::<N>::ZERO; 4];
                 for (i, c_i) in c.iter().enumerate() {
                     for (k, alpha_k) in alpha.iter_mut().enumerate() {
-                        *alpha_k = alpha_k.ct_add(&c_i.ct_mul(&class_basis.cols()[i][k]));
+                        *alpha_k = alpha_k.ct_add(&c_i.vt_mul(&class_basis.cols()[i][k]));
                     }
                 }
 
@@ -558,20 +558,20 @@ where
                     let (a0, a1, a2, a3) = (&a[0], &a[1], &a[2], &a[3]);
                     let (b0, b1, b2, b3) = (&b[0], &b[1], &b[2], &b[3]);
                     [
-                        a0.ct_mul(b0)
-                            .ct_sub(&a1.ct_mul(b1))
-                            .ct_sub(&p_n.ct_mul(&a2.ct_mul(b2).ct_add(&a3.ct_mul(b3)))),
-                        a0.ct_mul(b1)
-                            .ct_add(&a1.ct_mul(b0))
-                            .ct_add(&p_n.ct_mul(&a2.ct_mul(b3).ct_sub(&a3.ct_mul(b2)))),
-                        a0.ct_mul(b2)
-                            .ct_add(&a2.ct_mul(b0))
-                            .ct_sub(&a1.ct_mul(b3))
-                            .ct_add(&a3.ct_mul(b1)),
-                        a0.ct_mul(b3)
-                            .ct_add(&a3.ct_mul(b0))
-                            .ct_add(&a1.ct_mul(b2))
-                            .ct_sub(&a2.ct_mul(b1)),
+                        a0.vt_mul(b0)
+                            .ct_sub(&a1.vt_mul(b1))
+                            .ct_sub(&p_n.vt_mul(&a2.vt_mul(b2).ct_add(&a3.vt_mul(b3)))),
+                        a0.vt_mul(b1)
+                            .ct_add(&a1.vt_mul(b0))
+                            .ct_add(&p_n.vt_mul(&a2.vt_mul(b3).ct_sub(&a3.vt_mul(b2)))),
+                        a0.vt_mul(b2)
+                            .ct_add(&a2.vt_mul(b0))
+                            .ct_sub(&a1.vt_mul(b3))
+                            .ct_add(&a3.vt_mul(b1)),
+                        a0.vt_mul(b3)
+                            .ct_add(&a3.vt_mul(b0))
+                            .ct_add(&a1.vt_mul(b2))
+                            .ct_sub(&a2.vt_mul(b1)),
                     ]
                 };
 
@@ -618,13 +618,13 @@ where
                     let r = qmul(&e, &alpha);
                     *o_col = Vector::new(r[0], r[1], r[2], r[3]);
                 }
-                let o_alpha_denom = order.denom().ct_mul(&alpha_denom);
+                let o_alpha_denom = order.denom().vt_mul(&alpha_denom);
 
                 // Compute O₀·m: scale each basis column by m.
                 let mut o_m_cols = order.basis().columns();
                 for col in &mut o_m_cols {
                     for row in 0..4 {
-                        col[row] = col[row].ct_mul(&new_norm);
+                        col[row] = col[row].vt_mul(&new_norm);
                     }
                 }
                 // o_m's natural denom is `order.denom()`, but we
@@ -634,7 +634,7 @@ where
                 // (= `o_alpha_denom`). Scale factor = `alpha_denom`.
                 for col in &mut o_m_cols {
                     for row in 0..4 {
-                        col[row] = col[row].ct_mul(&alpha_denom);
+                        col[row] = col[row].vt_mul(&alpha_denom);
                     }
                 }
 
@@ -642,12 +642,12 @@ where
                 // multiple of the integer-column covolume for the
                 // O₀-ideal of norm m with denom `d²`).
                 let d4 = {
-                    let d2 = o_alpha_denom.ct_mul(&o_alpha_denom);
-                    d2.ct_mul(&d2)
+                    let d2 = o_alpha_denom.vt_mul(&o_alpha_denom);
+                    d2.vt_mul(&d2)
                 };
-                let m_sq = new_norm.ct_mul(&new_norm);
+                let m_sq = new_norm.vt_mul(&new_norm);
                 let four = BigInt::<N>::from_u64(4);
-                let modulus = four.ct_mul(&d4).ct_mul(&m_sq).ct_mul(&p_n);
+                let modulus = four.vt_mul(&d4).vt_mul(&m_sq).vt_mul(&p_n);
 
                 let all_cols = [
                     o_alpha_cols[0],
