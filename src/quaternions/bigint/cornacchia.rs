@@ -74,10 +74,10 @@ impl<const N: usize> BigInt<N> {
         }
 
         // Step 1: Check Legendre symbol — -q must be a QR mod m.
-        let neg_q = m.ct_sub(&q.ct_mod(m));
+        let neg_q = m.ct_sub(&q.vt_mod(m));
         let exp = m.ct_sub(&Self::ONE) >> 1;
         let legendre = Self::pow_mod(&neg_q, &exp, m);
-        if legendre != Self::ONE && !bool::from(neg_q.ct_mod(m).is_zero()) {
+        if legendre != Self::ONE && !bool::from(neg_q.vt_mod(m).is_zero()) {
             return None;
         }
 
@@ -98,7 +98,7 @@ impl<const N: usize> BigInt<N> {
             if s <= bound {
                 break;
             }
-            let tmp = r.ct_mod(&s);
+            let tmp = r.vt_mod(&s);
             r = s;
             s = tmp;
             i += 1;
@@ -112,7 +112,7 @@ impl<const N: usize> BigInt<N> {
         }
 
         // (m - x²) must be divisible by q.
-        let (y_sq, rem) = m.ct_sub(&x_sq).div_rem(q);
+        let (y_sq, rem) = m.ct_sub(&x_sq).vt_div_rem(q);
         if !bool::from(rem.is_zero()) {
             return None;
         }

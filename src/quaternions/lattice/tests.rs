@@ -270,7 +270,7 @@ fn ideal_generator() {
     // Verify: nrd(γ) / N_I is coprime to N_I.
     let (nrd_num, nrd_den) = gamma.norm();
     let n_i: BigInt<8> = (*ideal.norm()).into();
-    let (q, rem) = nrd_num.div_rem(&nrd_den.ct_mul(&n_i));
+    let (q, rem) = nrd_num.vt_div_rem(&nrd_den.ct_mul(&n_i));
     assert!(bool::from(rem.is_zero()), "nrd(γ) not divisible by N_I");
     assert_eq!(q.gcd(&n_i), BigInt::<8>::ONE, "gcd(nrd(γ)/N_I, N_I) != 1");
 }

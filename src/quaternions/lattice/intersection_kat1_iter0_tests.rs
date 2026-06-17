@@ -938,11 +938,11 @@ fn dsd_step_by_step() {
         let mut basis = *lat.basis();
         for r in 0..4 {
             for c in 0..4 {
-                let (q, _) = basis[r][c].div_rem(&g);
+                let (q, _) = basis[r][c].vt_div_rem(&g);
                 basis[r][c] = q;
             }
         }
-        let (denom_new, _) = lat.denom().div_rem(&g);
+        let (denom_new, _) = lat.denom().vt_div_rem(&g);
         Lattice::<W>::new(basis, denom_new)
     };
     let d1_canon = canonicalize_lat(&d1);
@@ -987,11 +987,11 @@ fn dsd_step_by_step() {
     } else {
         for r in 0..4 {
             for c in 0..4 {
-                let (q, _) = basis_w[r][c].div_rem(&g);
+                let (q, _) = basis_w[r][c].vt_div_rem(&g);
                 basis_w[r][c] = q;
             }
         }
-        let (q, _) = denom_w.div_rem(&g);
+        let (q, _) = denom_w.vt_div_rem(&g);
         q
     };
     let reduced_lat = Lattice::<W>::new(basis_w, denom_reduced);

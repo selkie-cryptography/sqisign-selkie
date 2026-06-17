@@ -405,8 +405,8 @@ fn bigint_xgcd_zero_neg_input() {
 fn bigint_div_rem_semantics() {
     let neg7 = BigInt::<4>::from(-7i64);
     let three = BigInt::<4>::from(3i64);
-    let (q, r) = neg7.div_rem(&three);
-    eprintln!("(-7).div_rem(3) = (q={:?}, r={:?})", q, r);
+    let (q, r) = neg7.vt_div_rem(&three);
+    eprintln!("(-7).vt_div_rem(3) = (q={:?}, r={:?})", q, r);
     // GMP's mpz_tdiv_qr (= C-ref's ibz_div): TRUNCATED. (-7)/3 = -2, rem = -1.
     // FLOOR/Euclidean: (-7)/3 = -3, rem = 2.
 }
@@ -414,7 +414,7 @@ fn bigint_div_rem_semantics() {
 #[test]
 fn bigint_ct_mod_large_negative() {
     use crate::quaternions::bigint::BigInt;
-    // Construct a large negative value at width 30 and verify ct_mod
+    // Construct a large negative value at width 30 and verify vt_mod
     // returns a value in [0, modulus).
     let mut limbs_a = [0u64; 30];
     limbs_a[10] = 0x1234_5678_9ABC_DEF0;
@@ -424,7 +424,7 @@ fn bigint_ct_mod_large_negative() {
     limbs_m[5] = 0xABCD_1234_5678_9ABC;
     let m = BigInt::<30>::from_limbs(limbs_m);
 
-    let r = neg_big.ct_mod(&m);
+    let r = neg_big.vt_mod(&m);
     eprintln!(
         "neg_big.bits = {}, m.bits = {}, r.bits = {}",
         neg_big.bitsize(),
@@ -436,18 +436,18 @@ fn bigint_ct_mod_large_negative() {
     // Verify r is in [0, m).
     assert!(
         !bool::from(r.is_negative()),
-        "ct_mod result should be non-negative"
+        "vt_mod result should be non-negative"
     );
     // r < m.
     let diff = m.ct_sub(&r);
     assert!(
         bool::from(diff.is_positive()),
-        "ct_mod result should be less than modulus"
+        "vt_mod result should be less than modulus"
     );
     // Verify: neg_big = q·m + r where 0 ≤ r < m.
-    let (q, _) = neg_big.div_rem(&m);
+    let (q, _) = neg_big.vt_div_rem(&m);
     let recon = q.ct_mul(&m).ct_add(&r);
-    assert_eq!(recon, neg_big, "div_rem reconstruction");
+    assert_eq!(recon, neg_big, "vt_div_rem reconstruction");
 }
 
 #[test]

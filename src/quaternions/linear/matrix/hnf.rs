@@ -148,9 +148,9 @@ impl<const N: usize> Matrix<N> {
 
         // Positive Euclidean reduction mod D: returns r in [0, D).
         let reduce = |x: &BigInt<W>| -> BigInt<W> {
-            let r = x.ct_mod(&modulus_w);
+            let r = x.vt_mod(&modulus_w);
             if bool::from(r.is_negative()) {
-                r.ct_add(&modulus_w)
+                r.vt_add(&modulus_w)
             } else {
                 r
             }
@@ -176,13 +176,13 @@ impl<const N: usize> Matrix<N> {
         // by a multiple of D in each coordinate, so reducing mod D
         // recovers the canonical value.
         let to_centered = |x: BigInt<W>| -> BigInt<W> {
-            let two_x = x.ct_add(&x);
+            let two_x = x.vt_add(&x);
             // 2x > D  ⇔  x > D/2.
-            let above_half = bool::from(two_x.ct_sub(&modulus_w).is_positive());
+            let above_half = bool::from(two_x.vt_sub(&modulus_w).is_positive());
             // x < D  (so x ∈ [0, D)). Excludes the literal modulus value.
-            let below_d = bool::from(modulus_w.ct_sub(&x).is_positive());
+            let below_d = bool::from(modulus_w.vt_sub(&x).is_positive());
             if above_half && below_d {
-                x.ct_sub(&modulus_w)
+                x.vt_sub(&modulus_w)
             } else {
                 x
             }
@@ -265,17 +265,17 @@ impl<const N: usize> Matrix<N> {
                 let (g, u, v) = val_k.xgcd(&val_j);
                 // coeff_k = a[k][k]_signed / g, coeff_j = a[j][k]_signed / g.
                 // Both are exact (g divides both signed values).
-                let (coeff_k, _) = val_k.div_rem(&g);
-                let (coeff_j, _) = val_j.div_rem(&g);
+                let (coeff_k, _) = val_k.vt_div_rem(&g);
+                let (coeff_j, _) = val_j.vt_div_rem(&g);
                 let old_k = a[k];
                 let old_j = a[j];
                 for r in 0..4 {
                     // u·a[k] + v·a[j] gives the new gcd col.
-                    let new_k_r = reduce(&u.vt_mul(&old_k[r]).ct_add(&v.vt_mul(&old_j[r])));
+                    let new_k_r = reduce(&u.vt_mul(&old_k[r]).vt_add(&v.vt_mul(&old_j[r])));
                     // coeff_k·a[j] - coeff_j·a[k] gives the orthogonal col
                     // (row-k entry zero).
                     let new_j_r =
-                        reduce(&coeff_k.vt_mul(&old_j[r]).ct_sub(&coeff_j.vt_mul(&old_k[r])));
+                        reduce(&coeff_k.vt_mul(&old_j[r]).vt_sub(&coeff_j.vt_mul(&old_k[r])));
                     a[k][r] = new_k_r;
                     a[j][r] = new_j_r;
                 }
@@ -323,12 +323,12 @@ impl<const N: usize> Matrix<N> {
             {
                 let mut j = 0;
                 while j < pivot {
-                    let (g, _) = a[j][pivot].div_rem(&piv);
+                    let (g, _) = a[j][pivot].vt_div_rem(&piv);
                     if !bool::from(g.is_zero()) {
                         let col_piv = a[pivot];
                         for (r, col_piv_r) in col_piv.iter().enumerate().take(d) {
                             let sub = g.vt_mul(col_piv_r);
-                            a[j][r] = reduce(&a[j][r].ct_sub(&sub));
+                            a[j][r] = reduce(&a[j][r].vt_sub(&sub));
                         }
                     }
                     j += 1;
@@ -340,13 +340,13 @@ impl<const N: usize> Matrix<N> {
                 let mut j = pivot + 1;
                 while j < c {
                     let entry = a[j][pivot];
-                    let r = entry.ct_mod(&piv);
-                    let (g, _) = entry.ct_sub(&r).div_rem(&piv);
+                    let r = entry.vt_mod(&piv);
+                    let (g, _) = entry.vt_sub(&r).vt_div_rem(&piv);
                     if !bool::from(g.is_zero()) {
                         let col_piv = a[pivot];
                         for (row, col_piv_row) in col_piv.iter().enumerate().take(d) {
                             let sub = g.vt_mul(col_piv_row);
-                            a[j][row] = reduce(&a[j][row].ct_sub(&sub));
+                            a[j][row] = reduce(&a[j][row].vt_sub(&sub));
                         }
                     }
                     j += 1;
@@ -442,10 +442,10 @@ impl<const N: usize> Matrix<N> {
                         v2: &[BigInt<W>; 4]|
          -> [BigInt<W>; 4] {
             [
-                c1.vt_mul(&v1[0]).ct_add(&c2.vt_mul(&v2[0])),
-                c1.vt_mul(&v1[1]).ct_add(&c2.vt_mul(&v2[1])),
-                c1.vt_mul(&v1[2]).ct_add(&c2.vt_mul(&v2[2])),
-                c1.vt_mul(&v1[3]).ct_add(&c2.vt_mul(&v2[3])),
+                c1.vt_mul(&v1[0]).vt_add(&c2.vt_mul(&v2[0])),
+                c1.vt_mul(&v1[1]).vt_add(&c2.vt_mul(&v2[1])),
+                c1.vt_mul(&v1[2]).vt_add(&c2.vt_mul(&v2[2])),
+                c1.vt_mul(&v1[3]).vt_add(&c2.vt_mul(&v2[3])),
             ]
         };
 
@@ -456,21 +456,21 @@ impl<const N: usize> Matrix<N> {
         // - `positive_mod`: result in `[0, |m|)`. Used in output store
         //   (`ibz_vec_4_scalar_mul_mod` → `ibz_mod`).
         let centered_mod = |x: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
-            let mut r = x.ct_mod(m);
+            let mut r = x.vt_mod(m);
             if bool::from(r.is_negative()) {
-                r = r.ct_add(m);
+                r = r.vt_add(m);
             }
-            let two_r = r.ct_add(&r);
-            if bool::from(two_r.ct_sub(m).is_positive()) {
-                r.ct_sub(m)
+            let two_r = r.vt_add(&r);
+            if bool::from(two_r.vt_sub(m).is_positive()) {
+                r.vt_sub(m)
             } else {
                 r
             }
         };
         let positive_mod = |x: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
-            let r = x.ct_mod(m);
+            let r = x.vt_mod(m);
             if bool::from(r.is_negative()) {
-                r.ct_add(m)
+                r.vt_add(m)
             } else {
                 r
             }
@@ -494,7 +494,7 @@ impl<const N: usize> Matrix<N> {
 
         // Truncated division matching C `mpz_tdiv_qr` / `ibz_div`:
         // quotient rounds toward zero, remainder takes sign of dividend.
-        // Selkie's `BigInt::div_rem` is Euclidean (floor for positive
+        // Selkie's `BigInt::vt_div_rem` is Euclidean (floor for positive
         // divisor, with positive remainder), which differs from C-ref
         // on negative dividends. The HNF algorithm passes negative
         // intermediate values to `ibz_div` in multiple places
@@ -502,7 +502,7 @@ impl<const N: usize> Matrix<N> {
         // `ibz_xgcd_with_u_not_0`), so matching `mpz_tdiv_qr` semantics
         // is required to produce the same canonical HNF as C-ref.
         let trunc_div_rem = |a: &BigInt<W>, b: &BigInt<W>| -> (BigInt<W>, BigInt<W>) {
-            let (q_eu, r_eu) = a.div_rem(b);
+            let (q_eu, r_eu) = a.vt_div_rem(b);
             if bool::from(a.is_negative()) && !bool::from(r_eu.is_zero()) {
                 // Euclidean→truncated conversion for a<0 with nonzero remainder:
                 //   trunc rounds toward 0 → |q_trunc| = |q_eu| - 1.
@@ -512,13 +512,13 @@ impl<const N: usize> Matrix<N> {
                 // Examples: (−7, 3) Eu=(−3, 2), trunc=(−2, −1); add +1=sign(3).
                 //           (−7, −3) Eu=(3, 2), trunc=(2, −1); add −1=sign(−3).
                 let b_abs = b.abs();
-                let r_trunc = r_eu.ct_sub(&b_abs);
+                let r_trunc = r_eu.vt_sub(&b_abs);
                 let sign_b = if bool::from(b.is_negative()) {
                     BigInt::<W>::ONE.wrapping_neg()
                 } else {
                     BigInt::<W>::ONE
                 };
-                let q_trunc = q_eu.ct_add(&sign_b);
+                let q_trunc = q_eu.vt_add(&sign_b);
                 (q_trunc, r_trunc)
             } else {
                 (q_eu, r_eu)
@@ -563,13 +563,13 @@ impl<const N: usize> Matrix<N> {
             // Euclidean: while b != 0, (a, b) = (b, a mod b). Carry
             // coefficients along.
             while !bool::from(b.is_zero()) {
-                let (q, r) = a.div_rem(&b);
+                let (q, r) = a.vt_div_rem(&b);
                 a = b;
                 b = r;
                 let new_u_a = u_b;
                 let new_v_a = v_b;
-                let new_u_b = u_a.ct_sub(&q.vt_mul(&u_b));
-                let new_v_b = v_a.ct_sub(&q.vt_mul(&v_b));
+                let new_u_b = u_a.vt_sub(&q.vt_mul(&u_b));
+                let new_v_b = v_a.vt_sub(&q.vt_mul(&v_b));
                 u_a = new_u_a;
                 v_a = new_v_a;
                 u_b = new_u_b;
@@ -599,9 +599,9 @@ impl<const N: usize> Matrix<N> {
                         *y
                     };
                     // C-ref uses `ibz_div` (truncated). For negative x,
-                    // Selkie's Euclidean `div_rem` would differ.
+                    // Selkie's Euclidean `vt_div_rem` would differ.
                     let (q, _) = trunc_div_rem(x, &y_use);
-                    v = v.ct_sub(&q);
+                    v = v.vt_sub(&q);
                     u = BigInt::<W>::ONE;
                 }
 
@@ -628,8 +628,8 @@ impl<const N: usize> Matrix<N> {
                     // u·x > 0. Each step: u += sign·y/d, v -= sign·x/d.
                     let mut ux = x.vt_mul(&u);
                     while !bool::from(ux.is_positive()) {
-                        u = u.ct_add(&q_y_d);
-                        v = v.ct_sub(&q_x_d);
+                        u = u.vt_add(&q_y_d);
+                        v = v.vt_sub(&q_x_d);
                         ux = x.vt_mul(&u);
                     }
                     // Then minimize |u|: while subtracting one offset
@@ -641,16 +641,16 @@ impl<const N: usize> Matrix<N> {
                     // the upward "u·x > 0" loop, producing a
                     // different HNF mod result than C-ref.
                     loop {
-                        let try_u = u.ct_sub(&q_y_d);
+                        let try_u = u.vt_sub(&q_y_d);
                         let try_ux = x.vt_mul(&try_u);
                         if !bool::from(try_ux.is_positive()) {
                             break;
                         }
-                        if !bool::from(u.abs().ct_sub(&try_u.abs()).is_positive()) {
+                        if !bool::from(u.abs().vt_sub(&try_u.abs()).is_positive()) {
                             break;
                         }
                         u = try_u;
-                        v = v.ct_add(&q_x_d);
+                        v = v.vt_add(&q_x_d);
                     }
                 }
                 (d, u, v)
@@ -789,18 +789,18 @@ impl<const N: usize> Matrix<N> {
             let pivot = w[i as usize][i as usize];
             for h in (i as usize + 1)..4 {
                 // Floor division (per C-ref `ibz_div_floor`). Selkie's
-                // `div_rem` is truncated; using Euclidean (positive)
+                // `vt_div_rem` is truncated; using Euclidean (positive)
                 // remainder gives floor q for negative entries.
                 let entry = w[h][i as usize];
                 let r = positive_mod(&entry, &pivot);
-                let (q, _) = entry.ct_sub(&r).div_rem(&pivot);
+                let (q, _) = entry.vt_sub(&r).vt_div_rem(&pivot);
                 let neg_q = q.wrapping_neg();
                 let w_i = w[i as usize];
                 let updated = lin_comb(&BigInt::<W>::ONE, &w[h], &neg_q, &w_i);
                 w[h] = updated;
             }
 
-            let (new_m, _r) = m.div_rem(&d);
+            let (new_m, _r) = m.vt_div_rem(&d);
             m = new_m;
 
             if i != 0 {
@@ -896,15 +896,15 @@ impl<const N: usize> Matrix<N> {
                     let val_j = a[j][pivot];
                     if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
                         let (g, u, v) = val_i.xgcd(&val_j);
-                        let (val_i_over_g, _) = val_i.div_rem(&g);
-                        let (val_j_over_g, _) = val_j.div_rem(&g);
+                        let (val_i_over_g, _) = val_i.vt_div_rem(&g);
+                        let (val_j_over_g, _) = val_j.vt_div_rem(&g);
                         let old_i = a[pivot];
                         let old_j = a[j];
                         for r in 0..d {
-                            a[pivot][r] = u.vt_mul(&old_i[r]).ct_add(&v.vt_mul(&old_j[r]));
+                            a[pivot][r] = u.vt_mul(&old_i[r]).vt_add(&v.vt_mul(&old_j[r]));
                             a[j][r] = val_i_over_g
                                 .vt_mul(&old_j[r])
-                                .ct_sub(&val_j_over_g.vt_mul(&old_i[r]));
+                                .vt_sub(&val_j_over_g.vt_mul(&old_i[r]));
                         }
                     }
                 }
@@ -920,15 +920,15 @@ impl<const N: usize> Matrix<N> {
                     let val_j = a[j][pivot];
                     if !(bool::from(val_i.is_zero()) && bool::from(val_j.is_zero())) {
                         let (g, u, v) = val_i.xgcd(&val_j);
-                        let (val_i_over_g, _) = val_i.div_rem(&g);
-                        let (val_j_over_g, _) = val_j.div_rem(&g);
+                        let (val_i_over_g, _) = val_i.vt_div_rem(&g);
+                        let (val_j_over_g, _) = val_j.vt_div_rem(&g);
                         let old_i = a[pivot];
                         let old_j = a[j];
                         for r in 0..d {
-                            a[pivot][r] = u.vt_mul(&old_i[r]).ct_add(&v.vt_mul(&old_j[r]));
+                            a[pivot][r] = u.vt_mul(&old_i[r]).vt_add(&v.vt_mul(&old_j[r]));
                             a[j][r] = val_i_over_g
                                 .vt_mul(&old_j[r])
-                                .ct_sub(&val_j_over_g.vt_mul(&old_i[r]));
+                                .vt_sub(&val_j_over_g.vt_mul(&old_i[r]));
                         }
                     }
                     j += 1;
@@ -952,11 +952,11 @@ impl<const N: usize> Matrix<N> {
             {
                 let mut j = 0;
                 while j < pivot {
-                    let (g, _) = a[j][pivot].div_rem(&piv);
+                    let (g, _) = a[j][pivot].vt_div_rem(&piv);
                     if !bool::from(g.is_zero()) {
                         let col_piv = a[pivot];
                         for (r, col_piv_r) in col_piv.iter().enumerate().take(d) {
-                            a[j][r] = a[j][r].ct_sub(&g.vt_mul(col_piv_r));
+                            a[j][r] = a[j][r].vt_sub(&g.vt_mul(col_piv_r));
                         }
                     }
                     j += 1;
@@ -971,12 +971,12 @@ impl<const N: usize> Matrix<N> {
                 let mut j = pivot + 1;
                 while j < c {
                     let entry = a[j][pivot];
-                    let r = entry.ct_mod(&piv);
-                    let (g, _) = entry.ct_sub(&r).div_rem(&piv);
+                    let r = entry.vt_mod(&piv);
+                    let (g, _) = entry.vt_sub(&r).vt_div_rem(&piv);
                     if !bool::from(g.is_zero()) {
                         let col_piv = a[pivot];
                         for (row, col_piv_row) in col_piv.iter().enumerate().take(d) {
-                            a[j][row] = a[j][row].ct_sub(&g.vt_mul(col_piv_row));
+                            a[j][row] = a[j][row].vt_sub(&g.vt_mul(col_piv_row));
                         }
                     }
                     j += 1;

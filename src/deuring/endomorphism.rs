@@ -268,12 +268,12 @@ impl EndomorphismAction {
         // None, then a spurious sign retry). The matrix action only
         // depends on the coordinates mod 2^f, and `2^f < 2^256`, so
         // reducing first lands every coordinate in `[0, 2^f)`, which
-        // always fits `BigInt<4>`. For negative coordinates `ct_mod`
+        // always fits `BigInt<4>`. For negative coordinates `vt_mod`
         // returns a negative remainder (truncated division), so add the
         // modulus to land in the canonical range.
         let modulus_w = BigInt::<20>::ONE << f.value();
         let reduce = |c: &BigInt<20>| -> Scalar {
-            let r = c.ct_mod(&modulus_w);
+            let r = c.vt_mod(&modulus_w);
             let r = if bool::from(r.is_negative()) {
                 r.ct_add(&modulus_w)
             } else {

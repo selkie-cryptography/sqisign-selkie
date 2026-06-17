@@ -496,16 +496,16 @@ impl<const N: usize> LeftIdeal<N> {
         // computed mod 2^f, so the value always fits in `BigInt<4>`
         // even when `original_norm` itself spans more limbs.
         let modulus_8: BigInt<8> = modulus.widen();
-        let original_norm_mod_f_8 = original_norm.widen::<8>().ct_mod(&modulus_8);
+        let original_norm_mod_f_8 = original_norm.widen::<8>().vt_mod(&modulus_8);
         let parent_norm: BigInt<4> = original_norm_mod_f_8
             .narrow_to::<4>()
             .expect("nrd(I) mod 2^248 fits in BigInt<4>");
         let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
         let scale_denom = {
-            let base = parent_norm.ct_mul(&d1_big).ct_mod(&modulus);
+            let base = parent_norm.ct_mul(&d1_big).vt_mod(&modulus);
             if t_index > 0 {
                 base.ct_mul(&CONNECTING_IDEAL_NORMS[t_index])
-                    .ct_mod(&modulus)
+                    .vt_mod(&modulus)
             } else {
                 base
             }
@@ -760,7 +760,7 @@ impl<const N: usize> LeftIdeal<N> {
         // Expected: w_s^(d₁ · u² mod 2^f).
         let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
         let u_sq = sui.u.ct_mul(&sui.u);
-        let exp_disamb = d1_big.ct_mul(&u_sq).ct_mod(&modulus);
+        let exp_disamb = d1_big.ct_mul(&u_sq).vt_mod(&modulus);
         let expected = w_s.pow_scalar(&Scalar::from(exp_disamb));
 
         // Compute Weil pairing on codomain.E1 side using the

@@ -68,7 +68,7 @@ impl LeftIdeal<4> {
         // after dividing by denom = 2 yields (N, N·i, (x·i + j)/2, (y + k)/2).
         // For t = 0 (N = 1) this is the standard order basis
         // (1, i, (i+j)/2, (1+k)/2).
-        let two_norm = norm.ct_add(&norm);
+        let two_norm = norm.vt_add(&norm);
         let basis = Matrix::from_rows(
             Vector::new(two_norm, BigInt::ZERO, BigInt::ZERO, y),
             Vector::new(BigInt::ZERO, two_norm, x, BigInt::ZERO),
@@ -251,7 +251,7 @@ impl LeftIdeal<4> {
             let mut m = Matrix::<4>::ZERO;
             for (j, col) in basis_cols_w.iter().enumerate() {
                 for row in 0..4 {
-                    let (q, _) = col[row].div_rem(&g);
+                    let (q, _) = col[row].vt_div_rem(&g);
                     m[row][j] = q
                         .narrow_to::<4>()
                         .expect("LeftIdeal<4>::new basis entry does not fit in BigInt<4>");
@@ -260,7 +260,7 @@ impl LeftIdeal<4> {
             m
         };
         let denom_4 = {
-            let (q, _) = denom_w.div_rem(&g);
+            let (q, _) = denom_w.vt_div_rem(&g);
             q.narrow_to::<4>()
                 .expect("LeftIdeal<4>::new denom does not fit in BigInt<4>")
         };
@@ -304,7 +304,7 @@ impl LeftIdeal<4> {
                     }
                     let val = BigInt::<4>::from_bytes_le_unsigned(&bytes[..n_bytes]);
                     // Reject if val >= N.
-                    if val.bitsize() <= n.bitsize() && val.ct_mod(n) == val {
+                    if val.bitsize() <= n.bitsize() && val.vt_mod(n) == val {
                         return val; // val < N
                     }
                 }
@@ -332,13 +332,13 @@ impl LeftIdeal<4> {
             }
             let nrd_num_4 = nrd_num_4.unwrap();
             let nrd_den_4 = nrd_den_4.unwrap();
-            let (nrd_val, rem) = nrd_num_4.div_rem(&nrd_den_4);
+            let (nrd_val, rem) = nrd_num_4.vt_div_rem(&nrd_den_4);
             if !bool::from(rem.is_zero()) {
                 continue;
             }
 
             // Check Legendre(-nrd(γ), N) = 1.
-            let neg_nrd = n.ct_sub(&nrd_val.ct_mod(n));
+            let neg_nrd = n.vt_sub(&nrd_val.vt_mod(n));
             if BigInt::<4>::legendre(&neg_nrd, n) != 1 {
                 continue;
             }
@@ -418,7 +418,7 @@ impl LeftIdeal<4> {
         // but each accepted sample one less than C-ref's, which then
         // compounded through `γ·β` into a different `i_aux` lattice
         // (KAT 39 iter 0 byte-diff vs `[I_AUX_CREF]`).
-        let n_minus_1 = n.ct_sub(&BigInt::<4>::ONE);
+        let n_minus_1 = n.vt_sub(&BigInt::<4>::ONE);
         let bmina_bits = n_minus_1.bitsize() as usize;
         let bmina_bytes = bmina_bits.div_ceil(8);
         let mut sample_in_range = || -> BigInt<4> {
@@ -434,7 +434,7 @@ impl LeftIdeal<4> {
                 if tmp > n_minus_1 {
                     continue;
                 }
-                return tmp.ct_add(&BigInt::<4>::ONE);
+                return tmp.vt_add(&BigInt::<4>::ONE);
             }
         };
 
@@ -462,7 +462,7 @@ impl LeftIdeal<4> {
             // any N > ~2^64 and made `random_norm` return `None`
             // after 10_000 futile iterations.
             let (nrd_num, nrd_den) = beta.norm();
-            let (nrd_val_wide, rem) = nrd_num.div_rem(&nrd_den);
+            let (nrd_val_wide, rem) = nrd_num.vt_div_rem(&nrd_den);
             if !bool::from(rem.is_zero()) {
                 continue;
             }
@@ -514,7 +514,7 @@ impl LeftIdeal<4> {
             // of O_0 entirely.
             let n_times_denom_8 = n.widen::<8>().vt_mul(gamma_beta_8.denom.as_bigint());
             let reduce_coord = |c: &BigInt<8>| -> BigInt<4> {
-                let r = c.ct_mod(&n_times_denom_8);
+                let r = c.vt_mod(&n_times_denom_8);
                 r.narrow_to::<4>()
                     .expect("coord reduced mod N·denom fits in BigInt<4>")
             };
@@ -609,9 +609,9 @@ impl LeftIdeal<4> {
                             for row in 0..4 {
                                 gamma_coords[row] = a_big
                                     .vt_mul(&basis[row][0])
-                                    .ct_add(&b_big.vt_mul(&basis[row][1]))
-                                    .ct_add(&c_big.vt_mul(&basis[row][2]))
-                                    .ct_add(&d_big.vt_mul(&basis[row][3]));
+                                    .vt_add(&b_big.vt_mul(&basis[row][1]))
+                                    .vt_add(&c_big.vt_mul(&basis[row][2]))
+                                    .vt_add(&d_big.vt_mul(&basis[row][3]));
                             }
                             let gamma = Element::<4>::new(
                                 Coordinate::from_bigint(gamma_coords[0]),
@@ -624,7 +624,7 @@ impl LeftIdeal<4> {
                             let (nrd_num, nrd_den) = gamma.norm();
                             // Widen n_i to BigInt<8> for division.
                             let n_i_wide: BigInt<8> = (*n_i).into();
-                            let (q, rem) = nrd_num.div_rem(&nrd_den.vt_mul(&n_i_wide));
+                            let (q, rem) = nrd_num.vt_div_rem(&nrd_den.vt_mul(&n_i_wide));
                             if !bool::from(rem.is_zero()) {
                                 continue;
                             }

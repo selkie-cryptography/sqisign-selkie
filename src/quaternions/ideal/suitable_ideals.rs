@@ -414,7 +414,7 @@ impl<const W: usize> NrdBasis<W> {
             }
 
             // degree = nrd_scaled / (nrd(I) · denom²).
-            let (degree_wide, rem) = nrd_scaled.div_rem(&divisor);
+            let (degree_wide, rem) = nrd_scaled.vt_div_rem(&divisor);
             if !bool::from(rem.is_zero()) {
                 continue;
             }
@@ -431,7 +431,7 @@ impl<const W: usize> NrdBasis<W> {
             // β = Σ x_k · col_k.
             let coords: [BigInt<W>; 4] = core::array::from_fn(|row| {
                 (0..4).fold(BigInt::<W>::ZERO, |acc, k| {
-                    acc.ct_add(&x[k].vt_mul(&self.cols()[k][row]))
+                    acc.vt_add(&x[k].vt_mul(&self.cols()[k][row]))
                 })
             });
 
@@ -565,14 +565,14 @@ fn try_find_uv<const N: usize>(
     // both directions terminate, but they pick different `(u, v)` —
     // so on KAT-aligned DRBG the chosen `(β_s, β_t)` diverges.
     let d2_inv = d2_w.invert_mod(&d1_w)?;
-    let v0 = two_f.vt_mul(&d2_inv).ct_mod(&d1_w);
+    let v0 = two_f.vt_mul(&d2_inv).vt_mod(&d1_w);
     let mut v = v0;
     let mut u = {
         let vd2 = v.vt_mul(&d2_w);
         if vd2 >= *two_f {
             return None;
         }
-        let (u, rem) = two_f.ct_sub(&vd2).div_rem(&d1_w);
+        let (u, rem) = two_f.vt_sub(&vd2).vt_div_rem(&d1_w);
         if !bool::from(rem.is_zero()) || bool::from(u.is_negative()) {
             return None;
         }
@@ -635,11 +635,11 @@ fn try_find_uv<const N: usize>(
             if u.trailing_zeros() >= 31 || v.trailing_zeros() >= 31 {
                 // Advance `v += d₁`, `u -= d₂`. Stop if u would go
                 // non-positive.
-                v = v.ct_add(&d1_w);
+                v = v.vt_add(&d1_w);
                 if u <= d2_w {
                     return None;
                 }
-                u = u.ct_sub(&d2_w);
+                u = u.vt_sub(&d2_w);
                 continue;
             }
             if let Ok(e) = TorsionExponent::try_from(f.value() - e_val) {
@@ -670,11 +670,11 @@ fn try_find_uv<const N: usize>(
         // Advance to the next solution on the line: `v += d₁`,
         // `u -= d₂`. Stop when `u` would go non-positive (matches
         // C ref's `while (cmp < 0)` exit at v >= n/d₂).
-        v = v.ct_add(&d1_w);
+        v = v.vt_add(&d1_w);
         if u <= d2_w {
             return None;
         }
-        u = u.ct_sub(&d2_w);
+        u = u.vt_sub(&d2_w);
     }
 }
 
@@ -827,7 +827,7 @@ impl<const N: usize> LeftIdeal<N> {
                 for i in 0..4 {
                     for j in 0..4 {
                         let traced = nrd_pre.gram()[i][j].vt_mul(&two);
-                        let (q, _rem) = traced.div_rem(&class_divisor);
+                        let (q, _rem) = traced.vt_div_rem(&class_divisor);
                         g[i][j] = q;
                     }
                 }
@@ -878,13 +878,13 @@ impl<const N: usize> LeftIdeal<N> {
                 // nrd(δ_num) = dx² + dy² + p·(dz² + dw²).
                 let nrd_delta_num = dx
                     .vt_mul(&dx)
-                    .ct_add(&dy.vt_mul(&dy))
-                    .ct_add(&p_w2.vt_mul(&dz.vt_mul(&dz).ct_add(&dw.vt_mul(&dw))));
+                    .vt_add(&dy.vt_mul(&dy))
+                    .vt_add(&p_w2.vt_mul(&dz.vt_mul(&dz).vt_add(&dw.vt_mul(&dw))));
 
                 // k = nrd(δ_num) / (denom² · N(self)). Integer for valid input.
                 let denom_sq = denom_t0_w2.vt_mul(&denom_t0_w2);
                 let div = denom_sq.vt_mul(&norm_t0_w2);
-                let (k_norm, rem) = nrd_delta_num.div_rem(&div);
+                let (k_norm, rem) = nrd_delta_num.vt_div_rem(&div);
                 if !bool::from(rem.is_zero()) {
                     continue;
                 }

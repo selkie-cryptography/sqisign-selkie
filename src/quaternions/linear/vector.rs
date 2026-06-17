@@ -76,10 +76,10 @@ impl<const N: usize> Add for Vector<N> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         Self([
-            self.0[0].ct_add(&rhs.0[0]),
-            self.0[1].ct_add(&rhs.0[1]),
-            self.0[2].ct_add(&rhs.0[2]),
-            self.0[3].ct_add(&rhs.0[3]),
+            self.0[0].vt_add(&rhs.0[0]),
+            self.0[1].vt_add(&rhs.0[1]),
+            self.0[2].vt_add(&rhs.0[2]),
+            self.0[3].vt_add(&rhs.0[3]),
         ])
     }
 }
@@ -88,10 +88,10 @@ impl<const N: usize> Sub for Vector<N> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
         Self([
-            self.0[0].ct_sub(&rhs.0[0]),
-            self.0[1].ct_sub(&rhs.0[1]),
-            self.0[2].ct_sub(&rhs.0[2]),
-            self.0[3].ct_sub(&rhs.0[3]),
+            self.0[0].vt_sub(&rhs.0[0]),
+            self.0[1].vt_sub(&rhs.0[1]),
+            self.0[2].vt_sub(&rhs.0[2]),
+            self.0[3].vt_sub(&rhs.0[3]),
         ])
     }
 }

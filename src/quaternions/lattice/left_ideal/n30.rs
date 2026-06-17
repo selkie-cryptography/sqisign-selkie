@@ -199,7 +199,7 @@ impl LeftIdeal<30> {
 
         let zero_big = BigInt::<30>::ZERO;
         let one_big = BigInt::<30>::ONE;
-        let n_minus_one = n.ct_sub(&one_big);
+        let n_minus_one = n.vt_sub(&one_big);
 
         for _ in 0..10_000 {
             // Phase A: trace-zero quaternion γ = a + g₁·i + g₂·j +
@@ -219,10 +219,10 @@ impl LeftIdeal<30> {
             let g1_sq = g1.vt_mul(&g1);
             let g2_sq = g2.vt_mul(&g2);
             let g3_sq = g3.vt_mul(&g3);
-            let nrd = g1_sq.ct_add(&p_wide.vt_mul(&g2_sq.ct_add(&g3_sq)));
+            let nrd = g1_sq.vt_add(&p_wide.vt_mul(&g2_sq.vt_add(&g3_sq)));
 
-            let nrd_mod = nrd.ct_mod(n);
-            let neg_nrd = n.ct_sub(&nrd_mod);
+            let nrd_mod = nrd.vt_mod(n);
+            let neg_nrd = n.vt_sub(&nrd_mod);
 
             // The Legendre check and square root take N = D_MIX (513
             // bits) as modulus, with neg_nrd reduced at or below it, so
@@ -266,9 +266,9 @@ impl LeftIdeal<30> {
                 let d3 = BigInt::<30>::rand_interval(rng, &one_big, n);
                 let nrd_d = d0
                     .vt_mul(&d0)
-                    .ct_add(&d1.vt_mul(&d1))
-                    .ct_add(&p_wide.vt_mul(&d2.vt_mul(&d2).ct_add(&d3.vt_mul(&d3))));
-                let nrd_d_mod = nrd_d.ct_mod(n);
+                    .vt_add(&d1.vt_mul(&d1))
+                    .vt_add(&p_wide.vt_mul(&d2.vt_mul(&d2).vt_add(&d3.vt_mul(&d3))));
+                let nrd_d_mod = nrd_d.vt_mod(n);
                 if nrd_d_mod.gcd(n) == BigInt::<30>::ONE {
                     Some([d0, d1, d2, d3])
                 } else {
@@ -338,9 +338,9 @@ impl LeftIdeal<30> {
                 for row in 0..4 {
                     o_alpha_col[row] = e[0]
                         .vt_mul(&prod_1[row])
-                        .ct_add(&e[1].vt_mul(&prod_i[row]))
-                        .ct_add(&e[2].vt_mul(&prod_j[row]))
-                        .ct_add(&e[3].vt_mul(&prod_k[row]));
+                        .vt_add(&e[1].vt_mul(&prod_i[row]))
+                        .vt_add(&e[2].vt_mul(&prod_j[row]))
+                        .vt_add(&e[3].vt_mul(&prod_k[row]));
                 }
             }
 

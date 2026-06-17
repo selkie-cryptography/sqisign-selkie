@@ -151,7 +151,7 @@ impl<const N: usize> LeftIdeal<N> {
             );
             return None;
         }
-        let (index, rem) = num.div_rem(&den);
+        let (index, rem) = num.vt_div_rem(&den);
         if !bool::from(rem.is_zero()) {
             #[cfg(test)]
             eprintln!(
@@ -165,7 +165,7 @@ impl<const N: usize> LeftIdeal<N> {
 
         // A degenerate (zero-covolume) lattice is not a valid ideal.
         // Reject explicitly so callers don't inherit `self.norm = 0`
-        // and panic on downstream `div_rem` by the stored norm.
+        // and panic on downstream `vt_div_rem` by the stored norm.
         if bool::from(index.is_zero()) {
             #[cfg(test)]
             eprintln!("[refresh_norm] degenerate lattice: [O:I] = 0");
@@ -178,7 +178,7 @@ impl<const N: usize> LeftIdeal<N> {
             #[cfg(test)]
             {
                 let sqr = n_sqrt.vt_mul(&n_sqrt);
-                let diff = index.ct_sub(&sqr);
+                let diff = index.vt_sub(&sqr);
                 eprintln!(
                     "[refresh_norm] index is not a perfect square: index bits={}, sqrt_floor bits={}, index-sqrt² bits={}, det_i bits={}, det_o bits={}, i_denom bits={}, o_denom bits={}",
                     index.bitsize(),
@@ -504,7 +504,7 @@ where
         for i in 0..4 {
             for j in 0..4 {
                 let traced = nrd.gram()[i][j].vt_mul(&two);
-                let (q, _rem) = traced.div_rem(&class_divisor);
+                let (q, _rem) = traced.vt_div_rem(&class_divisor);
                 class_gram[i][j] = q;
             }
         }
@@ -536,7 +536,7 @@ where
                 let mut alpha = [BigInt::<N>::ZERO; 4];
                 for (i, c_i) in c.iter().enumerate() {
                     for (k, alpha_k) in alpha.iter_mut().enumerate() {
-                        *alpha_k = alpha_k.ct_add(&c_i.vt_mul(&class_basis.cols()[i][k]));
+                        *alpha_k = alpha_k.vt_add(&c_i.vt_mul(&class_basis.cols()[i][k]));
                     }
                 }
 
@@ -559,19 +559,19 @@ where
                     let (b0, b1, b2, b3) = (&b[0], &b[1], &b[2], &b[3]);
                     [
                         a0.vt_mul(b0)
-                            .ct_sub(&a1.vt_mul(b1))
-                            .ct_sub(&p_n.vt_mul(&a2.vt_mul(b2).ct_add(&a3.vt_mul(b3)))),
+                            .vt_sub(&a1.vt_mul(b1))
+                            .vt_sub(&p_n.vt_mul(&a2.vt_mul(b2).vt_add(&a3.vt_mul(b3)))),
                         a0.vt_mul(b1)
-                            .ct_add(&a1.vt_mul(b0))
-                            .ct_add(&p_n.vt_mul(&a2.vt_mul(b3).ct_sub(&a3.vt_mul(b2)))),
+                            .vt_add(&a1.vt_mul(b0))
+                            .vt_add(&p_n.vt_mul(&a2.vt_mul(b3).vt_sub(&a3.vt_mul(b2)))),
                         a0.vt_mul(b2)
-                            .ct_add(&a2.vt_mul(b0))
-                            .ct_sub(&a1.vt_mul(b3))
-                            .ct_add(&a3.vt_mul(b1)),
+                            .vt_add(&a2.vt_mul(b0))
+                            .vt_sub(&a1.vt_mul(b3))
+                            .vt_add(&a3.vt_mul(b1)),
                         a0.vt_mul(b3)
-                            .ct_add(&a3.vt_mul(b0))
-                            .ct_add(&a1.vt_mul(b2))
-                            .ct_sub(&a2.vt_mul(b1)),
+                            .vt_add(&a3.vt_mul(b0))
+                            .vt_add(&a1.vt_mul(b2))
+                            .vt_sub(&a2.vt_mul(b1)),
                     ]
                 };
 
@@ -691,11 +691,11 @@ where
                 let mut canonical_basis = hnf_basis;
                 for row in 0..4 {
                     for col in 0..4 {
-                        let (q, _) = canonical_basis[row][col].div_rem(&g_denom);
+                        let (q, _) = canonical_basis[row][col].vt_div_rem(&g_denom);
                         canonical_basis[row][col] = q;
                     }
                 }
-                let (canonical_denom, _) = o_alpha_denom.div_rem(&g_denom);
+                let (canonical_denom, _) = o_alpha_denom.vt_div_rem(&g_denom);
 
                 self.lattice = HnfLattice {
                     basis: canonical_basis,

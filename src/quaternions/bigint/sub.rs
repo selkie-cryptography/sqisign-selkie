@@ -45,6 +45,31 @@ impl<const N: usize> BigInt<N> {
         let neg_rhs = rhs.wrapping_neg();
         self.ct_add(&neg_rhs)
     }
+
+    /// Variable-time-permitted signed subtraction: returns exactly what
+    /// [`ct_sub`](Self::ct_sub) does, but under the `vartime` feature
+    /// routes through [`vt_add`](Self::vt_add) so the length-bounded
+    /// path applies. Without the feature it *is* `ct_sub`.
+    ///
+    /// Use only where constant-time is not required -- the `main`
+    /// track's quaternion and lattice arithmetic. On the constant-time
+    /// `next` build (feature off) every call site compiles to `ct_sub`.
+    #[inline]
+    pub fn vt_sub(&self, rhs: &Self) -> Self {
+        #[cfg(not(feature = "vartime"))]
+        {
+            self.ct_sub(rhs)
+        }
+
+        #[cfg(feature = "vartime")]
+        {
+            // `wrapping_neg` only flips the sign bit (and re-canonicalizes
+            // zero), leaving the magnitude limbs untouched, so the negated
+            // operand has the same effective length and vt_add's gate and
+            // short path apply unchanged.
+            self.vt_add(&rhs.wrapping_neg())
+        }
+    }
 }
 
 impl<const N: usize> Sub for BigInt<N> {

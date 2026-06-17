@@ -95,13 +95,13 @@ impl LeftIdeal<4> {
 
         // nrd(δ) at BigInt<8> for precision.
         let (nrd_num, nrd_den) = delta.norm();
-        let (new_norm, rem) = nrd_num.div_rem(&nrd_den);
+        let (new_norm, rem) = nrd_num.vt_div_rem(&nrd_den);
         if !bool::from(rem.is_zero()) {
             return None;
         }
         // new_norm = nrd(δ), ideal norm = nrd(δ) / nrd(I)
         let norm_8: BigInt<8> = (*self.norm()).into();
-        let (equiv_norm_8, rem2) = new_norm.div_rem(&norm_8);
+        let (equiv_norm_8, rem2) = new_norm.vt_div_rem(&norm_8);
         if !bool::from(rem2.is_zero()) {
             return None;
         }
@@ -166,11 +166,11 @@ impl LeftIdeal<4> {
         let mut basis_4 = Matrix::<4>::ZERO;
         for row in 0..4 {
             for col in 0..4 {
-                let (q, _) = hnf_8[row][col].div_rem(&g);
+                let (q, _) = hnf_8[row][col].vt_div_rem(&g);
                 basis_4[row][col] = q.narrow_to::<4>()?;
             }
         }
-        let (denom_simplified, _) = product_denom.div_rem(&g);
+        let (denom_simplified, _) = product_denom.vt_div_rem(&g);
         let denom_4: BigInt<4> = denom_simplified.narrow_to()?;
 
         let result_lattice = HnfLattice::from(Lattice::new(basis_4, denom_4));
@@ -269,7 +269,7 @@ impl<const N: usize> LeftIdeal<N> {
         for i in 0..4 {
             for j in 0..4 {
                 let traced = nrd.gram()[i][j].vt_mul(&two_w);
-                let (q, _rem) = traced.div_rem(&class_divisor);
+                let (q, _rem) = traced.vt_div_rem(&class_divisor);
                 class_gram[i][j] = q;
             }
         }
@@ -282,7 +282,7 @@ impl<const N: usize> LeftIdeal<N> {
             for (j, cj) in c.iter().enumerate() {
                 let cj_big = BigInt::<W>::from_i64(*cj);
                 for (k, vk) in v.iter_mut().enumerate() {
-                    *vk = vk.ct_add(&cj_big.vt_mul(&cols_w[j][k]));
+                    *vk = vk.vt_add(&cj_big.vt_mul(&cols_w[j][k]));
                 }
             }
             v
@@ -293,7 +293,7 @@ impl<const N: usize> LeftIdeal<N> {
             let b2 = v[1].vt_mul(&v[1]);
             let c2 = v[2].vt_mul(&v[2]);
             let d2 = v[3].vt_mul(&v[3]);
-            a2.ct_add(&b2).ct_add(&p_w.vt_mul(&c2.ct_add(&d2)))
+            a2.vt_add(&b2).vt_add(&p_w.vt_mul(&c2.vt_add(&d2)))
         };
         // Collect the top-K shortest δ candidates (by nrd). When the
         // absolute shortest fails to produce an equivalent ideal
@@ -427,16 +427,16 @@ impl<const N: usize> LeftIdeal<N> {
                 p8.widen::<W>()
             };
             a.vt_mul(a)
-                .ct_add(&b.vt_mul(b))
-                .ct_add(&p_w.vt_mul(&c.vt_mul(c).ct_add(&d.vt_mul(d))))
+                .vt_add(&b.vt_mul(b))
+                .vt_add(&p_w.vt_mul(&c.vt_mul(c).vt_add(&d.vt_mul(d))))
         };
         let delta_nrd_den = denom_w.vt_mul(&denom_w);
-        let (new_norm_w, rem) = delta_nrd_num.div_rem(&delta_nrd_den);
+        let (new_norm_w, rem) = delta_nrd_num.vt_div_rem(&delta_nrd_den);
         if !bool::from(rem.is_zero()) {
             return None;
         }
         let self_norm_w: BigInt<W> = self.norm().widen::<W>();
-        let (equiv_norm_w, rem2) = new_norm_w.div_rem(&self_norm_w);
+        let (equiv_norm_w, rem2) = new_norm_w.vt_div_rem(&self_norm_w);
         if !bool::from(rem2.is_zero()) {
             return None;
         }
@@ -479,19 +479,19 @@ impl<const N: usize> LeftIdeal<N> {
             let (b0, b1, b2, b3) = (&b[0], &b[1], &b[2], &b[3]);
             [
                 a0.vt_mul(b0)
-                    .ct_sub(&a1.vt_mul(b1))
-                    .ct_sub(&p_w.vt_mul(&a2.vt_mul(b2).ct_add(&a3.vt_mul(b3)))),
+                    .vt_sub(&a1.vt_mul(b1))
+                    .vt_sub(&p_w.vt_mul(&a2.vt_mul(b2).vt_add(&a3.vt_mul(b3)))),
                 a0.vt_mul(b1)
-                    .ct_add(&a1.vt_mul(b0))
-                    .ct_add(&p_w.vt_mul(&a2.vt_mul(b3).ct_sub(&a3.vt_mul(b2)))),
+                    .vt_add(&a1.vt_mul(b0))
+                    .vt_add(&p_w.vt_mul(&a2.vt_mul(b3).vt_sub(&a3.vt_mul(b2)))),
                 a0.vt_mul(b2)
-                    .ct_add(&a2.vt_mul(b0))
-                    .ct_sub(&a1.vt_mul(b3))
-                    .ct_add(&a3.vt_mul(b1)),
+                    .vt_add(&a2.vt_mul(b0))
+                    .vt_sub(&a1.vt_mul(b3))
+                    .vt_add(&a3.vt_mul(b1)),
                 a0.vt_mul(b3)
-                    .ct_add(&a3.vt_mul(b0))
-                    .ct_add(&a1.vt_mul(b2))
-                    .ct_sub(&a2.vt_mul(b1)),
+                    .vt_add(&a3.vt_mul(b0))
+                    .vt_add(&a1.vt_mul(b2))
+                    .vt_sub(&a2.vt_mul(b1)),
             ]
         };
         let alpha_arr = [

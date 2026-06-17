@@ -144,13 +144,13 @@ impl EvenResponseKernel {
 
         let m_alpha = endo_e0.apply(&alpha_conj, TorsionExponent::try_from(r_rsp_val).ok()?)?;
         let modulus = BigInt::<4>::ONE << r_rsp_val;
-        let s0 = BigInt::<4>::from(*m_alpha.entry(0, 0)).ct_mod(&modulus);
-        let t0 = BigInt::<4>::from(*m_alpha.entry(1, 0)).ct_mod(&modulus);
+        let s0 = BigInt::<4>::from(*m_alpha.entry(0, 0)).vt_mod(&modulus);
+        let t0 = BigInt::<4>::from(*m_alpha.entry(1, 0)).vt_mod(&modulus);
         let g0 = s0.gcd(&t0);
         let g0_is_even = g0.as_limbs()[0] & 1 == 0;
         let (s, t) = if g0_is_even {
-            let s1 = BigInt::<4>::from(*m_alpha.entry(0, 1)).ct_mod(&modulus);
-            let t1 = BigInt::<4>::from(*m_alpha.entry(1, 1)).ct_mod(&modulus);
+            let s1 = BigInt::<4>::from(*m_alpha.entry(0, 1)).vt_mod(&modulus);
+            let t1 = BigInt::<4>::from(*m_alpha.entry(1, 1)).vt_mod(&modulus);
             (s1, t1)
         } else {
             (s0, t0)

@@ -1,6 +1,6 @@
 //! Euclidean division on [`BigInt<N>`][super::BigInt]:
-//! [`div_rem`][BigInt::div_rem], [`ct_mod`][BigInt::ct_mod],
-//! [`divides`][BigInt::divides], and the private
+//! [`vt_div_rem`][BigInt::vt_div_rem], [`vt_mod`][BigInt::vt_mod],
+//! [`vt_divides`][BigInt::vt_divides], and the private
 //! [`mag_div_rem`](BigInt::mag_div_rem) limb-level helper
 //! (Knuth Algorithm D).
 
@@ -18,6 +18,9 @@ impl<const N: usize> BigInt<N> {
     /// Knuth's Algorithm D; the sign-adjustment step is constant-time
     /// over its inputs.
     ///
+    /// The `vt_` prefix marks this as variable-time-permitted: it is not
+    /// constant-time, and its CT-not-guaranteed status is greppable.
+    ///
     /// # Panics
     ///
     /// Panics if `divisor` is zero.
@@ -25,13 +28,16 @@ impl<const N: usize> BigInt<N> {
     /// # Constant-time
     ///
     /// Variable-time on both operands' effective lengths and on the
-    /// at-most-one fix-up step inside the magnitude loop. `TODO(ct)`:
-    /// replace [`mag_div_rem`][Self::mag_div_rem] with the CT divider
-    /// from [Kouider et al.][ct-bigint] before any caller that operates
-    /// on secret-derived inputs is shipped.
+    /// at-most-one fix-up step inside the magnitude loop. With the
+    /// `vartime` feature on, the normalization shift is additionally
+    /// bounded to the dividend's effective length (byte-identical
+    /// output). `TODO(ct)`: a future constant-time `ct_div_rem` (with
+    /// `ct_mod` on top) will replace [`mag_div_rem`][Self::mag_div_rem]
+    /// with the CT divider from [Kouider et al.][ct-bigint] on the `next`
+    /// track, before any caller operating on secret-derived inputs ships.
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
-    pub fn div_rem(&self, divisor: &Self) -> (Self, Self) {
+    pub fn vt_div_rem(&self, divisor: &Self) -> (Self, Self) {
         assert!(!bool::from(divisor.is_zero()), "division by zero");
 
         // Compute unsigned division on magnitudes.
@@ -74,9 +80,11 @@ impl<const N: usize> BigInt<N> {
         )
     }
 
-    /// Returns `true` if `self` divides `other` evenly.
-    pub fn divides(&self, other: &Self) -> Choice {
-        let (_, r) = other.div_rem(self);
+    /// Returns a [`Choice`] set iff `self` divides `other` evenly.
+    ///
+    /// Variable-time: built on [`vt_div_rem`](Self::vt_div_rem).
+    pub fn vt_divides(&self, other: &Self) -> Choice {
+        let (_, r) = other.vt_div_rem(self);
         r.is_zero()
     }
 
@@ -130,20 +138,31 @@ impl<const N: usize> BigInt<N> {
         let mut u = [0u64; N];
         let mut u_hi: u64 = 0;
         let mut v = [0u64; N];
+
+        // Divisor normalization is already bounded to its n_b limbs.
+        if s == 0 {
+            v[..n_b].copy_from_slice(&b[..n_b]);
+        } else {
+            v[0] = b[0] << s;
+            for i in 1..n_b {
+                v[i] = (b[i] << s) | (b[i - 1] >> (64 - s));
+            }
+        }
+
+        // Dividend normalization: shift left by s into u, with the top
+        // shift-out in u_hi. Left full-width: a vartime len-bounded shift
+        // (loop 1..m_a) was tried and measured within noise -- the Knuth
+        // core below is already length-bounded and the [0u64; N] memset is
+        // irreducible at fixed width, so it is not worth a var-time opt on
+        // this CT-debt path.
         if s == 0 {
             u.copy_from_slice(a);
-            v[..n_b].copy_from_slice(&b[..n_b]);
         } else {
             u[0] = a[0] << s;
             for i in 1..N {
                 u[i] = (a[i] << s) | (a[i - 1] >> (64 - s));
             }
             u_hi = a[N - 1] >> (64 - s);
-
-            v[0] = b[0] << s;
-            for i in 1..n_b {
-                v[i] = (b[i] << s) | (b[i - 1] >> (64 - s));
-            }
         }
 
         let v_hi = v[n_b - 1];
@@ -238,8 +257,9 @@ impl<const N: usize> BigInt<N> {
         (q, r)
     }
 
-    /// Bit-by-bit long division — kept around as the constant-time
-    /// reference for div_rem until the CT pass replaces this.
+    /// Bit-by-bit long division - kept around as the constant-time
+    /// reference for the future `ct_div_rem` until the CT pass replaces
+    /// the variable-time `mag_div_rem`.
     #[cfg(any())]
     fn mag_div_rem_bitwise(a: &[u64; N], b: &[u64; N]) -> ([u64; N], [u64; N]) {
         let mut r = *a;

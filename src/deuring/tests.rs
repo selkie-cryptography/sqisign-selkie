@@ -140,7 +140,7 @@ fn c_ref_basis_cross_check() {
             0,
             [limbs[0], limbs[1], limbs[2], limbs[3], 0, 0, 0, 0],
         );
-        let plain = mont.ct_mul(&r_bw_inv).ct_mod(&p);
+        let plain = mont.ct_mul(&r_bw_inv).vt_mod(&p);
         let mut bytes = [0u8; 32];
         for i in 0..4 {
             bytes[i * 8..(i + 1) * 8].copy_from_slice(&plain.as_limbs()[i].to_le_bytes());
@@ -238,7 +238,7 @@ fn c_ref_all_bases_cross_check() {
             0,
             [limbs[0], limbs[1], limbs[2], limbs[3], 0, 0, 0, 0],
         );
-        let plain = mont.ct_mul(&r_bw_inv).ct_mod(&p);
+        let plain = mont.ct_mul(&r_bw_inv).vt_mod(&p);
         let mut bytes = [0u8; 32];
         for i in 0..4 {
             bytes[i * 8..(i + 1) * 8].copy_from_slice(&plain.as_limbs()[i].to_le_bytes());
