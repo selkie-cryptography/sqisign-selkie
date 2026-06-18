@@ -22,7 +22,7 @@ fn output_spans_inputs<const N: usize>(out: &[Vector<N>; 4], inputs: &[Vector<N>
     let adj = bo.adjugate();
     inputs.iter().all(|v| {
         let x = adj.eval(v);
-        (0..4).all(|c| bool::from(x[c].div_rem(&det).1.is_zero()))
+        (0..4).all(|c| bool::from(x[c].vt_div_rem(&det).1.is_zero()))
     })
 }
 
