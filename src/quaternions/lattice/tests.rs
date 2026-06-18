@@ -1240,7 +1240,7 @@ fn compact_product_spans_product_lattice_imbalanced() {
             let x = adj.eval(v);
             for c in 0..4 {
                 assert!(
-                    bool::from(x[c].div_rem(&det).1.is_zero()),
+                    bool::from(x[c].vt_div_rem(&det).1.is_zero()),
                     "compact_product output does not span product column {n}"
                 );
             }
