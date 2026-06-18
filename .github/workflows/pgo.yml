@@ -1,0 +1,114 @@
+name: PGO
+
+# Profile-guided optimization for the production (main-track) build.
+#
+# Regenerates the per-arch profile from a deterministic corpus, caches it
+# keyed on (arch, rustc version, source hash), and builds the release
+# artifact with -Cprofile-use. The profile is ~20 MB and keyed to the exact
+# LLVM/rustc version, so it is cached and regenerated, never committed --
+# the cache key invalidates on a toolchain or source change.
+#
+# The driver is .github/scripts/pgo-build.rs (instrument -> train on
+# `profile_sign all <seeds>` -> merge -> use). Measured byte-identical:
+# ~8-9% on keygen and sign, ~2% on verify (Apple M4).
+#
+# Only the x86_64 Linux target is built here: it is the deployment /
+# benchmark target (Fly runners; gungraun grades on x86). When an arm64
+# runner exists, add a matrix entry -- the cache key already keys on
+# runner.arch, and the driver resolves host rustflags from
+# .cargo/config.toml per triple.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'examples/profile_sign.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/config.toml'
+      - '.github/scripts/pgo-build.rs'
+      - '.github/workflows/pgo.yml'
+  pull_request:
+    branches: [main, next]
+    paths:
+      - 'src/**'
+      - 'examples/profile_sign.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/config.toml'
+      - '.github/scripts/pgo-build.rs'
+      - '.github/workflows/pgo.yml'
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: 'Training trajectories (perturbed seeds); ~100 saturates the hot frames, more is diminishing returns'
+        required: false
+        default: '100'
+
+concurrency:
+  group: pgo-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  pgo:
+    name: regenerate + profile-use build (x86_64)
+    runs-on: [self-hosted, fly, linux, perf-2x]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+
+      # llvm-tools provides llvm-profdata, which the driver runs to merge
+      # the raw counters into the profile.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+        with:
+          components: llvm-tools
+
+      - name: Resolve toolchain version
+        id: rustc
+        run: echo "version=$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      # The profile is reproducible from the deterministic corpus, so cache
+      # it rather than commit it. Key on (arch, rustc version, source hash):
+      # a change to the sources, the corpus example, the build flags, the
+      # driver, or the toolchain regenerates it. actions/cache saves the
+      # path at post-job on a miss.
+      - name: Cache PGO profile
+        id: pgo-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: target/pgo
+          key: >-
+            pgo-${{ runner.arch }}-rustc${{ steps.rustc.outputs.version }}-${{ hashFiles(
+              'src/**',
+              'examples/profile_sign.rs',
+              'Cargo.toml',
+              'Cargo.lock',
+              '.cargo/config.toml',
+              '.github/scripts/pgo-build.rs'
+            ) }}
+
+      - name: Build driver
+        run: env -u RUSTC_WRAPPER rustc -O .github/scripts/pgo-build.rs -o /tmp/pgo-build
+
+      - name: Resolved target, flags, profile path
+        run: /tmp/pgo-build flags
+
+      # Reuse the cached profile, or regenerate it on a miss, then build the
+      # release artifact with -Cprofile-use. This is the production PGO
+      # build; it shares the training feature set so the profile applies.
+      - name: Profile-use release build
+        run: /tmp/pgo-build build "${{ github.event.inputs.seeds || '100' }}"
+
+      # A/B the win on the low-noise runner: baseline vs PGO medians for
+      # keygen/sign/verify. Skipped on PRs to save runner time (the perf
+      # workflow already tracks bench medians); runs on push-to-main and
+      # manual dispatch.
+      - name: A/B baseline vs PGO
+        if: github.event_name != 'pull_request'
+        run: /tmp/pgo-build bench "${{ github.event.inputs.seeds || '100' }}"
