@@ -390,6 +390,41 @@ of the division and modular-reduction entry points to
 former \texttt{ct\_mod} name was a misnomer) landed; the normalization
 micro-optimization did not.
 
+\paragraph{Precomputed-reciprocal division (Moller--Granlund).}
+The Knuth quotient estimate in \texttt{mag\_div\_rem} divides the top two
+dividend limbs by the leading divisor limb; on aarch64 that $128/64$-bit
+step lowers to a \texttt{\_\_udivti3} libcall, not a single \texttt{udiv}.
+Replacing it with a Moller--Granlund precomputed $2/1$ reciprocal (one
+$128$-bit divide amortized over every quotient digit, then a
+multiply-based \texttt{div\_2by1} per digit) is byte-identical and, in
+isolation, $35\%$ faster on a wide ($512/192$-bit, six quotient limbs)
+division on an Apple M4.  But the reciprocal's own setup is itself one
+\texttt{\_\_udivti3}, so it pays only once the quotient is at least three
+limbs; the variant is gated on width and falls back to the direct divide
+below that.  At the full-protocol level it measured within run-to-run
+noise (key generation $-1.8\%$, signing $-1.2\%$): the hot divisions are
+narrow ($\mathtt{BigInt}\langle 4\rangle$ modulo a $192$--$256$-bit
+modulus, one or two quotient limbs), and division is not a dominant frame
+after Montgomery modular exponentiation (key generation) and MLLL
+(signing).  Correct and byte-identical, but banked rather than adopted as
+performance work.
+
+\paragraph{Apple SME outer-product integer multiply.}
+The Apple M4 implements SME and SME2 with $16$-bit integer outer products
+(\texttt{UMOPA}, \texttt{SME\_I16I32}) but no $64$-bit integer outer
+product, so a $64$-bit-limb schoolbook multiply must use a radix-$2^{16}$
+decomposition.  Measured on the M4: per call (streaming-mode round trip
+plus tile extract plus carry propagation) is $51\times$ slower than scalar
+Comba at $256$ bits and $11\times$ slower at $512$ bits; even the
+amortized best case (one \texttt{smstart}/\texttt{smstop} around many
+products) is $7\times$ slower at $512$ bits, because carry-propagating the
+$256$- or $1024$-entry partial-product matrix alone costs more than the
+entire scalar multiply.  Plain (non-streaming) SVE additionally traps with
+\texttt{SIGILL} under macOS, streaming mode clobbers the \texttt{FP}/NEON
+register state, the scattered call pattern is not batchable, and SME
+timing is uncharacterized for constant-time use.  SME targets large dense
+integer matrix multiply, not small fixed-size bignum.  No-go.
+
 \subsection{Next steps}
 \label{sec:next}
 
