@@ -96,6 +96,42 @@ fn vt_div_rem(bencher: divan::Bencher) {
     bencher.bench(|| divan::black_box(&a).vt_div_rem(divan::black_box(&b)));
 }
 
+// Multi-limb divisor: exercises the Knuth core (reciprocal q_hat path),
+// unlike `vt_div_rem` above whose single-limb divisor takes the fast path.
+#[divan::bench]
+fn vt_div_rem_multi_w4(bencher: divan::Bencher) {
+    let a = sample_a();
+    let b = modulus_192();
+    bencher.bench(|| divan::black_box(&a).vt_div_rem(divan::black_box(&b)));
+}
+
+// Wide dividend, ~192-bit divisor: ~5 quotient limbs, so ~5 per-limb
+// reciprocal divisions per call -- the case the q_hat reciprocal targets.
+#[divan::bench]
+fn vt_div_rem_multi_w8(bencher: divan::Bencher) {
+    let a = BigInt::<8>::from_limbs([
+        0xDEAD_BEEF_CAFE_BABE,
+        0x1234_5678_9ABC_DEF0,
+        0xFEDC_BA98_7654_3210,
+        0x0123_4567_89AB_CDEF,
+        0xA5A5_5A5A_3C3C_C3C3,
+        0x9999_8888_7777_6666,
+        0x0F0F_F0F0_1E1E_E1E1,
+        0x0000_1357_9BDF_2468,
+    ]);
+    let b = BigInt::<8>::from_limbs([
+        0xFFFF_FFFF_FFFF_FFC5,
+        0xFFFF_FFFF_FFFF_FFFF,
+        0xFFFF_FFFF_FFFF_FFFF,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ]);
+    bencher.bench(|| divan::black_box(&a).vt_div_rem(divan::black_box(&b)));
+}
+
 #[divan::bench]
 fn gcd(bencher: divan::Bencher) {
     let a = sample_a();
