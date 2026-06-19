@@ -24,7 +24,7 @@
 
 use aes::{
     Aes256Enc,
-    cipher::{Block, BlockEncrypt, KeyInit, generic_array::GenericArray},
+    cipher::{Block, BlockCipherEncrypt, KeyInit},
 };
 use rand_core::{CryptoRng, Error, RngCore};
 
@@ -94,7 +94,7 @@ impl Aes256CtrDrbg {
     /// (see [`Self::randombytes`]), use [`Self::update_with_cipher`] to
     /// reuse that schedule instead of expanding twice.
     fn update(&mut self, provided_data: Option<&[u8; SEEDLEN]>) {
-        let cipher = Aes256Enc::new(GenericArray::from_slice(&self.key));
+        let cipher = Aes256Enc::new((&self.key).into());
         self.update_with_cipher(&cipher, provided_data);
     }
 
@@ -104,7 +104,7 @@ impl Aes256CtrDrbg {
         let mut blocks = [Block::<Aes256Enc>::default(); SEEDLEN / BLOCKLEN];
         for block in &mut blocks {
             Self::increment_v(&mut self.v);
-            *block = *GenericArray::from_slice(&self.v);
+            *block = self.v.into();
         }
         cipher.encrypt_blocks(&mut blocks);
 
@@ -129,14 +129,14 @@ impl Aes256CtrDrbg {
         // `PAR` counter blocks per AES call so the backend's parallel
         // block pipeline is fed instead of one block at a time.
         const PAR: usize = 8;
-        let cipher = Aes256Enc::new(GenericArray::from_slice(&self.key));
+        let cipher = Aes256Enc::new((&self.key).into());
         let mut blocks = [Block::<Aes256Enc>::default(); PAR];
         let mut i = 0;
         while i < out.len() {
             let nblocks = (out.len() - i).div_ceil(BLOCKLEN).min(PAR);
             for block in &mut blocks[..nblocks] {
                 Self::increment_v(&mut self.v);
-                *block = *GenericArray::from_slice(&self.v);
+                *block = self.v.into();
             }
             cipher.encrypt_blocks(&mut blocks[..nblocks]);
             for block in &blocks[..nblocks] {
