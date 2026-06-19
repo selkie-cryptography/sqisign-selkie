@@ -81,6 +81,13 @@ RUN useradd -m -s /bin/bash runner \
 # `unzip` is needed for the AWS CLI v2 install below; the bundled
 # installer ships as a zip and the apt `awscli` package no longer
 # exists on noble (see comment on that RUN step).
+#
+# `libc6-dbg` ships glibc's debuginfo. Valgrind (built from source
+# below) must redirect `memcmp` in the stripped `ld-linux-x86-64.so.2`
+# at startup for the memcheck combination; without those debug symbols
+# the symbol is not found and valgrind fatal-errors before running
+# anything, silently turning every `tests/ctgrind.rs` run into a no-op
+# (no analysis, a vacuous "0 errors").
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
       biber \
@@ -90,6 +97,7 @@ RUN apt-get update \
       git \
       jq \
       latexmk \
+      libc6-dbg \
       libclang-dev \
       libicu-dev \
       libssl-dev \
