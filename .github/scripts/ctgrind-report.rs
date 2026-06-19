@@ -25,7 +25,12 @@ fn main() -> io::Result<()> {
     eprintln!("[ctgrind-report] building...");
     let status = Command::new("cargo")
         .args([
-            "test", "--test", "ctgrind", "--features", "expose-internals", "--no-run",
+            "test",
+            "--test",
+            "ctgrind",
+            "--features",
+            "expose-internals",
+            "--no-run",
         ])
         .status()
         .expect("failed to build");
@@ -60,13 +65,32 @@ fn main() -> io::Result<()> {
         test_names
     );
 
-    // Run each test individually under Valgrind.
+    // Run each test individually under Valgrind. Classify from three
+    // independent signals so a broken harness cannot masquerade as a clean
+    // pass (the historical failure mode: every test reported "0 errors"
+    // because no valgrind XML was produced, while a known variable-time
+    // path showed nothing):
+    //   * xml_ok      -- valgrind actually produced output (the XML root is
+    //                    present). Without it there is no CT verdict, only
+    //                    a vacuous "0 errors" from a missing file.
+    //   * test_ran_ok -- the test's own exit status. With
+    //                    `--error-exitcode=0` valgrind leaves the child exit
+    //                    code untouched, so this is the test pass/fail,
+    //                    independent of any memcheck findings.
+    //   * errors      -- count of memcheck `<error>` records (secret-
+    //                    dependent branches / addresses).
+    // On anything but a clean pass we dump the captured valgrind stderr and
+    // test stdout: no other tool runs valgrind on Apple Silicon, so the CI
+    // log is the only window into what actually happened.
     let mut results = Vec::new();
     let mut total_errors = 0;
+    let mut harness_broken = false;
 
     for name in &test_names {
         eprintln!("[ctgrind-report] running {name}...");
         let xml_file = format!("/tmp/ctgrind-{name}.xml");
+        let _ = fs::remove_file(&xml_file);
+
         let output = Command::new("valgrind")
             .args([
                 "--tool=memcheck",
@@ -83,21 +107,51 @@ fn main() -> io::Result<()> {
             .output()
             .expect("failed to run valgrind");
 
-        let errors = fs::read_to_string(&xml_file)
-            .ok()
-            .map(|xml| xml.matches("<error>").count())
-            .unwrap_or(0);
-
+        let xml = fs::read_to_string(&xml_file).unwrap_or_default();
+        let xml_ok = xml.contains("<valgrindoutput>");
+        let errors = xml.matches("<error>").count();
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let passed = stdout.contains("test result: ok");
-        let status = if errors == 0 && passed { "pass" } else { "fail" };
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let test_ran_ok = output.status.success() && stdout.contains("test result: ok");
+
+        let detail = if !xml_ok {
+            harness_broken = true;
+            "no-analysis"
+        } else if !test_ran_ok {
+            harness_broken = true;
+            "test-error"
+        } else if errors > 0 {
+            "leak"
+        } else {
+            "pass"
+        };
+        let status = if detail == "pass" { "pass" } else { "fail" };
 
         total_errors += errors;
         results.push((name.clone(), status.to_string(), errors));
-        eprintln!("[ctgrind-report]   {name}: {status} ({errors} errors)");
+
+        eprintln!(
+            "[ctgrind-report]   {name}: {detail} (errors={errors}, xml_ok={xml_ok}, test_exit={:?})",
+            output.status.code()
+        );
+        if detail != "pass" {
+            eprintln!(
+                "---- {name}: valgrind stderr (tail) ----\n{}",
+                tail(&stderr, 40)
+            );
+            eprintln!(
+                "---- {name}: test stdout (tail) ----\n{}",
+                tail(&stdout, 20)
+            );
+            eprintln!("----");
+        }
     }
 
-    let overall = if total_errors == 0 { "pass" } else { "fail" };
+    let overall = if total_errors == 0 && !harness_broken {
+        "pass"
+    } else {
+        "fail"
+    };
 
     // Write JSON.
     let out = io::stdout();
@@ -125,7 +179,29 @@ fn main() -> io::Result<()> {
     }
     writeln!(w, "  ]")?;
     writeln!(w, "}}")?;
+    // `process::exit` skips the BufWriter's drop, so flush the JSON first.
+    w.flush()?;
+    drop(w);
+
+    // A harness that cannot analyze -- no valgrind output, or a test that
+    // did not run cleanly -- must not pass silently as a vacuous "0
+    // errors". Fail loudly so the job goes red and the dumped output above
+    // shows why. (Detected leaks are reported but not gated here: which
+    // tests must be leak-free is track-specific, since signing is
+    // variable-time on `main`.)
+    if harness_broken {
+        eprintln!(
+            "[ctgrind-report] FAIL: a test produced no valgrind analysis or did not run cleanly"
+        );
+        std::process::exit(2);
+    }
     Ok(())
+}
+
+/// Returns the last `n` lines of `s`, for surfacing captured output.
+fn tail(s: &str, n: usize) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
 fn find_binary(prefix: &str) -> Option<String> {
@@ -184,7 +260,16 @@ fn iso8601_now() -> String {
     let md = [
         31,
         if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     let mut mo = 0;
     for &d in &md {
