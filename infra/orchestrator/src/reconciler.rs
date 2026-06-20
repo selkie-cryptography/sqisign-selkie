@@ -26,7 +26,7 @@ use anyhow::Result;
 use tracing::{info, warn};
 
 use crate::{
-    fly::{FlyClient, Machine, RunnerSizes},
+    fly::{FlyClient, Machine, RunnerSizes, SpawnOutcome},
     github::GitHubAppClient,
 };
 
@@ -47,8 +47,8 @@ pub struct Reconciler {
 }
 
 impl Reconciler {
-    /// Construct a reconciler polling `repo`'s queued `fly` jobs every
-    /// [`SWEEP_INTERVAL`].
+    /// Construct a reconciler polling `repo`'s queued `fly` jobs on a
+    /// fixed interval.
     pub fn new(github: GitHubAppClient, fly: FlyClient, sizes: RunnerSizes, repo: String) -> Self {
         Self {
             github,
@@ -123,8 +123,18 @@ impl Reconciler {
                 }
             };
             match self.fly.spawn_runner(size, &jit).await {
-                Ok(id) => {
+                Ok(SpawnOutcome::Spawned(id)) => {
                     info!(machine = ?id, job_id = job.id, job = %job.name, "reconciler spawned runner")
+                }
+                Ok(SpawnOutcome::AtCapacity) => {
+                    // The org is at its machine limit. Stop the sweep:
+                    // the remaining jobs stay queued on GitHub and the
+                    // next sweep drains them as finishing runners free
+                    // slots. Avoids hammering the API at the cap.
+                    info!(
+                        "reconciler at machine-limit capacity; deferring remaining jobs to next sweep"
+                    );
+                    break;
                 }
                 Err(e) => {
                     warn!(
