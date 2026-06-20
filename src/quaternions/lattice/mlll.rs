@@ -108,12 +108,12 @@ impl<const N: usize, const G: usize> Generators<N, G> {
         for i in 0..G {
             for j in i..G {
                 let scalar = cols[i][0]
-                    .ct_mul(&cols[j][0])
-                    .ct_add(&cols[i][1].ct_mul(&cols[j][1]));
+                    .vt_mul(&cols[j][0])
+                    .vt_add(&cols[i][1].vt_mul(&cols[j][1]));
                 let jk = cols[i][2]
-                    .ct_mul(&cols[j][2])
-                    .ct_add(&cols[i][3].ct_mul(&cols[j][3]));
-                let val = scalar.ct_add(&p.ct_mul(&jk));
+                    .vt_mul(&cols[j][2])
+                    .vt_add(&cols[i][3].vt_mul(&cols[j][3]));
+                let val = scalar.vt_add(&p.vt_mul(&jk));
 
                 gram[i][j] = val;
                 gram[j][i] = val;
@@ -297,12 +297,9 @@ impl<const N: usize, const G: usize> Generators<N, G> {
                         let (lo, hi) = cols.split_at_mut(kappa);
                         let old = &lo[i];
                         let tgt = &mut hi[0];
+                        let _ = (mu_bound, basis_bound);
                         for row in 0..4 {
-                            tgt[row] = tgt[row].ct_sub(&x.ct_mul_both_bounded(
-                                &old[row],
-                                mu_bound,
-                                basis_bound,
-                            ));
+                            tgt[row] = tgt[row].vt_sub(&x.vt_mul(&old[row]));
                         }
                     }
 
@@ -313,22 +310,22 @@ impl<const N: usize, const G: usize> Generators<N, G> {
                     // multiplying twice.
                     let mut prods = [BigInt::<N>::ZERO; G];
                     for (p, src) in prods.iter_mut().zip(gram[i].iter()) {
-                        *p = x.ct_mul_lhs_bounded(src, mu_bound);
+                        *p = x.vt_mul(src);
                     }
 
                     for (dst, p) in gram[kappa].iter_mut().zip(prods.iter()) {
-                        *dst = dst.ct_sub(p);
+                        *dst = dst.vt_sub(p);
                     }
 
                     // The m == κ entry recomputes from the just-updated G[κ][i],
                     // which folds in the x²·G[i][i] term of ‖b_κ - x·b_i‖².
                     for (m, row) in gram.iter_mut().enumerate() {
                         let upd = if m == kappa {
-                            x.ct_mul_lhs_bounded(&row[i], mu_bound)
+                            x.vt_mul(&row[i])
                         } else {
                             prods[m]
                         };
-                        row[kappa] = row[kappa].ct_sub(&upd);
+                        row[kappa] = row[kappa].vt_sub(&upd);
                     }
                 }
             }
