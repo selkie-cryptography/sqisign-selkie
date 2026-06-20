@@ -20,7 +20,7 @@ use axum::{
     routing::{get, post},
 };
 use orchestrator::{
-    fly::{Config, FlyClient, Machine},
+    fly::{Config, FlyClient, Machine, SpawnOutcome},
     github::{GitHubAppClient, WorkflowJobEvent, verify_webhook_signature},
     reaper::Reaper,
     reconciler::Reconciler,
@@ -243,9 +243,23 @@ async fn handle_queued(state: &Arc<AppState>, event: WorkflowJobEvent) -> axum::
     };
 
     match state.fly.spawn_runner(size, &jit).await {
-        Ok(id) => {
+        Ok(SpawnOutcome::Spawned(id)) => {
             info!(machine = ?id, job_id = event.workflow_job.id, "runner spawned");
             (StatusCode::OK, Json(serde_json::json!({"machine": id}))).into_response()
+        }
+        Ok(SpawnOutcome::AtCapacity) => {
+            // At the org machine limit. Leave the job queued on GitHub;
+            // the reconcile loop places it once a slot frees. Ack 200 so
+            // GitHub doesn't treat the delivery as failed.
+            info!(
+                job_id = event.workflow_job.id,
+                "at capacity; job left queued for reconcile loop"
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"queued": "at_capacity"})),
+            )
+                .into_response()
         }
         Err(e) => {
             error!(error = format!("{e:#}"), "failed to spawn Machine");

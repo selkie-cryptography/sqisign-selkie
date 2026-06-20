@@ -15,20 +15,8 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use tracing::{info, warn};
 
 const FLY_API_BASE: &str = "https://api.machines.dev/v1";
-
-/// Backoff between `spawn_runner` retries when Fly returns HTTP 422
-/// "machine limit". Total budget ~35 s across 4 attempts; the reaper
-/// destroys finishing runners every minute or two so capacity returns
-/// fast and stranding the GH workflow_job in `queued` is worse than
-/// waiting briefly here.
-const SPAWN_RETRY_DELAYS: &[Duration] = &[
-    Duration::from_secs(5),
-    Duration::from_secs(10),
-    Duration::from_secs(20),
-];
 
 /// Per-vCPU memory allowance applied when a size omits `memory_mb`.
 /// 2 GB is Fly's recommendation for general-purpose Rust builds and
@@ -271,14 +259,23 @@ impl FlyClient {
         }
     }
 
-    /// Spawn an ephemeral runner Machine.
+    /// Spawn an ephemeral runner Machine, or report the org is at its
+    /// machine limit.
     ///
     /// `jit_config` is the base64 JIT blob from
     /// [`crate::github::GitHubAppClient::mint_jit_config`], injected
     /// via the `JITCONFIG` env var. The Machine is created with
     /// `auto_destroy: true` so it self-destroys when the runner
     /// finishes its single job and exits.
-    pub async fn spawn_runner(&self, size: &MachineSize, jit_config: &str) -> Result<MachineId> {
+    ///
+    /// Returns [`SpawnOutcome::AtCapacity`] (not an error) on the machine-
+    /// limit 422 so the caller can defer the job to the reconcile loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on any other non-success response or a transport
+    /// failure.
+    pub async fn spawn_runner(&self, size: &MachineSize, jit_config: &str) -> Result<SpawnOutcome> {
         // Resolve `:latest` to a content-addressable digest here so the
         // Machine's recorded image digest matches what the reaper's
         // `resolve_latest_digest` returns. Without this, Fly's
@@ -324,57 +321,39 @@ impl FlyClient {
         };
 
         let url = format!("{FLY_API_BASE}/apps/{}/machines", self.app);
-        let max_attempts = SPAWN_RETRY_DELAYS.len() + 1;
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.api_token)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("send POST {url}"))?;
 
-        for attempt in 1..=max_attempts {
-            let resp = self
-                .http
-                .post(&url)
-                .bearer_auth(&self.api_token)
-                .json(&body)
-                .send()
-                .await
-                .with_context(|| format!("send POST {url} (attempt {attempt}/{max_attempts})"))?;
-
-            let status = resp.status();
-            if status.is_success() {
-                let parsed: SpawnMachineResponse =
-                    resp.json().await.context("parse Machines API response")?;
-                if attempt > 1 {
-                    info!(attempt, "machine create succeeded after retry");
-                }
-                return Ok(MachineId(parsed.id));
-            }
-
-            let body_text = resp
-                .text()
-                .await
-                .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
-
-            // Org-wide "machine limit" 422 is transient — the reaper
-            // frees capacity continuously. Bailing on the first hit
-            // strands the GH workflow_job in `queued`; retry instead.
-            // All other 4xx/5xx are surfaced immediately.
-            let is_machine_limit = status == reqwest::StatusCode::UNPROCESSABLE_ENTITY
-                && body_text.contains("machine limit");
-
-            if !is_machine_limit || attempt == max_attempts {
-                anyhow::bail!(
-                    "POST {url} returned HTTP {status} \
-                     (attempt {attempt}/{max_attempts}); body: {body_text}"
-                );
-            }
-
-            let delay = SPAWN_RETRY_DELAYS[attempt - 1];
-            warn!(
-                attempt,
-                next_retry_in_s = delay.as_secs(),
-                "machine limit hit, will retry"
-            );
-            tokio::time::sleep(delay).await;
+        let status = resp.status();
+        if status.is_success() {
+            let parsed: SpawnMachineResponse =
+                resp.json().await.context("parse Machines API response")?;
+            return Ok(SpawnOutcome::Spawned(MachineId(parsed.id)));
         }
 
-        unreachable!("retry loop exits via return or bail")
+        let body_text = resp
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
+
+        // Org-wide "machine limit" 422 is a soft, expected condition: the
+        // caller leaves the job queued and the reconcile loop places it
+        // once a finishing runner frees a slot. No in-place retry -- that
+        // burned ~35 s per job and hammered the API under saturation. All
+        // other 4xx/5xx are real errors.
+        if status == reqwest::StatusCode::UNPROCESSABLE_ENTITY
+            && body_text.contains("machine limit")
+        {
+            return Ok(SpawnOutcome::AtCapacity);
+        }
+
+        anyhow::bail!("POST {url} returned HTTP {status}; body: {body_text}")
     }
 
     /// List every Machine in the bound app. Used by the reaper to
@@ -490,6 +469,23 @@ impl FlyClient {
 /// Opaque Machine identifier returned by the Fly Machines API.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MachineId(pub String);
+
+/// Outcome of a [`FlyClient::spawn_runner`] attempt.
+///
+/// `AtCapacity` is the org-wide machine-limit 422 surfaced as a soft,
+/// expected condition rather than an error: the caller leaves the job
+/// queued on GitHub and lets the reconcile loop place it once a runner
+/// finishes and frees a slot. (The limit is soft -- Fly tolerates some
+/// overage, e.g. 107/100 -- so the 422 itself, not a hardcoded number,
+/// is the capacity signal.)
+#[derive(Debug)]
+pub enum SpawnOutcome {
+    /// A Machine was created.
+    Spawned(MachineId),
+
+    /// The org is at its machine limit; no Machine was created.
+    AtCapacity,
+}
 
 /// Subset of `GET /v1/apps/<app>/machines` response fields the reaper
 /// needs. The full payload has many more fields; deserializing only
