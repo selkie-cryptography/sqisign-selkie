@@ -30,6 +30,12 @@ use crate::{
     github::GitHubAppClient,
 };
 
+/// Seconds between reconcile sweeps. A fixed implementation detail, not
+/// an operator knob: polling GitHub once a minute is negligible API load,
+/// and the loop is a backstop to the webhook path, not the primary spawn
+/// trigger. Promote to `runners.toml` only if a real need to tune arises.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Background loop that spawns runners for queued jobs the webhook path
 /// missed or that lost their runner to job-stealing.
 #[derive(Debug)]
@@ -38,25 +44,17 @@ pub struct Reconciler {
     fly: FlyClient,
     sizes: RunnerSizes,
     repo: String,
-    interval: Duration,
 }
 
 impl Reconciler {
-    /// Construct a reconciler waking every `interval`, polling `repo`'s
-    /// queued `fly` jobs.
-    pub fn new(
-        github: GitHubAppClient,
-        fly: FlyClient,
-        sizes: RunnerSizes,
-        repo: String,
-        interval: Duration,
-    ) -> Self {
+    /// Construct a reconciler polling `repo`'s queued `fly` jobs every
+    /// [`SWEEP_INTERVAL`].
+    pub fn new(github: GitHubAppClient, fly: FlyClient, sizes: RunnerSizes, repo: String) -> Self {
         Self {
             github,
             fly,
             sizes,
             repo,
-            interval,
         }
     }
 
@@ -64,7 +62,7 @@ impl Reconciler {
     /// continues.
     pub async fn run(self) {
         info!(
-            interval_s = self.interval.as_secs(),
+            interval_s = SWEEP_INTERVAL.as_secs(),
             repo = %self.repo,
             "reconciler started"
         );
@@ -72,7 +70,7 @@ impl Reconciler {
             if let Err(e) = self.sweep().await {
                 warn!(error = format!("{e:#}"), "reconciler sweep failed");
             }
-            tokio::time::sleep(self.interval).await;
+            tokio::time::sleep(SWEEP_INTERVAL).await;
         }
     }
 
@@ -90,6 +88,9 @@ impl Reconciler {
             .filter_map(Machine::spawned_job_id)
             .collect();
 
+        // No per-sweep cap: spawns are already bounded by the dedup above
+        // (only queued jobs lacking a runner) and, in turn, by Fly's
+        // org-wide machine limit, which `spawn_runner` backs off on.
         let missing: Vec<_> = queued
             .into_iter()
             .filter(|j| !served.contains(&j.id))

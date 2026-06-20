@@ -48,34 +48,26 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(AppState::from_env().context("loading env")?);
 
-    // Reaper tunables come from the config file; env vars still
-    // override at runtime for emergency tuning without a redeploy.
-    let reaper_interval = env_secs(
-        "REAPER_SWEEP_INTERVAL_SECS",
-        state.config.reaper.sweep_interval_secs,
-    );
-    let reaper_max_age = env_secs("REAPER_MAX_AGE_SECS", state.config.reaper.max_age_secs);
+    // Reaper tunables come from `runners.toml`, edited and redeployed
+    // like any other config (config changes always ride a redeploy, so a
+    // runtime env override would buy nothing).
+    let reaper_interval = Duration::from_secs(state.config.reaper.sweep_interval_secs);
+    let reaper_max_age = Duration::from_secs(state.config.reaper.max_age_secs);
     tokio::spawn(Reaper::new(state.fly.clone(), reaper_interval, reaper_max_age).run());
 
-    // Reconcile loop: recovers queued jobs the webhook path missed or
-    // that lost their runner to job-stealing. Off by default while the
-    // approach is validated; flip `RECONCILE_ENABLED=1` to enable without
-    // a code change.
-    if std::env::var("RECONCILE_ENABLED").as_deref() == Ok("1") {
-        let interval = env_secs("RECONCILE_INTERVAL_SECS", 60);
-        tokio::spawn(
-            Reconciler::new(
-                state.github.clone(),
-                state.fly.clone(),
-                state.config.sizes.clone(),
-                state.repo.clone(),
-                interval,
-            )
-            .run(),
-        );
-    } else {
-        info!("reconciler disabled (set RECONCILE_ENABLED=1 to enable)");
-    }
+    // Reconcile loop: a backstop alongside the webhook path that recovers
+    // queued jobs the webhook missed or that lost their runner to
+    // job-stealing. Always on, like the reaper. Spawns are bounded by the
+    // dedup against live Machines and Fly's machine limit.
+    tokio::spawn(
+        Reconciler::new(
+            state.github.clone(),
+            state.fly.clone(),
+            state.config.sizes.clone(),
+            state.repo.clone(),
+        )
+        .run(),
+    );
 
     let app = Router::new()
         .route("/healthz", get(healthz))
@@ -141,23 +133,6 @@ impl AppState {
 
 fn require_env(name: &str) -> Result<String> {
     std::env::var(name).map_err(|_| anyhow::anyhow!("missing required env var: {name}"))
-}
-
-/// Reads an optional integer env var with a fallback default, in
-/// seconds. Logs and falls back to the default on a parse error so a
-/// typo in a Fly secret never takes the orchestrator down.
-fn env_secs(name: &str, default: u64) -> Duration {
-    let secs = match std::env::var(name) {
-        Ok(raw) => match raw.parse::<u64>() {
-            Ok(n) => n,
-            Err(e) => {
-                warn!(name, raw, error = %e, "invalid env var, using default");
-                default
-            }
-        },
-        Err(_) => default,
-    };
-    Duration::from_secs(secs)
 }
 
 async fn healthz() -> &'static str {
