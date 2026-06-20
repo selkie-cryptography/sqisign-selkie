@@ -275,7 +275,7 @@ impl EndomorphismAction {
         let reduce = |c: &BigInt<20>| -> Scalar {
             let r = c.vt_mod(&modulus_w);
             let r = if bool::from(r.is_negative()) {
-                r.ct_add(&modulus_w)
+                r.vt_add(&modulus_w)
             } else {
                 r
             };

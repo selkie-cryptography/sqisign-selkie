@@ -36,7 +36,7 @@ impl<const N: usize> BigInt<N> {
             if limb_idx < N {
                 result.limbs[limb_idx] |= 1u64 << bit_idx;
                 // Check if result^2 > self.
-                let sq = result.ct_mul(&result);
+                let sq = result.vt_mul(&result);
                 if sq > *self {
                     // Clear the bit.
                     result.limbs[limb_idx] &= !(1u64 << bit_idx);

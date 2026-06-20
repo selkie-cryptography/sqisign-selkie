@@ -329,7 +329,7 @@ impl<const N: usize> MontReducer<N> {
     /// back via REDC with no truncation. Result is canonical, in
     /// `[0, n)`.
     ///
-    /// Unlike `a.ct_mul(&b).vt_mod(n)` this is correct whenever `a` and
+    /// Unlike `a.vt_mul(&b).vt_mod(n)` this is correct whenever `a` and
     /// `b` fit in `N` limbs (and are `< n`), with no `64*N >= 2*bits`
     /// floor: it is what lets [`modular_sqrt`](BigInt::modular_sqrt) run
     /// its Tonelli-Shanks multiplies at the candidate's own width rather
@@ -620,12 +620,12 @@ impl<const N: usize> BigInt<N> {
         let mut i = bs;
         while i > 0 {
             i -= 1;
-            result = result.ct_mul(&result).vt_mod(modulus);
+            result = result.vt_mul(&result).vt_mod(modulus);
             let limb_idx = (i / 64) as usize;
             let bit_idx = i % 64;
             let bit = (exp.limbs[limb_idx] >> bit_idx) & 1;
             if bit == 1 {
-                result = result.ct_mul(base).vt_mod(modulus);
+                result = result.vt_mul(base).vt_mod(modulus);
             }
         }
         result
@@ -719,7 +719,7 @@ impl<const N: usize> BigInt<N> {
         let mul_mod = |a: &Self, b: &Self| -> Self {
             match &ctx {
                 Some(c) => c.mul_mod(a, b),
-                None => a.ct_mul(b).vt_mod(m),
+                None => a.vt_mul(b).vt_mod(m),
             }
         };
 
@@ -728,7 +728,7 @@ impl<const N: usize> BigInt<N> {
 
         // m ≡ 3 (mod 4): return n^((m+1)/4) mod m.
         if m_mod4 == 3 {
-            let exp = m.ct_add(&Self::ONE) >> 2;
+            let exp = m.vt_add(&Self::ONE) >> 2;
             let r = pow(&n_mod, &exp);
             let check = mul_mod(&r, &r);
             return if check == n_mod { Some(r) } else { None };
@@ -737,16 +737,16 @@ impl<const N: usize> BigInt<N> {
         // m ≡ 5 (mod 8):
         if m_mod8 == 5 {
             // Check if n^((m-1)/4) ≡ 1 mod m.
-            let exp_check = m.ct_sub(&Self::ONE) >> 2;
+            let exp_check = m.vt_sub(&Self::ONE) >> 2;
             let test = pow(&n_mod, &exp_check);
             if test == Self::ONE {
                 // return n^((m+3)/8) mod m
-                let exp = m.ct_add(&Self::THREE) >> 3;
+                let exp = m.vt_add(&Self::THREE) >> 3;
                 return Some(pow(&n_mod, &exp));
             } else {
                 // return 2n(4n)^((m-5)/8) mod m
                 let four_n = mul_mod(&n_mod, &Self::from_u64(4));
-                let exp = m.ct_sub(&Self::from_u64(5)) >> 3;
+                let exp = m.vt_sub(&Self::from_u64(5)) >> 3;
                 let base = pow(&four_n, &exp);
                 let r = mul_mod(&mul_mod(&Self::TWO, &n_mod), &base);
                 let check = mul_mod(&r, &r);
@@ -755,19 +755,19 @@ impl<const N: usize> BigInt<N> {
         }
 
         // General Tonelli-Shanks (m ≡ 1 mod 8).
-        let e = m.ct_sub(&Self::ONE).two_adic_val();
-        let q = m.ct_sub(&Self::ONE) >> e;
+        let e = m.vt_sub(&Self::ONE).two_adic_val();
+        let q = m.vt_sub(&Self::ONE) >> e;
 
         // Find a non-residue w.
         let mut w = Self::TWO;
         loop {
-            let exp = m.ct_sub(&Self::ONE) >> 1;
+            let exp = m.vt_sub(&Self::ONE) >> 1;
             let ls = pow(&w, &exp);
             // Legendre symbol: if ls == m - 1, then w is a non-residue.
-            if ls == m.ct_sub(&Self::ONE) {
+            if ls == m.vt_sub(&Self::ONE) {
                 break;
             }
-            w = w.ct_add(&Self::ONE);
+            w = w.vt_add(&Self::ONE);
             // Safety bound.
             if w > *m {
                 return None;
@@ -776,12 +776,12 @@ impl<const N: usize> BigInt<N> {
 
         let mut z = pow(&w, &q);
         let mut y = pow(&n_mod, &q);
-        let mut x = pow(&n_mod, &(q.ct_add(&Self::ONE) >> 1));
+        let mut x = pow(&n_mod, &(q.vt_add(&Self::ONE) >> 1));
         let mut f = Self::from_u64(1u64 << (e - 2));
 
         for _i in 0..e.saturating_sub(1) {
             let b = pow(&y, &f);
-            if b == m.ct_sub(&Self::ONE) {
+            if b == m.vt_sub(&Self::ONE) {
                 // b ≡ -1 mod m
                 x = mul_mod(&x, &z);
                 y = mul_mod(&mul_mod(&y, &z), &z);
@@ -828,7 +828,7 @@ impl<const N: usize> BigInt<N> {
         if bool::from(a_mod.is_zero()) {
             return 0;
         }
-        let exp = p.ct_sub(&Self::ONE) >> 1;
+        let exp = p.vt_sub(&Self::ONE) >> 1;
         let result = Self::pow_mod(&a_mod, &exp, p);
         if result == Self::ONE { 1 } else { -1 }
     }
@@ -885,7 +885,7 @@ mod tests {
         let xw: BigInt<N2> = x_red.widen();
         let yw: BigInt<N2> = y_red.widen();
         let nw: BigInt<N2> = n.widen();
-        let via_oracle = (xw.ct_mul(&yw).vt_mod(&nw))
+        let via_oracle = (xw.vt_mul(&yw).vt_mod(&nw))
             .narrow_to::<N>()
             .expect("product mod n < n < 2^(64N) fits in N limbs");
         assert_eq!(via_mont, via_oracle);

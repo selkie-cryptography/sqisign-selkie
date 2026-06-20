@@ -36,7 +36,7 @@ impl<const N: usize> BigInt<N> {
     /// Debug-asserts `a ≤ b`.
     pub fn rand_interval<R: RngCore>(rng: &mut R, a: &Self, b: &Self) -> Self {
         debug_assert!(a <= b, "rand_interval: a must be ≤ b");
-        let bmina = b.ct_sub(a);
+        let bmina = b.vt_sub(a);
         if bool::from(bmina.is_zero()) {
             return *a;
         }
@@ -76,7 +76,7 @@ impl<const N: usize> BigInt<N> {
             }
             let val = Self::from_limbs(limbs);
             if val <= bmina {
-                return val.ct_add(a);
+                return val.vt_add(a);
             }
         }
     }
