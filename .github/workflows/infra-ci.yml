@@ -201,10 +201,21 @@ jobs:
         # builder-app provisioning fails `unauthorized`. The
         # laptop `ops` path works because a personal Fly token has
         # broader scope; CI sticks with Depot.
+        #
+        # `--no-cache`: Depot's persistent layer cache served a
+        # stale `apt-get install` layer when the package list
+        # changed (a `libc6-dbg` addition built but never landed in
+        # the image), and the weekly OS-patch run needs a fresh
+        # `apt-get update` to actually pull security updates rather
+        # than reuse a months-old cached layer. The base job is rare
+        # (Dockerfile.base edits / weekly / dispatch), so paying the
+        # full ~10-15 min rebuild for guaranteed-correct packages is
+        # the right trade.
         run: |
           flyctl deploy --build-only --app sqisign-infra-runners \
             --config fly.base.toml \
             --image-label base \
+            --no-cache \
             --push
       - name: Resolve pushed :base digest
         id: digest
@@ -310,12 +321,23 @@ jobs:
 
   # Deploy the orchestrator last, after any freshly-pushed
   # `:latest` it'll spawn Machines from.
+  #
+  # Redeploy on a runner-image change too, not just orchestrator-code
+  # changes: the orchestrator resolves `:latest` to a digest at deploy
+  # time and spawns from that pinned digest (its reaper keeps the fleet on
+  # it), so a new `:latest` is ignored until the orchestrator redeploys.
+  # Without this, a Dockerfile.base/runtime edit builds and pushes a new
+  # image that the running fleet never picks up.
   deploy-orchestrator:
     name: Deploy orchestrator
     needs: [build, changes, deploy-runners-image]
     if: |
       !failure() && !cancelled() && (
-        (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.orchestrator == 'true') ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main' && (
+          needs.changes.outputs.orchestrator == 'true' ||
+          needs.changes.outputs.runners == 'true' ||
+          needs.changes.outputs.runners_base == 'true'
+        )) ||
         github.event_name == 'workflow_dispatch'
       )
     runs-on: [self-hosted, fly, linux, x64]

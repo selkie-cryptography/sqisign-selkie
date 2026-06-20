@@ -147,10 +147,21 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let overall = if total_errors == 0 && !harness_broken {
-        "pass"
-    } else {
+    // Verdict. A broken harness fails everywhere. A secret-path timing
+    // finding fails the job everywhere except `main`, which is allowed to
+    // be variable-time (matching the C reference); every other branch is
+    // held to constant-time. No branch allowlist -- `main` is the sole
+    // exemption.
+    let on_main = is_main_branch();
+    let secret_leaks: Vec<&str> = results
+        .iter()
+        .filter(|(name, _, errs)| *errs > 0 && name.ends_with("_secret_independent"))
+        .map(|(name, _, _)| name.as_str())
+        .collect();
+    let overall = if harness_broken || (!on_main && !secret_leaks.is_empty()) {
         "fail"
+    } else {
+        "pass"
     };
 
     // Write JSON.
@@ -185,17 +196,44 @@ fn main() -> io::Result<()> {
 
     // A harness that cannot analyze -- no valgrind output, or a test that
     // did not run cleanly -- must not pass silently as a vacuous "0
-    // errors". Fail loudly so the job goes red and the dumped output above
-    // shows why. (Detected leaks are reported but not gated here: which
-    // tests must be leak-free is track-specific, since signing is
-    // variable-time on `main`.)
+    // errors"; that fails everywhere. A secret-path timing finding fails
+    // everywhere except `main`, which is allowed to be variable-time.
     if harness_broken {
         eprintln!(
             "[ctgrind-report] FAIL: a test produced no valgrind analysis or did not run cleanly"
         );
+    }
+    if !secret_leaks.is_empty() {
+        if on_main {
+            eprintln!(
+                "[ctgrind-report] note: timing findings {secret_leaks:?} tolerated on main (variable-time, matches the C reference)"
+            );
+        } else {
+            eprintln!(
+                "[ctgrind-report] FAIL: constant-time leak on a non-main branch: {secret_leaks:?}"
+            );
+        }
+    }
+    if overall == "fail" {
         std::process::exit(2);
     }
     Ok(())
+}
+
+/// Whether the change under test is `main`, the sole branch where a
+/// secret-path timing finding is tolerated (it matches the variable-time
+/// C reference); every other branch is held to constant-time. For a pull
+/// request this is the source branch (`GITHUB_HEAD_REF`), so a `next ->
+/// main` PR is still gated (its source is `next`, not `main`); for a push
+/// it is the pushed ref. Anything else (unset env, detached HEAD) is
+/// treated as not-main -- constant-time-required, the safe default.
+fn is_main_branch() -> bool {
+    let branch = if env::var("GITHUB_EVENT_NAME").as_deref() == Ok("pull_request") {
+        env::var("GITHUB_HEAD_REF").unwrap_or_default()
+    } else {
+        env::var("GITHUB_REF_NAME").unwrap_or_default()
+    };
+    branch == "main"
 }
 
 /// Returns the last `n` lines of `s`, for surfacing captured output.
