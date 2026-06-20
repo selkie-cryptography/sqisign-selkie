@@ -252,17 +252,9 @@ impl<const N: usize, const G: usize> Generators<N, G> {
         // |μ_{κ,i}| <= ‖b_κ‖/‖b_i*‖ <= √B / (δ̄ - 1/4)^((G-1)/2), where B is
         // the largest-input-norm² bound that sizes W = N (so B < 2^(N·64),
         // √B < 2^(N·32)), the prefix is LLL-reduced (so ‖b_i*‖ is bounded
-        // below), and ‖b_ζ‖ >= 1 (nonzero integer vector). Hence x fits in
-        // N/2 + 1 limbs regardless of the secret operand values, so the
-        // x·(·) products below run at a fixed N/2 + 2 limb width. This is a
-        // data-independent bound (a function of N and the L² constants, not
-        // of x), so it does not branch on secret magnitudes.
-        let mu_bound = N / 2 + 2;
-
-        // Each basis coordinate is equally narrow: |b[row]| <= ‖b‖ =
-        // √(gram[·][·]) <= √B < 2^(N·32), i.e. at most N/2 limbs. So the
-        // x·b_i products in the column update bound *both* operands.
-        let basis_bound = N / 2 + 1;
+        // below), and ‖b_ζ‖ >= 1 (nonzero integer vector). So x fits in N/2
+        // + 1 limbs and each basis coordinate in N/2 limbs; vt_mul's adaptive
+        // mag_mul_short path exploits this whenever it fires.
 
         loop {
             // Cholesky GSO of b_κ against the live prefix (Alg. 8 step 2).
@@ -297,7 +289,6 @@ impl<const N: usize, const G: usize> Generators<N, G> {
                         let (lo, hi) = cols.split_at_mut(kappa);
                         let old = &lo[i];
                         let tgt = &mut hi[0];
-                        let _ = (mu_bound, basis_bound);
                         for row in 0..4 {
                             tgt[row] = tgt[row].vt_sub(&x.vt_mul(&old[row]));
                         }
