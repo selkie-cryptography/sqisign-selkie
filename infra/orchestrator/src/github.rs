@@ -82,6 +82,89 @@ impl GitHubAppClient {
         Ok(resp.encoded_jit_config)
     }
 
+    /// Lists the currently `queued` workflow jobs in `repo` whose labels
+    /// include `fly` (the ones this orchestrator is responsible for).
+    ///
+    /// Used by the reconcile loop to recover from missed/lost `queued`
+    /// webhooks and from runner job-stealing (an ephemeral runner spawned
+    /// for job A legitimately takes a different label-matching job B,
+    /// leaving A queued with no runner). Walks the repo's `queued` runs,
+    /// then the jobs of each, since GitHub exposes no org-wide
+    /// list-queued-jobs endpoint. Low-volume repo, so the runs->jobs walk
+    /// is cheap; revisit with pagination if job volume grows.
+    pub async fn list_queued_fly_jobs(&self, repo: &str) -> Result<Vec<QueuedJob>> {
+        let token = self.installation_token().await?;
+
+        #[derive(Deserialize)]
+        struct RunsResp {
+            workflow_runs: Vec<Run>,
+        }
+        #[derive(Deserialize)]
+        struct Run {
+            id: u64,
+        }
+        #[derive(Deserialize)]
+        struct JobsResp {
+            jobs: Vec<Job>,
+        }
+        #[derive(Deserialize)]
+        struct Job {
+            id: u64,
+            name: String,
+            status: String,
+            labels: Vec<String>,
+        }
+
+        let runs: RunsResp = self
+            .http
+            .get(format!(
+                "https://api.github.com/repos/{}/{repo}/actions/runs?status=queued&per_page=100",
+                self.org
+            ))
+            .bearer_auth(&token)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "sqisign-infra-orchestrator")
+            .send()
+            .await
+            .context("GET /actions/runs?status=queued")?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        let mut queued = Vec::new();
+        for run in runs.workflow_runs {
+            let jobs: JobsResp = self
+                .http
+                .get(format!(
+                    "https://api.github.com/repos/{}/{repo}/actions/runs/{}/jobs?filter=latest&per_page=100",
+                    self.org, run.id
+                ))
+                .bearer_auth(&token)
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("User-Agent", "sqisign-infra-orchestrator")
+                .send()
+                .await
+                .with_context(|| format!("GET /actions/runs/{}/jobs", run.id))?
+                .error_for_status()?
+                .json()
+                .await?;
+
+            for job in jobs.jobs {
+                if job.status == "queued" && job.labels.iter().any(|l| l == "fly") {
+                    queued.push(QueuedJob {
+                        id: job.id,
+                        name: job.name,
+                        labels: job.labels,
+                    });
+                }
+            }
+        }
+
+        Ok(queued)
+    }
+
     /// Mint a ~1 hr installation access token by signing a JWT with
     /// the App's private key and exchanging it via the App API.
     async fn installation_token(&self) -> Result<String> {
@@ -165,6 +248,16 @@ pub struct WorkflowJobEvent {
 
 #[derive(Debug, Deserialize)]
 pub struct WorkflowJob {
+    pub id: u64,
+    pub name: String,
+    pub labels: Vec<String>,
+}
+
+/// A currently-queued `fly` job, from polling the Actions API rather
+/// than a webhook. Mirrors the fields of [`WorkflowJob`] the spawn path
+/// needs (id for the runner-name prefix, labels for sizing/JIT).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedJob {
     pub id: u64,
     pub name: String,
     pub labels: Vec<String>,

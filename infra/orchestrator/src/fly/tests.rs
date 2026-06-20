@@ -190,3 +190,40 @@ fn actionlint_yaml_emits_fly_and_every_size_label() {
         );
     }
 }
+
+/// Builds a [`Machine`] with the given `name`; other fields stubbed.
+fn named_machine(name: &str) -> Machine {
+    serde_json::from_value(serde_json::json!({
+        "id": "0123456789abcd",
+        "name": name,
+        "created_at": "2026-06-20T00:00:00Z",
+        "image_ref": { "digest": "sha256:test" },
+    }))
+    .expect("test fixture deserializes")
+}
+
+#[test]
+fn spawned_job_id_parses_runner_names() {
+    assert_eq!(
+        named_machine("fly-82509019233-1980abc").spawned_job_id(),
+        Some(82509019233)
+    );
+    assert_eq!(named_machine("fly-123").spawned_job_id(), Some(123));
+}
+
+#[test]
+fn spawned_job_id_ignores_non_runner_names() {
+    assert_eq!(named_machine("summer-dream-9663").spawned_job_id(), None);
+    assert_eq!(named_machine("fly-abc-1980").spawned_job_id(), None);
+}
+
+#[test]
+fn runner_name_round_trips_through_spawned_job_id() {
+    let name = Machine::runner_name(82_509_019_233);
+
+    assert_eq!(
+        named_machine(&name).spawned_job_id(),
+        Some(82_509_019_233),
+        "runner_name must be parseable by spawned_job_id: {name}"
+    );
+}
