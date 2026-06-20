@@ -53,6 +53,15 @@ further to the $\leq 110$-limb bound proven by Kim et al.\ (ePrint
 2025/1649), giving $110$~limbs at the main site and $48$ at the
 auxiliary site.
 
+The substitution is faster than HNF on main because the
+size-reduction multiplies route through \texttt{vt\_mul}, whose
+adaptive \texttt{mag\_mul\_short} path runs at the operands' effective
+limb count rather than at the full $W$.  This preserves the
+$\leq N/2$ correctness invariant from Kim et al.~\cite{KLY26} while
+exploiting that $\lfloor\mu\rceil$ and the basis coordinates typically
+fall well under that bound.  M4 wall-clock against main: $-11.0\%$ on
+signing, byte-identical.
+
 \paragraph{Constant-time modular exponentiation in primality testing.}
 \texttt{MontReducer::pow} (Miller--Rabin during the norm-equation
 prime search of \texttt{represent\_integer}, where the exponent
