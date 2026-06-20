@@ -70,6 +70,20 @@ rustflags = [
 [target.aarch64-apple-darwin]
 rustflags = ["--cfg", "aes_armv8"]
 
+# `rustc-wrapper` — scopes the committed PGO profile to our crate only.
+# The wrapper adds `-Cprofile-use=<absolute path>` when compiling
+# `sqisign_selkie` against a target triple whose profile is present in
+# `tools/pgo/`; build scripts, proc-macros, every dep crate, and
+# triples without a committed profile pass through untouched. The
+# wrapper exists because rustc resolves `-Cprofile-use=<path>` relative
+# to each crate's own source dir (cargo's invocation CWD per crate),
+# making workspace-relative paths in `[target.*] rustflags` unusable.
+# Regenerate the host's profile with `scripts/regenerate-pgo.sh` after
+# rustc bumps or training-corpus edits, then commit the resulting
+# `tools/pgo/<triple>.profdata`.
+[build]
+rustc-wrapper = "./.cargo/rustc-pgo-wrapper.sh"
+
 [env]
 # Tests run signing on width-60 BigInts (480 bytes each); debug-mode
 # stack frames in `Lattice::product`'s `det(first_block)` and the
