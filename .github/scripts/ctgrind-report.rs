@@ -102,6 +102,13 @@ fn main() -> io::Result<()> {
                 name,
                 "--test-threads=1",
             ])
+            // The signing path recurses deep through width-60 `BigInt`
+            // frames; the test runner thread overflows the default 2 MiB
+            // stack (sign / verify abort with "stack overflow"). The
+            // normal suite gets headroom from `.cargo/config.toml`'s
+            // `[env]`, but that only applies under `cargo` -- here the
+            // test binary is exec'd directly through valgrind, so set it.
+            .env("RUST_MIN_STACK", "67108864")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
