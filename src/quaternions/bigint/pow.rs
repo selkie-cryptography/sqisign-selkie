@@ -16,9 +16,9 @@ impl<const N: usize> BigInt<N> {
         let mut e = exp;
         while e > 0 {
             if e & 1 == 1 {
-                result = result.ct_mul(&base);
+                result = result.vt_mul(&base);
             }
-            base = base.ct_mul(&base);
+            base = base.vt_mul(&base);
             e >>= 1;
         }
         result

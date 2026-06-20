@@ -122,7 +122,7 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
     if u_wide >= two_e_fdi {
         return None;
     }
-    let m = u_wide.ct_mul(&two_e_fdi.ct_sub(&u_wide));
+    let m = u_wide.vt_mul(&two_e_fdi.vt_sub(&u_wide));
     let order_wide = ExtremalOrder::<8>::from(*order);
     let theta = match order_wide.represent_integer(&m, true, rng) {
         Some(t) => t,
@@ -502,9 +502,9 @@ impl<const N: usize> LeftIdeal<N> {
             .expect("nrd(I) mod 2^248 fits in BigInt<4>");
         let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
         let scale_denom = {
-            let base = parent_norm.ct_mul(&d1_big).vt_mod(&modulus);
+            let base = parent_norm.vt_mul(&d1_big).vt_mod(&modulus);
             if t_index > 0 {
-                base.ct_mul(&CONNECTING_IDEAL_NORMS[t_index])
+                base.vt_mul(&CONNECTING_IDEAL_NORMS[t_index])
                     .vt_mod(&modulus)
             } else {
                 base
@@ -759,8 +759,8 @@ impl<const N: usize> LeftIdeal<N> {
 
         // Expected: w_s^(d₁ · u² mod 2^f).
         let d1_big = BigInt::<4>::from_sign_and_limbs(0, *d1.limbs());
-        let u_sq = sui.u.ct_mul(&sui.u);
-        let exp_disamb = d1_big.ct_mul(&u_sq).vt_mod(&modulus);
+        let u_sq = sui.u.vt_mul(&sui.u);
+        let exp_disamb = d1_big.vt_mul(&u_sq).vt_mod(&modulus);
         let expected = w_s.pow_scalar(&Scalar::from(exp_disamb));
 
         // Compute Weil pairing on codomain.E1 side using the
@@ -792,7 +792,7 @@ impl<const N: usize> LeftIdeal<N> {
         // scalar = 1/(u · d₁) mod 2^f
         let ud1 = sui
             .u
-            .ct_mul(&BigInt::<4>::from_sign_and_limbs(0, *d1.limbs()));
+            .vt_mul(&BigInt::<4>::from_sign_and_limbs(0, *d1.limbs()));
         let ud1_inv = ud1.invert_mod(&modulus)?;
 
         // Apply `(1/(u·d₁)) M_{β₁}` to the basis `(P, Q, PmQ)` using

@@ -857,10 +857,10 @@ impl SigningKey {
             let n_chl: BigInt<N_RESP> = *i_chl_prime_w.norm();
             let n_sk: BigInt<N_RESP> = *i_sk_w.norm();
             let n_com: BigInt<N_RESP> = *i_com_w.norm();
-            let lattice_content_r: BigInt<N_RESP> = n_chl.ct_mul(&n_sk).ct_mul(&n_com);
+            let lattice_content_r: BigInt<N_RESP> = n_chl.vt_mul(&n_sk).vt_mul(&n_com);
             let two_to_e_rsp: BigInt<N_RESP> = BigInt::<N_RESP>::ONE << e_rsp;
-            let two_e_rsp_minus_one = two_to_e_rsp.ct_sub(&BigInt::<N_RESP>::ONE);
-            let radius = two_e_rsp_minus_one.ct_mul(&lattice_content_r);
+            let two_e_rsp_minus_one = two_to_e_rsp.vt_sub(&BigInt::<N_RESP>::ONE);
+            let radius = two_e_rsp_minus_one.vt_mul(&lattice_content_r);
             // The intersection lattice has entries up to ~1920 bits
             // (BigInt<30>). The gram computation squares these:
             // ~3840 bits ≈ 60 limbs. Use W=64 for margin.
@@ -995,7 +995,7 @@ impl SigningKey {
             let alpha_rsp_conj = alpha_rsp_w.conjugate();
             let q_rsp_wide: BigInt<N_RESP> = q_rsp.widen();
             let i_com_norm_w: BigInt<N_RESP> = i_com.norm().widen();
-            let i_com_rsp_norm_w = i_com_norm_w.ct_mul(&q_rsp_wide);
+            let i_com_rsp_norm_w = i_com_norm_w.vt_mul(&q_rsp_wide);
             // KNOWN BUG: this `from_generator_mod_hnf` produces a
             // lattice whose canonical HNF differs from C-ref's
             // `quat_lideal_create` output for the same (α, N) inputs.
@@ -1059,7 +1059,7 @@ impl SigningKey {
                 // prime norm (~2^15). The intersection with I_aux
                 // (norm ~2^126) produces a ~141-bit norm ideal,
                 // within FixedDegreeIsogeny's bound (< 2^246).
-                let aux_norm = (BigInt::<4>::ONE << e_rsp_prime).ct_sub(&q_rsp);
+                let aux_norm = (BigInt::<4>::ONE << e_rsp_prime).vt_sub(&q_rsp);
                 let i_aux = match LeftIdeal::<4>::random_norm(&aux_norm, &EXTREMAL_ORDERS[0], rng) {
                     Some(i) => i,
                     None => {
@@ -1111,7 +1111,7 @@ impl SigningKey {
                 let inter_norm_w8: BigInt<8> = i_com_rsp
                     .norm()
                     .widen::<8>()
-                    .ct_mul(&i_aux.norm().widen::<8>());
+                    .vt_mul(&i_aux.norm().widen::<8>());
                 let o0_w8 = EXTREMAL_ORDERS[0].widen::<8>();
                 let mut i_inter_w =
                     LeftIdeal::<8>::from_parts(inter_hnf_w8, inter_norm_w8, *o0_w8.order());
@@ -1227,7 +1227,7 @@ impl SigningKey {
                 let reduce_o0 = |c: &BigInt<N_RESP>| -> BigInt<N_RESP> {
                     let r = c.vt_mod(&two_to_r);
                     if bool::from(r.is_negative()) {
-                        r.ct_add(&two_to_r)
+                        r.vt_add(&two_to_r)
                     } else {
                         r
                     }
@@ -1236,10 +1236,10 @@ impl SigningKey {
                 for (j, cj) in o0_coords.iter().enumerate() {
                     let cj_red = reduce_o0(cj);
                     let col = o0_lat.basis_elem(j);
-                    num[0] = num[0].ct_add(&cj_red.ct_mul(col.a.as_bigint()));
-                    num[1] = num[1].ct_add(&cj_red.ct_mul(col.b.as_bigint()));
-                    num[2] = num[2].ct_add(&cj_red.ct_mul(col.c.as_bigint()));
-                    num[3] = num[3].ct_add(&cj_red.ct_mul(col.d.as_bigint()));
+                    num[0] = num[0].vt_add(&cj_red.vt_mul(col.a.as_bigint()));
+                    num[1] = num[1].vt_add(&cj_red.vt_mul(col.b.as_bigint()));
+                    num[2] = num[2].vt_add(&cj_red.vt_mul(col.c.as_bigint()));
+                    num[3] = num[3].vt_add(&cj_red.vt_mul(col.d.as_bigint()));
                 }
                 let reduced_w = Element::<N_RESP>::new(
                     Coordinate::from_bigint(num[0]),

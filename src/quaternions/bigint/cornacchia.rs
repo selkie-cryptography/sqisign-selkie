@@ -57,7 +57,7 @@ impl<const N: usize> BigInt<N> {
         // Special case: q = 0 reduces to x² = m.
         if bool::from(q.is_zero()) {
             let s = m.sqrt_floor()?;
-            return if s.ct_mul(&s) == *m {
+            return if s.vt_mul(&s) == *m {
                 Some((s, Self::ZERO))
             } else {
                 None
@@ -74,8 +74,8 @@ impl<const N: usize> BigInt<N> {
         }
 
         // Step 1: Check Legendre symbol — -q must be a QR mod m.
-        let neg_q = m.ct_sub(&q.vt_mod(m));
-        let exp = m.ct_sub(&Self::ONE) >> 1;
+        let neg_q = m.vt_sub(&q.vt_mod(m));
+        let exp = m.vt_sub(&Self::ONE) >> 1;
         let legendre = Self::pow_mod(&neg_q, &exp, m);
         if legendre != Self::ONE && !bool::from(neg_q.vt_mod(m).is_zero()) {
             return None;
@@ -106,25 +106,25 @@ impl<const N: usize> BigInt<N> {
 
         // Step 4: x = s, y² = (m - x²) / q.
         let x = s;
-        let x_sq = x.ct_mul(&x);
+        let x_sq = x.vt_mul(&x);
         if x_sq > *m {
             return None;
         }
 
         // (m - x²) must be divisible by q.
-        let (y_sq, rem) = m.ct_sub(&x_sq).vt_div_rem(q);
+        let (y_sq, rem) = m.vt_sub(&x_sq).vt_div_rem(q);
         if !bool::from(rem.is_zero()) {
             return None;
         }
 
         // y² must be a perfect square.
         let y = y_sq.sqrt_floor()?;
-        if y.ct_mul(&y) != y_sq {
+        if y.vt_mul(&y) != y_sq {
             return None;
         }
 
         // Final verification: x² + qy² = m.
-        let check = x_sq.ct_add(&q.ct_mul(&y.ct_mul(&y)));
+        let check = x_sq.vt_add(&q.vt_mul(&y.vt_mul(&y)));
         if check == *m { Some((x, y)) } else { None }
     }
 

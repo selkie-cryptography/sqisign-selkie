@@ -126,7 +126,7 @@ impl<const N: usize> BigInt<N> {
         }
 
         // Write self - 1 = 2^s · d with d odd.
-        let n_minus_1 = self.ct_sub(&Self::ONE);
+        let n_minus_1 = self.vt_sub(&Self::ONE);
         let s = n_minus_1.two_adic_val();
         let d = n_minus_1 >> s;
 

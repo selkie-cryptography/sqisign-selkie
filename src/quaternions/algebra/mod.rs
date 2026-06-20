@@ -211,7 +211,7 @@ impl<const N: usize> Denominator<N> {
 
     /// Multiplies two denominators. The result is always positive.
     pub fn mul(&self, other: &Self) -> Self {
-        Self(self.0.ct_mul(&other.0))
+        Self(self.0.vt_mul(&other.0))
     }
 }
 
@@ -385,7 +385,7 @@ impl<const N: usize> Element<N> {
     ///
     /// Returns (numerator, denominator) as `BigInt<N>` values.
     pub fn trace(&self) -> (BigInt<N>, BigInt<N>) {
-        let two_a = self.a.0.ct_mul(&BigInt::TWO);
+        let two_a = self.a.0.vt_mul(&BigInt::TWO);
         (two_a, self.denom.0)
     }
 
@@ -430,10 +430,10 @@ impl<const N: usize> Element<N> {
     pub fn add(&self, rhs: &Self) -> Self {
         if self.denom == rhs.denom {
             Self {
-                a: Coordinate(self.a.0.ct_add(&rhs.a.0)),
-                b: Coordinate(self.b.0.ct_add(&rhs.b.0)),
-                c: Coordinate(self.c.0.ct_add(&rhs.c.0)),
-                d: Coordinate(self.d.0.ct_add(&rhs.d.0)),
+                a: Coordinate(self.a.0.vt_add(&rhs.a.0)),
+                b: Coordinate(self.b.0.vt_add(&rhs.b.0)),
+                c: Coordinate(self.c.0.vt_add(&rhs.c.0)),
+                d: Coordinate(self.d.0.vt_add(&rhs.d.0)),
                 denom: self.denom,
             }
         } else {
@@ -441,26 +441,26 @@ impl<const N: usize> Element<N> {
                 a: Coordinate(
                     self.a
                         .0
-                        .ct_mul(&rhs.denom.0)
-                        .ct_add(&rhs.a.0.ct_mul(&self.denom.0)),
+                        .vt_mul(&rhs.denom.0)
+                        .vt_add(&rhs.a.0.vt_mul(&self.denom.0)),
                 ),
                 b: Coordinate(
                     self.b
                         .0
-                        .ct_mul(&rhs.denom.0)
-                        .ct_add(&rhs.b.0.ct_mul(&self.denom.0)),
+                        .vt_mul(&rhs.denom.0)
+                        .vt_add(&rhs.b.0.vt_mul(&self.denom.0)),
                 ),
                 c: Coordinate(
                     self.c
                         .0
-                        .ct_mul(&rhs.denom.0)
-                        .ct_add(&rhs.c.0.ct_mul(&self.denom.0)),
+                        .vt_mul(&rhs.denom.0)
+                        .vt_add(&rhs.c.0.vt_mul(&self.denom.0)),
                 ),
                 d: Coordinate(
                     self.d
                         .0
-                        .ct_mul(&rhs.denom.0)
-                        .ct_add(&rhs.d.0.ct_mul(&self.denom.0)),
+                        .vt_mul(&rhs.denom.0)
+                        .vt_add(&rhs.d.0.vt_mul(&self.denom.0)),
                 ),
                 denom: self.denom.mul(&rhs.denom),
             }
@@ -482,10 +482,10 @@ impl<const N: usize> Element<N> {
     /// Scalar multiplication: α · s.
     pub fn scalar_mul(&self, s: &BigInt<N>) -> Self {
         Self {
-            a: Coordinate(self.a.0.ct_mul(s)),
-            b: Coordinate(self.b.0.ct_mul(s)),
-            c: Coordinate(self.c.0.ct_mul(s)),
-            d: Coordinate(self.d.0.ct_mul(s)),
+            a: Coordinate(self.a.0.vt_mul(s)),
+            b: Coordinate(self.b.0.vt_mul(s)),
+            c: Coordinate(self.c.0.vt_mul(s)),
+            d: Coordinate(self.d.0.vt_mul(s)),
             denom: self.denom,
         }
     }
@@ -546,10 +546,10 @@ impl<const N: usize> Element<N> {
         let d = &elem.d.0;
         let r = &elem.denom.0;
 
-        let c0 = a.ct_sub(d); // r · β0
-        let c1 = b.ct_sub(c); // r · β1
-        let c2 = c.ct_add(c); // r · β2 = 2c (since β2 = 2c/r)
-        let c3 = d.ct_add(d); // r · β3 = 2d
+        let c0 = a.vt_sub(d); // r · β0
+        let c1 = b.vt_sub(c); // r · β1
+        let c2 = c.vt_add(c); // r · β2 = 2c (since β2 = 2c/r)
+        let c3 = d.vt_add(d); // r · β3 = 2d
 
         // gcd(r·β0, r·β1, r·β2, r·β3) = r · gcd(β0, β1, β2, β3)
         let g_scaled = c0.abs().gcd(&c1.abs()).gcd(&c2.abs()).gcd(&c3.abs());
@@ -573,7 +573,7 @@ impl<const N: usize> Element<N> {
         // Divide α by tmp (full gcd, including odd part): scale denom
         // up by tmp. New denom = r · tmp.
         if !bool::from(tmp.is_zero()) && tmp != BigInt::<N>::ONE {
-            let new_denom = elem.denom.0.ct_mul(&tmp);
+            let new_denom = elem.denom.0.vt_mul(&tmp);
             elem.denom = Denominator::new(new_denom).expect("denom > 0");
             elem.normalize();
         }
@@ -609,8 +609,8 @@ impl<const N: usize> Element<N> {
         let d = &elem.d.0;
 
         // `O₀`-basis coordinates of α (see `compute_backtracking`).
-        let c0 = a.ct_sub(d);
-        let c1 = b.ct_sub(c);
+        let c0 = a.vt_sub(d);
+        let c1 = b.vt_sub(c);
         let c2 = *c;
         let c3 = *d;
 
@@ -620,7 +620,7 @@ impl<const N: usize> Element<N> {
             return (elem, one);
         }
 
-        let new_denom = elem.denom.0.ct_mul(&g);
+        let new_denom = elem.denom.0.vt_mul(&g);
         elem.denom = Denominator::new(new_denom).expect("denom > 0");
         elem.normalize();
 
@@ -675,10 +675,10 @@ impl<const N: usize> Element<N> {
         };
 
         let numer = a
-            .ct_mul(&a)
-            .ct_add(&b.ct_mul(&b))
-            .ct_add(&p.ct_mul(&c.ct_mul(&c).ct_add(&d.ct_mul(&d))));
-        let denom_sq = r.ct_mul(&r);
+            .vt_mul(&a)
+            .vt_add(&b.vt_mul(&b))
+            .vt_add(&p.vt_mul(&c.vt_mul(&c).vt_add(&d.vt_mul(&d))));
+        let denom_sq = r.vt_mul(&r);
         (numer, denom_sq)
     }
 
@@ -694,12 +694,12 @@ impl<const N: usize> Element<N> {
         let p = Self::p_at_width();
 
         let numer = a
-            .ct_mul(a)
-            .ct_add(&b.ct_mul(b))
-            .ct_add(&p.ct_mul(&c.ct_mul(c).ct_add(&d.ct_mul(d))));
+            .vt_mul(a)
+            .vt_add(&b.vt_mul(b))
+            .vt_add(&p.vt_mul(&c.vt_mul(c).vt_add(&d.vt_mul(d))));
 
         let r = &self.denom.0;
-        let denom_sq = r.ct_mul(r);
+        let denom_sq = r.vt_mul(r);
         (numer, denom_sq)
     }
 
@@ -726,25 +726,25 @@ impl<const N: usize> Element<N> {
         let p = Self::p_at_width();
 
         let a = a1
-            .ct_mul(a2)
-            .ct_sub(&b1.ct_mul(b2))
-            .ct_sub(&p.ct_mul(&c1.ct_mul(c2).ct_add(&d1.ct_mul(d2))));
+            .vt_mul(a2)
+            .vt_sub(&b1.vt_mul(b2))
+            .vt_sub(&p.vt_mul(&c1.vt_mul(c2).vt_add(&d1.vt_mul(d2))));
         let b = a1
-            .ct_mul(b2)
-            .ct_add(&b1.ct_mul(a2))
-            .ct_add(&p.ct_mul(&c1.ct_mul(d2).ct_sub(&d1.ct_mul(c2))));
+            .vt_mul(b2)
+            .vt_add(&b1.vt_mul(a2))
+            .vt_add(&p.vt_mul(&c1.vt_mul(d2).vt_sub(&d1.vt_mul(c2))));
         let c = a1
-            .ct_mul(c2)
-            .ct_sub(&b1.ct_mul(d2))
-            .ct_add(&c1.ct_mul(a2))
-            .ct_add(&d1.ct_mul(b2));
+            .vt_mul(c2)
+            .vt_sub(&b1.vt_mul(d2))
+            .vt_add(&c1.vt_mul(a2))
+            .vt_add(&d1.vt_mul(b2));
         let d = a1
-            .ct_mul(d2)
-            .ct_add(&b1.ct_mul(c2))
-            .ct_sub(&c1.ct_mul(b2))
-            .ct_add(&d1.ct_mul(a2));
+            .vt_mul(d2)
+            .vt_add(&b1.vt_mul(c2))
+            .vt_sub(&c1.vt_mul(b2))
+            .vt_add(&d1.vt_mul(a2));
 
-        let new_denom = self.denom.0.ct_mul(&rhs.denom.0);
+        let new_denom = self.denom.0.vt_mul(&rhs.denom.0);
 
         Self {
             a: Coordinate(a),
@@ -775,12 +775,12 @@ impl Element<4> {
         let p: BigInt<8> = P_WIDE;
 
         let numer = a
-            .ct_mul(&a)
-            .ct_add(&b.ct_mul(&b))
-            .ct_add(&p.ct_mul(&c.ct_mul(&c).ct_add(&d.ct_mul(&d))));
+            .vt_mul(&a)
+            .vt_add(&b.vt_mul(&b))
+            .vt_add(&p.vt_mul(&c.vt_mul(&c).vt_add(&d.vt_mul(&d))));
 
         let r = self.denom.wide();
-        let denom_sq = r.ct_mul(&r);
+        let denom_sq = r.vt_mul(&r);
         (numer, denom_sq)
     }
 
@@ -801,25 +801,25 @@ impl Element<4> {
         let p: BigInt<8> = P_WIDE;
 
         let a = a1
-            .ct_mul(&a2)
-            .ct_sub(&b1.ct_mul(&b2))
-            .ct_sub(&p.ct_mul(&c1.ct_mul(&c2).ct_add(&d1.ct_mul(&d2))));
+            .vt_mul(&a2)
+            .vt_sub(&b1.vt_mul(&b2))
+            .vt_sub(&p.vt_mul(&c1.vt_mul(&c2).vt_add(&d1.vt_mul(&d2))));
         let b = a1
-            .ct_mul(&b2)
-            .ct_add(&b1.ct_mul(&a2))
-            .ct_add(&p.ct_mul(&c1.ct_mul(&d2).ct_sub(&d1.ct_mul(&c2))));
+            .vt_mul(&b2)
+            .vt_add(&b1.vt_mul(&a2))
+            .vt_add(&p.vt_mul(&c1.vt_mul(&d2).vt_sub(&d1.vt_mul(&c2))));
         let c = a1
-            .ct_mul(&c2)
-            .ct_sub(&b1.ct_mul(&d2))
-            .ct_add(&c1.ct_mul(&a2))
-            .ct_add(&d1.ct_mul(&b2));
+            .vt_mul(&c2)
+            .vt_sub(&b1.vt_mul(&d2))
+            .vt_add(&c1.vt_mul(&a2))
+            .vt_add(&d1.vt_mul(&b2));
         let d = a1
-            .ct_mul(&d2)
-            .ct_add(&b1.ct_mul(&c2))
-            .ct_sub(&c1.ct_mul(&b2))
-            .ct_add(&d1.ct_mul(&a2));
+            .vt_mul(&d2)
+            .vt_add(&b1.vt_mul(&c2))
+            .vt_sub(&c1.vt_mul(&b2))
+            .vt_add(&d1.vt_mul(&a2));
 
-        let new_denom = self.denom.wide().ct_mul(&rhs.denom.wide());
+        let new_denom = self.denom.wide().vt_mul(&rhs.denom.wide());
         Self::from_wide(a, b, c, d, new_denom)
     }
 
@@ -894,10 +894,10 @@ impl Element<4> {
 impl<const N: usize> PartialEq for Element<N> {
     fn eq(&self, other: &Self) -> bool {
         // Cross-multiply: a1/r1 == a2/r2 iff a1*r2 == a2*r1.
-        self.a.0.ct_mul(&other.denom.0) == other.a.0.ct_mul(&self.denom.0)
-            && self.b.0.ct_mul(&other.denom.0) == other.b.0.ct_mul(&self.denom.0)
-            && self.c.0.ct_mul(&other.denom.0) == other.c.0.ct_mul(&self.denom.0)
-            && self.d.0.ct_mul(&other.denom.0) == other.d.0.ct_mul(&self.denom.0)
+        self.a.0.vt_mul(&other.denom.0) == other.a.0.vt_mul(&self.denom.0)
+            && self.b.0.vt_mul(&other.denom.0) == other.b.0.vt_mul(&self.denom.0)
+            && self.c.0.vt_mul(&other.denom.0) == other.c.0.vt_mul(&self.denom.0)
+            && self.d.0.vt_mul(&other.denom.0) == other.d.0.vt_mul(&self.denom.0)
     }
 }
 
