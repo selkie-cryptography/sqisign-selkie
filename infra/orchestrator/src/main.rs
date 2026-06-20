@@ -20,9 +20,10 @@ use axum::{
     routing::{get, post},
 };
 use orchestrator::{
-    fly::{Config, FlyClient},
+    fly::{Config, FlyClient, Machine},
     github::{GitHubAppClient, WorkflowJobEvent, verify_webhook_signature},
     reaper::Reaper,
+    reconciler::Reconciler,
 };
 use tracing::{error, info, warn};
 
@@ -31,6 +32,9 @@ struct AppState {
     github: GitHubAppClient,
     config: Config,
     webhook_secret: Vec<u8>,
+    /// Repo the reconcile loop polls for queued jobs (`name` only; the
+    /// org is held by the GitHub client). Webhook spawns don't need it.
+    repo: String,
 }
 
 #[tokio::main]
@@ -52,6 +56,26 @@ async fn main() -> Result<()> {
     );
     let reaper_max_age = env_secs("REAPER_MAX_AGE_SECS", state.config.reaper.max_age_secs);
     tokio::spawn(Reaper::new(state.fly.clone(), reaper_interval, reaper_max_age).run());
+
+    // Reconcile loop: recovers queued jobs the webhook path missed or
+    // that lost their runner to job-stealing. Off by default while the
+    // approach is validated; flip `RECONCILE_ENABLED=1` to enable without
+    // a code change.
+    if std::env::var("RECONCILE_ENABLED").as_deref() == Ok("1") {
+        let interval = env_secs("RECONCILE_INTERVAL_SECS", 60);
+        tokio::spawn(
+            Reconciler::new(
+                state.github.clone(),
+                state.fly.clone(),
+                state.config.sizes.clone(),
+                state.repo.clone(),
+                interval,
+            )
+            .run(),
+        );
+    } else {
+        info!("reconciler disabled (set RECONCILE_ENABLED=1 to enable)");
+    }
 
     let app = Router::new()
         .route("/healthz", get(healthz))
@@ -86,6 +110,7 @@ impl AppState {
         let image_ref = std::env::var("FLY_RUNNER_IMAGE")
             .unwrap_or_else(|_| format!("registry.fly.io/{fly_app}:latest"));
         let org = std::env::var("GITHUB_ORG").unwrap_or_else(|_| "selkie-cryptography".into());
+        let repo = std::env::var("GITHUB_REPO").unwrap_or_else(|_| "sqisign-selkie".into());
 
         // Path inside the runtime image. Dockerfile.runtime COPYs
         // `runners.toml` to this location; overridable for local
@@ -109,6 +134,7 @@ impl AppState {
             github: GitHubAppClient::new(app_id, installation_id, private_key, org),
             config,
             webhook_secret,
+            repo,
         })
     }
 }
@@ -222,7 +248,7 @@ async fn handle_queued(state: &Arc<AppState>, event: WorkflowJobEvent) -> axum::
         "spawning runner"
     );
 
-    let runner_name = format!("fly-{}-{}", event.workflow_job.id, short_hex_now());
+    let runner_name = Machine::runner_name(event.workflow_job.id);
     let label_refs: Vec<&str> = event
         .workflow_job
         .labels
@@ -313,12 +339,4 @@ async fn handle_completed(
         Json(serde_json::json!({"destroyed": machine.id})),
     )
         .into_response()
-}
-
-fn short_hex_now() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    format!("{now:x}")
 }

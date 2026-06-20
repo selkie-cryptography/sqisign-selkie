@@ -542,6 +542,31 @@ impl Machine {
         now.duration_since(created)
             .context("Machine created_at is in the future")
     }
+
+    /// Returns the Machine name for a runner spawned to serve `job_id`:
+    /// `fly-{job_id}-{hex}`, where `hex` is a millisecond-resolution
+    /// timestamp for uniqueness. [`Machine::spawned_job_id`] inverts it.
+    #[must_use]
+    pub fn runner_name(job_id: u64) -> String {
+        let hex = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        format!("fly-{job_id}-{hex:x}")
+    }
+
+    /// Returns the workflow-job id this runner Machine was spawned for,
+    /// or `None` if `name` is not a [`Machine::runner_name`] shape (a
+    /// non-runner Machine, so callers can filter it out).
+    #[must_use]
+    pub fn spawned_job_id(&self) -> Option<u64> {
+        self.name
+            .strip_prefix("fly-")?
+            .split('-')
+            .next()?
+            .parse()
+            .ok()
+    }
 }
 
 /// Image reference fields the reaper inspects.
