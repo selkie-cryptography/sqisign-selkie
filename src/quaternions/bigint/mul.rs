@@ -101,7 +101,6 @@ impl<const N: usize> BigInt<N> {
     /// bounds depend on operand magnitude, hence variable-time; reached
     /// via [`vt_mul`](Self::vt_mul) when `la * lb` is well below `N * N`,
     /// where it beats the full-width arch kernels.
-    #[cfg(feature = "vartime")]
     fn mag_mul_short(a: &[u64; N], b: &[u64; N], la: usize, lb: usize) -> [u64; N] {
         let mut result = [0u64; N];
 
@@ -157,47 +156,37 @@ impl<const N: usize> BigInt<N> {
     }
 
     /// Variable-time-permitted signed multiplication: returns exactly
-    /// what [`ct_mul`](Self::ct_mul) does, but under the `vartime`
-    /// feature skips leading-zero limbs (looping over the operands'
-    /// effective lengths) where that beats the full-width kernels.
-    /// Without the feature it *is* `ct_mul`.
+    /// what [`ct_mul`](Self::ct_mul) does, but skips leading-zero limbs
+    /// (looping over the operands' effective lengths) when that beats
+    /// the full-width arch kernels.
     ///
-    /// Use only where constant-time is not required -- the `main`
-    /// track's quaternion and lattice arithmetic. On the constant-time
-    /// `next` build (feature off) every call site compiles to `ct_mul`.
+    /// Use only where constant-time is not required -- the quaternion
+    /// and lattice arithmetic, where variable-time is the accepted
+    /// posture. [`ct_mul`](Self::ct_mul) is preserved in source so a
+    /// constant-time build can re-route these call sites back to it.
     pub fn vt_mul(&self, rhs: &Self) -> Self {
-        #[cfg(not(feature = "vartime"))]
-        {
-            self.ct_mul(rhs)
-        }
+        let la = Self::mag_effective_len(&self.limbs);
+        let lb = Self::mag_effective_len(&rhs.limbs);
+        let result_limbs = if la * lb * 4 < N * N {
+            Self::mag_mul_short(&self.limbs, &rhs.limbs, la, lb)
+        } else {
+            Self::mag_mul(&self.limbs, &rhs.limbs)
+        };
 
-        #[cfg(feature = "vartime")]
-        {
-            let la = Self::mag_effective_len(&self.limbs);
-            let lb = Self::mag_effective_len(&rhs.limbs);
-            let result_limbs = if la * lb * 4 < N * N {
-                Self::mag_mul_short(&self.limbs, &rhs.limbs, la, lb)
-            } else {
-                Self::mag_mul(&self.limbs, &rhs.limbs)
-            };
+        let result_sign = self.sign ^ rhs.sign;
+        let is_zero = Self::mag_is_zero(&result_limbs);
+        let result_sign = result_sign & (1 - is_zero);
 
-            let result_sign = self.sign ^ rhs.sign;
-            let is_zero = Self::mag_is_zero(&result_limbs);
-            let result_sign = result_sign & (1 - is_zero);
-
-            Self {
-                sign: result_sign,
-                limbs: result_limbs,
-            }
+        Self {
+            sign: result_sign,
+            limbs: result_limbs,
         }
     }
 }
 
-// The `*` operator routes to vt_mul, the build-default multiply: on the
-// `main` track (vartime feature) it is variable-time, matching the
-// variable-time C reference's mpz multiply; on `next` (feature off)
-// vt_mul is ct_mul, so `*` is constant-time. Code that must be
-// constant-time on both tracks calls ct_mul explicitly.
+// The `*` operator routes to vt_mul, the build-default multiply:
+// variable-time, matching the variable-time C reference's mpz
+// multiply. Code that requires constant-time calls ct_mul explicitly.
 impl<const N: usize> Mul for BigInt<N> {
     type Output = Self;
     #[inline]

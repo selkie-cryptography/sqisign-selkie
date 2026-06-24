@@ -114,7 +114,7 @@ impl<const N: usize> BigInt<N> {
     /// Variable-time trailing-zero count of a magnitude array.
     ///
     /// Returns `N * 64` for an all-zero input. Used by the Stein binary
-    /// GCD where vartime is the design choice.
+    /// GCD where variable-time is the design choice.
     pub(super) fn mag_trailing_zeros(a: &[u64; N]) -> u32 {
         let mut i = 0;
         while i < N {

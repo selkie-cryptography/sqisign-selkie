@@ -419,9 +419,7 @@ fn is_probable_prime_d_mix(bencher: divan::Bencher) {
 // lattice/ideal case) and full occupancy (all N limbs nonzero, the
 // fallback). The decisive cell is vt_add vs ct_add at N=500, low
 // occupancy: the saved high-limb adds against the two effective-length
-// scans and the irreducible `[u64; N]` result memset. Build with
-// `--features vartime` so vt_* takes the length-bounded path; without
-// the feature vt_* is ct_*, so the pairs read equal (a sanity check).
+// scans and the irreducible `[u64; N]` result memset.
 
 /// `N` limbs filled from an LCG (full occupancy: every limb nonzero).
 fn full_occupancy<const N: usize>(seed: u64) -> BigInt<N> {

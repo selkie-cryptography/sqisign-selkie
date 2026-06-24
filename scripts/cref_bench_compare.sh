@@ -93,7 +93,7 @@ echo "### sqisign-selkie (this crate)${PROFDATA:+ -- PGO ($PROFDATA)}, divan"
 rustflags="--cfg aes_armv8"
 [ -n "${PROFDATA:-}" ] && rustflags="$rustflags -Cprofile-use=$PROFDATA"
 rust_out="$(cd "$crate" && RUSTFLAGS="$rustflags" cargo bench --bench sqisign \
-  --features expose-internals,vartime -- 'keygen_derand|sign_derand|verify' 2>/dev/null)"
+  --features expose-internals -- 'keygen_derand|sign_derand|verify' 2>/dev/null)"
 echo "$rust_out" | grep -E "keygen_derand|sign_derand|verify "
 
 echo

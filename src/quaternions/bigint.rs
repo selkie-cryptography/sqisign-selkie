@@ -14,16 +14,14 @@
 //!   **variable-time permitted**: a call site that does not require constant
 //!   time. `grep vt_` is the variable-time (CT-debt) ledger.
 //!
-//! The split maps onto the project's two tracks via the `vartime` cargo
-//! feature:
-//!
-//! - **`main`** (feature on): `vt_*` take a variable-time fast path that skips
-//!   leading-zero limbs, matching the variable-time C reference.
-//! - **`next`** (feature off): [`vt_mul`](BigInt::vt_mul) is exactly
-//!   [`ct_mul`](BigInt::ct_mul), hence constant-time.
-//!   [`vt_div_rem`](BigInt::vt_div_rem) / [`vt_mod`](BigInt::vt_mod) stay
-//!   variable-time on both tracks for now -- a known CT gap (`TODO(ct)`) to be
-//!   closed by a constant-time divider ([Kouider et al.][ct-bigint]).
+//! `vt_*` take a length-bounded fast path that skips leading-zero
+//! limbs, matching the variable-time C reference. Where constant-time
+//! is mandatory, callers use [`ct_*`](BigInt::ct_mul) directly; the
+//! `ct_*` delegates are preserved so an alternate build can re-route
+//! the `vt_*` call sites back to them at the source level.
+//! [`vt_div_rem`](BigInt::vt_div_rem) / [`vt_mod`](BigInt::vt_mod)
+//! remain variable-time for now -- a known CT gap (`TODO(ct)`) to be
+//! closed by a constant-time divider ([Kouider et al.][ct-bigint]).
 //!
 //! Operators route to the build default: `*` is
 //! [`vt_mul`](BigInt::vt_mul). The `mag_*` helpers are the unsigned

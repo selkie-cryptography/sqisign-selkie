@@ -1302,9 +1302,8 @@ proptest! {
 
     // vt_mul returns exactly what ct_mul does, at every width and
     // occupancy. arb_wide_bigint sweeps the significant-limb count from 0
-    // to N-2, so under `--features vartime` this covers both the
-    // len-tracking short path (low occupancy) and the full-width fallback
-    // (high occupancy). Without the feature vt_mul is ct_mul.
+    // to N-2, covering both the len-tracking short path (low occupancy)
+    // and the full-width fallback (high occupancy).
     #[test]
     fn prop_vt_mul_matches_ct_mul_8(a in arb_wide_bigint::<8>(), b in arb_wide_bigint::<8>()) {
         prop_assert_eq!(a.vt_mul(&b), a.ct_mul(&b));
@@ -1322,11 +1321,10 @@ proptest! {
 
     // vt_add / vt_sub return exactly what ct_add / ct_sub do, at every
     // width and occupancy. arb_wide_bigint sweeps the significant-limb
-    // count from 0 to N-2 over both signs, so under `--features vartime`
-    // this covers the length-bounded short path (low occupancy, both
-    // same-sign and differing-sign with either operand the larger), the
-    // borrow-propagating two's-complement case, and the full-width
-    // fallback (high occupancy). Without the feature vt_add is ct_add.
+    // count from 0 to N-2 over both signs, covering the length-bounded
+    // short path (low occupancy, both same-sign and differing-sign with
+    // either operand the larger), the borrow-propagating two's-complement
+    // case, and the full-width fallback (high occupancy).
     #[test]
     fn prop_vt_add_matches_ct_add_8(a in arb_wide_bigint::<8>(), b in arb_wide_bigint::<8>()) {
         prop_assert_eq!(a.vt_add(&b), a.ct_add(&b));
@@ -1383,11 +1381,10 @@ proptest! {
 
     // vt_div_rem's Euclidean identity at wide N with low-occupancy
     // dividends. arb_wide_bigint sweeps the dividend's significant-limb
-    // count from 0 up, so under `--features vartime` this exercises the
-    // len-tracked normalization short path (m_a < N) alongside the
-    // single-limb (sig == 1) and multi-limb (sig > 1) divisor paths. The
-    // identity `a == q*b + r` with `0 <= r < |b|` is checked at double
-    // width so `q*b` cannot truncate.
+    // count from 0 up, exercising the len-tracked normalization short
+    // path (m_a < N) alongside the single-limb (sig == 1) and multi-limb
+    // (sig > 1) divisor paths. The identity `a == q*b + r` with
+    // `0 <= r < |b|` is checked at double width so `q*b` cannot truncate.
     #[test]
     fn prop_vt_div_rem_euclidean_16(
         a in arb_wide_bigint::<16>(),

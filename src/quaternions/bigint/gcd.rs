@@ -20,7 +20,7 @@ impl<const N: usize> BigInt<N> {
     ///
     /// **Variable-time.** Both backends leak operand structure (iteration
     /// count, shift amounts / quotient values, the swap branch). Mirrors
-    /// the `main` track's GMP-equivalent posture; CT GCD lives elsewhere.
+    /// the GMP-equivalent posture; CT GCD lives elsewhere.
     pub fn gcd(&self, other: &Self) -> Self {
         if N >= 8 {
             return self.gcd_lehmer(other);
@@ -97,8 +97,7 @@ impl<const N: usize> BigInt<N> {
     ///
     /// **Variable-time.** Quotient values, iteration count, and the
     /// leading-word disambiguation branch all leak operand structure.
-    /// This is the `main`-track Lehmer that mirrors GMP's var-time
-    /// posture; the CT GCD lives elsewhere.
+    /// Mirrors GMP's var-time posture; the CT GCD lives elsewhere.
     pub fn gcd_lehmer(&self, other: &Self) -> Self {
         let mut a = self.abs().limbs;
         let mut b = other.abs().limbs;
