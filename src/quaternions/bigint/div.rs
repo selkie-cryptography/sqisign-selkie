@@ -28,13 +28,13 @@ impl<const N: usize> BigInt<N> {
     /// # Constant-time
     ///
     /// Variable-time on both operands' effective lengths and on the
-    /// at-most-one fix-up step inside the magnitude loop. With the
-    /// `vartime` feature on, the normalization shift is additionally
-    /// bounded to the dividend's effective length (byte-identical
-    /// output). `TODO(ct)`: a future constant-time `ct_div_rem` (with
-    /// `ct_mod` on top) will replace [`mag_div_rem`][Self::mag_div_rem]
-    /// with the CT divider from [Kouider et al.][ct-bigint] on the `next`
-    /// track, before any caller operating on secret-derived inputs ships.
+    /// at-most-one fix-up step inside the magnitude loop. The
+    /// normalization shift is bounded to the dividend's effective
+    /// length (byte-identical output). `TODO(ct)`: a future
+    /// constant-time `ct_div_rem` (with `ct_mod` on top) will replace
+    /// [`mag_div_rem`][Self::mag_div_rem] with the CT divider from
+    /// [Kouider et al.][ct-bigint], before any caller operating on
+    /// secret-derived inputs ships.
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
     pub fn vt_div_rem(&self, divisor: &Self) -> (Self, Self) {
@@ -150,7 +150,7 @@ impl<const N: usize> BigInt<N> {
         }
 
         // Dividend normalization: shift left by s into u, with the top
-        // shift-out in u_hi. Left full-width: a vartime len-bounded shift
+        // shift-out in u_hi. Left full-width: a len-bounded shift
         // (loop 1..m_a) was tried and measured within noise -- the Knuth
         // core below is already length-bounded and the [0u64; N] memset is
         // irreducible at fixed width, so it is not worth a var-time opt on

@@ -576,8 +576,8 @@ impl<const N: usize> BigInt<N> {
     /// The `vt_` prefix marks this as variable-time-permitted: it inherits
     /// `vt_div_rem`'s data-dependent branching and is not constant-time.
     /// `TODO(ct)`: a future `ct_mod` over the constant-time `ct_div_rem`
-    /// (Kouider et al. 2025/832) replaces this on the `next` track before
-    /// any secret-derived caller ships.
+    /// (Kouider et al. 2025/832) replaces this before any secret-derived
+    /// caller ships.
     ///
     /// # Panics
     ///

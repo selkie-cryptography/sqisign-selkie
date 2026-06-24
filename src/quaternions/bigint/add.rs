@@ -41,7 +41,6 @@ impl<const N: usize> BigInt<N> {
     /// [`vt_add`](Self::vt_add) when both operands sit well below full
     /// width, where skipping the high zero limbs beats the full-width
     /// `adcs` chain.
-    #[cfg(feature = "vartime")]
     fn mag_add_short(a: &[u64; N], b: &[u64; N], la: usize, lb: usize) -> ([u64; N], u64) {
         let mut result = [0u64; N];
         let lmax = core::cmp::max(la, lb);
@@ -79,7 +78,6 @@ impl<const N: usize> BigInt<N> {
     /// limbs (i.e. `a < b`), the result is the two's-complement
     /// negation, whose high limbs are all-ones; this loop fills them
     /// explicitly so the output matches the full-width result exactly.
-    #[cfg(feature = "vartime")]
     fn mag_sub_short(a: &[u64; N], b: &[u64; N], la: usize, lb: usize) -> ([u64; N], u64) {
         let mut result = [0u64; N];
         let lmax = core::cmp::max(la, lb);
@@ -145,61 +143,53 @@ impl<const N: usize> BigInt<N> {
     }
 
     /// Variable-time-permitted signed addition: returns exactly what
-    /// [`ct_add`](Self::ct_add) does, but under the `vartime` feature
-    /// skips leading-zero limbs (looping over the operands' effective
-    /// lengths) where that beats the full-width sign-and-magnitude
-    /// merge. Without the feature it *is* `ct_add`.
+    /// [`ct_add`](Self::ct_add) does, but skips leading-zero limbs
+    /// (looping over the operands' effective lengths) when that beats
+    /// the full-width sign-and-magnitude merge.
     ///
-    /// Use only where constant-time is not required -- the `main`
-    /// track's quaternion and lattice arithmetic. On the constant-time
-    /// `next` build (feature off) every call site compiles to `ct_add`.
+    /// Use only where constant-time is not required -- the quaternion
+    /// and lattice arithmetic, where variable-time is the accepted
+    /// posture. [`ct_add`](Self::ct_add) is preserved in source so a
+    /// constant-time build can re-route these call sites back to it.
     #[inline]
     pub fn vt_add(&self, rhs: &Self) -> Self {
-        #[cfg(not(feature = "vartime"))]
-        {
-            self.ct_add(rhs)
+        let la = Self::mag_effective_len(&self.limbs);
+        let lb = Self::mag_effective_len(&rhs.limbs);
+
+        // Gate: only take the short path when both operands sit well
+        // below full width, so the saved high-limb adds outweigh the
+        // two O(N) effective-length scans plus the irreducible result
+        // memset. K = 4 (same family as vt_mul's `la * lb * 4 < N*N`).
+        if core::cmp::max(la, lb) * 4 >= N {
+            return self.ct_add(rhs);
         }
 
-        #[cfg(feature = "vartime")]
-        {
-            let la = Self::mag_effective_len(&self.limbs);
-            let lb = Self::mag_effective_len(&rhs.limbs);
-
-            // Gate: only take the short path when both operands sit well
-            // below full width, so the saved high-limb adds outweigh the
-            // two O(N) effective-length scans plus the irreducible result
-            // memset. K = 4 (same family as vt_mul's `la * lb * 4 < N*N`).
-            if core::cmp::max(la, lb) * 4 >= N {
-                return self.ct_add(rhs);
-            }
-
-            // Same sign-and-magnitude algorithm as ct_add, length-bounded.
-            // Being variable-time, the differing-sign branch picks the
-            // larger magnitude directly via the borrow rather than the
-            // negate + two selects ct_add needs to stay branchless.
-            let (result_sign, result_limbs) = if (self.sign ^ rhs.sign) == 0 {
-                let (sum, _carry) = Self::mag_add_short(&self.limbs, &rhs.limbs, la, lb);
-                (self.sign, sum)
+        // Same sign-and-magnitude algorithm as ct_add, length-bounded.
+        // Being variable-time, the differing-sign branch picks the
+        // larger magnitude directly via the borrow rather than the
+        // negate + two selects ct_add needs to stay branchless.
+        let (result_sign, result_limbs) = if (self.sign ^ rhs.sign) == 0 {
+            let (sum, _carry) = Self::mag_add_short(&self.limbs, &rhs.limbs, la, lb);
+            (self.sign, sum)
+        } else {
+            let (diff, borrow) = Self::mag_sub_short(&self.limbs, &rhs.limbs, la, lb);
+            if borrow == 0 {
+                // self >= rhs: keep self's sign and the forward difference.
+                (self.sign, diff)
             } else {
-                let (diff, borrow) = Self::mag_sub_short(&self.limbs, &rhs.limbs, la, lb);
-                if borrow == 0 {
-                    // self >= rhs: keep self's sign and the forward difference.
-                    (self.sign, diff)
-                } else {
-                    // self < rhs: magnitude is rhs - self, sign is rhs's.
-                    let (rdiff, _b) = Self::mag_sub_short(&rhs.limbs, &self.limbs, lb, la);
-                    (rhs.sign, rdiff)
-                }
-            };
-
-            // Canonicalize: if result is zero, sign must be 0.
-            let is_zero = Self::mag_is_zero(&result_limbs);
-            let result_sign = result_sign & (1 - is_zero);
-
-            Self {
-                sign: result_sign,
-                limbs: result_limbs,
+                // self < rhs: magnitude is rhs - self, sign is rhs's.
+                let (rdiff, _b) = Self::mag_sub_short(&rhs.limbs, &self.limbs, lb, la);
+                (rhs.sign, rdiff)
             }
+        };
+
+        // Canonicalize: if result is zero, sign must be 0.
+        let is_zero = Self::mag_is_zero(&result_limbs);
+        let result_sign = result_sign & (1 - is_zero);
+
+        Self {
+            sign: result_sign,
+            limbs: result_limbs,
         }
     }
 }

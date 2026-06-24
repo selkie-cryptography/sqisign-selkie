@@ -31,8 +31,9 @@
 //! track ([`TRAIN_FEATURES`]); `profile_sign` uses only the public API, so
 //! it needs no `expose-internals`. They MUST match for the profile to
 //! apply. The A/B `bench` adds `expose-internals` ([`BENCH_FEATURES`])
-//! because the `sqisign` bench target requires it; the vartime-trained
-//! profile still applies to the shared keygen/sign/verify functions.
+//! because the `sqisign` bench target requires it; the shared
+//! keygen/sign/verify functions the bench calls receive the trained
+//! profile.
 //!
 //! # Flags
 //!
@@ -62,16 +63,16 @@ use std::process::{Command, exit};
 const EXAMPLE: &str = "profile_sign";
 
 /// Features for the training workload and the profile-use release build:
-/// the production main track (vartime). `profile_sign` uses only the
-/// public API, so it needs no `expose-internals`. Training and the release
-/// build must share this set for the profile to match; set it to the
-/// shipped configuration (drop `vartime` if production does not enable it).
-const TRAIN_FEATURES: &str = "vartime";
+/// the production main track. `profile_sign` uses only the public API,
+/// so it needs no `expose-internals`. Training and the release build
+/// must share this set for the profile to match; set it to the shipped
+/// configuration.
+const TRAIN_FEATURES: &str = "";
 
 /// Features for the A/B `bench`: the `sqisign` bench target requires
-/// `expose-internals`. The vartime-trained profile still applies to the
-/// shared keygen/sign/verify functions the bench calls.
-const BENCH_FEATURES: &str = "expose-internals,vartime";
+/// `expose-internals`. The trained profile still applies to the shared
+/// keygen/sign/verify functions the bench calls.
+const BENCH_FEATURES: &str = "expose-internals";
 
 /// Seeds when none is given. ~100 varied trajectories saturate the hot
 /// frames; see the module docs on diminishing returns.

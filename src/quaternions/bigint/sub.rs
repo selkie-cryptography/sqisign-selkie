@@ -47,28 +47,20 @@ impl<const N: usize> BigInt<N> {
     }
 
     /// Variable-time-permitted signed subtraction: returns exactly what
-    /// [`ct_sub`](Self::ct_sub) does, but under the `vartime` feature
-    /// routes through [`vt_add`](Self::vt_add) so the length-bounded
-    /// path applies. Without the feature it *is* `ct_sub`.
+    /// [`ct_sub`](Self::ct_sub) does, but routes through
+    /// [`vt_add`](Self::vt_add) so the length-bounded path applies.
     ///
-    /// Use only where constant-time is not required -- the `main`
-    /// track's quaternion and lattice arithmetic. On the constant-time
-    /// `next` build (feature off) every call site compiles to `ct_sub`.
+    /// Use only where constant-time is not required -- the quaternion
+    /// and lattice arithmetic, where variable-time is the accepted
+    /// posture. [`ct_sub`](Self::ct_sub) is preserved in source so a
+    /// constant-time build can re-route these call sites back to it.
     #[inline]
     pub fn vt_sub(&self, rhs: &Self) -> Self {
-        #[cfg(not(feature = "vartime"))]
-        {
-            self.ct_sub(rhs)
-        }
-
-        #[cfg(feature = "vartime")]
-        {
-            // `wrapping_neg` only flips the sign bit (and re-canonicalizes
-            // zero), leaving the magnitude limbs untouched, so the negated
-            // operand has the same effective length and vt_add's gate and
-            // short path apply unchanged.
-            self.vt_add(&rhs.wrapping_neg())
-        }
+        // `wrapping_neg` only flips the sign bit (and re-canonicalizes
+        // zero), leaving the magnitude limbs untouched, so the negated
+        // operand has the same effective length and vt_add's gate and
+        // short path apply unchanged.
+        self.vt_add(&rhs.wrapping_neg())
     }
 }
 
