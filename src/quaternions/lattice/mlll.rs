@@ -34,16 +34,6 @@
 //! `Lattice::product` / intersection; that integration is gated on
 //! byte-identical sign and keygen KATs.
 //!
-//! # Integration plan
-//!
-//! - `CompactIdealMultiplication` ([Alg. 2]): LLL-reduce each input ideal
-//!   basis, form the 16 products `αᵢβⱼ`, `Generators::<N, 16>::new`,
-//!   `mlll_reduce`, rescale by `r₁r₂`. Replaces `Lattice::product`'s HNF.
-//! - `CompactLatticeIntersection` ([Alg. 3]): the dual-sum-dual path with
-//!   `MLLL` in place of HNF on the 8-column dual sum. Replaces
-//!   `intersection_via_dual_sum_dual` — the 32000-bit working width that the
-//!   profiling measured at ~45% of signing time.
-//!
 //! [cqa]: https://eprint.iacr.org/2026/1031.pdf
 //! [Alg. 1]: https://eprint.iacr.org/2026/1031.pdf#algorithm.1
 //! [Alg. 2]: https://eprint.iacr.org/2026/1031.pdf#algorithm.2
