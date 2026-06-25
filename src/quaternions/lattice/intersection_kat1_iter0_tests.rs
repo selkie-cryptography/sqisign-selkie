@@ -574,22 +574,26 @@ fn dump_input_sizes() {
 ///    covol(L_sum)` uniquely identifies the *true* L1 ∩ L2 among sublattices of
 ///    both inputs.
 ///
-/// State as of 2026-05-09 (after the modular-HNF sum fix in DSD):
+/// State as of the xgcd_euclidean dispatch:
 ///
 /// | method                                  | (1) contained        | (2) vs kernel | (3) identity |
 /// |-----------------------------------------|----------------------|---------------|--------------|
 /// | `intersection_via_kernel::<500>`        | ✓                    | (self)        | ✓ TRUE       |
-/// | `intersection_via_dual_sum_dual::<60>`  | overflow (cols outside) | n/a        | n/a          |
-/// | `intersection_via_dual_sum_dual::<100>` | overflow (cols outside) | n/a        | ✗ overflow   |
+/// | `intersection_via_dual_sum_dual::<60>`  | ✓                    | matches kernel | ✓ TRUE     |
+/// | `intersection_via_dual_sum_dual::<100>` | ✓                    | matches kernel | ✓ TRUE     |
 /// | `intersection_via_dual_sum_dual::<200>` | ✓                    | matches kernel | ✓ TRUE     |
 ///
-/// Findings (post-fix):
+/// Findings (post-xgcd_euclidean):
 /// - `intersection_via_kernel::<500>` is correct on these inputs.
-/// - `intersection_via_dual_sum_dual::<200>` is now correct after switching the
-///   sum step from non-modular to modular HNF (mirroring C-ref's
-///   `quat_lattice_add` recipe with `modulus = gcd(det1, det2)`).
-/// - Smaller widths (W=60, 100) silently overflow during the modular HNF
-///   intermediates; the captured inputs need W >= ~200 to be accommodated.
+/// - `intersection_via_dual_sum_dual` is correct at every probed width (60,
+///   100, 200). The Stein-based binary xgcd previously dispatched from `xgcd`
+///   blew Bezout cofactor bounds at the narrowed working width, silently
+///   producing wrong-magnitude HNF rows at W=60 / 100 on these inputs. Routing
+///   `xgcd` through the Euclidean cofactor-tracking variant kept every
+///   intermediate inside the declared width and recovered correctness at the
+///   lower widths. The precise new lower boundary is below 60 and not pinned by
+///   this test; production sites (`signing.rs:803`/`signing.rs:1105`) call at
+///   W=500 and W=200 and are unaffected.
 ///
 /// Underlying root cause (left as TODO): `Matrix::from_hnf_columns`
 /// (non-modular HNF) produces a strict superlattice of the true Z-module
@@ -608,8 +612,11 @@ fn intersection_results_contained_in_inputs() {
     let inter_k = l1
         .intersection_via_kernel::<500>(&l2)
         .expect("kernel intersection at W=500 must succeed");
-    // W=200 — the smallest tested width that handles KAT-1 iter 0
-    // inputs without silent overflow under the modular-HNF sum.
+    // W=200 — production sign-side W; smaller widths also work since
+    // the xgcd_euclidean dispatch tightened the cofactor bounds (see
+    // the function-level rustdoc), but W=200 matches what
+    // `keys/signing.rs:1105` calls so this exercises the production
+    // path.
     let inter_d = l1
         .intersection_via_dual_sum_dual::<200>(&l2)
         .expect("dual-sum-dual intersection at W=200 must succeed");
@@ -687,9 +694,10 @@ fn intersection_results_contained_in_inputs() {
         eprintln!("  kernel<500> ⊆ DSD<100>? {kernel_in_d100}");
     }
 
-    // Probe DSD at additional widths to localize the silent-overflow
-    // boundary. Avoid W=500 here — `[BigInt<500>; 4×4]` exhausts the
-    // default 2 MB test thread stack on macOS.
+    // Probe DSD at additional widths. The xgcd_euclidean dispatch
+    // moved the silent-overflow boundary well below W=60; these probes
+    // remain to catch a regression. Avoid W=500 here — `[BigInt<500>;
+    // 4×4]` exhausts the default 2 MB test thread stack on macOS.
     if let Some(d100) = l1.intersection_via_dual_sum_dual::<100>(&l2) {
         report("intersection_via_dual_sum_dual<100>", &d100);
     } else {
@@ -803,8 +811,10 @@ fn intersection_results_contained_in_inputs() {
     // Definitive assertions:
     //   - kernel<500> must produce a true sublattice of L1 ∩ L2.
     //   - DSD<200> must too (the post-fix correctness check).
-    //   - DSD<60> is documented to silently overflow on these inputs — fail-loud
-    //     assertion fires only if the boundary moved.
+    //   - DSD<60> also produces a valid intersection now that `xgcd` dispatches to
+    //     the Euclidean cofactor-tracking variant; the old binary-xgcd overflow at
+    //     the boundary is gone. The test stays in place to catch a regression of
+    //     that fix.
     assert!(
         k_in_l1 && k_in_l2,
         "intersection_via_kernel<500> produced a result NOT contained in both inputs"
@@ -815,9 +825,9 @@ fn intersection_results_contained_in_inputs() {
          — modular-HNF sum fix may have regressed."
     );
     assert!(
-        !d60_in_l1 || !d60_in_l2,
-        "EXPECTED FAILURE on iter-0 inputs: dual_sum_dual<60> is supposed to silently overflow. \
-         If this fires, the silent-overflow boundary moved and the docs should be narrowed."
+        d60_in_l1 && d60_in_l2,
+        "dual_sum_dual<60> should produce a valid intersection on iter-0 inputs since the \
+         xgcd_euclidean dispatch landed; if this fires, the cofactor-bound regression is back."
     );
 
     eprintln!();

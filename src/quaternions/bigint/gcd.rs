@@ -314,21 +314,21 @@ impl<const N: usize> BigInt<N> {
     /// Extended GCD: returns `(gcd, x, y)` such that
     /// `self * x + other * y = gcd`, with `gcd >= 0`.
     ///
-    /// Dispatches to [`Self::xgcd_binary`] at the smallest fixed working
-    /// width that safely holds the operands and their Bezout cofactors.
-    /// The quaternion lattice code calls this on values stored in wide
-    /// `BigInt<N>` (N up to ~500) whose actual magnitudes are far
-    /// smaller, so each halve/subtract step would otherwise run across
-    /// hundreds of always-zero high limbs. Narrowing first makes the
-    /// per-iteration cost track the operand size, not the storage width;
-    /// the result is identical to running at width `N`.
+    /// Dispatches to [`Self::xgcd_euclidean`] at the smallest fixed
+    /// working width that safely holds the operands and their Bezout
+    /// cofactors. The quaternion lattice code calls this on values
+    /// stored in wide `BigInt<N>` (N up to ~500) whose actual magnitudes
+    /// are far smaller, so each `vt_div_rem` step would otherwise run
+    /// across hundreds of always-zero high limbs. Narrowing first makes
+    /// the per-iteration cost track the operand size, not the storage
+    /// width; the result is identical to running at width `N`.
     ///
     /// **Variable-time**, same sources of leakage as [`Self::gcd`] plus
     /// cofactor sign branches.
     #[must_use]
     pub fn xgcd(&self, other: &Self) -> (Self, Self, Self) {
-        // Operands and the binary-GCD cofactors are bounded in magnitude
-        // by `max(|self|, |other|)`, so `bits/64 + 2` limbs (one for the
+        // Operands and the Bezout cofactors are bounded in magnitude by
+        // `max(|self|, |other|)`, so `bits/64 + 2` limbs (one for the
         // bit-length boundary, one of slack) hold every intermediate.
         let bits = Self::mag_bitsize(&self.limbs).max(Self::mag_bitsize(&other.limbs)) as usize;
         let needed = bits / 64 + 2;
@@ -352,11 +352,11 @@ impl<const N: usize> BigInt<N> {
             return self.xgcd_narrowed::<256>(other);
         }
 
-        self.xgcd_binary(other)
+        self.xgcd_euclidean(other)
     }
 
-    /// Runs [`Self::xgcd_binary`] at narrower working width `M`, resizing
-    /// the `(gcd, x, y)` result back to `N`.
+    /// Runs [`Self::xgcd_euclidean`] at narrower working width `M`,
+    /// resizing the `(gcd, x, y)` result back to `N`.
     ///
     /// The caller ([`Self::xgcd`]) chooses `M >= needed`, so the operand
     /// magnitudes (and hence all cofactors) fit in `M` limbs and the
@@ -367,7 +367,7 @@ impl<const N: usize> BigInt<N> {
         let a = self.resize_for_xgcd::<M>();
         let b = other.resize_for_xgcd::<M>();
 
-        let (g, x, y) = a.xgcd_binary(&b);
+        let (g, x, y) = a.xgcd_euclidean(&b);
 
         (
             g.resize_for_xgcd::<N>(),
@@ -403,25 +403,50 @@ impl<const N: usize> BigInt<N> {
         }
     }
 
-    /// Stein's binary extended GCD (HAC algorithm 14.61). Same shape as
-    /// [`Self::gcd`] but tracks Bezout cofactors through the halving and
-    /// subtract steps; when the cofactor pair isn't both even, the
-    /// originals (post common-factor strip) are added/subtracted to make
-    /// them so before halving.
+    /// Modular inverse: returns `self^{-1} mod modulus`, or `None` if
+    /// the inverse does not exist (i.e., `gcd(self, modulus) != 1`).
     ///
-    /// Runs entirely at the storage width `N`; [`Self::xgcd`] narrows to
-    /// a tight width before calling this.
+    /// The result is in `[0, |modulus|)`.
+    pub fn invert_mod(&self, modulus: &Self) -> Option<Self> {
+        let (g, x, _) = self.xgcd(modulus);
+        if !bool::from(g.ct_eq(&Self::ONE)) {
+            return None;
+        }
+        // x might be negative; reduce mod |modulus|.
+        let result = x.vt_mod(modulus);
+        Some(result)
+    }
+
+    /// Extended GCD via the variable-time Euclidean algorithm with
+    /// cofactor tracking. Returns `(gcd, x, y)` such that
+    /// `self * x + other * y = gcd`, with `gcd >= 0`.
+    ///
+    /// At each step `(a, b) <- (b, a mod b)` while the Bezout cofactor
+    /// pairs `(x_a, x_b)` and `(y_a, y_b)` update via
+    /// `(x_b, x_a - q * x_b)` and `(y_b, y_a - q * y_b)`. Total cost
+    /// is `O(n)` full-width divisions (via [`vt_div_rem`][Self::vt_div_rem])
+    /// versus [`xgcd_binary`][Self::xgcd_binary]'s `O(n * 64)` bit-steps;
+    /// at `N = 8` after the [`xgcd`][Self::xgcd] dispatch's narrowing,
+    /// the iteration count drops from a few hundred bit-halvings to a
+    /// handful of word-Euclidean steps. The Bezout cofactors are bounded
+    /// in magnitude by `max(|self|, |other|)`; the intermediate products
+    /// `q * x_b` are bounded similarly via the standard cofactor bound,
+    /// so width `N` holds every intermediate when [`xgcd`][Self::xgcd]
+    /// narrows to a width that holds the operands.
+    ///
+    /// **Variable-time.** The quotient values, iteration count, and
+    /// terminal `is_zero` check all leak operand structure. Mirrors
+    /// GMP's `mpn_gcdext` posture; the constant-time path through
+    /// [`ct_modular_inverse`][Self::ct_modular_inverse] (Fermat-based)
+    /// remains the CT delegate.
     #[must_use]
-    fn xgcd_binary(&self, other: &Self) -> (Self, Self, Self) {
+    pub fn xgcd_euclidean(&self, other: &Self) -> (Self, Self, Self) {
         let a_abs = self.abs();
         let b_abs = other.abs();
 
-        // Edge cases: gcd(0, b) = |b| with cofactors (0, sign(b)); symmetric.
-        // The cofactors must satisfy `self · u + other · v = gcd ≥ 0`. For
-        // negative inputs the early-returned cofactor needs the matching
-        // sign so the identity holds (e.g. `xgcd(-5, 0)` must return
-        // `(5, -1, 0)` so that `(-5) · (-1) + 0 · 0 = 5`, not `(5, 1, 0)`
-        // which gives `-5 ≠ 5`).
+        // Edge cases match xgcd_binary's: zero input means the gcd is
+        // the other operand and the cofactor for the nonzero side
+        // carries its original sign.
         if bool::from(a_abs.is_zero()) {
             let v_sign = if other.sign == 1 {
                 Self::ONE.wrapping_neg()
@@ -439,121 +464,50 @@ impl<const N: usize> BigInt<N> {
             return (a_abs, u_sign, Self::ZERO);
         }
 
-        // Strip common factor of 2; reapplied to gcd at the end.
-        // Cofactors are computed against the stripped operands `(x, y)`,
-        // and that's also what satisfies `x_co · self + y_co · other == g`,
-        // since stripping a common factor doesn't change the cofactor
-        // identity.
-        let g_shift =
-            Self::mag_trailing_zeros(&a_abs.limbs).min(Self::mag_trailing_zeros(&b_abs.limbs));
-        let x_lim = Self::mag_shr(&a_abs.limbs, g_shift);
-        let y_lim = Self::mag_shr(&b_abs.limbs, g_shift);
-        let x = Self {
-            sign: 0,
-            limbs: x_lim,
-        };
-        let y = Self {
-            sign: 0,
-            limbs: y_lim,
-        };
+        // Invariants throughout the loop:
+        //   a = x_a * a_abs + y_a * b_abs
+        //   b = x_b * a_abs + y_b * b_abs
+        // After convergence (b == 0), a holds gcd(a_abs, b_abs) and
+        // (x_a, y_a) is the Bezout pair against the absolute-value
+        // operands. Sign adjustment at the end re-introduces the
+        // original input signs.
+        let mut a = a_abs;
+        let mut b = b_abs;
+        let mut x_a = Self::ONE;
+        let mut y_a = Self::ZERO;
+        let mut x_b = Self::ZERO;
+        let mut y_b = Self::ONE;
 
-        // Invariant: `u = aa·x + bb·y` and `v = cc·x + dd·y`.
-        let mut u = x_lim;
-        let mut v = y_lim;
-        let mut aa = Self::ONE;
-        let mut bb = Self::ZERO;
-        let mut cc = Self::ZERO;
-        let mut dd = Self::ONE;
-
-        loop {
-            // Halve u while the invariant holds; adjust cofactors.
-            while u[0] & 1 == 0 {
-                u = Self::mag_shr(&u, 1);
-                if (aa.limbs[0] | bb.limbs[0]) & 1 == 0 {
-                    aa = Self::halve_even(&aa);
-                    bb = Self::halve_even(&bb);
-                } else {
-                    aa = Self::halve_even(&(aa + &y));
-                    bb = Self::halve_even(&(bb - &x));
-                }
-            }
-            // Halve v likewise.
-            while v[0] & 1 == 0 {
-                v = Self::mag_shr(&v, 1);
-                if (cc.limbs[0] | dd.limbs[0]) & 1 == 0 {
-                    cc = Self::halve_even(&cc);
-                    dd = Self::halve_even(&dd);
-                } else {
-                    cc = Self::halve_even(&(cc + &y));
-                    dd = Self::halve_even(&(dd - &x));
-                }
-            }
-
-            // Both u, v odd. Subtract smaller from larger; result is
-            // even, picked up by the next iteration's halve loop.
-            if Self::mag_cmp(&u, &v) != Ordering::Less {
-                let (new_u, _) = Self::mag_sub(&u, &v);
-                u = new_u;
-                aa = aa - &cc;
-                bb = bb - &dd;
-            } else {
-                let (new_v, _) = Self::mag_sub(&v, &u);
-                v = new_v;
-                cc = cc - &aa;
-                dd = dd - &bb;
-            }
-
-            if Self::mag_is_zero(&u) == 1 {
-                break;
-            }
+        while !bool::from(b.is_zero()) {
+            let (q, r) = a.vt_div_rem(&b);
+            // (a, b) <- (b, r)
+            // (x_a, x_b) <- (x_b, x_a - q * x_b)
+            // (y_a, y_b) <- (y_b, y_a - q * y_b)
+            let q_xb = q.vt_mul(&x_b);
+            let q_yb = q.vt_mul(&y_b);
+            let new_xb = x_a.vt_sub(&q_xb);
+            let new_yb = y_a.vt_sub(&q_yb);
+            a = b;
+            b = r;
+            x_a = x_b;
+            y_a = y_b;
+            x_b = new_xb;
+            y_b = new_yb;
         }
 
-        let g = Self {
-            sign: 0,
-            limbs: Self::mag_shl(&v, g_shift),
-        };
-
-        // Adjust signs to undo our `abs()` of the inputs.
         let mut x_co = if self.sign == 1 {
-            cc.wrapping_neg()
+            x_a.wrapping_neg()
         } else {
-            cc
+            x_a
         };
         let mut y_co = if other.sign == 1 {
-            dd.wrapping_neg()
+            y_a.wrapping_neg()
         } else {
-            dd
+            y_a
         };
         x_co.normalize();
         y_co.normalize();
 
-        (g, x_co, y_co)
-    }
-
-    /// Halves a value known to be even. Sign preserved (no floor-vs-trunc
-    /// issue since we only halve even values).
-    #[inline]
-    fn halve_even(a: &Self) -> Self {
-        debug_assert!(a.limbs[0] & 1 == 0, "halve_even on odd value");
-        let limbs = Self::mag_shr(&a.limbs, 1);
-        let zero = Self::mag_is_zero(&limbs) == 1;
-        Self {
-            sign: if zero { 0 } else { a.sign },
-            limbs,
-        }
-    }
-
-    /// Modular inverse: returns `self^{-1} mod modulus`, or `None` if
-    /// the inverse does not exist (i.e., `gcd(self, modulus) != 1`).
-    ///
-    /// The result is in `[0, |modulus|)`.
-    pub fn invert_mod(&self, modulus: &Self) -> Option<Self> {
-        let (g, x, _) = self.xgcd(modulus);
-        if !bool::from(g.ct_eq(&Self::ONE)) {
-            return None;
-        }
-        // x might be negative; reduce mod |modulus|.
-        let result = x.vt_mod(modulus);
-        Some(result)
+        (a, x_co, y_co)
     }
 }
