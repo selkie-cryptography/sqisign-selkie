@@ -799,23 +799,13 @@ impl SigningKey {
             // magnitudes (KAT-1 sign iter 0: ~520-bit i_chl_sk vs
             // ~140-bit conj(I_com)). For byte-equality with C-ref we
             // must use the dual-sum-dual path here.
-            let intersection = {
-                let compact = i_chl_sk_lat.compact_intersection::<110>(&i_com_conj_lat);
-                #[cfg(test)]
-                {
-                    let hnf = i_chl_sk_lat.intersection_via_dual_sum_dual::<500>(&i_com_conj_lat);
-                    assert_eq!(
-                        compact, hnf,
-                        "compact_intersection::<110> != dual_sum_dual::<500>"
-                    );
-                }
-                match compact {
+            let intersection =
+                match i_chl_sk_lat.intersection_via_dual_sum_dual::<500>(&i_com_conj_lat) {
                     Some(l) => l,
                     None => {
                         continue;
                     }
-                }
-            };
+                };
             let intersection_lat = Lattice::<N_RESP>::from(intersection);
 
             // Sampling radius — C-ref formula, not spec.
@@ -1111,24 +1101,13 @@ impl SigningKey {
                 // `quat_lideal_inter`. Same-norm, same-diagonal HNF, but
                 // off-diagonal cols disagree — distinct canonical HNFs =
                 // distinct lattices. dual-sum-dual matches C-ref.
-                let inter_hnf_w8 = {
-                    let compact = i_com_rsp_lat_w.compact_intersection::<48>(&i_aux_lat_w);
-                    #[cfg(test)]
-                    {
-                        let hnf =
-                            i_com_rsp_lat_w.intersection_via_dual_sum_dual::<200>(&i_aux_lat_w);
-                        assert_eq!(
-                            compact, hnf,
-                            "compact_intersection::<48> != dual_sum_dual::<200>"
-                        );
-                    }
-                    match compact {
+                let inter_hnf_w8 =
+                    match i_com_rsp_lat_w.intersection_via_dual_sum_dual::<200>(&i_aux_lat_w) {
                         Some(h) => h,
                         None => {
                             continue;
                         }
-                    }
-                };
+                    };
                 let inter_norm_w8: BigInt<8> = i_com_rsp
                     .norm()
                     .widen::<8>()
