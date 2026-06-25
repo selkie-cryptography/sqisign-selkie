@@ -425,28 +425,28 @@ impl<const N: usize> BigInt<N> {
     /// pairs `(x_a, x_b)` and `(y_a, y_b)` update via
     /// `(x_b, x_a - q * x_b)` and `(y_b, y_a - q * y_b)`. Total cost
     /// is `O(n)` full-width divisions (via [`vt_div_rem`][Self::vt_div_rem])
-    /// versus [`xgcd_binary`][Self::xgcd_binary]'s `O(n * 64)` bit-steps;
-    /// at `N = 8` after the [`xgcd`][Self::xgcd] dispatch's narrowing,
-    /// the iteration count drops from a few hundred bit-halvings to a
-    /// handful of word-Euclidean steps. The Bezout cofactors are bounded
-    /// in magnitude by `max(|self|, |other|)`; the intermediate products
+    /// versus the Stein binary xgcd's `O(n * 64)` bit-steps; at `N = 8`
+    /// after the [`xgcd`][Self::xgcd] dispatch's narrowing, the iteration
+    /// count drops from a few hundred bit-halvings to a handful of
+    /// word-Euclidean steps. The Bezout cofactors are bounded in
+    /// magnitude by `max(|self|, |other|)`; the intermediate products
     /// `q * x_b` are bounded similarly via the standard cofactor bound,
     /// so width `N` holds every intermediate when [`xgcd`][Self::xgcd]
     /// narrows to a width that holds the operands.
     ///
     /// **Variable-time.** The quotient values, iteration count, and
     /// terminal `is_zero` check all leak operand structure. Mirrors
-    /// GMP's `mpn_gcdext` posture; the constant-time path through
-    /// [`ct_modular_inverse`][Self::ct_modular_inverse] (Fermat-based)
-    /// remains the CT delegate.
+    /// GMP's `mpn_gcdext` posture; a constant-time path (Fermat- or
+    /// safegcd-based) would be a separate primitive when the CT track
+    /// needs it.
     #[must_use]
     pub fn xgcd_euclidean(&self, other: &Self) -> (Self, Self, Self) {
         let a_abs = self.abs();
         let b_abs = other.abs();
 
-        // Edge cases match xgcd_binary's: zero input means the gcd is
-        // the other operand and the cofactor for the nonzero side
-        // carries its original sign.
+        // Edge cases: zero input means the gcd is the other operand
+        // and the cofactor for the nonzero side carries its original
+        // sign.
         if bool::from(a_abs.is_zero()) {
             let v_sign = if other.sign == 1 {
                 Self::ONE.wrapping_neg()
