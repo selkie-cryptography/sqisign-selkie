@@ -50,12 +50,6 @@ pub use left_ideal::LeftIdeal;
 mod nrd_basis;
 pub use nrd_basis::NrdBasis;
 
-// reason: MLLL engine is a complete sketch but not yet called from
-// `Lattice::product` / intersection (the integration step); exercised only by
-// its own tests until then. Drop this allow when the callers are wired.
-#[allow(dead_code)]
-mod mlll;
-
 #[cfg(test)]
 mod tests;
 
@@ -396,13 +390,12 @@ impl<const N: usize> Lattice<N> {
     /// with very imbalanced magnitudes (KAT-1 sign iter 2 with
     /// ~520-bit `i_chl_sk` vs ~140-bit `conj(I_com)`).
     ///
-    /// The 8-column dual-sum is reduced by modular HNF — the
-    /// blow-up-prone step, so `W` must be wide (entry sizes grow
-    /// cubically through the two duals). For a max input entry size
+    /// `W` is the working width; entry sizes can grow cubically
+    /// through the two duals (each dual takes adjugate, which is
+    /// a 3-product of basis entries). For a max input entry size
     /// of `B` bits and max input denom `D` bits, intermediate
     /// entries reach ~`3·B + max(B+D, 4·B)` bits. Pick `W` to
-    /// accommodate. [`Lattice::compact_intersection`] reduces the same
-    /// dual-sum with MLLL, bounding the growth so a far smaller `W` suffices.
+    /// accommodate.
     ///
     /// Returns `None` if any of the intermediate basis entries or
     /// the final lattice does not narrow back to `BigInt<N>`.
@@ -410,60 +403,7 @@ impl<const N: usize> Lattice<N> {
         &self,
         other: &Self,
     ) -> Option<HnfLattice<N>> {
-        // Mirror C-ref's `quat_lattice_add` recipe (`lattice.c:85`): modular
-        // HNF mod `gcd(det of each scaled dual basis)` over the 8 columns. The
-        // explicit modulus generators drive the canonical pivot gcds, which the
-        // non-modular [`Matrix::from_hnf_columns`] does not — it produces a
-        // strict superlattice on these inputs (the duals' basis entries
-        // ~`denom · adj(B)^T` share large gcds with `det(B)`). See
-        // `intersection_kat1_iter0_tests::dsd_step_by_step` for the regression.
-        self.dual_sum_dual::<W, _>(other, |cols| {
-            let first: [Vector<W>; 4] = [cols[0], cols[1], cols[2], cols[3]];
-            let second: [Vector<W>; 4] = [cols[4], cols[5], cols[6], cols[7]];
-            let modulus = Matrix::<W>::from_columns(&first)
-                .det()
-                .abs()
-                .gcd(&Matrix::<W>::from_columns(&second).det().abs());
-            Matrix::<W>::from_hnf_columns_mod::<W>(&cols, &modulus)
-        })
-    }
-
-    /// Lattice intersection reducing the 8-column dual-sum with MLLL instead of
-    /// HNF — `CompactLatticeIntersection` ([Alg. 3] of ePrint 2026/1031).
-    ///
-    /// Same `(L1* + L2*)*` identity and canonical [`HnfLattice`] output as
-    /// [`Lattice::intersection_via_dual_sum_dual`], but the dominant dual-sum
-    /// reduction uses [`mlll`]'s ML2, which keeps intermediate integers bounded
-    /// by the largest input norm² ([Lemma 10]) rather than incurring HNF's
-    /// coefficient blow-up; the final 4×4 canonicalization is unchanged. MLLL
-    /// spans exactly the 8-column Z-module, so the result is identical to the
-    /// modular-HNF path — at a far smaller working width `W`.
-    ///
-    /// Returns `None` if the result does not narrow back to `BigInt<N>`.
-    ///
-    /// [Alg. 3]: https://eprint.iacr.org/2026/1031.pdf#algorithm.3
-    /// [Lemma 10]: https://eprint.iacr.org/2026/1031.pdf#lemma.1.10
-    // reason: validated differentially against `intersection_via_dual_sum_dual`
-    // but not yet wired into callers; the allow comes off at the migration.
-    #[allow(dead_code)]
-    pub(crate) fn compact_intersection<const W: usize>(
-        &self,
-        other: &Self,
-    ) -> Option<HnfLattice<N>> {
-        self.dual_sum_dual::<W, _>(other, |cols| {
-            Matrix::<W>::from_columns(&mlll::Generators::<W, 8>::new(cols).mlll_reduce())
-        })
-    }
-
-    /// Shared `(L1* + L2*)*` machinery, parameterized by how the 8-column
-    /// dual-sum is reduced: modular HNF for
-    /// [`intersection_via_dual_sum_dual`](Self::intersection_via_dual_sum_dual),
-    /// MLLL for [`compact_intersection`](Self::compact_intersection).
-    fn dual_sum_dual<const W: usize, F>(&self, other: &Self, reduce_sum: F) -> Option<HnfLattice<N>>
-    where
-        F: FnOnce([Vector<W>; 8]) -> Matrix<W>,
-    {
-        const { assert!(W >= N, "dual_sum_dual: W must be >= N") };
+        const { assert!(W >= N, "intersection_via_dual_sum_dual: W must be >= N") };
 
         // Widen self and other to working width.
         let widen_lat = |lat: &Self| -> Lattice<W> {
@@ -479,13 +419,31 @@ impl<const N: usize> Lattice<N> {
         let l1_w = widen_lat(self);
         let l2_w = widen_lat(other);
 
-        // dual(L1), dual(L2).
+        // Step 1: dual(L1), dual(L2).
         let d1 = l1_w.dual();
         let d2 = l2_w.dual();
 
-        // Bring both duals to the common denominator `d1.denom · d2.denom` by
-        // scaling each numerator basis by the other's denom, then hand the 8
-        // columns to `reduce_sum`.
+        // Step 2: sum(dual(L1), dual(L2)) via *modular* HNF.
+        //
+        // We must mirror C-ref's `quat_lattice_add` recipe (`lattice.c:85`)
+        // here rather than calling `Lattice::sum` directly, because
+        // the non-modular [`Matrix::from_hnf_columns`] used by `sum`
+        // produces a strict superlattice of the true Z-module
+        // span on inputs with large per-column common factors against
+        // the denom — exactly the shape `dual()` outputs (basis entries
+        // ~ `denom · adj(B)^T` share large gcds with `det(B)`).
+        // Modular HNF is correct on these inputs because the explicit
+        // modulus generators it appends drive the canonical pivot gcds.
+        // See `quaternions/lattice/intersection_kat1_iter0_tests.rs::dsd_step_by_step`
+        // for the regression case (kernel<500> agrees with this path
+        // but disagrees with the `sum`-based path by 2^971 in covol).
+        //
+        // C-ref recipe (`lattice.c:85`):
+        //   - tmp_a = d2.denom · d1.basis;  det1 = |det(tmp_a)|
+        //   - tmp_b = d1.denom · d2.basis;  det2 = |det(tmp_b)|
+        //   - modulus = gcd(det1, det2)
+        //   - HNF mod modulus over the 8 cols (tmp_a ∪ tmp_b)
+        //   - sum.denom = d1.denom · d2.denom
         let scale_basis = |basis: &Matrix<W>, s: BigInt<W>| -> Matrix<W> {
             let mut out = Matrix::<W>::ZERO;
             for r in 0..4 {
@@ -497,6 +455,9 @@ impl<const N: usize> Lattice<N> {
         };
         let tmp_a = scale_basis(d1.basis(), *d2.denom());
         let tmp_b = scale_basis(d2.basis(), *d1.denom());
+        let det1 = tmp_a.det().abs();
+        let det2 = tmp_b.det().abs();
+        let modulus = det1.gcd(&det2);
         let all_cols = [
             tmp_a.column(0),
             tmp_a.column(1),
@@ -508,32 +469,19 @@ impl<const N: usize> Lattice<N> {
             tmp_b.column(3),
         ];
         let common_denom = d1.denom().vt_mul(d2.denom());
-        let sum_basis = reduce_sum(all_cols);
+        let sum_basis = Matrix::<W>::from_hnf_columns_mod::<W>(&all_cols, &modulus);
         let sum_lat = Lattice::<W>::new(sum_basis, common_denom);
 
-        // dual of the sum = L1 ∩ L2.
+        // Step 3: dual of sum.
         let result_w = sum_lat.dual();
 
-        // Normalize the denominator sign: `dual()`'s denom = det can be
-        // negative, and `det` sign differs between the MLLL and modular-HNF
-        // `sum_basis`. Negate basis and denom together (the rational lattice is
-        // unchanged) so the canonical HNF is sign-stable and the two reduction
-        // strategies produce identical results.
+        // Step 4: reduce gcd of basis entries with denom. The
+        // double-dual (mathematically self-inverse) leaves a `d^3`
+        // factor in basis numerators and `d^4` in the denom; we
+        // need to factor that out before narrowing, otherwise the
+        // basis entries don't fit in `BigInt<N>`.
         let mut basis_w = result_w.basis;
-        let mut denom_w = result_w.denom;
-        if bool::from(denom_w.is_negative()) {
-            denom_w = denom_w.wrapping_neg();
-            for row in 0..4 {
-                for col in 0..4 {
-                    basis_w[row][col] = basis_w[row][col].wrapping_neg();
-                }
-            }
-        }
-
-        // Reduce gcd of basis entries with denom. The double-dual
-        // (mathematically self-inverse) leaves a `d^3` factor in basis
-        // numerators and `d^4` in the denom; factor it out before narrowing,
-        // otherwise the basis entries don't fit in `BigInt<N>`.
+        let denom_w = result_w.denom;
         let mut g = denom_w.abs();
         for r in 0..4 {
             for c in 0..4 {
@@ -970,42 +918,6 @@ impl<const N: usize> Lattice<N> {
             basis,
             denom: new_denom,
         }
-    }
-
-    /// Lattice product via MLLL instead of HNF — `CompactIdealMultiplication`
-    /// ([Alg. 2] of ePrint 2026/1031).
-    ///
-    /// Forms the 16 pairwise products of the two bases and reduces them with
-    /// [`mlll`]'s ML2 rather than taking an HNF, yielding an LLL-reduced basis
-    /// of the *same* product lattice as [`Lattice::product`] while bounding
-    /// intermediate integers by the largest input norm² instead of HNF's nrd⁴.
-    /// Unlike `product`, the returned basis is reduced, not canonical HNF.
-    ///
-    /// [Alg. 2]: https://eprint.iacr.org/2026/1031.pdf#algorithm.2
-    // reason: validated differentially against the exact product lattice but
-    // not yet wired into callers; the allow comes off when the HNF-based
-    // product / intersection call sites migrate to MLLL.
-    #[allow(dead_code)]
-    #[must_use]
-    pub(crate) fn compact_product(&self, other: &Self) -> Self {
-        let mut cols = [Vector::<N>::ZERO; 16];
-        for i in 0..4 {
-            let alpha = self.basis_elem(i);
-            for j in 0..4 {
-                let prod = alpha.mul_direct(&other.basis_elem(j));
-                cols[i * 4 + j] = Vector::new(
-                    *prod.a.as_bigint(),
-                    *prod.b.as_bigint(),
-                    *prod.c.as_bigint(),
-                    *prod.d.as_bigint(),
-                );
-            }
-        }
-
-        let reduced = mlll::Generators::<N, 16>::new(cols).mlll_reduce();
-        let new_denom = self.denom.ct_mul(&other.denom);
-
-        Self::new(Matrix::from_columns(&reduced), new_denom)
     }
 
     /// Right-multiply this lattice by a single quaternion element.
