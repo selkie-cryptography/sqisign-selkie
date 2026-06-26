@@ -295,3 +295,127 @@ pub(in super::super) fn mag_mul_comba<const N: usize>(a: &[u64; N], b: &[u64; N]
 
     out
 }
+
+/// Montgomery REDC on a `2N`-limb input `(lo, hi)`, returning the reduced
+/// `N`-limb value and the at-most-1 overflow above the `N`-limb window.
+///
+/// Mirrors the portable `MontReducer::reduce_wide` recipe — N rounds of
+///
+/// > `m = t[0] · n_inv (mod 2^64)`,
+/// > `t[j-1] = (t[j] + m·n[j] + carry) (mod 2^64)` for `j = 1..N`,
+/// > `t[N-1] = t_n + carry`,
+/// > shift `t_n = t_np1 + new_high_carry`, `t_np1 = hi[round+2]` or 0.
+///
+/// The inner mul-add-shift loop uses `mulx` (BMI2 — destination registers
+/// independent of `rdx`, so no spills around the multiplier) plus a single
+/// `add`/`adc`/`adc` carry chain. Dual ADCX/ADOX interleave is left for a
+/// follow-up — this is the smaller-blast-radius first attempt, matched to
+/// the runtime-`N` inner loop already used by `mag_mul_comba`.
+///
+/// Caller compares `(t_n, t)` against `n` and subtracts when out of range.
+///
+/// # Safety
+///
+/// `target_feature = "adx"` and `"bmi2"` are cfg-required (`mulx`).
+/// Reads `N` `u64` from each of `hi` and `n`; writes `N` `u64` to the
+/// returned `t`. No stack use beyond the result array. `N >= 1`.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "adx",
+    target_feature = "bmi2",
+))]
+#[inline]
+#[allow(dead_code)] // wired via cfg in modular.rs::reduce_wide; CI gates the perf trial
+pub(in super::super) fn redc_adx<const N: usize>(
+    lo: [u64; N],
+    hi: &[u64; N],
+    n: &[u64; N],
+    n_inv_neg: u64,
+) -> ([u64; N], u64) {
+    const { assert!(N >= 1, "redc_adx: N >= 1") };
+
+    let mut t = lo;
+    let mut t_n: u64 = hi[0];
+    let mut t_np1: u64 = if N >= 2 { hi[1] } else { 0 };
+
+    // SAFETY: cfg-gated on +adx,+bmi2. `t_ptr` written N limbs;
+    // `n_ptr`/`hi_ptr` read N limbs. Loop bounds depend only on `N` (a
+    // width, not data). `t_n`/`t_np1` round-trip through `inout(reg)`.
+    // nostack: no spills.
+    unsafe {
+        asm!(
+            "xor   {round_b:e}, {round_b:e}",
+            // ---- outer: per-round REDC ----
+            "2:",
+            // m = t[0] * n_inv_neg; mulx will keep rdx = m through the
+            // round (BMI2 mulx doesn't clobber rdx).
+            "mov   rdx, qword ptr [{t_ptr}]",
+            "imul  rdx, {n_inv}",
+            // j = 0: t[0] + m·n[0] has low bits = 0 by choice of m;
+            // capture the high half + carry-out into the running c.
+            "mulx  {ph}, {pl}, qword ptr [{n_ptr}]",
+            "add   {pl}, qword ptr [{t_ptr}]",
+            "mov   {c}, {ph}",
+            "adc   {c}, 0",
+            // inner: j = 1..N. j_b counts bytes (= 8 * j).
+            "mov   {j_b}, 8",
+            "3:",
+            "mulx  {ph}, {pl}, qword ptr [{n_ptr} + {j_b}]",
+            "add   {pl}, {c}",
+            "adc   {ph}, 0",
+            "add   {pl}, qword ptr [{t_ptr} + {j_b}]",
+            "adc   {ph}, 0",
+            "mov   {c}, {ph}",
+            "lea   {jm1_b}, [{j_b} - 8]",
+            "mov   qword ptr [{t_ptr} + {jm1_b}], {pl}",
+            "add   {j_b}, 8",
+            "cmp   {j_b}, {nb}",
+            "jb    3b",
+            // t[N-1] = t_n + c   (with carry-out into hc).
+            "mov   {pl}, {t_n}",
+            "add   {pl}, {c}",
+            "mov   {hc:e}, 0",
+            "adc   {hc}, 0",
+            "lea   {jm1_b}, [{nb} - 8]",
+            "mov   qword ptr [{t_ptr} + {jm1_b}], {pl}",
+            // t_n = t_np1 + high_carry  (wrapping; final guard in Rust).
+            "mov   {t_n}, {t_np1}",
+            "add   {t_n}, {hc}",
+            // t_np1 = hi[round + 2] if (round + 2) < N else 0
+            "lea   {idx_b}, [{round_b} + 16]",
+            "cmp   {idx_b}, {nb}",
+            "jae   4f",
+            "mov   {t_np1}, qword ptr [{hi_ptr} + {idx_b}]",
+            "jmp   5f",
+            "4:",
+            "xor   {t_np1:e}, {t_np1:e}",
+            "5:",
+            // round_b += 8; loop while round_b < N * 8.
+            "add   {round_b}, 8",
+            "cmp   {round_b}, {nb}",
+            "jb    2b",
+
+            t_ptr   = in(reg) t.as_mut_ptr(),
+            hi_ptr  = in(reg) hi.as_ptr(),
+            n_ptr   = in(reg) n.as_ptr(),
+            nb      = const N * 8,
+            n_inv   = in(reg) n_inv_neg,
+            t_n     = inout(reg) t_n,
+            t_np1   = inout(reg) t_np1,
+            round_b = out(reg) _,
+            j_b     = out(reg) _,
+            jm1_b   = out(reg) _,
+            c       = out(reg) _,
+            pl      = out(reg) _,
+            ph      = out(reg) _,
+            hc      = out(reg) _,
+            idx_b   = out(reg) _,
+            out("rdx") _,
+            options(nostack),
+        );
+    }
+
+    debug_assert_eq!(t_np1, 0, "redc_adx: t_np1 nonzero at end");
+
+    (t, t_n)
+}

@@ -282,40 +282,62 @@ impl<const N: usize> MontReducer<N> {
         let n = &self.n;
         let n_inv = self.n_inv_neg;
 
-        // Working window: t[0..N] + t_n + t_np1 (= conceptual N+2 limbs).
-        // Initialize from (lo, hi[0], hi[1]) — the bottom of the input.
-        let mut t = lo;
-        let mut t_n: u64 = if N >= 1 { hi[0] } else { 0 };
-        let mut t_np1: u64 = if N >= 2 { hi[1] } else { 0 };
+        // x86_64 + ADX + BMI2: `mulx`-based REDC with a single-CF carry
+        // chain (see `super::arch::x86_64::redc_adx`). Dual ADCX/ADOX
+        // interleave is deferred; this is the smaller-blast-radius first
+        // attempt, scoped so the Linux x86_64 CI's gungraun cycle bench
+        // can settle whether the inner-loop asm actually beats LLVM's
+        // portable `u128` lowering on real hardware.
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "adx",
+            target_feature = "bmi2",
+        ))]
+        let (mut t, t_n) = super::arch::x86_64::redc_adx::<N>(lo, &hi, n, n_inv);
 
-        let mut round = 0;
-        while round < N {
-            let m = t[0].wrapping_mul(n_inv);
-            // Low 64 bits of (t[0] + m·n[0]) are zero by choice of m.
-            let prod = t[0] as u128 + m as u128 * n[0] as u128;
-            let mut c = (prod >> 64) as u64;
-            let mut j = 1;
-            while j < N {
-                let prod = t[j] as u128 + m as u128 * n[j] as u128 + c as u128;
-                t[j - 1] = prod as u64;
-                c = (prod >> 64) as u64;
-                j += 1;
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            target_feature = "adx",
+            target_feature = "bmi2",
+        )))]
+        let (mut t, t_n) = {
+            // Working window: t[0..N] + t_n + t_np1 (= conceptual N+2 limbs).
+            // Initialize from (lo, hi[0], hi[1]) — the bottom of the input.
+            let mut t = lo;
+            let mut t_n: u64 = if N >= 1 { hi[0] } else { 0 };
+            let mut t_np1: u64 = if N >= 2 { hi[1] } else { 0 };
+
+            let mut round = 0;
+            while round < N {
+                let m = t[0].wrapping_mul(n_inv);
+                // Low 64 bits of (t[0] + m·n[0]) are zero by choice of m.
+                let prod = t[0] as u128 + m as u128 * n[0] as u128;
+                let mut c = (prod >> 64) as u64;
+                let mut j = 1;
+                while j < N {
+                    let prod = t[j] as u128 + m as u128 * n[j] as u128 + c as u128;
+                    t[j - 1] = prod as u64;
+                    c = (prod >> 64) as u64;
+                    j += 1;
+                }
+                let sum = t_n as u128 + c as u128;
+                t[N - 1] = sum as u64;
+                let new_high_carry = (sum >> 64) as u64;
+
+                // Shift t_np1 down into t_n; shift in the next hi limb at t_np1.
+                t_n = t_np1.wrapping_add(new_high_carry);
+                let next_hi_idx = round + 2;
+                t_np1 = if next_hi_idx < N { hi[next_hi_idx] } else { 0 };
+
+                round += 1;
             }
-            let sum = t_n as u128 + c as u128;
-            t[N - 1] = sum as u64;
-            let new_high_carry = (sum >> 64) as u64;
 
-            // Shift t_np1 down into t_n; shift in the next hi limb at t_np1.
-            t_n = t_np1.wrapping_add(new_high_carry);
-            let next_hi_idx = round + 2;
-            t_np1 = if next_hi_idx < N { hi[next_hi_idx] } else { 0 };
+            // After N rounds: result is in `t`; t_n is at-most-1 overflow;
+            // t_np1 should be 0 (all hi limbs consumed).
+            debug_assert_eq!(t_np1, 0, "reduce_wide: t_np1 nonzero at end");
 
-            round += 1;
-        }
-
-        // After N rounds: result is in `t`; t_n is at-most-1 overflow;
-        // t_np1 should be 0 (all hi limbs consumed).
-        debug_assert_eq!(t_np1, 0, "reduce_wide: t_np1 nonzero at end");
+            (t, t_n)
+        };
 
         if t_n != 0 || BigInt::<N>::mag_cmp(&t, n) != Ordering::Less {
             let (sub, _) = BigInt::<N>::mag_sub(&t, n);
