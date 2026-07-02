@@ -165,6 +165,94 @@ impl GitHubAppClient {
         Ok(queued)
     }
 
+    /// Looks up an org self-hosted runner by exact name via
+    /// `GET /orgs/{org}/actions/runners?name=`. Returns `None` when no
+    /// runner with that name is registered (never registered, or
+    /// already deregistered after finishing its job).
+    pub async fn find_runner_by_name(&self, name: &str) -> Result<Option<RunnerStatus>> {
+        let token = self.installation_token().await?;
+
+        #[derive(Deserialize)]
+        struct Resp {
+            runners: Vec<Runner>,
+        }
+        #[derive(Deserialize)]
+        struct Runner {
+            id: u64,
+            name: String,
+            busy: bool,
+        }
+
+        let url = format!(
+            "https://api.github.com/orgs/{}/actions/runners?name={name}",
+            self.org
+        );
+        let resp: Resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "sqisign-infra-orchestrator")
+            .send()
+            .await
+            .context("GET /actions/runners?name=")?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        Ok(resp
+            .runners
+            .into_iter()
+            .find(|r| r.name == name)
+            .map(|r| RunnerStatus {
+                id: r.id,
+                busy: r.busy,
+            }))
+    }
+
+    /// Deregisters an org self-hosted runner. GitHub refuses with 422
+    /// while the runner is running a job, which makes this the atomic
+    /// guard for cleanup: a runner that was deregistered can no longer
+    /// be assigned work, so its Machine is safe to destroy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on any response other than success or the
+    /// busy 422, or on a transport failure.
+    pub async fn delete_runner(&self, id: u64) -> Result<DeleteRunnerOutcome> {
+        let token = self.installation_token().await?;
+
+        let url = format!(
+            "https://api.github.com/orgs/{}/actions/runners/{id}",
+            self.org
+        );
+        let resp = self
+            .http
+            .delete(&url)
+            .bearer_auth(&token)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "sqisign-infra-orchestrator")
+            .send()
+            .await
+            .context("DELETE /actions/runners/{id}")?;
+
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(DeleteRunnerOutcome::Deleted);
+        }
+        if status == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+            return Ok(DeleteRunnerOutcome::Busy);
+        }
+
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
+        Err(anyhow!("DELETE {url} returned HTTP {status}; body: {body}"))
+    }
+
     /// Mint a ~1 hr installation access token by signing a JWT with
     /// the App's private key and exchanging it via the App API.
     async fn installation_token(&self) -> Result<String> {
@@ -261,4 +349,25 @@ pub struct QueuedJob {
     pub id: u64,
     pub name: String,
     pub labels: Vec<String>,
+}
+
+/// A registered self-hosted runner's identity and busy flag, from
+/// [`GitHubAppClient::find_runner_by_name`].
+#[derive(Debug, Clone, Copy)]
+pub struct RunnerStatus {
+    /// GitHub's runner id, consumed by [`GitHubAppClient::delete_runner`].
+    pub id: u64,
+    /// Whether the runner is currently executing a job.
+    pub busy: bool,
+}
+
+/// Outcome of a [`GitHubAppClient::delete_runner`] attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteRunnerOutcome {
+    /// The runner was deregistered; it can no longer take jobs.
+    Deleted,
+
+    /// GitHub refused (422): the runner is mid-job. Leave its
+    /// Machine alone; `auto_destroy` fires when the job finishes.
+    Busy,
 }

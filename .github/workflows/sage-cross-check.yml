@@ -95,16 +95,17 @@ jobs:
     #
     # Skipped on fork PR (untrusted code on self-hosted Machines).
     # On schedule, gated by cron-gate (skip if recent run on main).
-    # `perf-4x`: the cross-check is mostly Sage subprocess work, which
-    # is single-threaded but CPU-bound for ~30 min on perf-4x. On
-    # shared-cpu-4x the throttling extends that well past the timeout.
+    # `perf-2x`: the cross-check is mostly Sage subprocess work —
+    # single-threaded but CPU-bound for ~30 min, so one dedicated
+    # core is what matters. On shared CPUs the throttling extends
+    # that well past the timeout.
     if: >-
       !cancelled() &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository) &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: [self-hosted, fly, linux, perf-4x]
+    runs-on: [self-hosted, fly, linux, perf-2x]
     # 60 min: cold runs do a one-time Sage conda install (~several
     # minutes) plus the cross-check itself. Warm runs hit
     # `actions/cache` and finish quickly. 30 min was cancelling

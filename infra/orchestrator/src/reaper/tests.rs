@@ -51,13 +51,25 @@ fn newest_spawn_digest_skips_unparseable_created_at() {
     assert_eq!(newest_spawn_digest(&ms), Some("sha256:keep"));
 }
 
+/// Hard-age policy far beyond any fixture's age, for tests that
+/// exercise only the stale-image rule.
+fn no_hard_age() -> Duration {
+    Duration::from_secs(u64::MAX)
+}
+
 #[test]
 fn reap_candidates_skips_canonical_digest() {
     let ms = vec![
         machine("a", "2026-05-15T16:00:00Z", "sha256:new"),
         machine("b", "2026-05-15T17:36:00Z", "sha256:new"),
     ];
-    let candidates = reap_candidates(&ms, "sha256:new", anchor_now(), Duration::from_secs(60));
+    let candidates = reap_candidates(
+        &ms,
+        Some("sha256:new"),
+        anchor_now(),
+        Duration::from_secs(60),
+        no_hard_age(),
+    );
     assert!(candidates.is_empty(), "got {candidates:?}");
 }
 
@@ -66,9 +78,10 @@ fn reap_candidates_skips_too_young_stale_machine() {
     let ms = vec![machine("dry", "2026-05-15T17:31:00Z", "sha256:old")];
     let candidates = reap_candidates(
         &ms,
-        "sha256:new",
+        Some("sha256:new"),
         anchor_now(),
         Duration::from_secs(30 * 60),
+        no_hard_age(),
     );
     assert!(candidates.is_empty(), "got {candidates:?}");
 }
@@ -81,13 +94,15 @@ fn reap_candidates_destroys_stale_and_old() {
     ];
     let candidates = reap_candidates(
         &ms,
-        "sha256:new",
+        Some("sha256:new"),
         anchor_now(),
         Duration::from_secs(30 * 60),
+        no_hard_age(),
     );
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].0.0, "zombie");
     assert_eq!(candidates[0].2, "sha256:old");
+    assert_eq!(candidates[0].3, "stale image");
 }
 
 #[test]
@@ -96,9 +111,10 @@ fn reap_candidates_destroys_lone_stale_machine() {
     let ms = vec![machine("zombie", "2026-05-15T15:51:00Z", "sha256:old")];
     let candidates = reap_candidates(
         &ms,
-        "sha256:new",
+        Some("sha256:new"),
         anchor_now(),
         Duration::from_secs(30 * 60),
+        no_hard_age(),
     );
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].0.0, "zombie");
@@ -109,9 +125,51 @@ fn reap_candidates_skips_machine_with_unparseable_created_at() {
     let ms = vec![machine("broken", "not-a-date", "sha256:old")];
     let candidates = reap_candidates(
         &ms,
-        "sha256:new",
+        Some("sha256:new"),
         anchor_now(),
         Duration::from_secs(30 * 60),
+        no_hard_age(),
     );
     assert!(candidates.is_empty(), "got {candidates:?}");
+}
+
+#[test]
+fn reap_candidates_hard_age_destroys_canonical_digest_machine() {
+    // A runner that never received a job idles forever on the
+    // canonical image; only the hard-age rule catches it.
+    let ms = vec![
+        machine("idler", "2026-05-15T11:36:00Z", "sha256:new"),
+        machine("fresh", "2026-05-15T17:30:00Z", "sha256:new"),
+    ];
+    let candidates = reap_candidates(
+        &ms,
+        Some("sha256:new"),
+        anchor_now(),
+        Duration::from_secs(30 * 60),
+        Duration::from_secs(6 * 60 * 60),
+    );
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0.0, "idler");
+    assert_eq!(candidates[0].3, "over hard max age");
+}
+
+#[test]
+fn reap_candidates_hard_age_applies_without_canonical_digest() {
+    let ms = vec![
+        machine("idler", "2026-05-15T11:36:00Z", "sha256:whatever"),
+        machine("stale-but-young", "2026-05-15T15:51:00Z", "sha256:old"),
+    ];
+    let candidates = reap_candidates(
+        &ms,
+        None,
+        anchor_now(),
+        Duration::from_secs(30 * 60),
+        Duration::from_secs(6 * 60 * 60),
+    );
+
+    // The stale-image rule is disabled with no canonical digest, so
+    // only the over-hard-age Machine is reaped.
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0.0, "idler");
+    assert_eq!(candidates[0].3, "over hard max age");
 }

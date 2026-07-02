@@ -121,10 +121,15 @@ const DEFAULT_REAPER_SWEEP_SECS: u64 = 600;
 /// exceed the longest single job that may run on a runner Machine.
 const DEFAULT_REAPER_MAX_AGE_SECS: u64 = 45 * 60;
 
+/// Default reaper hard max-age in seconds (6 h). Must exceed every
+/// workflow's `timeout-minutes` (largest today: the mutants full
+/// shard at 240 min); the reaper destroys any Machine past this age
+/// regardless of image digest or runner state.
+const DEFAULT_REAPER_HARD_MAX_AGE_SECS: u64 = 6 * 60 * 60;
+
 /// Tunables for the background reaper task. Each field reverts to
-/// its module-level default when omitted from the TOML; the
-/// orchestrator's `REAPER_*` env vars still override at runtime as
-/// an escape hatch for emergency tuning without a redeploy.
+/// its module-level default when omitted from the TOML; changes ride
+/// a redeploy like the rest of the config.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReaperConfig {
     /// Seconds between reaper sweeps.
@@ -135,6 +140,12 @@ pub struct ReaperConfig {
     /// force-destroys it.
     #[serde(default = "default_reaper_max_age_secs")]
     pub max_age_secs: u64,
+
+    /// Seconds any Machine may live before the reaper force-destroys
+    /// it, regardless of digest. Keep above every workflow job
+    /// timeout or the reaper kills legitimate long jobs mid-run.
+    #[serde(default = "default_reaper_hard_max_age_secs")]
+    pub hard_max_age_secs: u64,
 }
 
 impl Default for ReaperConfig {
@@ -142,6 +153,7 @@ impl Default for ReaperConfig {
         Self {
             sweep_interval_secs: DEFAULT_REAPER_SWEEP_SECS,
             max_age_secs: DEFAULT_REAPER_MAX_AGE_SECS,
+            hard_max_age_secs: DEFAULT_REAPER_HARD_MAX_AGE_SECS,
         }
     }
 }
@@ -156,6 +168,12 @@ fn default_reaper_sweep_secs() -> u64 {
 /// which requires a function path rather than a literal.
 fn default_reaper_max_age_secs() -> u64 {
     DEFAULT_REAPER_MAX_AGE_SECS
+}
+
+/// Function-form default for serde's `#[serde(default = "...")]`,
+/// which requires a function path rather than a literal.
+fn default_reaper_hard_max_age_secs() -> u64 {
+    DEFAULT_REAPER_HARD_MAX_AGE_SECS
 }
 
 /// The label→size table plus the implicit default for plain `x64`.
@@ -174,7 +192,7 @@ pub struct RunnerSizes {
 }
 
 impl RunnerSizes {
-    /// Match a `runs-on:` label list (e.g. `[self-hosted, fly, perf-8x]`)
+    /// Match a `runs-on:` label list (e.g. `[self-hosted, fly, perf-2x]`)
     /// to a machine size. Explicit tier labels (anything in `sizes`)
     /// take precedence; plain `x64` with no explicit tier resolves to
     /// the configured `default`. Returns `None` if the label list
@@ -262,6 +280,14 @@ impl FlyClient {
     /// Spawn an ephemeral runner Machine, or report the org is at its
     /// machine limit.
     ///
+    /// `name` must come from [`Machine::runner_name`] so the Machine
+    /// is named `fly-{job_id}-{hex}`. The `completed` webhook handler
+    /// (name-prefix lookup) and the reconciler's dedup
+    /// ([`Machine::spawned_job_id`]) both identify the Machine by
+    /// this name; a Machine spawned without it (Fly assigns a random
+    /// name) is invisible to both cleanup paths and leaks if its
+    /// runner never exits.
+    ///
     /// `jit_config` is the base64 JIT blob from
     /// [`crate::github::GitHubAppClient::mint_jit_config`], injected
     /// via the `JITCONFIG` env var. The Machine is created with
@@ -275,7 +301,12 @@ impl FlyClient {
     ///
     /// Returns an error on any other non-success response or a transport
     /// failure.
-    pub async fn spawn_runner(&self, size: &MachineSize, jit_config: &str) -> Result<SpawnOutcome> {
+    pub async fn spawn_runner(
+        &self,
+        name: &str,
+        size: &MachineSize,
+        jit_config: &str,
+    ) -> Result<SpawnOutcome> {
         // Resolve `:latest` to a content-addressable digest here so the
         // Machine's recorded image digest matches what the reaper's
         // `resolve_latest_digest` returns. Without this, Fly's
@@ -293,6 +324,7 @@ impl FlyClient {
             .context("image_ref missing ':tag' suffix")?;
         let pinned = format!("{repo}@{digest}");
         let body = SpawnMachineRequest {
+            name,
             region: &self.region,
             config: SpawnMachineConfig {
                 image: &pinned,
@@ -579,6 +611,10 @@ pub struct MachineImageRef {
 
 #[derive(Serialize)]
 struct SpawnMachineRequest<'a> {
+    /// Machine name, from [`Machine::runner_name`]. Omitting it makes
+    /// Fly assign a random name, which breaks the name-based cleanup
+    /// contract (completed-handler lookup, reconciler dedup).
+    name: &'a str,
     region: &'a str,
     config: SpawnMachineConfig<'a>,
 }

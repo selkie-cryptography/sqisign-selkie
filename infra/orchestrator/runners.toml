@@ -22,10 +22,10 @@
 #
 #   [reaper]         Background reaper task tuning. Optional;
 #                    omitted values fall back to the Rust-side
-#                    defaults (10 min sweep, 45 min max age). The
-#                    `REAPER_SWEEP_INTERVAL_SECS` /
-#                    `REAPER_MAX_AGE_SECS` env vars still override
-#                    at runtime as an emergency escape hatch.
+#                    defaults (10 min sweep, 45 min stale-image max
+#                    age, 6 h hard max age). Changes ride a redeploy
+#                    like the rest of this file; there is no runtime
+#                    env override.
 #
 # Editing this file:
 #   - Tweak the `default` to change the implicit tier for plain
@@ -37,17 +37,10 @@
 
 default = "shared-4x"
 
-[sizes."perf-16x"]
-cpu_kind = "performance"
-cpus = 16
-
-[sizes."perf-8x"]
-cpu_kind = "performance"
-cpus = 8
-
-[sizes."perf-4x"]
-cpu_kind = "performance"
-cpus = 4
+# perf-16x, perf-8x, and perf-4x are intentionally undeclared:
+# performance tiers above 2 CPUs are disabled to cap runner spend.
+# Shared tiers keep their sizes; jobs that need dedicated cores use
+# perf-2x.
 
 [sizes."perf-2x"]
 cpu_kind = "performance"
@@ -70,3 +63,8 @@ rootfs_gb = 5
 [reaper]
 sweep_interval_secs = 600
 max_age_secs = 2700
+# Any Machine older than this is destroyed regardless of image digest
+# or runner state — the backstop for runners that never received a
+# job and idle forever. Must exceed every workflow `timeout-minutes`
+# (largest today: mutants full shard, 240 min).
+hard_max_age_secs = 21600

@@ -4,9 +4,6 @@
 self-hosted-runner:
   labels:
     - fly
-    - perf-16x
     - perf-2x
-    - perf-4x
-    - perf-8x
     - shared-2x
     - shared-4x

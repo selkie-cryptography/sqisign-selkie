@@ -202,13 +202,13 @@ jobs:
     # `debug_assert!`s and unintended integer overflow still surface).
     # Cargo.toml defines the profile.
     #
-    # Fork PRs still route to GH-hosted. `perf-4x` is required: the
-    # release-checked build + 100 sign KATs is CPU-bound and Fly's
-    # shared CPUs throttle after the burst window, ~3× wall-clock vs
-    # dedicated cores. Empirically: ~10 min on perf-4x, >30 min on
-    # shared-cpu-4x.
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","perf-4x"]' || '["ubuntu-latest"]') }}
-    timeout-minutes: 30
+    # Fork PRs still route to GH-hosted. `perf-2x` (dedicated cores)
+    # is required: the release-checked build + 100 sign KATs is
+    # CPU-bound and Fly's shared CPUs throttle after the burst
+    # window, ~3× wall-clock vs dedicated cores. Was ~10 min on the
+    # now-disabled perf-4x; expect ~15-20 min on perf-2x.
+    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","perf-2x"]' || '["ubuntu-latest"]') }}
+    timeout-minutes: 45
     permissions:
       contents: read
       # Sticky KAT comment on pull requests.

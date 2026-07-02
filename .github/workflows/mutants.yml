@@ -1,9 +1,9 @@
 name: Mutants
 
-# Triggered after a CI run completes. PR mutation = `incremental`
-# (changed code only). Push-to-main or scheduled-nightly CI completion
-# = `full` (8-shard sweep). Manual `workflow_dispatch` always runs
-# `full` regardless of CI state.
+# Manual-only: nothing here fires automatically. Dispatch with
+# `mode: full` (default) for the 64-shard whole-tree sweep, or
+# `mode: incremental` on a branch to test only the code changed
+# vs main.
 #
 # Shard intermediates (per-shard mutants.out/outcomes.json) ride
 # through the Fly volume at /data/mutants/shards/<sha>/ between the
@@ -14,37 +14,20 @@ name: Mutants
 # stopgap.
 
 on:
-  # Direct triggers for mutants-infra changes. CI's path filter is
-  # scoped to src/ + tests/ + benches/, so changes to this workflow
-  # or to `.cargo/mutants.toml` don't fire CI and would otherwise be
-  # silently un-validated. Same pattern fuzz.yml uses for its own
-  # infra paths.
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/mutants.yml'
-      - '.cargo/mutants.toml'
-  pull_request:
-    branches: [main, next]
-    paths:
-      - '.github/workflows/mutants.yml'
-      - '.cargo/mutants.toml'
-  # Indirect: after a CI run on Rust source completes. Most mutant
-  # runs come through this gate.
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: >-
+          full = whole-tree 64-shard sweep; incremental = mutants in
+          the dispatched ref's diff vs main only
+        type: choice
+        options: [full, incremental]
+        default: full
 
 concurrency:
-  # workflow_run sets github.ref to the default branch — key by the
-  # triggering run's head_branch so PRs don't share groups. With
-  # cancel-in-progress: false, every push to main fires its own
-  # mutants run; older runs keep finishing instead of getting
-  # superseded mid-shard. Eats more runner-minutes but stops the
-  # cascade where 5 consecutive pushes leave 5 cancelled runs and
-  # zero data.
-  group: mutants-${{ github.event.workflow_run.head_branch || github.ref }}
+  # cancel-in-progress: false — a second dispatch on the same ref
+  # queues behind the first instead of killing it mid-shard.
+  group: mutants-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -54,32 +37,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Detect whether the PR diff touches any Rust source files. cargo-
-  # mutants has nothing to do on a no-Rust diff (docs / workflow YAML
-  # / etc), and skipping the heavy `incremental` job entirely is much
-  # cheaper than letting it spin up Fly, install toolchain + tools,
-  # build the baseline, and then exit zero. Output is consumed by the
-  # `incremental` job's `if:` below.
+  # Detect whether the dispatched ref's diff vs main touches any Rust
+  # source files. cargo-mutants has nothing to do on a no-Rust diff
+  # (docs / workflow YAML / etc), and skipping the heavy `incremental`
+  # job entirely is much cheaper than letting it spin up Fly, install
+  # toolchain + tools, build the baseline, and then exit zero. Output
+  # is consumed by the `incremental` job's `if:` below.
   incremental-detect:
     name: Detect Rust changes
-    if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.event == 'pull_request') ||
-      github.event_name == 'pull_request'
-    runs-on: ${{ fromJSON(
-      ((github.event_name == 'workflow_run' &&
-        github.event.workflow_run.head_repository.full_name == github.repository) ||
-       (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository))
-      && '["self-hosted","fly","linux","x64"]'
-      || '["ubuntu-latest"]') }}
+    if: inputs.mode == 'incremental'
+    # Dispatch requires write access, so the code is trusted — route
+    # straight to Fly.
+    runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
-    # On direct pull_request events dorny ignores base/ref and uses
-    # the GitHub API to list changed files; that needs pull-requests:
-    # read on top of the workflow-level contents:read.
-    permissions:
-      contents: read
-      pull-requests: read
     outputs:
       has_rust: ${{ steps.filter.outputs.rust }}
     steps:
@@ -87,15 +57,15 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d
         id: filter
         with:
-          # Explicit base + ref so paths-filter works on workflow_run
-          # (where it can't infer them from the event payload). Same
-          # pattern fuzz.yml's detect job uses.
+          # Explicit base + ref so paths-filter diffs the dispatched
+          # ref against main instead of inferring from the event
+          # payload (workflow_dispatch has no base). Same pattern
+          # fuzz.yml's detect job uses.
           base: main
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
           # cargo-mutants runs the default cargo nextest target set
           # (lib unit tests + integration tests under `tests/`), so
           # changes in either directory can produce new mutants or
@@ -108,52 +78,17 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
 
-  # PR mutation testing. Fires when CI's pull_request run completes
-  # (success or failure — see the job's `if:` for rationale). Tests
-  # mutants in changed code only.
-  #
-  # Routes to Fly on same-repo PRs (where the contributor has
-  # write access to the repo and we trust their code). Fork PRs
-  # route to GH-hosted `ubuntu-latest` since workflow_run checks
-  # out the PR head_sha and that's untrusted contributor code on
-  # a public repo.
+  # Changed-code mutation testing: mutants in the dispatched ref's
+  # diff vs main only. Dispatch on a branch with `mode: incremental`.
   incremental:
     needs: [incremental-detect]
     name: Incremental
-    # `perf-8x` gives 8 dedicated cores so cargo-mutants can fan the
-    # changed-code mutants out in parallel (`-j 6` below). Dedicated
-    # cores also avoid shared-CPU throttling during the baseline build.
-    # Same-repo runs go to Fly; fork PRs fall back to GH-hosted. Two
-    # event paths reach this job (see `if:` below), so the same-repo
-    # check has to cover both: workflow_run after a CI run, and the
-    # direct pull_request trigger when the PR touches mutants infra.
-    runs-on: ${{ fromJSON(
-      ((github.event_name == 'workflow_run' &&
-        github.event.workflow_run.head_repository.full_name == github.repository) ||
-       (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository))
-      && '["self-hosted","fly","linux","perf-8x"]'
-      || '["ubuntu-latest"]') }}
-    permissions:
-      contents: read
-      # Sticky changed-code mutation-coverage comment on same-repo PRs.
-      pull-requests: write
-    # Run after CI completes (success OR failure) so a transient
-    # red — reviewdog 502, a platform-fly job timeout, an artifact
-    # quota miss — doesn't silently kill mutation coverage on the
-    # PR. cargo-mutants reports baseline test failure on its own
-    # via the "Verify mutants produced real outcomes" step below.
-    # Fires on:
-    # - workflow_run after CI completes on a PR (the normal path)
-    # - direct pull_request when the PR touches mutants infra (this
-    #   workflow file or .cargo/mutants.toml), to validate the
-    #   workflow itself end-to-end on PR diffs
-    if: >-
-      needs.incremental-detect.outputs.has_rust == 'true' &&
-      ((github.event_name == 'workflow_run' &&
-        github.event.workflow_run.event == 'pull_request') ||
-       github.event_name == 'pull_request')
-    timeout-minutes: 120
+    # `perf-2x` gives dedicated cores, avoiding shared-CPU throttling
+    # during the baseline build and the serial mutant loop (the run
+    # below is `--in-place`, hence `-j 1`).
+    runs-on: [self-hosted, fly, linux, perf-2x]
+    if: needs.incremental-detect.outputs.has_rust == 'true'
+    timeout-minutes: 180
     # sccache against the same Tigris bucket `gate` uses. cargo-mutants
     # rebuilds the crate many times (baseline + one rebuild per mutant);
     # most upstream deps are identical across mutants and across PRs, so
@@ -161,9 +96,7 @@ jobs:
     # graph and the baseline build. The `full` matrix below also writes
     # into the same bucket — shards share each other's writes for free.
     env:
-      # See gate (ci.yml) for the empty-RUSTC_WRAPPER rationale —
-      # same fallback so dependabot / fork PRs that touch mutants
-      # infra don't trip on missing sccache creds.
+      # See gate (ci.yml) for the empty-RUSTC_WRAPPER rationale.
       RUSTC_WRAPPER: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID != '' && 'sccache' || '' }}
       SCCACHE_BUCKET: selkie-ci-sccache
       SCCACHE_ENDPOINT: https://fly.storage.tigris.dev
@@ -175,7 +108,6 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Generate diff vs main
         # `actions/checkout` ran with `persist-credentials: false`,
@@ -204,13 +136,11 @@ jobs:
       # build come from `.cargo/mutants.toml`. `--in-place` is CLI-only
       # (no config key in cargo-mutants), so it stays here.
       #
-      # `-j 6` runs six mutants concurrently on the 8-core perf-8x box,
-      # leaving two cores for each mutant's nextest harness so the test
-      # runner isn't starved. `--minimum-test-timeout 180` widens the
-      # 60s floor from `.cargo/mutants.toml`: six concurrent nextest
-      # suites contend for CPU, so a legitimately-passing test can run
-      # several times slower than its solo baseline; the wider floor
-      # prevents that contention from being misread as a timeout kill.
+      # `--minimum-test-timeout 180` widens the 60s floor from
+      # `.cargo/mutants.toml`: a legitimately-passing test can run
+      # several times slower than its solo baseline on the 2-core
+      # box; the wider floor prevents that from being misread as a
+      # timeout kill.
       - name: Run cargo-mutants on changed code
         continue-on-error: true
         # `--in-place` is incompatible with `-j > 1` in cargo-mutants
@@ -218,7 +148,7 @@ jobs:
         # keep `--in-place` here — the changed-code mutant set on a
         # PR is small enough that the overhead of copying the tree per
         # worker would outweigh the parallel speedup, and `--in-place`
-        # lets the baseline build be shared. `full` runs `-j 8` without
+        # lets the baseline build be shared. `full` runs `-j 2` without
         # `--in-place` because its shard already partitions the work.
         run: |
           cargo mutants --no-shuffle -vV \
@@ -252,11 +182,11 @@ jobs:
           # Unset RUSTC_WRAPPER: skip sccache for this tiny standalone
           # compile (the job sets a wrapper for the crate build).
           env -u RUSTC_WRAPPER rustc -O .github/scripts/mutants-to-json.rs -o /tmp/mutants-to-json
-          /tmp/mutants-to-json mutants.out/outcomes.json "${{ github.event.workflow_run.head_sha || github.sha }}" > mutants.json
+          /tmp/mutants-to-json mutants.out/outcomes.json "${{ github.sha }}" > mutants.json
 
-      # Job summary always; sticky changed-code kill-rate comment on
-      # same-repo PRs. No Fly upload — uploads stay push/full-run only,
-      # so the dashboard baseline reflects whole-tree runs, not diffs.
+      # Job summary only (the action's sticky comment path needs a PR
+      # event). No Fly upload — the dashboard baseline reflects
+      # whole-tree sweeps, not diffs.
       - name: Report changed-code mutation coverage
         uses: ./.github/actions/ci-pr-report
         with:
@@ -264,36 +194,22 @@ jobs:
           payload: mutants.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-  # Full sharded sweep. Fires on push-to-main or scheduled-nightly CI
-  # completion (success or failure), or on manual dispatch. Each shard
-  # runs on a `perf-8x` box at `-j 3` — per
-  # https://mutants.rs/parallelism.html, `cargo build` and `cargo test`
-  # already parallelize aggressively internally, so layering high
-  # cargo-mutants `-j` on top of that thrashes. The upstream guidance
-  # is `-j 2` or `-j 3` for non-mega machines; we picked the higher
-  # end to fit the 8-core box.
+  # Full sharded sweep. Each shard runs on a `perf-2x` box at
+  # `-j 2` — per https://mutants.rs/parallelism.html, `cargo build`
+  # and `cargo test` already parallelize aggressively internally, so
+  # layering high cargo-mutants `-j` on top of that thrashes; `-j 2`
+  # keeps one mutant building while another tests on the 2-core box.
   full:
     name: Full shard ${{ matrix.shard }}
-    runs-on: [self-hosted, fly, linux, perf-8x]
-    # Same rationale as `incremental`: trigger on CI completion, not
-    # success — the merge step's outcome-count check is the real
-    # baseline-failure detector. Also fires on direct push to main
-    # of mutants infra (this workflow, .cargo/mutants.toml) so the
-    # workflow self-validates on its own changes.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
-    # 180 min budget per shard. Per-mutant test phase is dominated by
+    runs-on: [self-hosted, fly, linux, perf-2x]
+    if: inputs.mode == 'full'
+    # 240 min budget per shard. Per-mutant test phase is dominated by
     # tail mutations (infinite loops, slow lib tests under
     # contention) that the `timeout_multiplier = 2` cap in
-    # `.cargo/mutants.toml` shortens to ~5 min worst-case. With 32
-    # shards (~62 mutants/shard) under `-j 3` parallelism and the
-    # `mutants` profile (no debuginfo), the median mutant lands in
-    # ~30-60s and the tail fits inside the budget.
-    timeout-minutes: 180
+    # `.cargo/mutants.toml` shortens to ~5 min worst-case. Budget is
+    # a first calibration for the 2-core tier (the 8-core tier fit
+    # ~490 mutants in 180 min at `-j 3`); retune after a few runs.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -301,18 +217,21 @@ jobs:
           [
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
             16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+            32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+            48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
           ]
-    # All 32 shards share the same Tigris-backed sccache bucket;
+    # All 64 shards share the same Tigris-backed sccache bucket;
     # cargo-mutants' identical baseline build hits cross-shard on
     # arrival, and the upstream dep graph stays warm across runs.
-    # 32 shards sized to cargo-mutants 27's mutation set on this
-    # tree: ~15700 mutants total / 32 = ~490 mutants per shard.
-    # Fits the 180 min budget with the full perf stack: `-j 3`
-    # parallelism, the `mutants` profile (no debuginfo), and
-    # `--baseline=skip` (saves ~5 min × 32 shards of redundant
-    # baseline rebuild — the gate already validated the unmutated
-    # tree before this workflow_run fires). Mold linker is already
-    # in effect via `.cargo/config.toml` + the baked runner image.
+    # 64 shards sized to cargo-mutants 27's mutation set on this
+    # tree: ~15700 mutants total / 64 = ~245 mutants per shard,
+    # fitting the 240 min budget on 2 dedicated cores with `-j 2`,
+    # the `mutants` profile (no debuginfo), and `--baseline=skip`
+    # (saves ~5 min × 64 shards of redundant baseline rebuild — CI
+    # validates the unmutated tree on every push, and the merge
+    # step's outcome-count check catches a broken baseline). Mold
+    # linker is already in effect via `.cargo/config.toml` + the
+    # baked runner image.
     env:
       # See gate (ci.yml) for the empty-RUSTC_WRAPPER rationale.
       RUSTC_WRAPPER: ${{ secrets.TIGRIS_SCCACHE_ACCESS_KEY_ID != '' && 'sccache' || '' }}
@@ -325,7 +244,6 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696  # v0.0.10
         if: env.RUSTC_WRAPPER == 'sccache'
@@ -338,18 +256,18 @@ jobs:
       # debug = "line-tables-only" entirely for a faster build (per
       # https://mutants.rs/performance.html).
       #
-      # `-j 3` per upstream guidance — cargo + rustc already
+      # `-j 2` to fit the 2-core box — cargo + rustc already
       # parallelize internally, so higher `-j` here just contends.
       # `--baseline=skip` since the gate already validated the
       # unmutated tree; rerunning baseline per shard is ~5 min of
-      # waste × 32 shards. `--minimum-test-timeout 180` widens the
+      # waste × 64 shards. `--minimum-test-timeout 180` widens the
       # 60s floor so contention isn't misread as a timeout kill.
       # Mold linker is on for free via `.cargo/config.toml`.
-      - name: Run cargo-mutants (shard ${{ matrix.shard }}/32)
+      - name: Run cargo-mutants (shard ${{ matrix.shard }}/64)
         continue-on-error: true
         run: |
-          cargo mutants --shard ${{ matrix.shard }}/32 -vV \
-            -j 3 \
+          cargo mutants --shard ${{ matrix.shard }}/64 -vV \
+            -j 2 \
             --baseline=skip \
             --minimum-test-timeout 180
 
@@ -371,27 +289,23 @@ jobs:
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
-          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SHA: ${{ github.sha }}
           SHARD: ${{ matrix.shard }}
         run: /tmp/ci-scratch put mutants "${SHA}" "shard-${SHARD}" mutants.out/outcomes.json
 
-  # Merge + verify + upload the full sweep. Skipped on PR.
+  # Merge + verify + upload the full sweep. Skipped on incremental
+  # dispatches (with `full` skipped, the `needs` result is 'skipped').
   full-upload:
     name: Merge and upload full results
     needs: full
-    if: >-
-      always() && needs.full.result != 'skipped' &&
-      (github.event_name == 'workflow_dispatch' ||
-       github.event_name == 'push' ||
-       (github.event_name == 'workflow_run' &&
-        github.event.workflow_run.head_branch == 'main'))
+    if: always() && needs.full.result != 'skipped'
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Build ci-scratch
         run: rustc -O .github/scripts/ci-scratch.rs -o /tmp/ci-scratch
@@ -399,7 +313,7 @@ jobs:
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
-          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SHA: ${{ github.sha }}
         run: |
           mkdir -p shards
           /tmp/ci-scratch get mutants "${SHA}" shards
@@ -426,7 +340,7 @@ jobs:
 
       - name: Generate site JSON
         env:
-          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SHA: ${{ github.sha }}
         run: |
           rustc -O .github/scripts/mutants-to-json.rs -o /tmp/mutants-to-json
           /tmp/mutants-to-json merged-outcomes.json "$SHA" > mutants.json
@@ -437,7 +351,10 @@ jobs:
         with:
           kind: mutants
           payload: mutants.json
-          sha: ${{ github.event.workflow_run.head_sha || github.sha }}
+          sha: ${{ github.sha }}
+          # Branch dispatches write the per-sha file only; the
+          # latest/index/manifest baseline moves on main data alone.
+          pr-only: ${{ github.ref != 'refs/heads/main' }}
           fly-api-token: ${{ secrets.FLY_API_TOKEN }}
 
       # Sweep the per-SHA scratch intermediates now that the merged
@@ -450,5 +367,5 @@ jobs:
         env:
           TIGRIS_ACCESS_KEY_ID: ${{ secrets.TIGRIS_ACCESS_KEY_ID }}
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
-          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SHA: ${{ github.sha }}
         run: /tmp/ci-scratch clean mutants "${SHA}"

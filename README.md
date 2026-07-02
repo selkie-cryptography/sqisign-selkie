@@ -93,8 +93,9 @@ glue, compile-time constants) are excluded in `.cargo/mutants.toml`.
 Functions that would hang or loop forever under mutation are annotated
 with `#[mutants::skip]` in the source.
 
-CI runs incremental mutation testing on every PR (only changed code) and
-a full sharded run weekly.
+Mutation testing in CI is manual-only: dispatch the Mutants workflow
+with `mode: full` for the whole-tree sharded sweep, or
+`mode: incremental` on a branch for changed-code-only.
 
 ## Negative and vulnerability test vectors
 

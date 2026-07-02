@@ -122,7 +122,7 @@ impl Reconciler {
                     continue;
                 }
             };
-            match self.fly.spawn_runner(size, &jit).await {
+            match self.fly.spawn_runner(&name, size, &jit).await {
                 Ok(SpawnOutcome::Spawned(id)) => {
                     info!(machine = ?id, job_id = job.id, job = %job.name, "reconciler spawned runner")
                 }

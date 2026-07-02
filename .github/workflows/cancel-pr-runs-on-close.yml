@@ -4,14 +4,14 @@ name: Cancel PR runs on close
 # whose `head_sha` matches the PR's head — including:
 #   - The PR's own `pull_request`-triggered runs (CI, coverage,
 #     fuzz, c-ref-cross-check, sage-cross-check).
-#   - The `workflow_run`-triggered descendants (Mutants Incremental,
-#     Fuzz, anything keyed off CI completion) whose head_sha is
-#     inherited from the parent CI run.
+#   - The `workflow_run`-triggered descendants (Fuzz, anything keyed
+#     off CI completion) whose head_sha is inherited from the parent
+#     CI run.
 #
 # GitHub does not auto-cancel these on PR close. Without this
-# workflow, an in-flight mutants run (180 min budget) or fuzz matrix
-# keeps consuming a Fly Machine for up to its full timeout after the
-# PR has merged — wasted runner time and stale dashboard signal.
+# workflow, an in-flight fuzz matrix keeps consuming a Fly Machine
+# for up to its full timeout after the PR has merged — wasted runner
+# time and stale dashboard signal.
 #
 # Cancelled runs render as the grey circle-slash "cancelled" status,
 # not the red X "failure" status, so this doesn't pollute the PR's

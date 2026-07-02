@@ -1,7 +1,7 @@
-//! Unit tests for [`crate::fly::RunnerSizes`] label resolution and
-//! actionlint rendering. The Fly API client itself is exercised by
-//! the orchestrator's integration paths; this module covers the
-//! pure label-resolution logic that does not require a live API.
+//! Unit tests for [`crate::fly`]'s pure logic: label resolution,
+//! config parsing, actionlint rendering, Machine-name round-trips,
+//! and spawn-request serialization. The Fly API client itself is
+//! exercised by the orchestrator's integration paths.
 
 use super::*;
 
@@ -157,6 +157,10 @@ fn reaper_config_falls_back_to_defaults_when_section_omitted() {
 
     assert_eq!(config.reaper.sweep_interval_secs, DEFAULT_REAPER_SWEEP_SECS,);
     assert_eq!(config.reaper.max_age_secs, DEFAULT_REAPER_MAX_AGE_SECS);
+    assert_eq!(
+        config.reaper.hard_max_age_secs,
+        DEFAULT_REAPER_HARD_MAX_AGE_SECS
+    );
 }
 
 #[test]
@@ -170,12 +174,14 @@ fn reaper_config_picks_up_explicit_values() {
         [reaper]
         sweep_interval_secs = 120
         max_age_secs = 3600
+        hard_max_age_secs = 7200
         "#,
     )
     .unwrap();
 
     assert_eq!(config.reaper.sweep_interval_secs, 120);
     assert_eq!(config.reaper.max_age_secs, 3600);
+    assert_eq!(config.reaper.hard_max_age_secs, 7200);
 }
 
 #[test]
@@ -225,5 +231,44 @@ fn runner_name_round_trips_through_spawned_job_id() {
         named_machine(&name).spawned_job_id(),
         Some(82_509_019_233),
         "runner_name must be parseable by spawned_job_id: {name}"
+    );
+}
+
+/// Regression: the spawn request body must carry the runner name at
+/// the top level. When it was omitted, Fly assigned random names, the
+/// completed-handler prefix lookup and the reconciler's
+/// [`Machine::spawned_job_id`] dedup never matched, the reconciler
+/// re-spawned a runner for every queued job each sweep, and idle
+/// runners leaked indefinitely.
+#[test]
+fn spawn_request_serializes_runner_name() {
+    let name = Machine::runner_name(82_509_019_233);
+    let body = SpawnMachineRequest {
+        name: &name,
+        region: "iad",
+        config: SpawnMachineConfig {
+            image: "registry.fly.io/sqisign-infra-runners@sha256:test",
+            env: [("JITCONFIG", "blob")].into(),
+            init: SpawnInit {
+                exec: vec!["/entrypoint.sh"],
+            },
+            guest: SpawnGuest {
+                cpu_kind: "shared",
+                cpus: 2,
+                memory_mb: 4096,
+            },
+            rootfs: SpawnRootfs { size_gb: 30 },
+            auto_destroy: true,
+            restart: SpawnRestart { policy: "no" },
+        },
+    };
+
+    let json = serde_json::to_value(&body).expect("test fixture serializes");
+
+    assert_eq!(json["name"].as_str(), Some(name.as_str()));
+    assert_eq!(
+        named_machine(&name).spawned_job_id(),
+        Some(82_509_019_233),
+        "spawned name must satisfy the cleanup contract"
     );
 }

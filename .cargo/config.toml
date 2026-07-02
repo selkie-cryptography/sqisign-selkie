@@ -1,5 +1,5 @@
 # Linux target tunings. Applies to Fly self-hosted runners
-# (perf-2x / perf-8x) and Linux dev machines, across both x86_64
+# (perf-2x / shared-4x) and Linux dev machines, across both x86_64
 # and aarch64.  macOS / Windows are unaffected.
 #
 # `link-arg=-fuse-ld=mold` — use mold instead of the system ld.

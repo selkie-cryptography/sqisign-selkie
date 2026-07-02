@@ -21,7 +21,7 @@ use axum::{
 };
 use orchestrator::{
     fly::{Config, FlyClient, Machine, SpawnOutcome},
-    github::{GitHubAppClient, WorkflowJobEvent, verify_webhook_signature},
+    github::{DeleteRunnerOutcome, GitHubAppClient, WorkflowJobEvent, verify_webhook_signature},
     reaper::Reaper,
     reconciler::Reconciler,
 };
@@ -53,7 +53,16 @@ async fn main() -> Result<()> {
     // runtime env override would buy nothing).
     let reaper_interval = Duration::from_secs(state.config.reaper.sweep_interval_secs);
     let reaper_max_age = Duration::from_secs(state.config.reaper.max_age_secs);
-    tokio::spawn(Reaper::new(state.fly.clone(), reaper_interval, reaper_max_age).run());
+    let reaper_hard_max_age = Duration::from_secs(state.config.reaper.hard_max_age_secs);
+    tokio::spawn(
+        Reaper::new(
+            state.fly.clone(),
+            reaper_interval,
+            reaper_max_age,
+            reaper_hard_max_age,
+        )
+        .run(),
+    );
 
     // Reconcile loop: a backstop alongside the webhook path that recovers
     // queued jobs the webhook missed or that lost their runner to
@@ -118,6 +127,7 @@ impl AppState {
             default = config.sizes.default_label(),
             reaper_sweep_secs = config.reaper.sweep_interval_secs,
             reaper_max_age_secs = config.reaper.max_age_secs,
+            reaper_hard_max_age_secs = config.reaper.hard_max_age_secs,
             "loaded orchestrator config",
         );
 
@@ -191,10 +201,10 @@ async fn webhook(
     }
 }
 
-/// `workflow_job: queued` handler. Mints a JIT config, spawns a
-/// Machine, and records the `(job_id, machine_id)` mapping so the
-/// matching `completed` event can deterministically destroy the
-/// Machine even if the runner inside crashes without a clean exit.
+/// `workflow_job: queued` handler. Mints a JIT config and spawns a
+/// Machine named `fly-{job_id}-{hex}` so the matching `completed`
+/// event can deterministically destroy the Machine even if the
+/// runner inside crashes without a clean exit.
 async fn handle_queued(state: &Arc<AppState>, event: WorkflowJobEvent) -> axum::response::Response {
     if !event.workflow_job.labels.iter().any(|l| l == "fly") {
         return (
@@ -242,7 +252,7 @@ async fn handle_queued(state: &Arc<AppState>, event: WorkflowJobEvent) -> axum::
         }
     };
 
-    match state.fly.spawn_runner(size, &jit).await {
+    match state.fly.spawn_runner(&runner_name, size, &jit).await {
         Ok(SpawnOutcome::Spawned(id)) => {
             info!(machine = ?id, job_id = event.workflow_job.id, "runner spawned");
             (StatusCode::OK, Json(serde_json::json!({"machine": id}))).into_response()
@@ -269,14 +279,23 @@ async fn handle_queued(state: &Arc<AppState>, event: WorkflowJobEvent) -> axum::
 }
 
 /// `workflow_job: completed` handler. Finds the Machine the
-/// orchestrator spawned for this job by name prefix and force-destroys
-/// it, defending against the case where `auto_destroy: true` doesn't
-/// fire (runner crashed without clean exit).
+/// orchestrator spawned for this job by name prefix and cleans it up
+/// unless its runner is busy.
 ///
 /// Machine name is `fly-{workflow_job.id}-{short_hex}`, so the prefix
 /// `fly-{job_id}-` uniquely identifies the spawn. No per-replica
 /// in-memory state needed: every orchestrator replica sees the same
 /// Fly Machines API, so this works correctly under any replica count.
+///
+/// Runners register with labels, not job ids, so GitHub may hand the
+/// runner spawned for job X a different label-matching job
+/// (job-stealing). When X completes, the Machine named `fly-{X}-` can
+/// be mid-run on that other job; force-destroying it would kill the
+/// job. Guard: deregister the Machine's runner from GitHub first
+/// (GitHub refuses with 422 while the runner is busy) and destroy the
+/// Machine only once the runner is deregistered or already gone. A
+/// busy runner's Machine is left alone; `auto_destroy` fires when its
+/// job finishes.
 ///
 /// No-op for jobs we did not spawn or that `auto_destroy` already
 /// cleaned up. The periodic reaper covers anything missed.
@@ -304,6 +323,68 @@ async fn handle_completed(
             return (StatusCode::INTERNAL_SERVER_ERROR, "list failed").into_response();
         }
     };
+
+    // Deregister-first. On any uncertainty (lookup error, busy, 422)
+    // leave the Machine alone: the reaper's hard-age backstop covers
+    // a leak, whereas destroying a busy runner kills a live job.
+    match state.github.find_runner_by_name(&machine.name).await {
+        Ok(Some(runner)) if runner.busy => {
+            info!(
+                job_id,
+                machine = %machine.id.0,
+                name = %machine.name,
+                "runner busy with another job; leaving Machine"
+            );
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({"busy_runner": machine.name})),
+            )
+                .into_response();
+        }
+        Ok(Some(runner)) => match state.github.delete_runner(runner.id).await {
+            Ok(DeleteRunnerOutcome::Deleted) => {}
+            Ok(DeleteRunnerOutcome::Busy) => {
+                info!(
+                    job_id,
+                    machine = %machine.id.0,
+                    name = %machine.name,
+                    "runner took a job between lookup and deregister; leaving Machine"
+                );
+                return (
+                    StatusCode::OK,
+                    Json(serde_json::json!({"busy_runner": machine.name})),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                warn!(
+                    error = format!("{e:#}"),
+                    name = %machine.name,
+                    "runner deregister failed; leaving Machine for the reaper"
+                );
+                return (
+                    StatusCode::OK,
+                    Json(serde_json::json!({"deregister_failed": machine.name})),
+                )
+                    .into_response();
+            }
+        },
+        // Runner already exited/deregistered (or never registered):
+        // nothing can assign the Machine work, destroy it.
+        Ok(None) => {}
+        Err(e) => {
+            warn!(
+                error = format!("{e:#}"),
+                name = %machine.name,
+                "runner lookup failed; leaving Machine for the reaper"
+            );
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({"runner_lookup_failed": machine.name})),
+            )
+                .into_response();
+        }
+    }
 
     info!(
         job_id,

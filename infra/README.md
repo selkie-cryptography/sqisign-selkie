@@ -121,16 +121,32 @@ to `main`, rebuilds `:base` then `:latest` in order on a
    - Exchange for an installation access token.
    - `POST /orgs/{org}/actions/runners/generate-jitconfig`.
 5. Pick Machine size from labels via `MachineSize::from_labels`:
-   - `perf-2x` / `4x` / `8x` / `16x` — Fly performance CPUs.
+   - `perf-2x` — Fly performance CPUs.
    - `shared-2x` / `4x` — Fly shared CPUs.
    - Plain `x64` (no sizing label) defaults to `shared-4x`. Jobs that
-     genuinely need dedicated cores opt up with `perf-2x` / `perf-4x` /
-     `perf-8x`; everything else rides shared CPU.
+     genuinely need dedicated cores opt up with `perf-2x`; everything
+     else rides shared CPU. Performance tiers above 2 CPUs are
+     disabled to cap runner spend.
 6. `POST /v1/apps/sqisign-infra-runners/machines` with
    `auto_destroy: true` and `JITCONFIG` in the env.
 7. Machine boots → `entrypoint.sh` execs `./run.sh --jitconfig "$JITCONFIG"`.
 8. Runner registers JIT, picks up exactly one job, exits.
 9. Fly destroys the Machine.
+
+That is the happy path: `auto_destroy` covers every runner that runs a
+job (the runner is PID 1, so a crash also exits the Machine). Two
+backstops cover runners that never receive one (job-stealing, a job
+cancelled while queued):
+
+- On `workflow_job: completed`, the orchestrator finds the Machine
+  named `fly-{job_id}-`, deregisters its runner from GitHub (refused
+  with 422 while the runner is busy — it may have taken a different
+  label-matching job), and destroys the Machine only once the runner
+  is deregistered or already gone.
+- A reaper sweeps every 10 min, destroying stale-image Machines older
+  than 45 min and any Machine older than the 6 h hard max age
+  (`orchestrator/runners.toml` `[reaper]`; keep that above every
+  workflow `timeout-minutes`).
 
 Workflows that target Fly use `runs-on: [self-hosted, fly, linux, x64, ...]`.
 The full set of labels accepted is declared in `.github/actionlint.yaml`.
@@ -198,10 +214,10 @@ jobs:
     runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
 ```
 
-If the job needs more CPU, append a size label:
-`["self-hosted","fly","linux","x64","perf-8x"]`. Sizes are declared
-in `.github/actionlint.yaml`; if you need a new size, add it both
-there and to `MachineSize::from_labels` in `orchestrator/src/fly.rs`.
+If the job needs dedicated CPU, append a size label:
+`["self-hosted","fly","linux","x64","perf-2x"]`. Sizes are declared
+in `orchestrator/runners.toml`; if you need a new size, add it there
+and regenerate `.github/actionlint.yaml` with `render-actionlint`.
 
 If the job only needs to run on push/schedule/dispatch (never PR),
 the conditional is redundant — use the unconditional form:

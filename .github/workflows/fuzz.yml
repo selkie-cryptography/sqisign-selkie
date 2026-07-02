@@ -153,8 +153,8 @@ jobs:
     # budget. libFuzzer is single-threaded; shared-CPU throttling
     # after the burst-credit window costs measurable execs/sec.
     # 2 cores (one for the fuzz worker, one for OS / supervisor)
-    # is the right floor here — perf-4x doesn't speed a single-
-    # threaded fuzzer.
+    # is the right floor here — a bigger tier doesn't speed a
+    # single-threaded fuzzer.
     runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 30
     strategy:
