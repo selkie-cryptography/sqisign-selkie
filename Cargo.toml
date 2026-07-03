@@ -60,7 +60,7 @@ num-traits = "0.2"
 # cross-checks), and regex are unix-only: crabgrind needs Valgrind
 # headers, reqwest's TLS deps don't compile on i686-pc-windows-msvc.
 [target.'cfg(unix)'.dev-dependencies]
-crabgrind = "0.2"
+crabgrind = "0.3"
 regex = "1"
 reqwest = { version = "0.13", features = ["blocking"] }
 
