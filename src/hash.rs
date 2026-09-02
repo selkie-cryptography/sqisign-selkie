@@ -20,10 +20,12 @@
 //! [`E_CHL`]: crate::params::E_CHL
 //! [`HASH_ITERATIONS`]: crate::params::HASH_ITERATIONS
 
+use sha3_selkie::Shake256;
+
 use crate::{
     fields::fp2::Fp2,
     keys::VerifyingKey,
-    params::{E_CHL, FP2_ENCODED_BYTES, HASH_ITERATIONS, SECURITY_BITS},
+    params::{E_CHL, HASH_ITERATIONS, SECURITY_BITS},
 };
 
 /// Number of bytes in the intermediate SHAKE256 output.
@@ -100,24 +102,22 @@ pub(crate) fn hash(pk: &VerifyingKey, j: &Fp2, msg: &[u8]) -> [u8; CHALLENGE_BYT
     // Initial SHAKE256: absorb all input, squeeze 32 bytes.
     let mut buf = [0u8; INTERMEDIATE_BYTES];
     {
-        let mut input = Vec::with_capacity(2 * FP2_ENCODED_BYTES + msg.len());
-        input.extend_from_slice(&j_pk_bytes);
-        input.extend_from_slice(&j_bytes);
-        input.extend_from_slice(msg);
-        libcrux_sha3::shake256_ema(&mut buf, &input);
+        let mut xof = Shake256::new();
+        xof.update(&j_pk_bytes);
+        xof.update(&j_bytes);
+        xof.update(msg);
+        xof.finalize_xof().read(&mut buf);
     }
     // No intermediate masking needed: 2λ = 256 is byte-aligned.
 
     // Grind: iterate SHAKE256 (HASH_ITERATIONS − 2) more times.
     // C reference: for (int i = 2; i < HASH_ITERATIONS; i++)
     for _ in 2..HASH_ITERATIONS {
-        let input = buf;
-        libcrux_sha3::shake256_ema(&mut buf, &input);
+        buf = Shake256::digest(&buf);
     }
 
     // Final SHAKE256: squeeze e_chl = 122 bits.
-    let mut chl = [0u8; CHALLENGE_BYTES];
-    libcrux_sha3::shake256_ema(&mut chl, &buf);
+    let mut chl: [u8; CHALLENGE_BYTES] = Shake256::digest(&buf);
     chl[CHALLENGE_BYTES - 1] &= CHALLENGE_TOP_MASK;
 
     chl
