@@ -410,11 +410,10 @@ impl ChallengeMatrix {
         let parse_scalar = |offset: usize| -> Scalar {
             let mut buf = [0u8; TORSION_2POWER_BYTES];
             buf[..M_CHL_COMP_BYTES].copy_from_slice(&data[offset..offset + M_CHL_COMP_BYTES]);
+            let (chunks, _) = buf.as_slice().as_chunks::<8>();
             let mut limbs = [0u64; 4];
-            for (i, chunk) in buf.chunks_exact(8).enumerate() {
-                limbs[i] = u64::from_le_bytes([
-                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-                ]);
+            for (limb, chunk) in limbs.iter_mut().zip(chunks) {
+                *limb = u64::from_le_bytes(*chunk);
             }
             Scalar::from_limbs(limbs)
         };
