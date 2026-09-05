@@ -1,7 +1,10 @@
 # infra/
 
-Self-hosted GitHub Actions runners on Fly Machines. Cuts Linux CI cost
-versus GH-hosted minutes; macOS and Windows jobs stay on GH-hosted.
+Self-hosted GitHub Actions runners on Fly Machines. Since the repo
+went public, GitHub-hosted runners carry the standard CI (free Linux
+minutes); the fleet carries the scale-heavy and timing-sensitive jobs
+(mutants shards, the fuzz matrix, perf benchmarks, CT, PGO, LaTeX) and
+never runs fork-PR code. macOS and Windows jobs stay on GH-hosted.
 
 ## Layout
 

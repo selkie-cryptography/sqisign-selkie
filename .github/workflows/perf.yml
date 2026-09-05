@@ -21,6 +21,11 @@ name: Perf
 #   instructions = deterministic counts (the grade); benchmark/cref =
 #   machine-bound time/cycles (trend + cross-impl); size/alloc/stack =
 #   deterministic resource costs.
+#
+# Runners: instructions / benchmark / flamegraphs / cref run on the Fly
+# fleet (one image, so baselines stay comparable; dedicated cores for
+# the timed ones) and skip fork PRs, since untrusted code never runs
+# on the fleet. Everything else is GitHub-hosted.
 
 on:
   push:
@@ -95,6 +100,10 @@ jobs:
   # `gungraun` aggregate job merges them and posts the comment.
   instructions:
     name: gungraun (${{ matrix.shard }})
+    # Fork PRs skip: untrusted code never runs on the fleet.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 90
     env:
@@ -191,7 +200,7 @@ jobs:
   gungraun:
     name: gungraun
     needs: instructions
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -293,6 +302,10 @@ jobs:
   # the deterministic counterpart is `gungraun` above.
   benchmark:
     name: Performance benchmarks
+    # Fork PRs skip: untrusted code never runs on the fleet.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 90
     steps:
@@ -415,12 +428,13 @@ jobs:
   # ---------------- resource costs: binary size ----------------
   size:
     name: Binary size
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d
@@ -435,7 +449,11 @@ jobs:
 
       - name: Verify size payload has data
         run: jq -e '.binary.total_bytes > 0' size.json > /dev/null || { echo "::error::size.json missing binary.total_bytes"; cat size.json >&2; exit 1; }
+      # Needs the Fly token, which fork PRs don't receive.
       - name: Upload
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
         uses: ./.github/actions/ci-upload
         with:
           kind: size
@@ -446,12 +464,13 @@ jobs:
   # ---------------- resource costs: allocation budget ----------------
   alloc:
     name: Allocation budget
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
@@ -467,7 +486,11 @@ jobs:
 
       - name: Verify alloc payload has data
         run: jq -e '.status != null and .status != ""' alloc.json > /dev/null || { echo "::error::alloc.json missing status field"; cat alloc.json >&2; exit 1; }
+      # Needs the Fly token, which fork PRs don't receive.
       - name: Upload
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
         uses: ./.github/actions/ci-upload
         with:
           kind: alloc
@@ -478,12 +501,15 @@ jobs:
   # ---------------- resource costs: stack depth ----------------
   stack:
     name: Stack depth
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
+        with:
+          packages: mold valgrind libc6-dbg
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
@@ -494,7 +520,11 @@ jobs:
 
       - name: Verify stack payload has data
         run: jq -e '.peak_stack_bytes > 0' stack.json > /dev/null || { echo "::error::stack.json has zero peak_stack_bytes"; cat stack.json >&2; exit 1; }
+      # Needs the Fly token, which fork PRs don't receive.
       - name: Upload
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
         uses: ./.github/actions/ci-upload
         with:
           kind: stack
@@ -510,6 +540,10 @@ jobs:
   # with DWARF unwinding from the profiling profile's debuginfo.
   flamegraphs:
     name: flamegraphs
+    # Fork PRs skip: untrusted code never runs on the fleet.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 30
     env:
@@ -570,12 +604,13 @@ jobs:
   # "fewer mulx but more instructions" non-win signal benches can miss.
   mca:
     name: llvm-mca
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
         with:
           targets: x86_64-unknown-linux-gnu
@@ -614,6 +649,10 @@ jobs:
   # KAT gate; this is a relative snapshot, not a merge gate.
   cref:
     name: C ref vs Rust (NIST-I)
+    # Fork PRs skip: untrusted code never runs on the fleet.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 60
     env:

@@ -47,22 +47,17 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
-# Runner routing
+# Runners
 #
-# Every Linux job's `runs-on` is gated on the trigger context:
-#   - push to main, schedule, workflow_dispatch, same-repo PR
-#       -> Fly self-hosted (`[self-hosted, fly, linux, x64]`)
-#   - fork PR
-#       -> GH-hosted (`ubuntu-latest`)
-#
-# Fork PRs run arbitrary contributor code and must NOT execute on
-# our self-hosted Machines. The same-repo distinction is
-# `head.repo.full_name == github.repository` — anyone with write
-# access to the repo can push branches, so write-access is the
-# trust line.
-#
-# The expression repeats inline on every `runs-on` since GitHub
-# Actions does not support YAML anchors for `runs-on` values.
+# Every job here runs GitHub-hosted (`ubuntu-latest`, 4 vCPU, free on
+# a public repo), so fork PRs need no special routing. The Fly fleet
+# (`[self-hosted, fly, ...]`) is reserved for the scale-heavy and
+# timing-sensitive workflows (mutants, fuzz, perf, ct, pgo, latex)
+# and never runs fork-PR code. Linux jobs that run cargo install
+# `mold` first (`.github/actions/setup-linux-deps`);
+# `.cargo/config.toml` selects it as the linker and builds x86_64 with
+# `x86-64-v3` + `adx`, so `gate` exercises the mulx/adx and AVX2
+# backends; `gate-aarch64` covers NEON.
 
 # Tier 1 — Gate
 #
@@ -80,7 +75,7 @@ jobs:
   cron-gate:
     name: Cron gate (skip if recent run on main)
     if: github.event_name == 'schedule'
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
       contents: read
@@ -118,7 +113,7 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       checks: write
@@ -170,12 +165,13 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # nightly
         with:
           components: clippy
@@ -201,13 +197,7 @@ jobs:
     # `debug-assertions` and `overflow-checks` kept on (so invariant
     # `debug_assert!`s and unintended integer overflow still surface).
     # Cargo.toml defines the profile.
-    #
-    # Fork PRs still route to GH-hosted. `perf-2x` (dedicated cores)
-    # is required: the release-checked build + 100 sign KATs is
-    # CPU-bound and Fly's shared CPUs throttle after the burst
-    # window, ~3× wall-clock vs dedicated cores. Was ~10 min on the
-    # now-disabled perf-4x; expect ~15-20 min on perf-2x.
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","perf-2x"]' || '["ubuntu-latest"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
@@ -241,6 +231,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696  # v0.0.10
         if: env.RUSTC_WRAPPER == 'sccache'
@@ -326,12 +317,13 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","fly","linux","x64"]' || '["ubuntu-latest"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
@@ -357,37 +349,44 @@ jobs:
           echo "put /tmp/rustdoc.tar.gz /data/rustdoc.tar.gz" | flyctl ssh sftp shell -a sqisign-selkie-ci
           flyctl ssh console -a sqisign-selkie-ci -C "sh -c 'set -e; rm -rf /data/rustdoc && mkdir -p /data/rustdoc && tar -xzf /data/rustdoc.tar.gz -C /data/rustdoc && rm /data/rustdoc.tar.gz'"
 
+  # Native aarch64 leg: the NEON `Fp29x4` backend's cross-impl tests and
+  # the `aes_armv8` cfg only compile on aarch64. `ubuntu-24.04-arm` is
+  # free on a public repo, so this runs on every PR like `gate`.
+  gate-aarch64:
+    name: lib + doc tests (aarch64-linux)
+    needs: [cron-gate]
+    if: |
+      !cancelled() &&
+      (github.event_name != 'schedule' ||
+       needs.cron-gate.outputs.skip == 'false')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: aarch64-linux
+      - uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d
+        with:
+          tool: cargo-nextest@0.9.133
+      - run: cargo nextest run --features expose-internals --cargo-profile release-checked
+      - run: cargo test --doc
+
   # Tier 2 — Cross-platform sanity (lib + doc only)
   #
-  # Cross-platform check that lib + doc compile and pass on macOS
-  # and Windows (Fly is x86_64-linux only, so non-Linux targets
-  # have to run GH-hosted). Skipped on PR and on private repos —
-  # the matrix per PR push is expensive (Windows bills 2×, macOS
-  # 10×). Runs on push to main + nightly cron + manual dispatch
-  # once the repo flips public.
-  #
-  # The x86_64-linux row is intentionally absent: the `gate` job
-  # already covers it (default features) and includes a
-  # `cargo check --no-default-features --all-targets` step that
-  # exercises the no-default-features compile path on every PR.
-
-  # macOS + Windows targets run on GH-hosted (Fly is x86_64-linux
-  # only). Gated on `repository.visibility == 'public'` so the
-  # workflow no-ops while the repo is private — those minutes are
-  # billed at 10× / 2× respectively.
-  #
-  # i686 and aarch64 Linux rows stay commented out for now:
-  #   - i686-unknown-linux-gnu would need `gcc-multilib` + the i686
-  #     rustup target back on the runner image. Both were dropped to
-  #     slim the image since Fly is x86_64-only.
-  #   - aarch64-unknown-linux-gnu would land on the `ubuntu-24.04-arm`
-  #     GH-hosted runner which bills regular minutes.
-  platform-billed:
+  # lib + doc tests on macOS (Apple Silicon) and Windows (x64, i686).
+  # Skipped on PRs: the macOS concurrency cap would make a per-PR
+  # matrix the slowest check. Runs on push to main, the nightly cron,
+  # and manual dispatch. Linux x86_64 and aarch64 run on every PR in
+  # `gate` and `gate-aarch64`.
+  platform:
     name: "lib + doc tests (${{ matrix.target }}, ${{ matrix.bits }}-bit)"
     needs: [gate]
-    if: |
-      github.event_name != 'pull_request' &&
-      github.event.repository.visibility == 'public'
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -403,22 +402,10 @@ jobs:
           - os: windows-latest
             target: i686-pc-windows-msvc
             bits: 32
-          # - os: ubuntu-24.04
-          #   target: i686-unknown-linux-gnu
-          #   bits: 32
-          #   multilib: true
-          # - os: ubuntu-24.04-arm
-          #   target: aarch64-unknown-linux-gnu
-          #   bits: 64
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
-      # When restoring the commented-out i686-linux matrix row, also
-      # add back this step:
-      #   - name: Install 32-bit multilib (Linux i686)
-      #     if: matrix.multilib
-      #     run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
         with:
           targets: ${{ matrix.target }}
@@ -445,14 +432,14 @@ jobs:
 
   platform-report:
     name: Platform coverage
-    needs: [gate, platform-billed]
-    # Only fires on main (never PR), so safe on self-hosted Fly.
-    # `!cancelled()` (not `always()`) so a user-cancelled run skips
+    needs: [gate, gate-aarch64, platform]
+    # Only fires on main (never PR). `!cancelled()` (not `always()`)
+    # so a user-cancelled run skips
     # the upload; coverage still reports on gate/platform-billed
     # failures since the dashboard wants to show which platforms
     # ran regardless of overall pass/fail.
     if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read

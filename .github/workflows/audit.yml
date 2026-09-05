@@ -39,7 +39,7 @@ jobs:
   cron-gate:
     name: Cron gate (skip if recent run on main)
     if: github.event_name == 'schedule'
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
       contents: read
@@ -77,7 +77,7 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -110,7 +110,7 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -140,12 +140,13 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       # `llvm-tools-preview` provides `llvm-objdump`, which `panic-count.rs`
       # uses to attribute each panic call site to its calling Rust
       # function (via the `--reloc --demangle` disassembly).
@@ -177,12 +178,13 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
@@ -210,12 +212,13 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
@@ -242,12 +245,13 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # 1.91.0
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
 
@@ -274,12 +278,13 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # nightly
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d
