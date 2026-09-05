@@ -1,12 +1,14 @@
-# Linux target tunings. Applies to Fly self-hosted runners
-# (perf-2x / shared-4x) and Linux dev machines, across both x86_64
-# and aarch64.  macOS / Windows are unaffected.
+# Linux target tunings. Applies to CI's Linux runners (GitHub-hosted
+# and the Fly fleet) and Linux dev machines, across both x86_64 and
+# aarch64.  macOS / Windows are unaffected.
 #
 # `link-arg=-fuse-ld=mold` — use mold instead of the system ld.
 # ~5× faster than `ld`, ~2× faster than `lld`; cuts cargo link
 # time noticeably on every build.  Set on both Linux target tables.
 # Requires `mold` on PATH:
 #   - Fly runner image: baked into `infra/runners/Dockerfile.base`.
+#   - GitHub-hosted: `.github/actions/setup-linux-deps` installs it
+#     per job.
 #   - Local Linux dev: `apt-get install mold` (Ubuntu 22.04+) or
 #     `dnf install mold` (Fedora 37+).
 # gcc 12+ / clang 12+ understands `-fuse-ld=mold` natively, so no
@@ -21,9 +23,9 @@
 # the build is baseline `x86_64-v1` (sse, sse2, fxsr) and the AVX2
 # code paths compile out silently — even on Fly runners whose CPUs
 # are Sapphire Rapids / Granite Rapids and support everything up
-# to AVX-512-IFMA52.  v3 is the safe rung: covers all production
-# Fly machines and excludes only pre-2013 Intel / pre-2015 AMD CPUs
-# we don't deploy to.
+# to AVX-512-IFMA52.  v3 is the safe rung: covers the Fly fleet and
+# the GitHub-hosted runners (EPYC 7763 / Xeon 8370C) and excludes
+# only pre-2013 Intel / pre-2015 AMD CPUs we don't deploy to.
 #
 # `target-feature=+aes,+pclmulqdq` — AES-NI is NOT in v{1..4}.
 # The `aes` crate already detects AES-NI via `cpufeatures` runtime
@@ -39,7 +41,8 @@
 # `src/quaternions/bigint/arch/x86_64.rs` (`mag_mul_4_adx`), which
 # interleaves CF and OF carry chains for the schoolbook product —
 # rustc's portable lowering only emits a single CF chain via ADC.
-# All Fly CI runners are Broadwell+ Intel / Zen+ AMD.
+# Fly runners (Broadwell+ Intel / Zen+ AMD) and GitHub-hosted runners
+# (Zen 3 / Ice Lake) all have it.
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
     "-C", "link-arg=-fuse-ld=mold",

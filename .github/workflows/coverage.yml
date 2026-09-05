@@ -50,7 +50,7 @@ jobs:
   cron-gate:
     name: Cron gate (skip if recent run on main)
     if: github.event_name == 'schedule'
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     # `actions: read` is needed to list workflow runs (the
     # github-script step calls actions API); contents:read alone
@@ -94,12 +94,11 @@ jobs:
       !cancelled() &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
-    # perf-2x (dedicated cores; larger tiers are disabled). The long
-    # tail under llvm-cov is the 100 `sign_kat_derand_NNN` tests
-    # (40-220s each instrumented); with nextest's `test-threads =
-    # num-cpus` putting 2 in flight, that line item alone is ~50 min.
-    # The 120 min budget covers it plus the instrumented build.
-    runs-on: [self-hosted, fly, linux, perf-2x]
+    # The long tail under llvm-cov is the 100 `sign_kat_derand_NNN`
+    # tests (40-220s each instrumented); nextest runs `num-cpus` of
+    # them at a time. The 120 min budget covers that plus the
+    # instrumented build.
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
       contents: read
@@ -109,6 +108,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

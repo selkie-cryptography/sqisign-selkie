@@ -15,6 +15,10 @@ name: Fuzz
 #
 # `workflow_dispatch` bypasses both gates (the operator knows what
 # they're doing).
+#
+# Fork PRs are skipped entirely (`seed` gates on same-repo): the
+# matrix runs on the Fly fleet, which never executes untrusted code,
+# and the seed / report jobs need repo secrets.
 
 on:
   push:
@@ -66,7 +70,7 @@ jobs:
   # touches docs / infra / workflows.
   detect:
     name: Detect fuzz-relevant changes
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     # On direct pull_request events dorny ignores base/ref and uses
     # the GitHub API to list changed files; that needs pull-requests:
@@ -113,10 +117,13 @@ jobs:
     # workflow_dispatch bypasses the path filter (manual override).
     if: >-
       (github.event_name != 'workflow_run' ||
-       github.event.workflow_run.conclusion == 'success') &&
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository)) &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
       (needs.detect.outputs.relevant == 'true' ||
        github.event_name == 'workflow_dispatch')
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -126,6 +133,7 @@ jobs:
           # the actual commit CI ran against. Direct triggers fall
           # back to the natural github.sha.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
@@ -154,7 +162,8 @@ jobs:
     # after the burst-credit window costs measurable execs/sec.
     # 2 cores (one for the fuzz worker, one for OS / supervisor)
     # is the right floor here — a bigger tier doesn't speed a
-    # single-threaded fuzzer.
+    # single-threaded fuzzer. Only reachable through `seed`, which
+    # gates on same-repo code.
     runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 30
     strategy:
@@ -467,10 +476,11 @@ jobs:
       (needs.detect.outputs.relevant == 'true' ||
        github.event_name == 'workflow_dispatch') &&
       ((github.event_name == 'workflow_run' &&
-        github.event.workflow_run.head_branch == 'main') ||
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository) ||
        (github.event_name != 'workflow_run' &&
         github.ref == 'refs/heads/main'))
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0

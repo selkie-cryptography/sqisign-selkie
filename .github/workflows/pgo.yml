@@ -56,6 +56,10 @@ env:
 jobs:
   pgo:
     name: regenerate + profile-use build (x86_64)
+    # Fork PRs skip: untrusted code never runs on the fleet.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, fly, linux, perf-2x]
     timeout-minutes: 120
     steps:

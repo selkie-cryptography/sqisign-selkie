@@ -1,10 +1,11 @@
 name: Constant-Time
 
-# Runs on self-hosted Fly runners (shared-cpu-4x). CT measurements
-# are timing-sensitive; shared CPU adds noise vs dedicated hardware.
+# Runs on the Fly fleet (perf-2x, dedicated cores). CT measurements
+# are timing-sensitive; a VM still adds noise vs bare metal.
 # Acceptable for CI regression detection (DudeCT statistical + Tacet
 # taint-tracking both tolerate noise). For publication-grade
-# measurements, run on dedicated hardware off-CI.
+# measurements, run on dedicated hardware off-CI. Fork PRs skip the
+# measurement jobs: untrusted code never runs on the fleet.
 
 on:
   # DudeCT, Tacet, and ctgrind all run on pushes, pull requests,
@@ -69,7 +70,7 @@ jobs:
   cron-gate:
     name: Cron gate (skip if recent run)
     if: github.event_name == 'schedule'
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     # `actions: read` is needed to list workflow runs (the
     # github-script step calls actions API); contents:read alone
@@ -116,6 +117,8 @@ jobs:
     # cron-gate output.
     if: |
       !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, perf-2x]
@@ -215,6 +218,8 @@ jobs:
     needs: [cron-gate]
     if: |
       !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
       (github.event_name != 'schedule' ||
        needs.cron-gate.outputs.skip == 'false')
     runs-on: [self-hosted, fly, linux, perf-2x]

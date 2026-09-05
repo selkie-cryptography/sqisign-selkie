@@ -81,7 +81,7 @@ fn main() -> io::Result<()> {
     if line_count == 0 {
         eprintln!(
             "::error::platform-report: zero jobs matched `startswith(\"lib + doc tests\")` in run {run_id}. \
-             Check that the platform-fly / platform-billed jobs actually ran (and that this job has `actions: read`)."
+             Check that the platform matrix jobs actually ran (and that this job has `actions: read`)."
         );
         std::process::exit(1);
     }

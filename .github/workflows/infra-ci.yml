@@ -11,9 +11,8 @@ name: Infra CI
 # image it expects. Each downstream job uses `!failure() &&
 # !cancelled()` so skipped upstreams don't block it.
 #
-# These jobs run on the very `:latest` they rebuild. If a `:base`
-# change ships broken, recover via the laptop `ops` CLI:
-# `deploy-runner-base` then `deploy-runners`.
+# These jobs run GitHub-hosted, so a broken `:base` can't take the
+# rebuild pipeline down with it.
 #
 # Repo secrets required for deploys:
 #   - FLY_API_TOKEN_ORCHESTRATOR  scoped to `sqisign-infra-orchestrator`
@@ -29,12 +28,14 @@ on:
     paths:
       - 'infra/**'
       - '.github/workflows/**'
+      - '.github/actions/**'
       - '.github/actionlint.yaml'
   pull_request:
     branches: [main, next]
     paths:
       - 'infra/**'
       - '.github/workflows/**'
+      - '.github/actions/**'
       - '.github/actionlint.yaml'
   schedule:
     # Weekly rebuild of the runner image so OS patches + rustup +
@@ -61,18 +62,14 @@ jobs:
   # issues in `run:` blocks, unused YAML anchors, etc.
   actionlint:
     name: actionlint
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
-      # Bare-binary install. `reviewdog/action-actionlint` is a
-      # Docker container action and the Fly self-hosted image
-      # doesn't run a dockerd; `taiki-e/install-action` doesn't
-      # ship actionlint (Go binary, not a Rust crate, so its
-      # cargo-binstall fallback 404s). So we pin VER and verify
-      # the tarball SHA-256 against the upstream checksums file.
+      # Bare-binary install pinned by version + SHA-256 (actionlint is
+      # a Go binary, so `taiki-e/install-action` doesn't ship it).
       # Bump VER and SHA256 in lockstep; SHA is from
       # `actionlint_${VER}_checksums.txt` on the release page.
       - name: Install + run actionlint
@@ -91,7 +88,7 @@ jobs:
   # `:base`.
   changes:
     name: Detect changed paths
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
       orchestrator: ${{ steps.filter.outputs.orchestrator }}
@@ -123,12 +120,13 @@ jobs:
   # to the Dockerfile so this job stays fast (~2-3 min warm cache).
   build:
     name: Check + lint orchestrator
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-linux-deps
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # nightly
         with:
@@ -162,7 +160,7 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.runners_base == 'true') ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
       # `sha256:...` digest of the manifest the build pushed, so
@@ -269,7 +267,7 @@ jobs:
         github.event_name == 'schedule' ||
         github.event_name == 'workflow_dispatch'
       )
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -340,7 +338,7 @@ jobs:
         )) ||
         github.event_name == 'workflow_dispatch'
       )
-    runs-on: [self-hosted, fly, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
