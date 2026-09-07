@@ -4,20 +4,19 @@
 //! target CPU architecture and instruction subset.  The active backend
 //! is selected by `cfg(sqisign_selkie_arch)`, emitted by `build.rs`:
 //!
-//! - `generic` -- radix-2^51 Montgomery `[u64; 5]` scalar `Fp51`.  Always
+//! - `generic` -- radix-2^55 Montgomery `[u64; 6]` scalar `Fp55`.  Always
 //!   compiles; the fallback for any target without a specialised cfg arm set.
 //!   Source of truth for `pub const FOO: Fp = Fp::from_limbs([...])`
-//!   precomputed tables; every other backend's `from_limbs([u64; 5])`
-//!   const-bridge accepts `Fp51`'s radix-51 limbs and const-converts.
-//! - `x86_64::mulx_adx` -- radix-2^64 packed `Fp64([u64; 4])`.  Standalone
+//!   precomputed tables; every other backend's `from_limbs([u64; 6])`
+//!   const-bridge accepts `Fp55`'s radix-55 limbs and const-converts.
+//! - `x86_64::mulx_adx` -- radix-2^64 packed `Fp64([u64; 6])`.  Standalone
 //!   scalar `Fp` backend with MULX + dual-chain ADCX/ADOX asm leaves.  Active
 //!   on x86_64 builds with `target_feature = "bmi2"` + `target_feature = "adx"`
-//!   (Broadwell 2014+).  Matches the C ref's `gf/broadwell/lvl1/gf5248.c`
-//!   storage.
-//! - `aarch64::neon` -- radix-2^29 `Fp29` (scalar) + `Fp29x4` (4-wide NEON
-//!   batch).  Activated by `cfg(sqisign_selkie_arch = "neon")`.
-//! - `x86_64::avx2` -- radix-2^26 `Fp26` (scalar) + `Fp26x4` (4-wide AVX2
-//!   batch).  Activated by `cfg(sqisign_selkie_arch = "avx2")`.
+//!   (Broadwell 2014+).  Matches the C ref's `gf/broadwell/p324_3` storage.
+//! - `aarch64::neon` -- radix-2^29 `Fp29` (scalar, 12 limbs) + `Fp29x4` (4-wide
+//!   NEON batch).  Activated by `cfg(sqisign_selkie_arch = "neon")`.
+//! - `x86_64::avx2` -- radix-2^26 `Fp26` (scalar, 13 limbs) + `Fp26x4` (4-wide
+//!   AVX2 batch).  Activated by `cfg(sqisign_selkie_arch = "avx2")`.
 //!
 //! # No AVX-512 / IFMA52 path
 //!

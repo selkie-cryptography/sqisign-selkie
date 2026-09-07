@@ -10,96 +10,173 @@ use sqisign_selkie::fields::fp::arch::x86_64::avx2::Fp26x4;
     target_feature = "adx"
 ))]
 use sqisign_selkie::fields::fp::arch::x86_64::mulx_adx::Fp64;
-use sqisign_selkie::fields::{
-    fp::{Fp, arch::generic::Fp51},
-    fp2::Fp2,
+use sqisign_selkie::{
+    fields::{
+        fp::{Fp, arch::generic::Fp55},
+        fp2::Fp2,
+    },
+    params::FP_ENCODED_BYTES,
 };
 
 fn main() {
     divan::main();
 }
 
+/// A canonical (< p) field-element encoding filled with `fill`.
+fn fp_bytes(fill: u8, top: u8) -> [u8; FP_ENCODED_BYTES] {
+    let mut b = [fill; FP_ENCODED_BYTES];
+    b[FP_ENCODED_BYTES - 1] = top;
+    b
+}
+
+fn fp_bytes_a() -> [u8; FP_ENCODED_BYTES] {
+    fp_bytes(17, 0x11)
+}
+
+fn fp_bytes_b() -> [u8; FP_ENCODED_BYTES] {
+    fp_bytes(42, 0x22)
+}
+
+fn fp_a() -> Fp {
+    Fp::from_bytes(&fp_bytes_a())
+}
+
+fn fp_b() -> Fp {
+    Fp::from_bytes(&fp_bytes_b())
+}
+
+// --- Fp ---
+
+#[divan::bench]
+fn fp_add(bencher: divan::Bencher) {
+    let (a, b) = (fp_a(), fp_b());
+    bencher.bench(|| divan::black_box(&a) + divan::black_box(&b));
+}
+
+#[divan::bench]
+fn fp_sub(bencher: divan::Bencher) {
+    let (a, b) = (fp_a(), fp_b());
+    bencher.bench(|| divan::black_box(&a) - divan::black_box(&b));
+}
+
 #[divan::bench]
 fn fp_mul(bencher: divan::Bencher) {
-    let a = Fp::from_small(17);
-    let b = Fp::from_small(42);
-    bencher.bench(|| divan::black_box(a) * divan::black_box(b));
+    let (a, b) = (fp_a(), fp_b());
+    bencher.bench(|| divan::black_box(&a) * divan::black_box(&b));
 }
 
 #[divan::bench]
 fn fp_square(bencher: divan::Bencher) {
-    let a = Fp::from_small(17);
+    let a = fp_a();
     bencher.bench(|| divan::black_box(&a).square());
 }
 
 #[divan::bench]
+fn fp_sum_of_2_products(bencher: divan::Bencher) {
+    let (a, b) = (fp_a(), fp_b());
+    bencher.bench(|| {
+        Fp::sum_of_2_products(
+            divan::black_box(&a),
+            divan::black_box(&b),
+            divan::black_box(&b),
+            divan::black_box(&a),
+        )
+    });
+}
+
+#[divan::bench]
 fn fp_invert(bencher: divan::Bencher) {
-    let a = Fp::from_small(17);
+    let a = fp_a();
     bencher.bench(|| divan::black_box(&a).invert());
 }
 
 #[divan::bench]
 fn fp_sqrt(bencher: divan::Bencher) {
-    let a = Fp::from_small(17).square();
+    let a = fp_a().square();
     bencher.bench(|| divan::black_box(&a).sqrt());
 }
 
 #[divan::bench]
+fn fp_is_square(bencher: divan::Bencher) {
+    let a = fp_a();
+    bencher.bench(|| divan::black_box(&a).is_square());
+}
+
+#[divan::bench]
+fn fp_to_bytes(bencher: divan::Bencher) {
+    let a = fp_a();
+    bencher.bench(|| divan::black_box(a).to_bytes());
+}
+
+#[divan::bench]
+fn fp_from_bytes(bencher: divan::Bencher) {
+    let bytes = fp_a().to_bytes();
+    bencher.bench(|| Fp::from_bytes(divan::black_box(&bytes)));
+}
+
+// --- Fp2 ---
+
+fn fp2_a() -> Fp2 {
+    Fp2::new(fp_a(), fp_b())
+}
+
+fn fp2_b() -> Fp2 {
+    Fp2::new(fp_b(), fp_a())
+}
+
+#[divan::bench]
+fn fp2_add(bencher: divan::Bencher) {
+    let (a, b) = (fp2_a(), fp2_b());
+    bencher.bench(|| divan::black_box(&a) + divan::black_box(&b));
+}
+
+#[divan::bench]
 fn fp2_mul(bencher: divan::Bencher) {
-    let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
-    let b = Fp2::new(Fp::from_small(11), Fp::from_small(13));
-    bencher.bench(|| divan::black_box(a) * divan::black_box(b));
+    let (a, b) = (fp2_a(), fp2_b());
+    bencher.bench(|| divan::black_box(&a) * divan::black_box(&b));
 }
 
 #[divan::bench]
 fn fp2_square(bencher: divan::Bencher) {
-    let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
+    let a = fp2_a();
     bencher.bench(|| divan::black_box(&a).square());
 }
 
 #[divan::bench]
 fn fp2_invert(bencher: divan::Bencher) {
-    let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
+    let a = fp2_a();
     bencher.bench(|| divan::black_box(&a).invert());
 }
 
 #[divan::bench]
 fn fp2_sqrt(bencher: divan::Bencher) {
-    let a = Fp2::new(Fp::from_small(3), Fp::from_small(7)).square();
+    let a = fp2_a().square();
     bencher.bench(|| divan::black_box(&a).sqrt());
 }
 
-// --- Explicit backend benches for the Fp51 vs Fp64 head-to-head ---
+#[divan::bench]
+fn fp2_is_square(bencher: divan::Bencher) {
+    let a = fp2_a();
+    bencher.bench(|| divan::black_box(&a).is_square());
+}
+
+// --- Explicit backend benches ---
 //
-// `fp_*` above measures the *active* `Fp` -- whichever backend the
-// dispatcher picked.  On the Fly perf-2x x86_64 runner that's `Fp64`
-// (MULX + dual ADCX/ADOX asm).  The benches below explicitly hit
-// `Fp51` (radix-2^51 LLVM scalar) and `Fp64` (radix-2^64 asm) on the
-// same hardware so the dashboard can show the per-op delta directly.
+// `fp_*` above measures the *active* `Fp`, whichever backend the
+// dispatcher picked.  The benches below hit each backend explicitly on
+// the same hardware so the per-op delta between layouts is visible.
 
 #[divan::bench]
-fn fp51_mul(bencher: divan::Bencher) {
-    let a = Fp51::from_bytes(&[17u8; 32]);
-    let b = Fp51::from_bytes(&[42u8; 32]);
-    bencher.bench(|| divan::black_box(a) * divan::black_box(b));
+fn fp55_mul(bencher: divan::Bencher) {
+    let a = Fp55::from_bytes(&fp_bytes_a());
+    let b = Fp55::from_bytes(&fp_bytes_b());
+    bencher.bench(|| divan::black_box(&a) * divan::black_box(&b));
 }
 
 #[divan::bench]
-fn fp51_square(bencher: divan::Bencher) {
-    let a = Fp51::from_bytes(&[17u8; 32]);
+fn fp55_square(bencher: divan::Bencher) {
+    let a = Fp55::from_bytes(&fp_bytes_a());
     bencher.bench(|| divan::black_box(&a).square());
-}
-
-#[divan::bench]
-fn fp51_invert(bencher: divan::Bencher) {
-    let a = Fp51::from_bytes(&[17u8; 32]);
-    bencher.bench(|| divan::black_box(&a).invert());
-}
-
-#[divan::bench]
-fn fp51_sqrt(bencher: divan::Bencher) {
-    let a = Fp51::from_bytes(&[17u8; 32]).square();
-    bencher.bench(|| divan::black_box(&a).sqrt());
 }
 
 #[cfg(all(
@@ -109,8 +186,8 @@ fn fp51_sqrt(bencher: divan::Bencher) {
 ))]
 #[divan::bench]
 fn fp64_mul(bencher: divan::Bencher) {
-    let a = Fp64::from_bytes(&[17u8; 32]);
-    let b = Fp64::from_bytes(&[42u8; 32]);
+    let a = Fp64::from_bytes(&fp_bytes_a());
+    let b = Fp64::from_bytes(&fp_bytes_b());
     bencher.bench(|| divan::black_box(a) * divan::black_box(b));
 }
 
@@ -121,7 +198,7 @@ fn fp64_mul(bencher: divan::Bencher) {
 ))]
 #[divan::bench]
 fn fp64_square(bencher: divan::Bencher) {
-    let a = Fp64::from_bytes(&[17u8; 32]);
+    let a = Fp64::from_bytes(&fp_bytes_a());
     bencher.bench(|| divan::black_box(&a).square());
 }
 
@@ -131,38 +208,24 @@ fn fp64_square(bencher: divan::Bencher) {
     target_feature = "adx"
 ))]
 #[divan::bench]
-fn fp64_invert(bencher: divan::Bencher) {
-    let a = Fp64::from_bytes(&[17u8; 32]);
-    bencher.bench(|| divan::black_box(&a).invert());
+fn fp64_sum_of_2_products(bencher: divan::Bencher) {
+    let a = Fp64::from_bytes(&fp_bytes_a());
+    let b = Fp64::from_bytes(&fp_bytes_b());
+    bencher.bench(|| {
+        Fp64::sum_of_2_products(
+            divan::black_box(&a),
+            divan::black_box(&b),
+            divan::black_box(&b),
+            divan::black_box(&a),
+        )
+    });
 }
 
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "bmi2",
-    target_feature = "adx"
-))]
-#[divan::bench]
-fn fp64_sqrt(bencher: divan::Bencher) {
-    let a = Fp64::from_bytes(&[17u8; 32]).square();
-    bencher.bench(|| divan::black_box(&a).sqrt());
-}
-
-/// Four independent scalar `Fp::mul`s — the baseline the NEON path must beat.
-#[cfg(target_arch = "aarch64")]
+/// Four independent scalar `Fp::mul`s: the baseline a batch path must beat.
 #[divan::bench]
 fn fp_mul_4_independent(bencher: divan::Bencher) {
-    let a = [
-        Fp::from_small(3),
-        Fp::from_small(7),
-        Fp::from_small(11),
-        Fp::from_small(13),
-    ];
-    let b = [
-        Fp::from_small(17),
-        Fp::from_small(19),
-        Fp::from_small(23),
-        Fp::from_small(29),
-    ];
+    let a = [fp_a(), fp_b(), fp_a().square(), fp_b().square()];
+    let b = [fp_b(), fp_a(), fp_b().square(), fp_a().square()];
     bencher.bench(|| {
         let aa = divan::black_box(&a);
         let bb = divan::black_box(&b);
@@ -170,168 +233,60 @@ fn fp_mul_4_independent(bencher: divan::Bencher) {
     });
 }
 
-/// One vectorised `Fp29x4::mul` — computes four independent products in one
-/// NEON Karatsuba-decomposed Montgomery multiplication.  Compare against
-/// `fp_mul_4_independent` for the scalar-vs-NEON crossover.
-#[cfg(target_arch = "aarch64")]
-#[divan::bench]
-fn fp29x4_mul_neon(bencher: divan::Bencher) {
-    let a29 = [
-        Fp29::from_small(3),
-        Fp29::from_small(7),
-        Fp29::from_small(11),
-        Fp29::from_small(13),
-    ];
-    let b29 = [
-        Fp29::from_small(17),
-        Fp29::from_small(19),
-        Fp29::from_small(23),
-        Fp29::from_small(29),
-    ];
-    let a4 = Fp29x4::from_scalars(&a29);
-    let b4 = Fp29x4::from_scalars(&b29);
-    bencher.bench(|| divan::black_box(&a4).mul(divan::black_box(&b4)));
-}
-
-/// Four independent scalar `Fp::square` calls — the baseline for the
-/// vectorised square path.
-#[cfg(target_arch = "aarch64")]
-#[divan::bench]
-fn fp_square_4_independent(bencher: divan::Bencher) {
-    let a = [
-        Fp::from_small(3),
-        Fp::from_small(7),
-        Fp::from_small(11),
-        Fp::from_small(13),
-    ];
-    bencher.bench(|| {
-        let aa = divan::black_box(&a);
-        [
-            aa[0].square(),
-            aa[1].square(),
-            aa[2].square(),
-            aa[3].square(),
-        ]
-    });
-}
-
-/// Vectorised `Fp29x4::square` — Karatsuba structure with symmetric
-/// sub-squares; cross-terms doubled via `vshlq_n_u64::<1>` rather than
-/// the two `vmlal_u32` calls a straight mul would do.
-#[cfg(target_arch = "aarch64")]
-#[divan::bench]
-fn fp29x4_square_neon(bencher: divan::Bencher) {
-    let a29 = [
-        Fp29::from_small(3),
-        Fp29::from_small(7),
-        Fp29::from_small(11),
-        Fp29::from_small(13),
-    ];
-    let a4 = Fp29x4::from_scalars(&a29);
-    bencher.bench(|| divan::black_box(&a4).square());
-}
-
-/// Standalone scalar `Fp29::mul` — for comparing radix-29 vs radix-51 cost
-/// at the single-product level, isolating the radix change from the NEON
-/// vectorisation factor.
 #[cfg(target_arch = "aarch64")]
 #[divan::bench]
 fn fp29_mul_scalar(bencher: divan::Bencher) {
-    let a = Fp29::from_small(17);
-    let b = Fp29::from_small(42);
+    let a = Fp29::from_bytes(&fp_bytes_a());
+    let b = Fp29::from_bytes(&fp_bytes_b());
     bencher.bench(|| divan::black_box(&a) * divan::black_box(&b));
 }
 
-/// Four independent scalar `Fp::mul`s — the x86_64 baseline the AVX2
-/// Fp26x4 path must beat.
-#[cfg(target_arch = "x86_64")]
+/// One `Fp29x4::mul`: four independent products in one NEON
+/// Karatsuba-decomposed Montgomery multiplication.
+#[cfg(target_arch = "aarch64")]
 #[divan::bench]
-fn fp_mul_4_independent_x86_64(bencher: divan::Bencher) {
-    let a = [
-        Fp::from_small(3),
-        Fp::from_small(7),
-        Fp::from_small(11),
-        Fp::from_small(13),
-    ];
-    let b = [
-        Fp::from_small(17),
-        Fp::from_small(19),
-        Fp::from_small(23),
-        Fp::from_small(29),
-    ];
-    bencher.bench(|| {
-        let aa = divan::black_box(&a);
-        let bb = divan::black_box(&b);
-        [aa[0] * bb[0], aa[1] * bb[1], aa[2] * bb[2], aa[3] * bb[3]]
-    });
-}
-
-/// Four independent scalar `Fp::square` calls — x86_64 baseline.
-#[cfg(target_arch = "x86_64")]
-#[divan::bench]
-fn fp_square_4_independent_x86_64(bencher: divan::Bencher) {
-    let a = [
-        Fp::from_small(3),
-        Fp::from_small(7),
-        Fp::from_small(11),
-        Fp::from_small(13),
-    ];
-    bencher.bench(|| {
-        let aa = divan::black_box(&a);
-        [
-            aa[0].square(),
-            aa[1].square(),
-            aa[2].square(),
-            aa[3].square(),
-        ]
-    });
-}
-
-/// Standalone scalar `Fp26::mul` — for comparing radix-26 vs radix-51
-/// cost at the single-product level, isolating the radix change from
-/// the AVX2 vectorisation factor.
-#[cfg(target_arch = "x86_64")]
-#[divan::bench]
-fn fp26_mul_scalar(bencher: divan::Bencher) {
-    let a = Fp26::from_small(17);
-    let b = Fp26::from_small(42);
-    bencher.bench(|| divan::black_box(&a) * divan::black_box(&b));
-}
-
-/// One vectorised `Fp26x4::mul` — four independent Montgomery products
-/// in one AVX2 schoolbook CIOS.  Compare against
-/// `fp_mul_4_independent_x86_64` for the scalar-vs-AVX2 crossover.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-#[divan::bench]
-fn fp26x4_mul_avx2(bencher: divan::Bencher) {
-    let a26 = [
-        Fp26::from_small(3),
-        Fp26::from_small(7),
-        Fp26::from_small(11),
-        Fp26::from_small(13),
-    ];
-    let b26 = [
-        Fp26::from_small(17),
-        Fp26::from_small(19),
-        Fp26::from_small(23),
-        Fp26::from_small(29),
-    ];
-    let a4 = Fp26x4::from_scalars(&a26);
-    let b4 = Fp26x4::from_scalars(&b26);
+fn fp29x4_mul_neon(bencher: divan::Bencher) {
+    let a = Fp29::from_bytes(&fp_bytes_a());
+    let b = Fp29::from_bytes(&fp_bytes_b());
+    let a4 = Fp29x4::from_scalars(&[a, b, a.square(), b.square()]);
+    let b4 = Fp29x4::from_scalars(&[b, a, b.square(), a.square()]);
     bencher.bench(|| divan::black_box(&a4).mul(divan::black_box(&b4)));
 }
 
-/// Vectorised `Fp26x4::square` — currently delegates to `mul`, baseline
-/// for the future symmetric-cross-term optimisation.
+#[cfg(target_arch = "aarch64")]
+#[divan::bench]
+fn fp29x4_square_neon(bencher: divan::Bencher) {
+    let a = Fp29::from_bytes(&fp_bytes_a());
+    let b = Fp29::from_bytes(&fp_bytes_b());
+    let a4 = Fp29x4::from_scalars(&[a, b, a.square(), b.square()]);
+    bencher.bench(|| divan::black_box(&a4).square());
+}
+
+#[cfg(target_arch = "x86_64")]
+#[divan::bench]
+fn fp26_mul_scalar(bencher: divan::Bencher) {
+    let a = Fp26::from_bytes(&fp_bytes_a());
+    let b = Fp26::from_bytes(&fp_bytes_b());
+    bencher.bench(|| divan::black_box(&a) * divan::black_box(&b));
+}
+
+/// One `Fp26x4::mul`: four independent Montgomery products in one AVX2
+/// schoolbook CIOS.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[divan::bench]
+fn fp26x4_mul_avx2(bencher: divan::Bencher) {
+    let a = Fp26::from_bytes(&fp_bytes_a());
+    let b = Fp26::from_bytes(&fp_bytes_b());
+    let a4 = Fp26x4::from_scalars(&[a, b, a.square(), b.square()]);
+    let b4 = Fp26x4::from_scalars(&[b, a, b.square(), a.square()]);
+    bencher.bench(|| divan::black_box(&a4).mul(divan::black_box(&b4)));
+}
+
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 #[divan::bench]
 fn fp26x4_square_avx2(bencher: divan::Bencher) {
-    let a26 = [
-        Fp26::from_small(3),
-        Fp26::from_small(7),
-        Fp26::from_small(11),
-        Fp26::from_small(13),
-    ];
-    let a4 = Fp26x4::from_scalars(&a26);
+    let a = Fp26::from_bytes(&fp_bytes_a());
+    let b = Fp26::from_bytes(&fp_bytes_b());
+    let a4 = Fp26x4::from_scalars(&[a, b, a.square(), b.square()]);
     bencher.bench(|| divan::black_box(&a4).square());
 }

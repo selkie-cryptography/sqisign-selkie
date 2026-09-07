@@ -16,9 +16,9 @@ not documented.  An implementor working from the spec alone will make
 wrong guesses.  We know because we did.
 
 This paper documents \texttt{sqisign-selkie}, a Rust library for the
-NIST-I parameter set ($p = 5 \cdot 2^{248} - 1$) only.  By fixing
+NIST-I parameter set ($p = 3 \cdot 2^{324} - 1$) only.  By fixing
 the parameter set at compile time, we specialize aggressively: field
-arithmetic uses a radix-51 Montgomery representation tuned to this
+arithmetic uses a radix-55 Montgomery representation tuned to this
 prime, integer widths match proven worst-case bounds for NIST-I
 quaternion intermediates~\cite{EPRINT:KLKL25}, and isogeny degree types are
 sized to the 246-bit maximum that NIST-I permits.  We do not attempt

@@ -2,7 +2,7 @@
 
 use sqisign_selkie::{
     curves::{
-        BasisHint, ChangeOfBasisMatrix, TorsionBasis, TorsionExponent,
+        BasisHint, TorsionBasis, TorsionExponent,
         isogeny::Kernel,
         montgomery::{Curve, ProjectiveXOnlyPoint},
         scalar::Scalar,
@@ -12,29 +12,6 @@ use sqisign_selkie::{
 
 fn main() {
     divan::main();
-}
-
-/// Setup for the change-of-basis / pairing benches: take E₀'s
-/// canonical 2^f torsion basis, then double down to a reduced basis
-/// at 2^(f − 8) torsion so `cross_pairings` and `from_bases` see a
-/// (canonical, reduced) pair rather than two co-equal bases at the
-/// same order.
-fn e0_basis_pair() -> (Curve, TorsionBasis, TorsionBasis, TorsionExponent) {
-    let curve = Curve::E0;
-    let (canonical, _) = TorsionBasis::to_hint(&curve).expect("E0 canonical basis");
-
-    let reduce_e = TORSION_EVEN_POWER - 8;
-    let mut p = canonical.P;
-    let mut pmq = canonical.PmQ;
-    let mut q = canonical.Q;
-    for _ in 0..(TORSION_EVEN_POWER - reduce_e) {
-        p = p.double();
-        pmq = pmq.double();
-        q = q.double();
-    }
-    let reduced = TorsionBasis::from_propagated(p, pmq, q);
-    let e = TorsionExponent::try_from(reduce_e).unwrap();
-    (curve, canonical, reduced, e)
 }
 
 fn e0_basis() -> TorsionBasis {
@@ -187,40 +164,4 @@ fn torsion_basis_from_hint(bencher: divan::Bencher) {
 fn torsion_basis_to_hint(bencher: divan::Bencher) {
     let curve = non_e0_curve();
     bencher.bench(|| TorsionBasis::to_hint(divan::black_box(&curve)));
-}
-
-// --- Tate cross-pairings + change-of-basis matrix ---
-
-#[divan::bench(sample_count = 30)]
-fn cross_pairings(bencher: divan::Bencher) {
-    let (_, canonical, reduced, e) = e0_basis_pair();
-    bencher.bench(|| divan::black_box(&canonical).cross_pairings(divan::black_box(&reduced), e));
-}
-
-#[divan::bench(sample_count = 30)]
-fn change_of_basis_from_bases(bencher: divan::Bencher) {
-    let (_, canonical, reduced, e) = e0_basis_pair();
-    bencher.bench(|| {
-        ChangeOfBasisMatrix::from_bases(divan::black_box(&canonical), divan::black_box(&reduced), e)
-    });
-}
-
-#[divan::bench(sample_count = 30)]
-fn change_of_basis_from_bases_invert(bencher: divan::Bencher) {
-    let (_, canonical, reduced, e) = e0_basis_pair();
-    bencher.bench(|| {
-        ChangeOfBasisMatrix::from_bases_invert(
-            divan::black_box(&canonical),
-            divan::black_box(&reduced),
-            e,
-        )
-    });
-}
-
-#[divan::bench(sample_count = 30)]
-fn change_of_basis_mul(bencher: divan::Bencher) {
-    let (_, canonical, reduced, e) = e0_basis_pair();
-    let m = ChangeOfBasisMatrix::from_bases(&canonical, &reduced, e)
-        .expect("KAT[0] basis pair admits a change-of-basis matrix");
-    bencher.bench(|| divan::black_box(&m).mul(divan::black_box(&canonical)));
 }
