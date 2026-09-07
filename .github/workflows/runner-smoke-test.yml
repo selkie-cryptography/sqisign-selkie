@@ -1,21 +1,33 @@
 name: Runner smoke test
 
-# One-off manual workflow to verify the Fly self-hosted runner
-# pipeline end-to-end: orchestrator receives the workflow_job webhook,
-# mints a JIT runner config, spawns an ephemeral Fly Machine, the
-# Machine registers, runs this trivial job, exits, auto-destroys.
+# Verifies the Fly self-hosted runner pipeline end-to-end: orchestrator
+# receives the workflow_job webhook, mints a JIT runner config, spawns
+# an ephemeral Fly Machine, the Machine registers, runs `hello`, exits,
+# auto-destroys.
 #
-# Costs nothing in GitHub Actions minutes (no GitHub-hosted jobs)
-# and roughly a few cents in Fly compute for the ~1 min runtime.
+# Runs weekly after `infra-ci.yml`'s Monday image rebuild, and on
+# demand. `watchdog` runs on a GitHub-hosted runner and fails when
+# `hello` has not started within 15 minutes: a job's `timeout-minutes`
+# only counts once it is running, so a fleet that cannot take jobs
+# would otherwise sit queued for 24 hours before GitHub gives up. The
+# queued `hello` still runs out that clock; the orchestrator's per-job
+# backoff keeps the respawns cheap meanwhile.
+#
+# Costs no GitHub-hosted minutes beyond the watchdog's polling and a
+# few cents of Fly compute for the ~1 min `hello` runtime.
 #
 # Trigger:
 #   gh workflow run runner-smoke-test.yml --ref <branch>
 
 on:
+  schedule:
+    # 07:00 UTC Monday, after infra-ci's 06:00 image rebuild.
+    - cron: '0 7 * * 1'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   hello:
@@ -30,4 +42,41 @@ jobs:
       - run: rustc --version
       - run: cargo --version
       - run: cargo nextest --version
+      # GitHub refuses runners a few releases behind ("Runner version
+      # vX is deprecated and cannot receive messages"). Fail at two
+      # behind so the image is rebuilt before that happens.
+      - name: Runner version drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current=$(/home/runner/actions-runner/bin/Runner.Listener --version)
+          releases=$(gh api repos/actions/runner/releases \
+            --jq '[.[] | select(.prerelease | not) | .tag_name | ltrimstr("v")]')
+          behind=$(jq -n --argjson r "$releases" --arg c "$current" '$r | index($c) // 99')
+          echo "runner $current, latest $(jq -r '.[0]' <<< "$releases"), $behind release(s) behind"
+          if [ "$behind" -ge 2 ]; then
+            echo "::error::runner $current is $behind releases behind; rebuild the image (infra-ci.yml)"
+            exit 1
+          fi
       - run: echo "smoke test ok"
+
+  watchdog:
+    name: Fail if the Fly job never starts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            status=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" \
+              --jq '.jobs[] | select(.name == "Hello from a Fly runner") | .status')
+            case "$status" in
+              in_progress|completed) echo "hello: $status"; exit 0 ;;
+            esac
+            sleep 30
+          done
+          echo "::error::no Fly runner picked up the smoke job within 15 minutes"
+          exit 1

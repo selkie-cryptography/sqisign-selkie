@@ -67,7 +67,8 @@ async fn main() -> Result<()> {
     // Reconcile loop: a backstop alongside the webhook path that recovers
     // queued jobs the webhook missed or that lost their runner to
     // job-stealing. Always on, like the reaper. Spawns are bounded by the
-    // dedup against live Machines and Fly's machine limit.
+    // dedup against live Machines, per-job backoff, and Fly's machine
+    // limit.
     tokio::spawn(
         Reconciler::new(
             state.github.clone(),
