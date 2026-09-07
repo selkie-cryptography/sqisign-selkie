@@ -14,7 +14,13 @@
 ARG BASE_IMAGE=registry.fly.io/sqisign-infra-runners:base
 FROM ${BASE_IMAGE}
 
-ARG RUNNER_VERSION=2.334.0
+# GitHub refuses runners more than a few releases behind ("Runner
+# version vX is deprecated and cannot receive messages"); a pinned
+# 2.334.0 took the fleet down from 2026-08-10 to 2026-09-07. Empty
+# resolves the current release at build time, so the weekly rebuild
+# in `infra-ci.yml` keeps the fleet accepted. Pass a version to
+# override.
+ARG RUNNER_VERSION=
 
 RUN mkdir -p /home/runner/actions-runner \
   && chown runner:runner /home/runner/actions-runner
@@ -22,8 +28,15 @@ RUN mkdir -p /home/runner/actions-runner \
 WORKDIR /home/runner/actions-runner
 
 USER runner
-RUN curl -L -o runner.tar.gz \
-      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+RUN set -eu; \
+  v="${RUNNER_VERSION}"; \
+  if [ -z "$v" ]; then \
+    v=$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest \
+        | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p'); \
+  fi; \
+  echo "actions-runner ${v}"; \
+  curl -fL -o runner.tar.gz \
+      "https://github.com/actions/runner/releases/download/v${v}/actions-runner-linux-x64-${v}.tar.gz" \
   && tar xzf runner.tar.gz \
   && rm runner.tar.gz
 USER root
