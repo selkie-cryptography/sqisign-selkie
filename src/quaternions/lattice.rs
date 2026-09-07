@@ -434,9 +434,10 @@ impl<const N: usize> Lattice<N> {
         // ~ `denom · adj(B)^T` share large gcds with `det(B)`).
         // Modular HNF is correct on these inputs because the explicit
         // modulus generators it appends drive the canonical pivot gcds.
-        // See `quaternions/lattice/intersection_kat1_iter0_tests.rs::dsd_step_by_step`
-        // for the regression case (kernel<500> agrees with this path
-        // but disagrees with the `sum`-based path by 2^971 in covol).
+        // See `quaternions/lattice/intersection_kat1_iter0_tests.
+        // rs::dsd_step_by_step` for the regression case (kernel<500>
+        // agrees with this path but disagrees with the `sum`-based path
+        // by 2^971 in covol).
         //
         // C-ref recipe (`lattice.c:85`):
         //   - tmp_a = d2.denom · d1.basis;  det1 = |det(tmp_a)|
@@ -723,12 +724,13 @@ impl<const N: usize> Lattice<N> {
         };
 
         // Match C-ref `quat_lattice_add` order:
-        //   gen[0..4] = lat1.denom · lat2.basis   (= "self.denom · other.basis")
-        //   gen[4..8] = lat2.denom · lat1.basis   (= "other.denom · self.basis")
-        // C-ref's HNF uses the LAST 4 cols as output cols (per `k = n-1`
-        // decrementing), so the second group's basis is the "primary"
-        // input and ends up in the output. Matters for byte-equality
-        // even though both orderings produce a valid canonical HNF.
+        //   gen[0..4] = lat1.denom · lat2.basis   (= "self.denom ·
+        // other.basis")   gen[4..8] = lat2.denom · lat1.basis   (=
+        // "other.denom · self.basis") C-ref's HNF uses the LAST 4 cols
+        // as output cols (per `k = n-1` decrementing), so the second
+        // group's basis is the "primary" input and ends up in the
+        // output. Matters for byte-equality even though both orderings
+        // produce a valid canonical HNF.
         let cols_first = scale_cols(&other.basis, &self.denom);
         let cols_second = scale_cols(&self.basis, &other.denom);
         let all_cols = [
@@ -776,7 +778,8 @@ impl<const N: usize> Lattice<N> {
     pub fn decompose(&self, elem: &Element<N>) -> Option<[BigInt<N>; 4]> {
         let ed = BigInt::<N>::from(elem.denom);
 
-        // Scale to common denominator: target = α_coords · lattice_denom / α_denom.
+        // Scale to common denominator: target = α_coords · lattice_denom /
+        // α_denom.
         let elem_coords = [
             *elem.a.as_bigint(),
             *elem.b.as_bigint(),
@@ -1036,12 +1039,13 @@ impl<const N: usize> Lattice<N> {
         //
         //   1. G  = primal Gram of the lattice basis.
         //   2. dualG = adj(G); det_G = det(G); so G⁻¹ = dualG / det_G.
-        //   3. LLL-reduce dualG, tracking the unimodular transform U: after reduction,
-        //      `dualG_red = U^T · dualG · U` and U is integer with det(U) = ±1.
+        //   3. LLL-reduce dualG, tracking the unimodular transform U: after
+        //      reduction, `dualG_red = U^T · dualG · U` and U is integer with
+        //      det(U) = ±1.
         //   4. box[i] = √(dualG_red[i][i] · rad / det_G).
         //   5. U_inv = inv(U) (= adj(U) · sign(det U), since |det U| = 1).
-        //   6. Repeat: sample y[i] uniform in [−box[i], box[i]]; x = U_inv^T · y; norm
-        //      = x^T · G · x; accept if 0 < norm ≤ rad.
+        //   6. Repeat: sample y[i] uniform in [−box[i], box[i]]; x = U_inv^T ·
+        //      y; norm = x^T · G · x; accept if 0 < norm ≤ rad.
         //   7. α = Σ x[i] · basis_col[i].
         //
         // The dual-LLL bound is asymptotically tighter than the per-axis

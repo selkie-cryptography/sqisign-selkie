@@ -537,11 +537,11 @@ impl TorsionBasis {
         let kbits = e.value() as usize;
         // Local-name aliases for the ladder roles, NOT the field semantics:
         //  - `P`   = first basis point P (the [m]-multiplied operand).
-        //  - `Q`   = the [n]-multiplied operand. Here that is `P − Q`, because this
-        //    function computes `[m]·P + [n]·(P − Q)`.
-        //  - `PmQ` = the precomputed `x(P − Q_local)`-differential the ladder needs for
-        //    differential addition. With `Q_local = P − Q`, that differential is
-        //    `x(Q)`.
+        //  - `Q`   = the [n]-multiplied operand. Here that is `P − Q`, because
+        //    this function computes `[m]·P + [n]·(P − Q)`.
+        //  - `PmQ` = the precomputed `x(P − Q_local)`-differential the ladder
+        //    needs for differential addition. With `Q_local = P − Q`, that
+        //    differential is `x(Q)`.
         let P = &self.P;
         let Q = &self.PmQ;
         let PmQ = &self.Q;

@@ -27,7 +27,8 @@ impl<const N: usize> BigInt<N> {
             // l transitions to 0 when i < j.
             l &= (i >= j) as u64;
             if i >= j {
-                // Shift the source limb and OR in the carry from the lower limb.
+                // Shift the source limb and OR in the carry from the lower
+                // limb.
                 let src = if i >= j { a[i - j] } else { 0 };
                 let carry = if i > j { a[i - j - 1] } else { 0 };
                 // When r == 0 we must avoid shifting by 64 (undefined).

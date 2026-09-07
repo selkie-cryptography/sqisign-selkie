@@ -131,7 +131,8 @@ impl Challenge {
         pre_iso: &TorsionBasis,
         n_bt: TorsionExponent,
     ) -> Option<(Curve, TorsionBasis)> {
-        // Line 1: E_chl ← TwoIsogenyChain([2^n_bt]·(P + [chl]·Q), E_pk, f − n_bt)
+        // Line 1: E_chl ← TwoIsogenyChain([2^n_bt]·(P + [chl]·Q), E_pk, f −
+        // n_bt)
         let mut kernel_point = basis_pk.scalar_mul_add(self.as_ref());
         for _ in 0..n_bt.value() {
             kernel_point = kernel_point.double();
@@ -139,8 +140,8 @@ impl Challenge {
         let e_chain = TorsionExponent::try_from(TORSION_EVEN_POWER - n_bt.value()).ok()?;
         let (curve_chl, _) = Kernel::new(kernel_point).isogeny(e_chain, &[]);
 
-        // Line 2: (P_chl, Q_chl, P_chl − Q_chl) ← IsomorphismMontgomeryCurves(E', P, Q,
-        // P−Q, E_chl)
+        // Line 2: (P_chl, Q_chl, P_chl − Q_chl) ←
+        // IsomorphismMontgomeryCurves(E', P, Q, P−Q, E_chl)
         let e_prime = pre_iso.P.curve();
         if e_prime.j_invariant() != curve_chl.j_invariant() {
             return None;

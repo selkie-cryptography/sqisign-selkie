@@ -315,7 +315,8 @@ impl SigningKey {
                 None => continue,
             };
 
-            // Line 9: M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)), (P_pk, Q_pk)).
+            // Line 9: M_sk ← ChangeOfBasis_{2^f}(E_pk, (φ_sk(P₀), φ_sk(Q₀)),
+            // (P_pk, Q_pk)).
             let eval_basis = TorsionBasis::from_propagated(phi_p, phi_pmq, phi_q);
             let Some(mat_sk) = SigningKeyMatrix::from_bases(&eval_basis, &basis_pk) else {
                 continue; // basis lift failed — retry with fresh ideal
@@ -594,25 +595,27 @@ impl SigningKey {
         // Status: response phase operates at `LeftIdeal<N_RESP>`
         // (= 22 limbs, enough for the 1399-bit sampling radius).
         //
-        // - Intersection is `I_com ∩ (I_sk · I_chl)` — corrected from the earlier bug
-        //   where it was `I_sk ∩ (I_sk · I_chl)`.
+        // - Intersection is `I_com ∩ (I_sk · I_chl)` — corrected from the
+        //   earlier bug where it was `I_sk ∩ (I_sk · I_chl)`.
         // - Sampling uses the full spec radius `D²_mix · 2^{e_rsp + f + 1}`.
-        // - `d_rsp = nrd(α_rsp) / (D²_mix · 2^{f - n_bt})` is computed at wide width
-        //   with the full `D²_mix` division.
+        // - `d_rsp = nrd(α_rsp) / (D²_mix · 2^{f - n_bt})` is computed at wide
+        //   width with the full `D²_mix` division.
         // - `I_com,rsp = O₀·α_rsp + O₀·(q_rsp · D_mix)` is built via
-        //   [`LeftIdeal::from_generator`] at `LeftIdeal<N_RESP>` with the full ~513-bit
-        //   norm, then reduced to a prime-norm equivalent and narrowed to
-        //   `LeftIdeal<4>` for `to_isogeny`.
-        // - `compute_even_response` is invoked with `α_rsp mod 2^r_rsp` (since that
-        //   generates the same even-response ideal), narrowed to `Element<4>`.
+        //   [`LeftIdeal::from_generator`] at `LeftIdeal<N_RESP>` with the full
+        //   ~513-bit norm, then reduced to a prime-norm equivalent and narrowed
+        //   to `LeftIdeal<4>` for `to_isogeny`.
+        // - `compute_even_response` is invoked with `α_rsp mod 2^r_rsp` (since
+        //   that generates the same even-response ideal), narrowed to
+        //   `Element<4>`.
         //
         // Known remaining issues:
         //
-        // - `q_rsp` is still extracted as a single `u64` from the odd part of `d_rsp`.
-        //   The spec allows `q_rsp` up to `D_rsp ≈ 2^126`, so a `u64` is insufficient
-        //   in general. TODO: widen `q_rsp` to `BigInt<4>`.
-        // - Not yet tested end-to-end against KATs — correctness of the wide-width
-        //   response phase depends on every step above and needs integration testing.
+        // - `q_rsp` is still extracted as a single `u64` from the odd part of
+        //   `d_rsp`. The spec allows `q_rsp` up to `D_rsp ≈ 2^126`, so a `u64`
+        //   is insufficient in general. TODO: widen `q_rsp` to `BigInt<4>`.
+        // - Not yet tested end-to-end against KATs — correctness of the
+        //   wide-width response phase depends on every step above and needs
+        //   integration testing.
 
         let f = TORSION_EVEN_POWER;
         let e_rsp = E_RSP;
@@ -987,7 +990,8 @@ impl SigningKey {
             // The spec writes `O₀·α_rsp + O₀·(q_rsp·D_mix)`.
             // The C ref (sign.c:165-169):
             //   1. Conjugates α_rsp (ᾱ_rsp)
-            //   2. Uses norm = N(I_com) · q_rsp (reduced norm, not the original D_mix)
+            //   2. Uses norm = N(I_com) · q_rsp (reduced norm, not the original
+            //      D_mix)
             //
             // We match the C ref. N(I_com) is the prime norm from
             // reduce_to_prime_norm (~2^133), not D_mix (~2^513).
@@ -1066,7 +1070,8 @@ impl SigningKey {
                         continue;
                     }
                 };
-                // Line 24: E_aux, P_aux, Q_aux ← IdealToIsogeny(I_{com,rsp} ∩ I_aux)
+                // Line 24: E_aux, P_aux, Q_aux ← IdealToIsogeny(I_{com,rsp} ∩
+                // I_aux)
                 //
                 // Use the true lattice intersection via
                 // `intersection_via_kernel` — the same method used

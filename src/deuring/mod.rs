@@ -109,7 +109,8 @@ fn fixed_degree_isogeny<R: rand_core::RngCore>(
         generators: curve_idx.gen_matrices(),
     };
 
-    // Step 1: e_FDI = min(f − 2, ⌈log₂(p)⌉ − ⌈log₂(u)⌉ + QUAT_repres_bound_input)
+    // Step 1: e_FDI = min(f − 2, ⌈log₂(p)⌉ − ⌈log₂(u)⌉ +
+    // QUAT_repres_bound_input)
     let e_fdi = core::cmp::min(
         f.value() - 2,
         p_bits.saturating_sub(u.bit_length()) + QUAT_REPRES_BOUND_INPUT,
@@ -354,7 +355,8 @@ impl<const N: usize> LeftIdeal<N> {
         // i.e., whether `reduce_to_prime_norm` produced the same
         // reduced ideal as the C ref despite same DRBG byte stream.
 
-        // Steps 2–3: degrees (already in sui.factor1.degree, sui.factor2.degree).
+        // Steps 2–3: degrees (already in sui.factor1.degree,
+        // sui.factor2.degree).
         let d1 = &sui.factor1.degree;
         let _d2 = &sui.factor2.degree;
 
@@ -597,16 +599,17 @@ impl<const N: usize> LeftIdeal<N> {
         //
         // Dispatch on `sui.e` vs `f`:
         //
-        //   * `sui.e ≤ f − 2` → extra-torsion path. Pad the kernel by `f − sui.e − 2`
-        //     doublings, leaving 2 spare torsion bits for the chain's
-        //     penultimate/ultimate hadamard absorption. Calls [`Kernel::isogeny`] (=
-        //     `isogeny_extra_torsion`).
+        //   * `sui.e ≤ f − 2` → extra-torsion path. Pad the kernel by `f −
+        //     sui.e − 2` doublings, leaving 2 spare torsion bits for the
+        //     chain's penultimate/ultimate hadamard absorption. Calls
+        //     [`Kernel::isogeny`] (= `isogeny_extra_torsion`).
         //
         //   * `sui.e ∈ {f − 1, f}` → no-extra-torsion path. Pad by `f − sui.e`
         //     doublings so the kernel is exactly `2^sui.e`. Calls
         //     [`Kernel::isogeny_no_extra_torsion`], which runs `sui.e − 2` main
-        //     8-torsion steps then a dedicated 4-isogeny + 2-isogeny tail. Mirrors the
-        //     C reference's `extra_torsion=false` mode at `dim2id2iso.c:1128`.
+        //     8-torsion steps then a dedicated 4-isogeny + 2-isogeny tail.
+        //     Mirrors the C reference's `extra_torsion=false` mode at
+        //     `dim2id2iso.c:1128`.
         // Always dispatch the outer chain to Mode B
         // (`isogeny_no_extra_torsion`), matching C ref's
         // `theta_chain_compute_and_eval_randomized(.., extra_torsion=false,

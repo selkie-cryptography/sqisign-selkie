@@ -38,7 +38,8 @@ fn inversion() {
 fn karatsuba_matches_schoolbook() {
     let a = Fp2::new(Fp::from_small(3), Fp::from_small(7));
     let b = Fp2::new(Fp::from_small(11), Fp::from_small(5));
-    // (3 + 7i)(11 + 5i) = 33 + 15i + 77i + 35i^2 = 33 - 35 + (15+77)i = -2 + 92i
+    // (3 + 7i)(11 + 5i) = 33 + 15i + 77i + 35i^2 = 33 - 35 + (15+77)i = -2 +
+    // 92i
     let c = &a * &b;
     // Check via from_small arithmetic
     let expected_real = &Fp::from_small(33) - &Fp::from_small(35);

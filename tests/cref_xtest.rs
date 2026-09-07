@@ -155,7 +155,8 @@ fn cref_xtest_differential() {
         assert_eq!(vk.to_bytes().as_slice(), ref_pk, "seed {i}: pk mismatch");
         assert_eq!(sk.to_bytes().as_slice(), ref_sk, "seed {i}: sk mismatch");
 
-        // Sign must verify; byte-equality is tallied here, asserted after the loop.
+        // Sign must verify; byte-equality is tallied here, asserted after the
+        // loop.
         let sig = sk
             .sign_with_rng(&XTEST_MSG, &mut drbg)
             .unwrap_or_else(|e| panic!("seed {i}: Rust sign failed: {e:?}"));
