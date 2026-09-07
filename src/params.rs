@@ -164,6 +164,27 @@ pub const BASIS_E0_Q_X: Fp2 = Fp2::new(
     ]),
 );
 
+/// x-coordinate of P₀ − Q₀ on E₀, the third component of the
+/// canonical basis triple (P₀, Q₀, P₀ − Q₀).
+///
+/// Stored in Montgomery form, radix-51 representation.
+pub const BASIS_E0_PMQ_X: Fp2 = Fp2::new(
+    Fp::from_limbs([
+        270480358487834,
+        2072266045736319,
+        1674191439884908,
+        2200260875474967,
+        6907110771017,
+    ]),
+    Fp::from_limbs([
+        1752869285732728,
+        495365606488051,
+        1818143936964406,
+        314346222928849,
+        165077940050103,
+    ]),
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
