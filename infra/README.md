@@ -150,6 +150,16 @@ cancelled while queued):
   than 45 min and any Machine older than the 6 h hard max age
   (`orchestrator/runners.toml` `[reaper]`; keep that above every
   workflow `timeout-minutes`).
+- A reconciler sweeps every minute, spawning a runner for each queued
+  `fly` job with no live `fly-{job_id}-` Machine. A job still queued
+  after a spawn lost that runner (deprecated runner version, broken
+  image, or the runner took another job); each further spawn for it
+  waits twice as long, from 2 min up to 30 min. Three or more such
+  jobs log an error: runners are exiting without taking jobs.
+- `runner-smoke-test.yml` runs every Monday after the image rebuild.
+  A GitHub-hosted watchdog fails it when no runner has picked the job
+  up within 15 min, and the job itself fails when the runner binary is
+  two or more releases behind, ahead of GitHub deprecating it.
 
 Workflows that target Fly use `runs-on: [self-hosted, fly, linux, x64, ...]`.
 The full set of labels accepted is declared in `.github/actionlint.yaml`.
