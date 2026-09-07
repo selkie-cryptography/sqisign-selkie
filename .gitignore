@@ -46,3 +46,5 @@ Cargo.lock
 app-credentials.json
 dhat-heap.json
 *.trace
+
+references/
