@@ -1,0 +1,30 @@
+name: Install Linux build deps
+description: >-
+  apt packages a job needs beyond the ubuntu-latest image. Defaults to
+  mold, the linker `.cargo/config.toml` selects on Linux targets. Pass
+  `packages` to add more (valgrind, texlive, ...) or to replace the
+  default for jobs that never link. No-op on a self-hosted runner,
+  whose image bakes these in.
+
+inputs:
+  packages:
+    description: Space-separated apt packages to install.
+    required: false
+    default: mold
+
+runs:
+  using: composite
+  steps:
+    - name: apt-get install
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+        if [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
+          echo "self-hosted runner: image already has $PACKAGES; skipping apt"
+          exit 0
+        fi
+        read -ra pkgs <<< "$PACKAGES"
+        sudo apt-get update -qq
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${pkgs[@]}"
