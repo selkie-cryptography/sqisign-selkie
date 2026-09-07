@@ -124,7 +124,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696  # v0.0.10
         if: env.RUSTC_WRAPPER == 'sccache'
-      - uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d
+      - uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8
         with:
           tool: cargo-mutants,cargo-nextest
 
@@ -247,7 +247,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696  # v0.0.10
         if: env.RUSTC_WRAPPER == 'sccache'
-      - uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d
+      - uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8
         with:
           tool: cargo-mutants,cargo-nextest
       # `--test-tool nextest`, `profile = "mutants"`, and

@@ -220,7 +220,7 @@ jobs:
         with:
           key: fuzz-${{ matrix.target }}
           workspaces: fuzz
-      - uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d
+      - uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8
         with:
           tool: cargo-fuzz
 

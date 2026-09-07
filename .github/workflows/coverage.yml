@@ -127,7 +127,7 @@ jobs:
           toolchain: nightly
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d
+      - uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8
         with:
           tool: cargo-llvm-cov,cargo-nextest
 
