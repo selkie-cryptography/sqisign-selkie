@@ -44,7 +44,7 @@ jobs:
 
       - name: Build spec review
         working-directory: latex
-        run: latexmk -pdf -file-line-error -halt-on-error -interaction=nonstopmode sqisign-v2-spec-review.tex
+        run: latexmk -pdf -file-line-error -halt-on-error -interaction=nonstopmode sqisign-v3-spec-review.tex
 
       # TEMP: artifact upload disabled — org GH Actions artifact-storage
       # quota is full. Job still builds the PDFs above to catch latex
@@ -56,7 +56,7 @@ jobs:
       #     name: latex-pdfs
       #     path: |
       #       latex/sqisign-selkie.pdf
-      #       latex/sqisign-v2-spec-review.pdf
+      #       latex/sqisign-v3-spec-review.pdf
       #
       # - name: Annotate commit with artifact link
       #   if: github.event_name == 'push'
