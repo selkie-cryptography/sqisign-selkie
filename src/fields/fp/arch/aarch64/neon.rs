@@ -699,7 +699,8 @@ impl Fp29x4 {
     pub fn square(&self) -> Fp29x4 {
         let a = &self.limbs;
 
-        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        // SAFETY: register-width NEON ops; covered by the type-level Safety
+        // note.
         unsafe {
             let a_lo = [a[0], a[1], a[2], a[3], a[4]];
             let a_hi = [a[5], a[6], a[7], a[8]];
@@ -748,7 +749,8 @@ impl Fp29x4 {
             mid[i].1 = vsubq_u64(vsubq_u64(q[i].1, p0[i].1), p1_hi);
         }
 
-        // 17-column polynomial: P0 at offset 0, mid at offset 5, P1 at offset 10.
+        // 17-column polynomial: P0 at offset 0, mid at offset 5, P1 at offset
+        // 10.
         let mut full: [(uint64x2_t, uint64x2_t); 17] = [(zero_u64, zero_u64); 17];
         full[..9].copy_from_slice(&p0);
         for i in 0..9 {
@@ -802,7 +804,8 @@ impl Fp29x4 {
     /// version of `Fp29::final_sub`.  Constant-time per lane via
     /// `vbslq_u32` (NEON bit-select).
     pub fn final_sub(self) -> Fp29x4 {
-        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        // SAFETY: register-width NEON ops; covered by the type-level Safety
+        // note.
         unsafe {
             let mask_u32 = vdupq_n_u32(MASK_29);
             let zero_u32 = vdupq_n_u32(0);
@@ -845,7 +848,8 @@ impl Fp29x4 {
     /// `vmovl_s32` on each half of the lane vector; arithmetic right shift
     /// (`vshrq_n_s64::<29>`) preserves the sign of the carry.
     fn prop(&mut self) -> uint32x4_t {
-        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        // SAFETY: register-width NEON ops; covered by the type-level Safety
+        // note.
         unsafe {
             let mask_u32 = vdupq_n_u32(MASK_29);
 
@@ -898,7 +902,8 @@ impl Fp29x4 {
     /// products and `5 * 2^60 < 2^63`.
     #[inline]
     fn polynomial_5x5(a: &[uint32x4_t; 5], b: &[uint32x4_t; 5]) -> [(uint64x2_t, uint64x2_t); 9] {
-        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        // SAFETY: register-width NEON ops; covered by the type-level Safety
+        // note.
         unsafe {
             let zero = vdupq_n_u64(0);
             let mut out: [(uint64x2_t, uint64x2_t); 9] = [(zero, zero); 9];
@@ -922,7 +927,8 @@ impl Fp29x4 {
     /// column accumulator.  15 unique mul-pairs against the plain 5x5's 25.
     #[inline]
     fn polynomial_5x5_square(a: &[uint32x4_t; 5]) -> [(uint64x2_t, uint64x2_t); 9] {
-        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        // SAFETY: register-width NEON ops; covered by the type-level Safety
+        // note.
         unsafe {
             let zero = vdupq_n_u64(0);
             let mut out: [(uint64x2_t, uint64x2_t); 9] = [(zero, zero); 9];
@@ -1001,7 +1007,8 @@ impl Add<Fp29x4> for Fp29x4 {
     /// add-2-to-limb-0 / subtract-`2 * P4_29`-from-limb-8 trick, propagate
     /// carries, then conditionally add `2p` back per lane on borrow.
     fn add(self, rhs: Fp29x4) -> Fp29x4 {
-        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        // SAFETY: register-width NEON ops; covered by the type-level Safety
+        // note.
         unsafe {
             let mut n = Fp29x4 {
                 limbs: [
@@ -1036,7 +1043,8 @@ impl Sub<Fp29x4> for Fp29x4 {
     /// each result reduced to `[0, 2p)`.  Lane-wise wrapping subtract, then
     /// conditionally adds `2p` per lane on borrow.  Mirrors [`Fp29::sub`].
     fn sub(self, rhs: Fp29x4) -> Fp29x4 {
-        // SAFETY: register-width NEON ops; covered by the type-level Safety note.
+        // SAFETY: register-width NEON ops; covered by the type-level Safety
+        // note.
         unsafe {
             let mut n = Fp29x4 {
                 limbs: [

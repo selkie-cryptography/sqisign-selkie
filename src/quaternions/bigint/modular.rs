@@ -382,7 +382,8 @@ impl<const N: usize> MontReducer<N> {
         let base_red = BigInt::<N>::mag_div_rem(&base.limbs, &self.n).1;
         let base_m = self.to_montgomery(&base_red);
 
-        // table[i] = base^i in Mont form, for i in 0..16. table[0] = 1·R = R mod n.
+        // table[i] = base^i in Mont form, for i in 0..16. table[0] = 1·R = R
+        // mod n.
         let mut one = [0u64; N];
         one[0] = 1;
         let mut table: [[u64; N]; 16] = [[0u64; N]; 16];

@@ -231,8 +231,8 @@ impl<const N: usize> Matrix<N> {
         // C ref's `ibz_mat_4xn_hnf_mod_core` lines:
         //
         //     c = u·a[k] + v·a[j]                       (new gcd col)
-        //     a[j] = (a[k][i]/g)·a[j] - (a[j][i]/g)·a[k]  (orthogonal col, row-i zero)
-        //     a[k] = c mod m
+        //     a[j] = (a[k][i]/g)·a[j] - (a[j][i]/g)·a[k]  (orthogonal col,
+        // row-i zero)     a[k] = c mod m
         //
         // Updating only `a[k]` (the gcd col) without simultaneously
         // updating `a[j]` makes the pair-transformation non-unimodular,
@@ -451,8 +451,9 @@ impl<const N: usize> Matrix<N> {
 
         // Two mod variants matching C-ref:
         //
-        // - `centered_mod`: result in `(-m/2, m/2]`. Used in inner gcd-combine loop
-        //   (`ibz_vec_4_linear_combination_mod` → `ibz_centered_mod` in `hnf.c`).
+        // - `centered_mod`: result in `(-m/2, m/2]`. Used in inner gcd-combine
+        //   loop (`ibz_vec_4_linear_combination_mod` → `ibz_centered_mod` in
+        //   `hnf.c`).
         // - `positive_mod`: result in `[0, |m|)`. Used in output store
         //   (`ibz_vec_4_scalar_mul_mod` → `ibz_mod`).
         let centered_mod = |x: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
@@ -504,10 +505,11 @@ impl<const N: usize> Matrix<N> {
         let trunc_div_rem = |a: &BigInt<W>, b: &BigInt<W>| -> (BigInt<W>, BigInt<W>) {
             let (q_eu, r_eu) = a.vt_div_rem(b);
             if bool::from(a.is_negative()) && !bool::from(r_eu.is_zero()) {
-                // Euclidean→truncated conversion for a<0 with nonzero remainder:
-                //   trunc rounds toward 0 → |q_trunc| = |q_eu| - 1.
-                //   sign(q_trunc) = sign(a)⊕sign(b) = sign(q_eu).
-                //   So q_trunc = q_eu + sign(b) (when sign(q_eu) = −sign(b),
+                // Euclidean→truncated conversion for a<0 with nonzero
+                // remainder:   trunc rounds toward 0 →
+                // |q_trunc| = |q_eu| - 1.   sign(q_trunc) =
+                // sign(a)⊕sign(b) = sign(q_eu).   So q_trunc =
+                // q_eu + sign(b) (when sign(q_eu) = −sign(b),
                 //   moves q_eu one step toward 0).
                 // Examples: (−7, 3) Eu=(−3, 2), trunc=(−2, −1); add +1=sign(3).
                 //           (−7, −3) Eu=(3, 2), trunc=(2, −1); add −1=sign(−3).
@@ -775,7 +777,8 @@ impl<const N: usize> Matrix<N> {
                 );
             }
 
-            // Output: positive mod (matches C-ref's `ibz_vec_4_scalar_mul_mod`).
+            // Output: positive mod (matches C-ref's
+            // `ibz_vec_4_scalar_mul_mod`).
             let mul_k_u: [BigInt<W>; 4] = array::from_fn(|r| u.vt_mul(&a[k][r]));
             w[i as usize] = vec_positive_mod_m(&mul_k_u, &m);
 

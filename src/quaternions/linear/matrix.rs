@@ -165,8 +165,8 @@ impl<const N: usize> Matrix<N> {
     /// `self * self.adjugate() == det(self) * I`.  Equals
     /// `transpose(self.cofactor())`, built transposed in place.
     pub fn adjugate(&self) -> Self {
-        // Cofactor C[i][j] = (-1)^(i+j) * minor(rows without i, cols without j).
-        // Adjugate = transpose of cofactor matrix.
+        // Cofactor C[i][j] = (-1)^(i+j) * minor(rows without i, cols without
+        // j). Adjugate = transpose of cofactor matrix.
         let rows = [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]];
 
         let mut result = Self::ZERO;

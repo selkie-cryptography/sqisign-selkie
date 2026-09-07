@@ -711,8 +711,8 @@ fn intersection_results_contained_in_inputs() {
 
     // Lattice-index identity:
     //   covol(L1) · covol(L2) = covol(L_int) · covol(L_sum)
-    // ⇔ |det(B1)| · |det(B2)| · d_int^4 · d_sum^4 = |det(B_int)| · |det(B_sum)| ·
-    // d1^4 · d2^4
+    // ⇔ |det(B1)| · |det(B2)| · d_int^4 · d_sum^4 = |det(B_int)| · |det(B_sum)|
+    // · d1^4 · d2^4
     //
     // Whichever candidate L_int satisfies this identity (within the
     // available width) is the *true* intersection L1 ∩ L2.
@@ -811,10 +811,10 @@ fn intersection_results_contained_in_inputs() {
     // Definitive assertions:
     //   - kernel<500> must produce a true sublattice of L1 ∩ L2.
     //   - DSD<200> must too (the post-fix correctness check).
-    //   - DSD<60> also produces a valid intersection now that `xgcd` dispatches to
-    //     the Euclidean cofactor-tracking variant; the old binary-xgcd overflow at
-    //     the boundary is gone. The test stays in place to catch a regression of
-    //     that fix.
+    //   - DSD<60> also produces a valid intersection now that `xgcd` dispatches
+    //     to the Euclidean cofactor-tracking variant; the old binary-xgcd
+    //     overflow at the boundary is gone. The test stays in place to catch a
+    //     regression of that fix.
     assert!(
         k_in_l1 && k_in_l2,
         "intersection_via_kernel<500> produced a result NOT contained in both inputs"
@@ -1141,16 +1141,16 @@ fn sum_simple_2zn_plus_3zn() {
 /// the dual outputs.
 #[test]
 fn sum_off_diagonal_simple() {
-    // L1 = upper-triangular [(2, 1, 0, 0), (0, 3, 0, 0), (0, 0, 1, 0), (0, 0, 0,
-    // 1)]
+    // L1 = upper-triangular [(2, 1, 0, 0), (0, 3, 0, 0), (0, 0, 1, 0), (0, 0,
+    // 0, 1)]
     let basis_a = Matrix::<4>::from_columns(&[
         Vector::new(BigInt::from(2), BigInt::ZERO, BigInt::ZERO, BigInt::ZERO),
         Vector::new(BigInt::from(1), BigInt::from(3), BigInt::ZERO, BigInt::ZERO),
         Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ONE, BigInt::ZERO),
         Vector::new(BigInt::ZERO, BigInt::ZERO, BigInt::ZERO, BigInt::ONE),
     ]);
-    // L2 = upper-triangular [(5, 0, 0, 0), (0, 7, 0, 0), (0, 0, 1, 0), (0, 0, 0,
-    // 1)]
+    // L2 = upper-triangular [(5, 0, 0, 0), (0, 7, 0, 0), (0, 0, 1, 0), (0, 0,
+    // 0, 1)]
     let basis_b = Matrix::<4>::from_columns(&[
         Vector::new(BigInt::from(5), BigInt::ZERO, BigInt::ZERO, BigInt::ZERO),
         Vector::new(BigInt::ZERO, BigInt::from(7), BigInt::ZERO, BigInt::ZERO),

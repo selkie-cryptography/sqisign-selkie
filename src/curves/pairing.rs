@@ -584,8 +584,8 @@ impl TorsionBasis {
         ];
 
         // Final exponentiation:
-        //   1. (X/Z)^(p−1) via Frobenius (conjugation in Fp2 with p ≡ 3 mod 4, which
-        //      holds for p = 5·2^248 − 1).
+        //   1. (X/Z)^(p−1) via Frobenius (conjugation in Fp2 with p ≡ 3 mod 4,
+        //      which holds for p = 5·2^248 − 1).
         //   2. clear_cofac → ^5 (since (p+1)/2^TORSION_EVEN_POWER = 5).
         //   3. 2^e_diff squarings → land in μ_{2^e}.
         let e_diff = e_full - e_red;

@@ -298,8 +298,8 @@ fn hnf_mod_kat29_cref_first_finduv() {
     let h_out = Matrix::<60>::from_hnf_columns_mod::<60>(&cols, &modulus);
 
     // Expected canonical HNF (pre-reduce-denom) from C ref's reduced_id.basis
-    // multiplied by g = 2N = 0x1398f6a0001a1e0db940394daddff8be32ea on each entry.
-    // Diagonal pivots: (2k · 2N, 2k · 2N, 2N, 2N).
+    // multiplied by g = 2N = 0x1398f6a0001a1e0db940394daddff8be32ea on each
+    // entry. Diagonal pivots: (2k · 2N, 2k · 2N, 2N, 2N).
     let two_n = h("1398f6a0001a1e0db940394daddff8be32ea");
     let two_k = h("2c1d9c251a519ad987c008d9d1dbddc");
     let pivot_01 = two_k.ct_mul(&two_n); // 2k · 2N
@@ -733,8 +733,8 @@ fn from_hnf_columns_predictable_4cols_shifted() {
 
     // The HNF should be diagonal with diagonals 7, 11, 13, 17 each
     // shifted by 200 bits (since cols are scaled but linearly independent).
-    // Off-diagonals SHOULD match the original `from_hnf_columns_predictable_4cols`
-    // shifted by 200 bits.
+    // Off-diagonals SHOULD match the original
+    // `from_hnf_columns_predictable_4cols` shifted by 200 bits.
     assert_eq!(hnf_classical, hnf_mod_cref, "classical vs mod_cref");
     assert_eq!(hnf_classical, hnf_mod, "classical vs mod");
 }

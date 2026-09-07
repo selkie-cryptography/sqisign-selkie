@@ -501,7 +501,8 @@ impl Kernel {
         //
         // Empirically:
         //   - r_rsp = 0 trajectories produce `ζ ∈ μ_4`.
-        //   - r_rsp = 1 trajectories (e.g. KAT-001 sign iter 1) produce `ζ ∈ μ_16`.
+        //   - r_rsp = 1 trajectories (e.g. KAT-001 sign iter 1) produce `ζ ∈
+        //     μ_16`.
         //   - Both subsets of `μ_64`; the chain handles both identically.
         //
         // Verification-path (`extra_torsion = false`) callers consume
@@ -509,7 +510,8 @@ impl Kernel {
         // `prod = 1` — also satisfies `prod^64 = 1`, so the same
         // check works for both call sites.
         let prod = w1.as_fp2() * w2.as_fp2();
-        // ζ^64 = ((ζ^2)^4)^4·... — six squarings: ζ^2, ζ^4, ζ^8, ζ^16, ζ^32, ζ^64.
+        // ζ^64 = ((ζ^2)^4)^4·... — six squarings: ζ^2, ζ^4, ζ^8, ζ^16, ζ^32,
+        // ζ^64.
         let prod64 = prod.square().square().square().square().square().square();
         prod64 == Fp2::ONE
     }

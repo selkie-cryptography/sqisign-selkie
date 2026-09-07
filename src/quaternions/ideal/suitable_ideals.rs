@@ -691,13 +691,13 @@ impl<const N: usize> LeftIdeal<N> {
         // Phase 1: for each of the seven extremal orders O_t, build
         // the corresponding ideal in which β is enumerated:
         //
-        // - `t = 0`: the caller-supplied ideal `self`. Short vectors β ∈ `self` have
-        //   `nrd(β) = degree · nrd(self)`.
-        // - `t > 0`: the pushforward `J_t · self` (see [§3.1.6.1][§3.1.6.1]), where
-        //   `J_t = connecting_ideal(t)` is the precomputed left-O_0 ideal with
-        //   right-order O_t. `pushforward` returns the left-O_t ideal `J_t^{-1} · (J_t
-        //   ∩ self)`, which has the same norm as `self` but lives in a different
-        //   lattice — β's enumerated here act on `E_t` via
+        // - `t = 0`: the caller-supplied ideal `self`. Short vectors β ∈ `self`
+        //   have `nrd(β) = degree · nrd(self)`.
+        // - `t > 0`: the pushforward `J_t · self` (see [§3.1.6.1][§3.1.6.1]),
+        //   where `J_t = connecting_ideal(t)` is the precomputed left-O_0 ideal
+        //   with right-order O_t. `pushforward` returns the left-O_t ideal
+        //   `J_t^{-1} · (J_t ∩ self)`, which has the same norm as `self` but
+        //   lives in a different lattice — β's enumerated here act on `E_t` via
         //   `ENDOMORPHISM_MATRICES[t][*]`.
         //
         // The C reference (`dim2id2iso.c:535-609`) does an equivalent
@@ -719,13 +719,14 @@ impl<const N: usize> LeftIdeal<N> {
 
         // C ref's multi-order recipe (`dim2id2iso.c:617-666`):
         // 1. After LLL on self, let δ = first post-L² basis col.
-        // 2. k = nrd(δ_num) / (denom_self² · N(self)) — integer "abstract norm" of the
-        //    equivalent ideal class.
+        // 2. k = nrd(δ_num) / (denom_self² · N(self)) — integer "abstract norm"
+        //    of the equivalent ideal class.
         // 3. reduced_id.lattice = self.lattice · conj(δ)/N(self) (a fractional
-        //    left-O_0-ideal in B; integer-col covolume at denom 4N is 64·N^5·k).
+        //    left-O_0-ideal in B; integer-col covolume at denom 4N is
+        //    64·N^5·k).
         // 4. conj_reduced_id = conjugate(reduced_id).
-        // 5. ideal[t] = conj_reduced_id · J_t. Norm = k · N(J_t). Integer-col covolume
-        //    at denom 8N is 1024·N^4·(k·N_J)².
+        // 5. ideal[t] = conj_reduced_id · J_t. Norm = k · N(J_t). Integer-col
+        //    covolume at denom 8N is 1024·N^4·(k·N_J)².
         //
         // We pass these *exact* covolume formulas as modular-HNF
         // moduli rather than the `det(first 4 cols)` heuristic, which
@@ -773,7 +774,8 @@ impl<const N: usize> LeftIdeal<N> {
                 // and L²-LLL never terminates (KAT 053 t=5 hang;
                 // C-ref's `quat_lll_core` also hangs on the same input).
                 //
-                // C-ref's `quat_lideal_lideal_mul_reduced` (`lll/lll_applications.c:38`)
+                // C-ref's `quat_lideal_lideal_mul_reduced`
+                // (`lll/lll_applications.c:38`)
                 // calls `quat_lattice_mul`, which uses `|det(first 4
                 // generators)|` (`lattice.c:231-233`) as the HNF modulus —
                 // a value guaranteed to live in the lattice. `Lattice::product`
