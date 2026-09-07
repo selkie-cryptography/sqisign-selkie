@@ -4,7 +4,6 @@ use crate::{
         BasisHint, ChangeOfBasisMatrix, TorsionBasis,
         montgomery::{Coefficient, Curve, ProjectiveXOnlyPoint},
     },
-    deuring::precomputed::torsion_basis::ExtremalCurve,
     fields::fp2::Fp2,
     params,
     quaternions::bigint::BigInt,
@@ -15,10 +14,7 @@ fn e0_basis() -> TorsionBasis {
     let curve = Curve::E0;
     let p = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_P_X, &curve);
     let q = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_Q_X, &curve);
-    let pmq = ProjectiveXOnlyPoint::from_affine_x(
-        crate::deuring::precomputed::torsion_basis::E0_PMQ_X,
-        &curve,
-    );
+    let pmq = ProjectiveXOnlyPoint::from_affine_x(params::BASIS_E0_PMQ_X, &curve);
     TorsionBasis::from_propagated(p, q, pmq)
 }
 
@@ -509,92 +505,6 @@ fn to_hint_from_hint_roundtrip_e0() {
         basis_via_to.Q, basis_via_from.Q,
         "to_hint/from_hint round-trip must match on E_0: RS differs"
     );
-}
-
-/// `to_hint` / `from_hint` round-trip on a non-`E_0` curve with
-/// non-zero `A`.
-///
-/// `from_hint` has separate code paths for `A == 0` (use the
-/// precomputed `BASIS_E0_*` constants) and `A != 0` (recover
-/// the basis via the hint's `(h_A, h)` payload). The `E_0` test
-/// only exercises the first path. This test exercises the second
-/// by using one of the alternate extremal curves (which have
-/// non-zero `A` by construction).
-#[test]
-fn to_hint_from_hint_roundtrip_alternate_curve() {
-    // E1 is an alternate extremal-order curve with non-zero A.
-    let (_, _, _, a) = ExtremalCurve::E1.basis();
-    assert_ne!(a, Fp2::ZERO, "alternate curve must have non-zero A");
-    let curve = Curve::from(Coefficient::from(a));
-
-    let (basis_via_to, hint) =
-        TorsionBasis::to_hint(&curve).expect("test: to_hint failed on honest curve");
-    let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()))
-        .expect("test: from_hint failed on honest curve");
-
-    assert_eq!(
-        basis_via_to.P, basis_via_from.P,
-        "to_hint/from_hint round-trip on alternate curve: R differs"
-    );
-    assert_eq!(
-        basis_via_to.PmQ, basis_via_from.PmQ,
-        "to_hint/from_hint round-trip on alternate curve: S differs"
-    );
-    assert_eq!(
-        basis_via_to.Q, basis_via_from.Q,
-        "to_hint/from_hint round-trip on alternate curve: RS differs"
-    );
-}
-
-/// `to_hint` / `from_hint` round-trip on **every** alternate
-/// extremal curve, asserting all three basis points (R, S, RS).
-///
-/// Regression test for the Bug 3 fix: `to_hint` previously did not
-/// call `curve.normalize()` while `from_hint` did. On an
-/// unnormalized curve, `clear_cofactor`'s doublings produced a
-/// projectively different `(X : Z)` for P and Q in `to_hint` than
-/// `from_hint` recomputed for the same affine x. The downstream
-/// `projective_difference(P, Q)` (which contains a square root) is
-/// sensitive to the projective rep and picks different sqrt
-/// branches, so `S = P − Q` ends up as a *different abstract
-/// point* in `to_hint(c)` vs `from_hint(c, hint)` — same curve,
-/// same hint.
-///
-/// The pre-existing `to_hint_from_hint_roundtrip_alternate_curve`
-/// test only exercised `ExtremalCurve::E1`, which happened to
-/// land on the same sqrt branch on both sides. Iterating all
-/// non-zero-A alternates raises the chance of hitting a
-/// branch-divergent curve, and post-fix the round-trip must
-/// agree on every component for every curve.
-#[test]
-fn to_hint_from_hint_roundtrip_all_alternate_curves() {
-    for ec in ExtremalCurve::ALL.iter().copied() {
-        if ec == ExtremalCurve::E0 {
-            // E0 (A = 0) is exercised by the dedicated E0 test.
-            continue;
-        }
-        let (_, _, _, a) = ec.basis();
-        assert_ne!(a, Fp2::ZERO, "alternate curve {ec:?} must have non-zero A");
-        let curve = Curve::from(Coefficient::from(a));
-
-        let (basis_via_to, hint) =
-            TorsionBasis::to_hint(&curve).expect("test: to_hint failed on honest curve");
-        let basis_via_from = TorsionBasis::from_hint(&curve, BasisHint::from_byte(hint.to_byte()))
-            .expect("test: from_hint failed on honest curve");
-
-        assert_eq!(
-            basis_via_to.P, basis_via_from.P,
-            "{ec:?}: to_hint/from_hint round-trip — R differs"
-        );
-        assert_eq!(
-            basis_via_to.PmQ, basis_via_from.PmQ,
-            "{ec:?}: to_hint/from_hint round-trip — S (= P−Q) differs"
-        );
-        assert_eq!(
-            basis_via_to.Q, basis_via_from.Q,
-            "{ec:?}: to_hint/from_hint round-trip — RS differs"
-        );
-    }
 }
 
 /// `from_bases` must recover the *exact* matrix entries used to

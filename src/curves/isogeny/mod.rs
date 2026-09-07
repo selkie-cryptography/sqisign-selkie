@@ -75,24 +75,6 @@ impl IsogenyDegree {
         Scalar::from_limbs(self.0)
     }
 
-    /// Widens to [`BigInt<8>`](crate::quaternions::bigint::BigInt) for
-    /// quaternion arithmetic.
-    pub(crate) fn to_bigint_wide(self) -> BigInt<8> {
-        BigInt::<8>::from_sign_and_limbs(
-            0,
-            [self.0[0], self.0[1], self.0[2], self.0[3], 0, 0, 0, 0],
-        )
-    }
-}
-
-impl IsogenyDegree {
-    /// Constructs from a positive odd 256-bit value encoded as 32
-    /// little-endian bytes, or `None` if the value is zero or even.
-    pub(crate) fn from_bytes_le(bytes: &[u8; 32]) -> Option<Self> {
-        let b = BigInt::<4>::from_bytes_le_unsigned(bytes);
-        Self::new_odd(*b.as_limbs())
-    }
-
     /// Converts to a [`BigInt<4>`](crate::quaternions::bigint::BigInt)
     /// for quaternion arithmetic.
     #[inline]
