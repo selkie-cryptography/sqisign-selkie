@@ -113,14 +113,18 @@ jobs:
     #  - triggered by a failed CI run (workflow_run.conclusion !=
     #    'success'), or
     #  - the diff touches no fuzz-relevant paths (detect.outputs.
-    #    relevant != 'true').
+    #    relevant != 'true'), or
+    #  - a Dependabot pull_request: no repo secrets, so the seed corpus
+    #    cannot reach Tigris scratch (workflow_run from a Dependabot PR
+    #    does get secrets and runs).
     # workflow_dispatch bypasses the path filter (manual override).
     if: >-
       (github.event_name != 'workflow_run' ||
        (github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.head_repository.full_name == github.repository)) &&
       (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
+       (github.actor != 'dependabot[bot]' &&
+        github.event.pull_request.head.repo.full_name == github.repository)) &&
       (needs.detect.outputs.relevant == 'true' ||
        github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest

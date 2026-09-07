@@ -100,10 +100,14 @@ jobs:
   # `gungraun` aggregate job merges them and posts the comment.
   instructions:
     name: gungraun (${{ matrix.shard }})
-    # Fork PRs skip: untrusted code never runs on the fleet.
+    # Fork PRs skip: untrusted code never runs on the fleet. Dependabot
+    # PRs skip: they get no repo secrets, so a shard cannot ship its
+    # output to Tigris scratch and the `gungraun` aggregate has nothing
+    # to merge.
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      (github.actor != 'dependabot[bot]' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, fly, linux, x64]
     timeout-minutes: 90
     env:
