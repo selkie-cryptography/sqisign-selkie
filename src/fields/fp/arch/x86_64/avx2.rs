@@ -455,9 +455,9 @@ impl Fp26 {
         carry >>= RADIX_26;
         self.limbs[0] &= MASK_26;
 
-        for i in 1..LIMBS_26 - 1 {
-            carry += (self.limbs[i] as i32) as i64;
-            self.limbs[i] = (carry as u32) & MASK_26;
+        for limb in &mut self.limbs[1..LIMBS_26 - 1] {
+            carry += (*limb as i32) as i64;
+            *limb = (carry as u32) & MASK_26;
             carry >>= RADIX_26;
         }
 
@@ -991,9 +991,9 @@ impl Fp26x4 {
 
         self.limbs[0] = _mm256_and_si256(self.limbs[0], mask_26);
 
-        for i in 1..LIMBS_26 - 1 {
-            let v = _mm256_add_epi64(carry, self.limbs[i]);
-            self.limbs[i] = _mm256_and_si256(v, mask_26);
+        for limb in &mut self.limbs[1..LIMBS_26 - 1] {
+            let v = _mm256_add_epi64(carry, *limb);
+            *limb = _mm256_and_si256(v, mask_26);
 
             let neg_mask = _mm256_cmpgt_epi64(zero, v);
             let logical = _mm256_srli_epi64::<{ RADIX_26 as i32 }>(v);
