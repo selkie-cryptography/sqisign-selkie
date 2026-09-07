@@ -191,9 +191,9 @@ impl<const N: usize> NrdBasis<N> {
                         let _ = writeln!(f, "g_{i}_{j} = {}", self.gram[i][j]);
                     }
                 }
-                for j in 0..4 {
+                for (j, col) in self.cols.iter().enumerate() {
                     for i in 0..4 {
-                        let _ = writeln!(f, "c_{j}_{i} = {}", self.cols[j][i]);
+                        let _ = writeln!(f, "c_{j}_{i} = {}", col[i]);
                     }
                 }
             }

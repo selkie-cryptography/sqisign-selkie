@@ -52,9 +52,9 @@ impl<const N: usize> BigInt<N> {
         // Add 1 to the magnitude.
         magnitude.limbs[0] = magnitude.limbs[0].wrapping_add(1);
         let mut carry = if magnitude.limbs[0] == 0 { 1u64 } else { 0 };
-        for i in 1..N {
-            let (val, c) = magnitude.limbs[i].overflowing_add(carry);
-            magnitude.limbs[i] = val;
+        for limb in &mut magnitude.limbs[1..] {
+            let (val, c) = limb.overflowing_add(carry);
+            *limb = val;
             carry = c as u64;
         }
 

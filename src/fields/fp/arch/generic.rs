@@ -335,9 +335,9 @@ impl Fp51 {
         let mut carry = self.0[0] as i64;
         carry >>= RADIX;
         self.0[0] &= MASK;
-        for i in 1..4 {
-            carry += self.0[i] as i64;
-            self.0[i] = (carry as u64) & MASK;
+        for limb in &mut self.0[1..4] {
+            carry += *limb as i64;
+            *limb = (carry as u64) & MASK;
             carry >>= RADIX;
         }
         self.0[4] = self.0[4].wrapping_add(carry as u64);

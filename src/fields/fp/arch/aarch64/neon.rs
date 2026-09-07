@@ -385,9 +385,9 @@ impl Fp29 {
         let mut carry = (self.limbs[0] as i32) as i64;
         carry >>= RADIX_29;
         self.limbs[0] &= MASK_29;
-        for i in 1..LIMBS_29 - 1 {
-            carry += (self.limbs[i] as i32) as i64;
-            self.limbs[i] = (carry as u32) & MASK_29;
+        for limb in &mut self.limbs[1..LIMBS_29 - 1] {
+            carry += (*limb as i32) as i64;
+            *limb = (carry as u32) & MASK_29;
             carry >>= RADIX_29;
         }
         self.limbs[LIMBS_29 - 1] = self.limbs[LIMBS_29 - 1].wrapping_add(carry as u32);
@@ -862,8 +862,8 @@ impl Fp29x4 {
             self.limbs[0] = vandq_u32(self.limbs[0], mask_u32);
 
             // Propagate through limbs 1..8.
-            for i in 1..LIMBS_29 - 1 {
-                let limb_s32 = vreinterpretq_s32_u32(self.limbs[i]);
+            for limb in &mut self.limbs[1..LIMBS_29 - 1] {
+                let limb_s32 = vreinterpretq_s32_u32(*limb);
                 carry_lo = vaddq_s64(carry_lo, vmovl_s32(vget_low_s32(limb_s32)));
                 carry_hi = vaddq_s64(carry_hi, vmovl_s32(vget_high_s32(limb_s32)));
 
@@ -871,7 +871,7 @@ impl Fp29x4 {
                 let carry_u_hi = vreinterpretq_u64_s64(carry_hi);
                 let pair_lo = vmovn_u64(carry_u_lo);
                 let combined = vmovn_high_u64(pair_lo, carry_u_hi);
-                self.limbs[i] = vandq_u32(combined, mask_u32);
+                *limb = vandq_u32(combined, mask_u32);
 
                 carry_lo = vshrq_n_s64::<29>(carry_lo);
                 carry_hi = vshrq_n_s64::<29>(carry_hi);
