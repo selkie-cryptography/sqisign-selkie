@@ -14,7 +14,7 @@ name: Perf
 #   size / alloc / stack       binary size, heap budget, peak stack.
 #   flamegraphs                sampled call-stack SVGs (perf cpu-clock).
 #   mca                        llvm-mca static pipeline estimate.
-#   cref                       C reference (system GMP) vs Rust, both in
+#   cref                       C reference vs Rust, both in
 #                              megacycles (rdtsc). C build is cached.
 #
 # Metric kinds, so the redundancy is intentional, not accidental:
@@ -74,8 +74,8 @@ on:
         description: 'C ref commit for the cref job (overrides default pin)'
         required: false
         default: ''
-      verify_reps:
-        description: 'cref verify iterations (default 100)'
+      iterations:
+        description: 'cref benchmark iterations per op (default 100)'
         required: false
         default: ''
 
@@ -642,15 +642,14 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
   # ---------------- C reference cross-check ----------------
-  # Build the SQIsign C reference with system GMP (GMP's hand-tuned `mpn`
-  # bignum asm, the config the published numbers use) and the portable
-  # ref GF backend, then run keypair/sign/verify against our Rust crate's
-  # rdtsc cycle bench on the same runner. Both report megacycles, so the
-  # gap to our hand-rolled BigInt is GMP's asm, not a no-asm strawman or
-  # a unit mismatch. Runs on every push/PR/dispatch; the upstream C build
-  # is cached by commit pin (actions/cache), so after the first run only
-  # the benchmark executions cost wall-clock. Interop is covered by the
-  # KAT gate; this is a relative snapshot, not a merge gate.
+  # Build the round-3 SQIsign C reference (own fixed-precision integers,
+  # no GMP) with the portable ref GF backend, then run
+  # keypair/sign/verify against our Rust crate's rdtsc cycle bench on the
+  # same runner. Both report megacycles. Runs on every push/PR/dispatch;
+  # the upstream C build is cached by commit pin (actions/cache), so after
+  # the first run only the benchmark executions cost wall-clock. Interop
+  # is covered by the KAT gate; this is a relative snapshot, not a merge
+  # gate.
   cref:
     name: C ref vs Rust (NIST-I)
     # Fork PRs skip: untrusted code never runs on the fleet.
@@ -663,12 +662,10 @@ jobs:
       # Pin upstream so timing comparisons are reproducible; overridable
       # per-run via the workflow_dispatch input.
       CREF_REPO: SQIsign/the-sqisign
-      CREF_REF: ${{ inputs.cref_ref || 'dd133d7aca576c361a270c8e6434832535b42ecc' }}
-      # Sign + keygen are slow and rejection-sampled, so a handful of
-      # repetitions; verify is ~ms-scale, run more.
-      KEYGEN_REPS: "5"
-      SIGN_REPS: "5"
-      VERIFY_REPS: ${{ inputs.verify_reps || '100' }}
+      CREF_REF: ${{ inputs.cref_ref || '6d017708db403bf83977fa70770fc4f7f9e9ff21' }}
+      # One count for keypair, sign, and verify: the v3 benchmark takes
+      # a single `--iterations=`.
+      BENCH_ITERS: ${{ inputs.iterations || '100' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -680,7 +677,7 @@ jobs:
         uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8  # v6.0.0
         with:
           path: cref/build
-          key: cref-build-${{ runner.os }}-${{ env.CREF_REF }}-system-gmp-ref-v1
+          key: cref-build-${{ runner.os }}-${{ env.CREF_REF }}-ref-v1
 
       - name: Clone C reference at pinned commit
         if: steps.cref-cache.outputs.cache-hit != 'true'
@@ -688,25 +685,18 @@ jobs:
           git clone --no-checkout "https://github.com/${CREF_REPO}.git" cref
           git -C cref checkout "${CREF_REF}"
 
-      - name: Install system GMP
-        # SYSTEM GMP dynamically links libgmp, so its headers are needed
-        # at build time and libgmp.so at run time -- even on a cache hit,
-        # the cached binary loads it -- so install unconditionally.
-        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
-
-      - name: Configure C ref (system GMP + ref GF, NIST-I, Release)
+      - name: Configure C ref (ref GF, NIST-I, Release)
         if: steps.cref-cache.outputs.cache-hit != 'true'
         run: |
           cmake -S cref -B cref/build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DGMP_LIBRARY=SYSTEM \
             -DSQISIGN_BUILD_TYPE=ref \
             -DENABLE_TESTS=OFF \
             -DENABLE_STRICT=OFF
 
       - name: Build C ref benchmark
         if: steps.cref-cache.outputs.cache-hit != 'true'
-        run: cmake --build cref/build -j --target benchmark_lvl1
+        run: cmake --build cref/build -j --target benchmark_p324_3
 
       - name: Run C ref benchmark
         run: |
@@ -715,10 +705,10 @@ jobs:
           # numbers are pullable via `gh run view --log` and not trapped in
           # the web-only step summary.
           {
-            echo "## C reference (system GMP + ref GF, NIST-I) -- megacycles"
+            echo "## C reference (ref GF, NIST-I p324_3) -- megacycles"
             echo
             echo '```'
-            ./cref/build/apps/benchmark_lvl1 -i "${VERIFY_REPS}" 2>&1 | tee cref-bench.txt
+            ./cref/build/apps/benchmark_p324_3 --iterations="${BENCH_ITERS}" 2>&1 | tee cref-bench.txt
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -760,7 +750,7 @@ jobs:
           set -o pipefail
           # Compute the actual C-vs-Rust ratio so the comparison this job
           # exists for is shown directly, not left to eyeball two tables.
-          # C medians come from benchmark_lvl1 (cref-bench.txt; C names
+          # C medians come from benchmark_p324_3 (cref-bench.txt; C names
           # keygen "keypair"); Rust medians from criterion's estimates.json.
           # Both are rdtsc megacycles on the same runner -> apples-to-apples.
           cmed() { awk -v k="$1" '$1==k { for (i=1;i<=NF;i++) if ($i=="median") { print $(i+1); exit } }' cref-bench.txt; }
