@@ -15,12 +15,12 @@ name: Compile scripts
 
 on:
   push:
-    branches: [main]
+    branches: [main, v3]
     paths:
       - '.github/scripts/**'
       - '.github/workflows/scripts-compile.yml'
   pull_request:
-    branches: [main, next]
+    branches: [main, next, v3]
     paths:
       - '.github/scripts/**'
       - '.github/workflows/scripts-compile.yml'

@@ -2,12 +2,12 @@ name: LaTeX
 
 on:
   push:
-    branches: [main]
+    branches: [main, v3]
     paths:
       - 'latex/**'
       - '.github/workflows/latex.yml'
   pull_request:
-    branches: [main, next]
+    branches: [main, next, v3]
     paths:
       - 'latex/**'
       - '.github/workflows/latex.yml'
