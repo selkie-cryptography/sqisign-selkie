@@ -4,7 +4,7 @@ SECURITYREVIEW = sqisign-v3-security-review
 
 .PHONY: all paper spec-review security-review watch watch-spec-review clean
 
-all: paper spec-review
+all: paper spec-review security-review
 
 paper: $(PAPER).pdf
 
