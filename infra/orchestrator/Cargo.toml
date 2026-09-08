@@ -16,7 +16,10 @@ publish = false
 anyhow = "1"
 axum = "0.7"
 hmac = "0.12"
-jsonwebtoken = "9"
+# 11 ships no signing backend by default. aws-lc-rs over rust_crypto:
+# the latter's `rsa` crate carries RUSTSEC-2023-0071 (Marvin timing
+# leak) and this key signs the GitHub App JWT.
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
