@@ -7,7 +7,7 @@ name: Doc name drift
 
 on:
   push:
-    branches: [main]
+    branches: [main, v3]
     paths:
       - 'src/**'
       - 'tests/**'
@@ -21,7 +21,7 @@ on:
       - '.github/scripts/check-doc-name-drift.rs'
       - '.github/workflows/doc-drift.yml'
   pull_request:
-    branches: [main, next]
+    branches: [main, next, v3]
     paths:
       - 'src/**'
       - 'tests/**'
