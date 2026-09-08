@@ -1,0 +1,66 @@
+name: Doc name drift
+
+# Fails when README, the site, or the paper sections name a type that
+# no longer exists in the crate. Renames must update every surface in
+# the same PR. The paper's history sections describe the v2.0.1
+# implementation, so they are also checked against that tag's tree.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'examples/**'
+      - 'fuzz/**'
+      - 'README.md'
+      - 'latex/sections/**'
+      - '.github/site/**'
+      - '.github/doc-drift-allow.txt'
+      - '.github/scripts/check-doc-name-drift.rs'
+      - '.github/workflows/doc-drift.yml'
+  pull_request:
+    branches: [main, next]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'examples/**'
+      - 'fuzz/**'
+      - 'README.md'
+      - 'latex/sections/**'
+      - '.github/site/**'
+      - '.github/doc-drift-allow.txt'
+      - '.github/scripts/check-doc-name-drift.rs'
+      - '.github/workflows/doc-drift.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Type names in docs exist in the crate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+          # Full history so the v2.0.1-final tag's tree can be exported.
+          fetch-depth: 0
+      - name: Build the checker
+        run: |
+          rustc -O .github/scripts/check-doc-name-drift.rs -o "$RUNNER_TEMP/check-doc-name-drift"
+      - name: README and site against the current tree
+        run: |
+          "$RUNNER_TEMP/check-doc-name-drift" --surfaces readme,site
+      - name: Paper against the current tree plus v2.0.1-final
+        run: |
+          mkdir -p "$RUNNER_TEMP/v2"
+          git archive v2.0.1-final src tests benches examples fuzz | tar -x -C "$RUNNER_TEMP/v2"
+          "$RUNNER_TEMP/check-doc-name-drift" --surfaces paper \
+            --src src --src tests --src benches --src examples --src fuzz \
+            --src "$RUNNER_TEMP/v2/src" --src "$RUNNER_TEMP/v2/tests" \
+            --src "$RUNNER_TEMP/v2/benches" --src "$RUNNER_TEMP/v2/examples" \
+            --src "$RUNNER_TEMP/v2/fuzz"
