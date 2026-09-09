@@ -1,4 +1,4 @@
-//! Euclidean division on [`BigInt<N>`][super::BigInt]:
+//! Truncating division on [`BigInt<N>`][super::BigInt]:
 //! [`vt_div_rem`][BigInt::vt_div_rem], [`vt_mod`][BigInt::vt_mod],
 //! [`vt_divides`][BigInt::vt_divides], and the private
 //! [`mag_div_rem`](BigInt::mag_div_rem) limb-level helper
@@ -9,17 +9,15 @@ use subtle::Choice;
 use super::BigInt;
 
 impl<const N: usize> BigInt<N> {
-    /// Euclidean division: returns `(quotient, remainder)` such that
-    /// `self = quotient * divisor + remainder` with
-    /// `0 <= remainder < |divisor|`.
+    /// Truncating division: returns `(quotient, remainder)` with
+    /// `self = quotient * divisor + remainder`, the quotient rounded
+    /// toward zero and `|remainder| < |divisor|`.
     ///
-    /// The quotient sign follows standard Euclidean division convention:
-    /// the remainder is always non-negative. Magnitude division is
-    /// Knuth's Algorithm D; the sign-adjustment step is constant-time
-    /// over its inputs.
-    ///
-    /// The `vt_` prefix marks this as variable-time-permitted: it is not
-    /// constant-time, and its CT-not-guaranteed status is greppable.
+    /// The remainder takes the dividend's sign, as `/` and `%` do on
+    /// Rust's signed integers and as the reference implementation's
+    /// `ibz_div` does. [`vt_mod`](Self::vt_mod) gives the non-negative
+    /// residue. Magnitude division is Knuth's Algorithm D; the sign
+    /// fix-up is constant-time over its inputs.
     ///
     /// # Panics
     ///
@@ -28,54 +26,31 @@ impl<const N: usize> BigInt<N> {
     /// # Constant-time
     ///
     /// Variable-time on both operands' effective lengths and on the
-    /// at-most-one fix-up step inside the magnitude loop. The
-    /// normalization shift is bounded to the dividend's effective
-    /// length (byte-identical output). `TODO(ct)`: a future
-    /// constant-time `ct_div_rem` (with `ct_mod` on top) will replace
-    /// [`mag_div_rem`][Self::mag_div_rem] with the CT divider from
-    /// [Kouider et al.][ct-bigint], before any caller operating on
-    /// secret-derived inputs ships.
+    /// at-most-one fix-up step inside the magnitude loop. `TODO(ct)`:
+    /// a constant-time `ct_div_rem` (with `ct_mod` on top) replaces
+    /// [`mag_div_rem`][Self::mag_div_rem] with the divider from
+    /// [Kouider et al.][ct-bigint] before any caller on secret-derived
+    /// inputs ships.
     ///
     /// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
     pub fn vt_div_rem(&self, divisor: &Self) -> (Self, Self) {
         assert!(!bool::from(divisor.is_zero()), "division by zero");
 
-        // Compute unsigned division on magnitudes.
         let (q_limbs, r_limbs) = Self::mag_div_rem(&self.limbs, &divisor.limbs);
 
-        // Determine quotient sign: negative if signs differ and quotient != 0.
-        let q_sign_raw = self.sign ^ divisor.sign;
-        let r_is_zero = Self::mag_is_zero(&r_limbs);
-
-        // Euclidean convention: if remainder is nonzero and the dividend
-        // was negative, adjust: q = q + 1, r = |divisor| - r.
-        let needs_adjust = self.sign & (1 - r_is_zero);
-
-        // q_adjusted = q_mag + 1 (when adjusting)
-        let one = {
-            let mut l = [0u64; N];
-            l[0] = 1;
-            l
-        };
-        let (q_inc, _) = Self::mag_add(&q_limbs, &one);
-        let q_final = Self::mag_select(&q_limbs, &q_inc, needs_adjust);
-
-        // r_adjusted = |divisor| - r (when adjusting)
-        let (r_adj, _) = Self::mag_sub(&divisor.limbs, &r_limbs);
-        let r_final = Self::mag_select(&r_limbs, &r_adj, needs_adjust);
-
-        // Quotient sign: q_sign_raw, but canonical if zero.
-        let q_is_zero = Self::mag_is_zero(&q_final);
-        let q_sign = q_sign_raw & (1 - q_is_zero);
+        // The quotient is negative iff the signs differ; the remainder
+        // keeps the dividend's sign. Zero canonicalizes to sign 0.
+        let q_sign = (self.sign ^ divisor.sign) & (1 - Self::mag_is_zero(&q_limbs));
+        let r_sign = self.sign & (1 - Self::mag_is_zero(&r_limbs));
 
         (
             Self {
                 sign: q_sign,
-                limbs: q_final,
+                limbs: q_limbs,
             },
             Self {
-                sign: 0,
-                limbs: r_final,
+                sign: r_sign,
+                limbs: r_limbs,
             },
         )
     }
@@ -252,45 +227,6 @@ impl<const N: usize> BigInt<N> {
                 r[i] = (u[i] >> s) | (u[i + 1] << (64 - s));
             }
             r[n_b - 1] = u[n_b - 1] >> s;
-        }
-
-        (q, r)
-    }
-
-    /// Bit-by-bit long division - kept around as the constant-time
-    /// reference for the future `ct_div_rem` until the CT pass replaces
-    /// the variable-time `mag_div_rem`.
-    #[cfg(any())]
-    fn mag_div_rem_bitwise(a: &[u64; N], b: &[u64; N]) -> ([u64; N], [u64; N]) {
-        let mut r = *a;
-        let mut q = [0u64; N];
-
-        let bs_b = Self::mag_bitsize(b);
-        let mut bit = Self::BITS;
-        while bit > 0 {
-            bit -= 1;
-
-            let u = Self::mag_shl(b, bit);
-
-            let (r_minus_u, borrow) = Self::mag_sub(&r, &u);
-            let can_sub = 1 - borrow.min(1);
-
-            let valid_shift = if bs_b == 0 {
-                0u64
-            } else if bit + bs_b <= Self::BITS {
-                1u64
-            } else {
-                0u64
-            };
-            let do_sub = can_sub & valid_shift;
-
-            r = Self::mag_select(&r, &r_minus_u, do_sub);
-
-            let q_limb = (bit / 64) as usize;
-            let q_bit = bit % 64;
-            if q_limb < N {
-                q[q_limb] |= do_sub << q_bit;
-            }
         }
 
         (q, r)

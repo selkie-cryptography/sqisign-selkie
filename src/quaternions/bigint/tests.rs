@@ -260,8 +260,7 @@ fn narrow_8_to_4() {
 
 #[test]
 fn narrow_overflow_fails() {
-    let mut wide = BigInt::<8>::from(1i64);
-    wide.as_limbs_mut()[4] = 1;
+    let wide = BigInt::<8>::from_limbs([1, 0, 0, 0, 1, 0, 0, 0]);
     let ct: subtle::CtOption<BigInt<4>> = wide.into();
     assert!(!bool::from(ct.is_some()));
 }
@@ -282,8 +281,7 @@ fn narrow_method_basic() {
 
 #[test]
 fn narrow_method_overflow() {
-    let mut wide = BigInt::<8>::from(1i64);
-    wide.as_limbs_mut()[4] = 1;
+    let wide = BigInt::<8>::from_limbs([1, 0, 0, 0, 1, 0, 0, 0]);
     assert!(wide.narrow().is_none());
 }
 
@@ -305,8 +303,7 @@ fn generic_narrow_to() {
 
 #[test]
 fn generic_narrow_to_overflow() {
-    let mut wide = BigInt::<9>::from(1i64);
-    wide.as_limbs_mut()[5] = 1;
+    let wide = BigInt::<9>::from_limbs([1, 0, 0, 0, 0, 1, 0, 0, 0]);
     assert!(wide.narrow_to::<4>().is_none());
 }
 
@@ -359,6 +356,22 @@ fn shr_across_limbs() {
 }
 
 #[test]
+fn shr_negative_rounds_toward_negative_infinity() {
+    assert_eq!(I256::from(-1i64) >> 1, I256::from(-1i64));
+    assert_eq!(I256::from(-2i64) >> 1, I256::from(-1i64));
+    assert_eq!(I256::from(-3i64) >> 1, I256::from(-2i64));
+    assert_eq!(I256::from(-4i64) >> 2, I256::from(-1i64));
+    assert_eq!(I256::from(-5i64) >> 2, I256::from(-2i64));
+    assert_eq!(I256::from(-1i64) >> 300, I256::from(-1i64));
+
+    // Dropped bits below a limb boundary still round down.
+    let minus_2_64 = I256::from_sign_and_limbs(1, [0, 1, 0, 0]);
+    assert_eq!(minus_2_64 >> 64, I256::from(-1i64));
+    let minus_2_64_plus_1 = I256::from_sign_and_limbs(1, [1, 1, 0, 0]);
+    assert_eq!(minus_2_64_plus_1 >> 64, I256::from(-2i64));
+}
+
+#[test]
 fn div_rem_basic() {
     let a = I256::from(17i64);
     let b = I256::from(5i64);
@@ -378,13 +391,13 @@ fn div_rem_exact() {
 
 #[test]
 fn div_rem_negative_dividend() {
-    // Euclidean: -17 = (-4) * 5 + 3
+    // Truncating: -17 = (-3) * 5 + (-2); the remainder keeps the
+    // dividend's sign.
     let a = I256::from(-17i64);
     let b = I256::from(5i64);
     let (q, r) = a.vt_div_rem(&b);
-    assert_eq!(q, I256::from(-4i64));
-    assert_eq!(r, I256::from(3i64));
-    assert!(bool::from(r.is_positive()) || bool::from(r.is_zero()));
+    assert_eq!(q, I256::from(-3i64));
+    assert_eq!(r, I256::from(-2i64));
 }
 
 #[test]
@@ -399,41 +412,45 @@ fn div_rem_negative_divisor() {
 
 #[test]
 fn div_rem_both_negative() {
-    // -17 = 4 * (-5) + 3
+    // -17 = 3 * (-5) + (-2)
     let a = I256::from(-17i64);
     let b = I256::from(-5i64);
     let (q, r) = a.vt_div_rem(&b);
-    assert_eq!(q, I256::from(4i64));
-    assert_eq!(r, I256::from(3i64));
+    assert_eq!(q, I256::from(3i64));
+    assert_eq!(r, I256::from(-2i64));
 }
 
 #[test]
-fn ct_mod_basic() {
+fn div_rem_exact_negative_has_zero_remainder_with_sign_zero() {
+    let (q, r) = I256::from(-15i64).vt_div_rem(&I256::from(5i64));
+    assert_eq!(q, I256::from(-3i64));
+    assert_eq!(r, I256::ZERO);
+    assert!(!bool::from(r.is_negative()));
+}
+
+#[test]
+fn vt_mod_is_non_negative_and_ignores_divisor_sign() {
+    let five = I256::from(5i64);
+    let minus_five = I256::from(-5i64);
+    assert_eq!(I256::from(17i64).vt_mod(&five), I256::from(2i64));
+    assert_eq!(I256::from(-17i64).vt_mod(&five), I256::from(3i64));
+    assert_eq!(I256::from(17i64).vt_mod(&minus_five), I256::from(2i64));
+    assert_eq!(I256::from(-17i64).vt_mod(&minus_five), I256::from(3i64));
+    assert_eq!(I256::from(-15i64).vt_mod(&five), I256::ZERO);
+}
+
+#[test]
+fn gcd_of_zeros_is_zero_at_every_dispatch_width() {
+    assert_eq!(BigInt::<4>::ZERO.gcd(&BigInt::<4>::ZERO), BigInt::<4>::ZERO);
+    assert_eq!(BigInt::<8>::ZERO.gcd(&BigInt::<8>::ZERO), BigInt::<8>::ZERO);
     assert_eq!(
-        I256::from(17i64).vt_mod(&I256::from(5i64)),
-        I256::from(2i64)
+        BigInt::<30>::ZERO.gcd(&BigInt::<30>::ZERO),
+        BigInt::<30>::ZERO
     );
-    assert_eq!(
-        I256::from(-17i64).vt_mod(&I256::from(5i64)),
-        I256::from(3i64)
-    );
-}
 
-#[test]
-fn two_adic_val_tests() {
-    assert_eq!(I256::from(1i64).two_adic_val(), 0);
-    assert_eq!(I256::from(2i64).two_adic_val(), 1);
-    assert_eq!(I256::from(8i64).two_adic_val(), 3);
-    assert_eq!(I256::from(12i64).two_adic_val(), 2); // 12 = 4 * 3
-    assert_eq!(I256::from(-24i64).two_adic_val(), 3); // 24 = 8 * 3
-}
-
-#[test]
-fn pow_tests() {
-    assert_eq!(I256::from(2i64).pow(10), I256::from(1024i64));
-    assert_eq!(I256::from(3i64).pow(0), I256::ONE);
-    assert_eq!(I256::from(-2i64).pow(3), I256::from(-8i64));
-    assert_eq!(I256::from(-2i64).pow(4), I256::from(16i64));
+    let minus_six = BigInt::<8>::from(-6i64);
+    assert_eq!(BigInt::<8>::ZERO.gcd(&minus_six), BigInt::<8>::from(6i64));
+    assert_eq!(minus_six.gcd(&BigInt::<8>::ZERO), BigInt::<8>::from(6i64));
 }
 
 #[test]
@@ -1047,17 +1064,27 @@ proptest! {
 proptest! {
     #[test]
     fn prop_bigint_div_rem_identity(a in arb_small_bigint4(), d in arb_small_bigint4()) {
-        // a = q * d + r, with 0 <= r < |d|.
+        // a = q * d + r, with |r| < |d|.
         prop_assume!(!bool::from(d.is_zero()));
         let (q, r) = a.vt_div_rem(&d);
         prop_assert_eq!(q * d + r, a);
     }
 
     #[test]
-    fn prop_bigint_div_rem_remainder_nonnegative(a in arb_small_bigint4(), d in arb_small_bigint4()) {
+    fn prop_bigint_div_rem_remainder_takes_dividend_sign(a in arb_small_bigint4(), d in arb_small_bigint4()) {
         prop_assume!(!bool::from(d.is_zero()));
         let (_, r) = a.vt_div_rem(&d);
+        prop_assert!(bool::from(r.is_zero()) || r.is_negative().unwrap_u8() == a.is_negative().unwrap_u8());
+        prop_assert!(r.abs() < d.abs());
+    }
+
+    #[test]
+    fn prop_bigint_vt_mod_non_negative(a in arb_small_bigint4(), d in arb_small_bigint4()) {
+        prop_assume!(!bool::from(d.is_zero()));
+        let r = a.vt_mod(&d);
         prop_assert!(!bool::from(r.is_negative()));
+        prop_assert!(r < d.abs());
+        prop_assert_eq!(a.vt_sub(&r).vt_mod(&d), BigInt::ZERO);
     }
 
     #[test]
@@ -1109,18 +1136,29 @@ proptest! {
     }
 
     #[test]
-    fn prop_bigint_two_adic_val_of_power_of_two(k in 1u32..200) {
+    fn prop_bigint_trailing_zeros_of_power_of_two(k in 1u32..200) {
         // v_2(2^k) = k.
         let val = BigInt::<4>::ONE << k;
-        prop_assert_eq!(val.two_adic_val(), k);
+        prop_assert_eq!(val.trailing_zeros(), k);
     }
 
     #[test]
-    fn prop_bigint_two_adic_val_of_odd(a in arb_small_bigint4()) {
+    fn prop_bigint_trailing_zeros_of_odd(a in arb_small_bigint4()) {
         // An odd number has v_2 = 0.
         prop_assume!(!bool::from(a.is_zero()));
         let odd = (a.abs() << 1) + BigInt::ONE; // 2|a| + 1 is always odd
-        prop_assert_eq!(odd.two_adic_val(), 0);
+        prop_assert_eq!(odd.trailing_zeros(), 0);
+    }
+
+    #[test]
+    fn prop_bigint_shr_is_floor_division(a in arb_bigint4(), k in 0u32..=255) {
+        // a >> k == floor(a / 2^k): the residue a - (a >> k) * 2^k lies
+        // in [0, 2^k). Reconstructed one limb wider so `q << k` cannot
+        // wrap for a negative `a` near the width limit.
+        let q = (a >> k).widen::<5>();
+        let residue = a.widen::<5>().vt_sub(&(q << k));
+        prop_assert!(!bool::from(residue.is_negative()));
+        prop_assert!(residue < (BigInt::<5>::ONE << k));
     }
 }
 
@@ -1379,22 +1417,22 @@ proptest! {
         prop_assert_eq!(lhs, g.widen::<610>());
     }
 
-    // vt_div_rem's Euclidean identity at wide N with low-occupancy
+    // vt_div_rem's truncating identity at wide N with low-occupancy
     // dividends. arb_wide_bigint sweeps the dividend's significant-limb
     // count from 0 up, exercising the len-tracked normalization short
     // path (m_a < N) alongside the single-limb (sig == 1) and multi-limb
     // (sig > 1) divisor paths. The identity `a == q*b + r` with
-    // `0 <= r < |b|` is checked at double width so `q*b` cannot truncate.
+    // `|r| < |b|` is checked at double width so `q*b` cannot truncate.
     #[test]
-    fn prop_vt_div_rem_euclidean_16(
+    fn prop_vt_div_rem_truncating_16(
         a in arb_wide_bigint::<16>(),
         b in arb_wide_divisor::<16>(8),
     ) {
         let (q, r) = a.vt_div_rem(&b);
 
-        // 0 <= r < |b|.
-        prop_assert!(!bool::from(r.is_negative()));
-        prop_assert!(r < b.abs());
+        // |r| < |b|, and r is zero or carries the dividend's sign.
+        prop_assert!(r.abs() < b.abs());
+        prop_assert!(bool::from(r.is_zero()) || r.is_negative().unwrap_u8() == a.is_negative().unwrap_u8());
 
         // a == q*b + r, widened so the product does not truncate.
         let lhs = q.widen::<33>().ct_mul(&b.widen::<33>()).ct_add(&r.widen::<33>());
@@ -1402,14 +1440,14 @@ proptest! {
     }
 
     #[test]
-    fn prop_vt_div_rem_euclidean_60(
+    fn prop_vt_div_rem_truncating_60(
         a in arb_wide_bigint::<60>(),
         b in arb_wide_divisor::<60>(20),
     ) {
         let (q, r) = a.vt_div_rem(&b);
 
-        prop_assert!(!bool::from(r.is_negative()));
-        prop_assert!(r < b.abs());
+        prop_assert!(r.abs() < b.abs());
+        prop_assert!(bool::from(r.is_zero()) || r.is_negative().unwrap_u8() == a.is_negative().unwrap_u8());
 
         let lhs = q.widen::<121>().ct_mul(&b.widen::<121>()).ct_add(&r.widen::<121>());
         prop_assert_eq!(lhs, a.widen::<121>());

@@ -1,6 +1,5 @@
 //! Encoding for [`BigInt<N>`][super::BigInt]: byte decode
-//! ([`from_bytes_le_unsigned`][BigInt::from_bytes_le_unsigned],
-//! [`from_bytes_le_signed`][BigInt::from_bytes_le_signed]), floating-point
+//! ([`from_bytes_le_unsigned`][BigInt::from_bytes_le_unsigned]), floating-point
 //! conversion ([`to_f64`][BigInt::to_f64],
 //! [`to_f64_trunc`][BigInt::to_f64_trunc]), and the `Debug`/`Display`
 //! impls.
@@ -28,50 +27,10 @@ impl<const N: usize> BigInt<N> {
         Self { sign: 0, limbs }
     }
 
-    /// Decodes from little-endian bytes (signed, two's complement).
-    ///
-    /// The highest bit of the last byte is the sign bit. Same
-    /// precondition as [`Self::from_bytes_le_unsigned`].
-    pub fn from_bytes_le_signed(bytes: &[u8]) -> Self {
-        debug_assert!(!bytes.is_empty() && bytes.len() <= N * 8);
-        let is_negative = bytes[bytes.len() - 1] & 0x80 != 0;
-        if !is_negative {
-            return Self::from_bytes_le_unsigned(bytes);
-        }
-
-        // Negate two's complement: flip bits, add 1.
-        let mut flipped = [0u8; { 8 * 8 }]; // max N=8
-        for (i, &b) in bytes.iter().enumerate() {
-            flipped[i] = !b;
-        }
-
-        // Pad with 0xFF for remaining bytes up to the limb boundary.
-        // Actually we only need to negate the bytes we have.
-        let mut magnitude = Self::from_bytes_le_unsigned(&flipped[..bytes.len()]);
-
-        // Add 1 to the magnitude.
-        magnitude.limbs[0] = magnitude.limbs[0].wrapping_add(1);
-        let mut carry = if magnitude.limbs[0] == 0 { 1u64 } else { 0 };
-        for limb in &mut magnitude.limbs[1..] {
-            let (val, c) = limb.overflowing_add(carry);
-            *limb = val;
-            carry = c as u64;
-        }
-
-        magnitude.sign = 1;
-        magnitude
-    }
-
     /// Returns the limbs as a slice in little-endian order.
     #[inline]
     pub const fn as_limbs(&self) -> &[u64; N] {
         &self.limbs
-    }
-
-    /// Returns a mutable reference to the limbs.
-    #[inline]
-    pub fn as_limbs_mut(&mut self) -> &mut [u64; N] {
-        &mut self.limbs
     }
 
     /// Lossy conversion to `f64`.

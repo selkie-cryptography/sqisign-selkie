@@ -54,11 +54,17 @@ once, rather than reducing each separately.
 
 \paragraph{Big-integer \texttt{BigInt<N>}.}
 Quaternion-side integers are fixed-width stack values
-(\texttt{[u64; N]}, \texttt{Copy}) with no heap allocation --- the
-opposite of the C reference, which uses heap GMP \texttt{mpz} with
-pointer / in-place semantics.  The stack representation is
-allocation-free and constant-time-friendly, at the cost of by-value
-copies (a lever discussed in \S\ref{sec:next}).
+(\texttt{[u64; N]}, \texttt{Copy}) in sign-magnitude form with no heap
+allocation.  The v2 C reference used heap GMP \texttt{mpz} with pointer /
+in-place semantics; the v3 reference moved to a fixed-capacity
+two's-complement \texttt{ibz\_t} (30 limbs at NIST-I) carrying a public
+bit-length bound.  The stack representation is allocation-free and
+constant-time-friendly, at the cost of by-value copies (a lever
+discussed in \S\ref{sec:next}).  Division conventions follow the
+reference: the quotient truncates toward zero with the remainder taking
+the dividend's sign, the residue operation is non-negative whatever the
+divisor's sign, right shifts round toward negative infinity, and
+$\gcd(0, 0) = 0$.
 
 \paragraph{Narrowing wide integers before the extended GCD.}
 The quaternion lattice and Hermite-normal-form code stores integers in

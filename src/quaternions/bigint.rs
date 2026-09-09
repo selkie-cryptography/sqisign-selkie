@@ -24,7 +24,11 @@
 //! closed by a constant-time divider ([Kouider et al.][ct-bigint]).
 //!
 //! Operators route to the build default: `*` is
-//! [`vt_mul`](BigInt::vt_mul). The `mag_*` helpers are the unsigned
+//! [`vt_mul`](BigInt::vt_mul). Division truncates toward zero
+//! ([`vt_div_rem`](BigInt::vt_div_rem)), the residue
+//! [`vt_mod`](BigInt::vt_mod) is non-negative, and `>>` rounds toward
+//! negative infinity; all three match the reference implementation.
+//! The `mag_*` helpers are the unsigned
 //! limb-array kernels beneath both families; their timing is documented
 //! per helper. API patterns follow [RustCrypto `crypto-bigint`][cb].
 //!
@@ -47,7 +51,6 @@ mod mac;
 mod modular;
 mod mul;
 mod neg;
-mod pow;
 mod primes;
 mod rand;
 mod resize;

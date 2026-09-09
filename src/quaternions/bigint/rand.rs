@@ -29,7 +29,7 @@ impl<const N: usize> BigInt<N> {
     /// Variable-time. Used only for `represent_integer`'s `(z, t)`
     /// sampling, which the C reference also runs in variable time.
     /// `TODO(ct)`: revisit when the keygen path is hardened against
-    /// timing side-channels (see `project_ct_plan.md`).
+    /// timing side-channels.
     ///
     /// # Panics
     ///

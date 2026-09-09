@@ -568,11 +568,12 @@ impl<const N: usize> MontReducer<N> {
 }
 
 impl<const N: usize> BigInt<N> {
-    /// Modular reduction: `self mod modulus`. Returns a value in
-    /// `[0, |modulus|)`.
+    /// Non-negative residue `self mod |modulus|`, in `[0, |modulus|)`.
     ///
-    /// Uses Euclidean division (Knuth Algorithm D), see
-    /// [`vt_div_rem`](Self::vt_div_rem) for the underlying routine.
+    /// The divisor's sign is ignored, as in the reference
+    /// implementation's `ibz_mod`. Built on
+    /// [`vt_div_rem`](Self::vt_div_rem): a negative truncated remainder
+    /// is lifted by `|modulus|`.
     ///
     /// The `vt_` prefix marks this as variable-time-permitted: it inherits
     /// `vt_div_rem`'s data-dependent branching and is not constant-time.
@@ -586,7 +587,9 @@ impl<const N: usize> BigInt<N> {
     #[inline]
     pub fn vt_mod(&self, modulus: &Self) -> Self {
         let (_, r) = self.vt_div_rem(modulus);
-        r
+        let (lifted, _) = Self::mag_sub(&modulus.limbs, &r.limbs);
+        let limbs = Self::mag_select(&r.limbs, &lifted, r.sign);
+        Self { sign: 0, limbs }
     }
 
     /// Modular exponentiation: `base^exp mod modulus`.
@@ -646,9 +649,6 @@ impl<const N: usize> BigInt<N> {
     /// - Runtime invariant: `64*W >= 2*bits(modulus)`. The caller is
     ///   responsible for choosing `W` large enough for their modulus. If this
     ///   is violated, the wider `pow_mod` will also silently truncate.
-    ///
-    /// For the SQIsign v2 commitment modulus
-    /// `D_mix = 2^512 + 75` (513 bits), use at least `W = 18`.
     pub fn pow_mod_w<const W: usize>(base: &Self, exp: &Self, modulus: &Self) -> Self {
         const {
             assert!(
@@ -756,7 +756,7 @@ impl<const N: usize> BigInt<N> {
         }
 
         // General Tonelli-Shanks (m ≡ 1 mod 8).
-        let e = m.vt_sub(&Self::ONE).two_adic_val();
+        let e = m.vt_sub(&Self::ONE).trailing_zeros();
         let q = m.vt_sub(&Self::ONE) >> e;
 
         // Find a non-residue w.

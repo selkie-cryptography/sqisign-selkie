@@ -98,10 +98,9 @@ impl<const N: usize> BigInt<N> {
     /// `reducer` is built for `self` — passing a mismatched reducer
     /// returns garbage (debug-asserted).
     ///
-    /// Use case: known-fixed moduli (e.g. `params::D_MIX_W18_MOD`)
-    /// where the `MontReducer` is built at compile time as a `const` —
-    /// saves the ~tens of µs `MontReducer::new` cost per primality
-    /// test (dominated by the `128·N` doublings to compute `R²`).
+    /// Use case: a fixed modulus whose `MontReducer` is a compile-time
+    /// `const`, saving the `MontReducer::new` cost per primality test
+    /// (dominated by the `128·N` doublings that compute `R²`).
     ///
     /// Internal API. Crate-private because it exposes a `MontReducer`,
     /// which is implementation detail; external callers use
@@ -127,7 +126,7 @@ impl<const N: usize> BigInt<N> {
 
         // Write self - 1 = 2^s · d with d odd.
         let n_minus_1 = self.vt_sub(&Self::ONE);
-        let s = n_minus_1.two_adic_val();
+        let s = n_minus_1.trailing_zeros();
         let d = n_minus_1 >> s;
 
         // Deterministic witnesses sufficient for values up to 3.3×10²⁴.
