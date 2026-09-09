@@ -8,19 +8,20 @@ A compact post-quantum signature scheme from quaternions and isogenies, in Rust.
   <img width="25%" align="right" src="https://github.com/selkie-cryptography/.github/raw/main/assets/selkie-solid-black-on-transparent.svg" alt="Selkie logo">
 </picture>
 
-Implements [SQIsign][sqisign] as specified in the [v2.0.1
-specification][spec] (2025-07-07), targeting the NIST-I parameter set
-(p = 5 · 2²⁴⁸ − 1).
+Implements [SQIsign][sqisign] as specified in the [v3.0
+specification][spec] (2026-09-01, round 3), targeting the NIST-I
+parameter set (p = 3 · 2³²⁴ − 1).
 
-> **Status: work in progress.** Key generation, signing, and
-> verification are functional and pass all 100 C reference KAT
-> vectors. Signing and key generation are **not yet constant-time** —
-> the quaternion layer is variable-time with `TODO(ct)` markers
-> throughout. **Do not use in production.**
+> **Status: v3 migration in progress.** The field, curve, quaternion,
+> and isogeny layers are being rebuilt bottom-up for the round-3
+> parameters and algorithms; the signing API returns once the protocol
+> layer lands. The v2.0.1 implementation, which passes all 100 C
+> reference KAT vectors, is preserved at tag `v2.0.1-final`.
+> **Do not use in production.**
 
 ## Example
 
-```rust,no_run
+```rust,ignore
 use sqisign_selkie::{SigningKey, VerifyingKey, SIGNATURE_BYTES};
 
 // Generate a new signing key.

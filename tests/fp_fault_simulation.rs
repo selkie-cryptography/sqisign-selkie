@@ -50,7 +50,7 @@ struct TestGroup {
 }
 
 /// One boundary vector: `(a, b, op) -> expected`, all canonical Fp
-/// encoded as 32 LE bytes.
+/// encoded as 41 LE bytes.
 #[derive(Deserialize)]
 struct TestVector {
     #[serde(rename = "tcId")]

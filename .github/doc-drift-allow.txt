@@ -1,0 +1,25 @@
+# Type-shaped names in the doc surfaces that are not identifiers in the
+# crate. One per line; `check-doc-name-drift.rs` skips these.
+
+# Test-vector algorithm identifiers (JSON `algorithm` field).
+SQIsign_248
+SQIsign_324
+
+# Wycheproof vector categories (JSON `flags`).
+AdversarialFpSubfield
+HintOverflow
+ShortChain
+
+# External crates, standard libraries, specs.
+Aes256
+CTR_DRBG_Instantiate
+ZeroDivisionError
+
+# Names from the v2 bug catalog that predate the v2.0.1-final tag.
+DifferencePoint
+IdealGenerator
+
+# v3 migration: protocol-layer types removed in the prune; they return
+# with the protocol phase. Delete these lines then.
+Challenge
+IdealFactor

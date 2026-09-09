@@ -2,12 +2,12 @@ name: LaTeX
 
 on:
   push:
-    branches: [main]
+    branches: [main, v3]
     paths:
       - 'latex/**'
       - '.github/workflows/latex.yml'
   pull_request:
-    branches: [main, next]
+    branches: [main, next, v3]
     paths:
       - 'latex/**'
       - '.github/workflows/latex.yml'
@@ -42,9 +42,17 @@ jobs:
         working-directory: latex
         run: latexmk -pdf -file-line-error -halt-on-error -interaction=nonstopmode sqisign-selkie.tex
 
-      - name: Build spec review
+      - name: Build v2 spec review
         working-directory: latex
         run: latexmk -pdf -file-line-error -halt-on-error -interaction=nonstopmode sqisign-v2-spec-review.tex
+
+      - name: Build v3 spec review
+        working-directory: latex
+        run: latexmk -pdf -file-line-error -halt-on-error -interaction=nonstopmode sqisign-v3-spec-review.tex
+
+      - name: Build v3 security review
+        working-directory: latex
+        run: latexmk -pdf -file-line-error -halt-on-error -interaction=nonstopmode sqisign-v3-security-review.tex
 
       # TEMP: artifact upload disabled — org GH Actions artifact-storage
       # quota is full. Job still builds the PDFs above to catch latex
