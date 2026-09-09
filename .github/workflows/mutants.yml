@@ -42,7 +42,7 @@ env:
   CARGO_TERM_COLOR: always
   # cargo-asm-mutants is not on crates.io yet; pin its git revision.
   ASM_MUTANTS_REPO: https://github.com/selkie-cryptography/asm-mutants
-  ASM_MUTANTS_REV: 5116defe98930201b7fef3b2d299e80c52e9e449
+  ASM_MUTANTS_REV: a9d52b3913e56ce6ba7182a1c66dc037d77870da
 
 jobs:
   # Detect whether the dispatched ref's diff vs main touches any Rust
@@ -391,7 +391,8 @@ jobs:
       !cancelled() && inputs.asm &&
       (inputs.mode == 'full' || needs.incremental-detect.outputs.has_rust == 'true')
     runs-on: ${{ fromJSON(matrix.os) }}
-    timeout-minutes: 90
+    # mulx-adx: ~120 mutants per shard at ~1.5 min each on 2 cores.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -443,12 +444,13 @@ jobs:
 
       # `--timeout-multiplier 4`: a mutant that breaks a proptest shrinks
       # for a while before failing, and must count as caught, not as a
-      # timeout.
+      # timeout. `--build-timeout-multiplier 4`: two concurrent mutant
+      # builds on 2 cores can take twice the baseline build time.
       - name: Run cargo-asm-mutants
         continue-on-error: true
         run: |
           set -o pipefail
-          args=(-f "${{ matrix.file }}" --shard "${{ matrix.shard }}/4" -j 2 --timeout-multiplier 4 --caught
+          args=(-f "${{ matrix.file }}" --shard "${{ matrix.shard }}/4" -j 2 --timeout-multiplier 4 --build-timeout-multiplier 4 --caught
                 "-C=--features=expose-internals" "--cargo-test-arg=--lib" "--cargo-test-arg=${{ matrix.tests }}")
           if [ "${{ inputs.mode }}" = "incremental" ]; then args+=(--in-diff git.diff); fi
           cargo asm-mutants "${args[@]}" 2>&1 | tee asm-mutants.log
