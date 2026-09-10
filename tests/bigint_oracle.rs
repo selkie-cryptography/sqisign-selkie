@@ -166,23 +166,29 @@ proptest! {
         prop_assume!(!bool::from(b.is_zero()));
         let (q_ours, r_ours) = a.vt_div_rem(&b);
 
-        // `BigInt::vt_div_rem` is Euclidean (`r >= 0`); `num_bigint` is
-        // truncated. Lift the quotient and remainder by hand.
-        let na = to_num(a);
-        let nb = to_num(b);
-        let (mut q_ref, mut r_ref) = na.div_rem(&nb);
-        if r_ref.is_negative() {
-            if nb.is_negative() {
-                q_ref += 1;
-                r_ref -= &nb;
-            } else {
-                q_ref -= 1;
-                r_ref += &nb;
-            }
-        }
-
+        // Both truncate toward zero with the remainder carrying the
+        // dividend's sign.
+        let (q_ref, r_ref) = to_num(a).div_rem(&to_num(b));
         prop_assert_eq!(canon(q_ours), from_num::<4>(&q_ref));
         prop_assert_eq!(canon(r_ours), from_num::<4>(&r_ref));
+    }
+
+    #[test]
+    fn oracle_div_rem_wide_8(a in arb_wide::<8>(), b in arb_wide::<8>()) {
+        prop_assume!(!bool::from(b.is_zero()));
+        let (q_ours, r_ours) = a.vt_div_rem(&b);
+        let (q_ref, r_ref) = to_num(a).div_rem(&to_num(b));
+        prop_assert_eq!(canon(q_ours), from_num::<8>(&q_ref));
+        prop_assert_eq!(canon(r_ours), from_num::<8>(&r_ref));
+    }
+
+    #[test]
+    fn oracle_mod(a in arb_bigint4(), b in arb_bigint4()) {
+        prop_assume!(!bool::from(b.is_zero()));
+        // `vt_mod` is the residue in `[0, |b|)` whatever the sign of `b`.
+        let ours = canon(a.vt_mod(&b));
+        let theirs: BigInt<4> = from_num(&to_num(a).mod_floor(&to_num(b).abs()));
+        prop_assert_eq!(ours, theirs);
     }
 
     #[test]
@@ -195,6 +201,14 @@ proptest! {
     }
 
     #[test]
+    fn oracle_gcd_wide_8(a in arb_wide::<8>(), b in arb_wide::<8>()) {
+        // Exercises the Lehmer path (`N >= 8`), zero operands included.
+        let ours = canon(a.gcd(&b));
+        let theirs: BigInt<8> = from_num(&to_num(a).gcd(&to_num(b)));
+        prop_assert_eq!(ours, theirs);
+    }
+
+    #[test]
     fn oracle_shl_small_k(a in arb_bigint4(), k in 0u32..=63) {
         let ours = canon(a << k);
         let theirs: BigInt<4> = from_num(&truncate::<4>(&(to_num(a) << k)));
@@ -203,18 +217,10 @@ proptest! {
 
     #[test]
     fn oracle_shr_small_k(a in arb_bigint4(), k in 0u32..=63) {
-        // Arithmetic shift on a sign+magnitude `BigInt` rounds the
-        // magnitude toward zero, then reattaches the sign. The
-        // reference is `|a| >> k` with the original sign restored.
+        // Both round toward negative infinity.
         let ours = canon(a >> k);
-        let na = to_num(a);
-        let shifted = na.abs() >> k;
-        let signed = if na.is_negative() && !shifted.is_zero() {
-            -shifted
-        } else {
-            shifted
-        };
-        prop_assert_eq!(ours, from_num::<4>(&signed));
+        let theirs: BigInt<4> = from_num(&(to_num(a) >> k));
+        prop_assert_eq!(ours, theirs);
     }
 }
 

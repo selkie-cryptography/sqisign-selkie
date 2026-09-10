@@ -1,5 +1,6 @@
 //! Bit shifts on [`BigInt<N>`][super::BigInt]: the [`Shl<u32>`] and
-//! [`Shr<u32>`] trait impls, plus the private
+//! [`Shr<u32>`] trait impls (the right shift is arithmetic, rounding
+//! toward negative infinity), plus the private
 //! [`mag_shl`](BigInt::mag_shl) / [`mag_shr`](BigInt::mag_shr)
 //! limb-level helpers.
 
@@ -67,6 +68,23 @@ impl<const N: usize> BigInt<N> {
         }
         result
     }
+
+    /// `floor(self / 2^s)`; backs the `Shr` impls.
+    fn shr_floor(&self, s: u32) -> Self {
+        let shifted = Self::mag_shr(&self.limbs, s);
+
+        // Shifting back restores the magnitude iff no set bit was
+        // dropped; a negative value with dropped bits rounds down.
+        let (dropped, _) = Self::mag_sub(&self.limbs, &Self::mag_shl(&shifted, s));
+        let round_down = self.sign & (1 - Self::mag_is_zero(&dropped));
+
+        let (bumped, _) = Self::mag_add(&shifted, &Self::ONE.limbs);
+        let limbs = Self::mag_select(&shifted, &bumped, round_down);
+        Self {
+            sign: self.sign & (1 - Self::mag_is_zero(&limbs)),
+            limbs,
+        }
+    }
 }
 
 /// Constant-time left shift by `s` bits (multiply by `2^s`).
@@ -99,23 +117,17 @@ impl<const N: usize> Shl<u32> for &BigInt<N> {
     }
 }
 
-/// Constant-time right shift by `s` bits (divide by `2^s`, rounding toward
-/// zero).
+/// Arithmetic right shift: `floor(self / 2^rhs)`.
 ///
-/// Algorithm 4 (§3.3) from [Kouider et al.][ct-bigint]
-///
-/// [ct-bigint]: https://eprint.iacr.org/2025/832.pdf
+/// Rounds toward negative infinity like `>>` on Rust's signed integers
+/// and the reference implementation's `ibz_div_2exp`, so a negative
+/// value with nonzero shifted-out bits rounds one further from zero.
+/// Constant-time in the value and the shift amount.
 impl<const N: usize> Shr<u32> for BigInt<N> {
     type Output = Self;
     #[inline]
     fn shr(self, rhs: u32) -> Self {
-        let limbs = Self::mag_shr(&self.limbs, rhs);
-        // Canonicalize zero.
-        let is_zero = Self::mag_is_zero(&limbs);
-        Self {
-            sign: self.sign & (1 - is_zero),
-            limbs,
-        }
+        self.shr_floor(rhs)
     }
 }
 
@@ -123,11 +135,6 @@ impl<const N: usize> Shr<u32> for &BigInt<N> {
     type Output = BigInt<N>;
     #[inline]
     fn shr(self, rhs: u32) -> BigInt<N> {
-        let limbs = BigInt::<N>::mag_shr(&self.limbs, rhs);
-        let is_zero = BigInt::<N>::mag_is_zero(&limbs);
-        BigInt::<N> {
-            sign: self.sign & (1 - is_zero),
-            limbs,
-        }
+        self.shr_floor(rhs)
     }
 }

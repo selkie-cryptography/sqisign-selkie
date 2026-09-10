@@ -444,10 +444,16 @@ fn bigint_ct_mod_large_negative() {
         bool::from(diff.is_positive()),
         "vt_mod result should be less than modulus"
     );
-    // Verify: neg_big = q·m + r where 0 ≤ r < m.
-    let (q, _) = neg_big.vt_div_rem(&m);
-    let recon = q.ct_mul(&m).ct_add(&r);
+    // Verify: neg_big = q·m + r_trunc with r_trunc <= 0, and r lifts
+    // r_trunc into [0, m).
+    let (q, r_trunc) = neg_big.vt_div_rem(&m);
+    let recon = q.ct_mul(&m).ct_add(&r_trunc);
     assert_eq!(recon, neg_big, "vt_div_rem reconstruction");
+    assert_eq!(
+        r_trunc.ct_add(&m),
+        r,
+        "vt_mod lifts the truncated remainder"
+    );
 }
 
 #[test]

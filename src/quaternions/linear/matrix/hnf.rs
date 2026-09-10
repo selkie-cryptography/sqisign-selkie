@@ -454,24 +454,13 @@ impl<const N: usize> Matrix<N> {
         // - `centered_mod`: result in `(-m/2, m/2]`. Used in inner gcd-combine
         //   loop (`ibz_vec_4_linear_combination_mod` → `ibz_centered_mod` in
         //   `hnf.c`).
-        // - `positive_mod`: result in `[0, |m|)`. Used in output store
+        // - `vt_mod`: result in `[0, |m|)`. Used in output store
         //   (`ibz_vec_4_scalar_mul_mod` → `ibz_mod`).
         let centered_mod = |x: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
-            let mut r = x.vt_mod(m);
-            if bool::from(r.is_negative()) {
-                r = r.vt_add(m);
-            }
+            let r = x.vt_mod(m);
             let two_r = r.vt_add(&r);
             if bool::from(two_r.vt_sub(m).is_positive()) {
                 r.vt_sub(m)
-            } else {
-                r
-            }
-        };
-        let positive_mod = |x: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
-            let r = x.vt_mod(m);
-            if bool::from(r.is_negative()) {
-                r.vt_add(m)
             } else {
                 r
             }
@@ -486,45 +475,11 @@ impl<const N: usize> Matrix<N> {
         };
         let vec_positive_mod_m = |v: &[BigInt<W>; 4], m: &BigInt<W>| -> [BigInt<W>; 4] {
             [
-                positive_mod(&v[0], m),
-                positive_mod(&v[1], m),
-                positive_mod(&v[2], m),
-                positive_mod(&v[3], m),
+                v[0].vt_mod(m),
+                v[1].vt_mod(m),
+                v[2].vt_mod(m),
+                v[3].vt_mod(m),
             ]
-        };
-
-        // Truncated division matching C `mpz_tdiv_qr` / `ibz_div`:
-        // quotient rounds toward zero, remainder takes sign of dividend.
-        // Selkie's `BigInt::vt_div_rem` is Euclidean (floor for positive
-        // divisor, with positive remainder), which differs from C-ref
-        // on negative dividends. The HNF algorithm passes negative
-        // intermediate values to `ibz_div` in multiple places
-        // (coeff_1 = a[k][i]/d, coeff_2 = a[j][i]/d, and inside
-        // `ibz_xgcd_with_u_not_0`), so matching `mpz_tdiv_qr` semantics
-        // is required to produce the same canonical HNF as C-ref.
-        let trunc_div_rem = |a: &BigInt<W>, b: &BigInt<W>| -> (BigInt<W>, BigInt<W>) {
-            let (q_eu, r_eu) = a.vt_div_rem(b);
-            if bool::from(a.is_negative()) && !bool::from(r_eu.is_zero()) {
-                // Euclidean→truncated conversion for a<0 with nonzero
-                // remainder:   trunc rounds toward 0 →
-                // |q_trunc| = |q_eu| - 1.   sign(q_trunc) =
-                // sign(a)⊕sign(b) = sign(q_eu).   So q_trunc =
-                // q_eu + sign(b) (when sign(q_eu) = −sign(b),
-                //   moves q_eu one step toward 0).
-                // Examples: (−7, 3) Eu=(−3, 2), trunc=(−2, −1); add +1=sign(3).
-                //           (−7, −3) Eu=(3, 2), trunc=(2, −1); add −1=sign(−3).
-                let b_abs = b.abs();
-                let r_trunc = r_eu.vt_sub(&b_abs);
-                let sign_b = if bool::from(b.is_negative()) {
-                    BigInt::<W>::ONE.wrapping_neg()
-                } else {
-                    BigInt::<W>::ONE
-                };
-                let q_trunc = q_eu.vt_add(&sign_b);
-                (q_trunc, r_trunc)
-            } else {
-                (q_eu, r_eu)
-            }
         };
 
         // Helper: xgcd with u != 0 guarantee AND `u·x > 0`, mirroring
@@ -600,9 +555,7 @@ impl<const N: usize> Matrix<N> {
                     } else {
                         *y
                     };
-                    // C-ref uses `ibz_div` (truncated). For negative x,
-                    // Selkie's Euclidean `vt_div_rem` would differ.
-                    let (q, _) = trunc_div_rem(x, &y_use);
+                    let (q, _) = x.vt_div_rem(&y_use);
                     v = v.vt_sub(&q);
                     u = BigInt::<W>::ONE;
                 }
@@ -614,13 +567,13 @@ impl<const N: usize> Matrix<N> {
                 if !bool::from(x.is_zero()) {
                     let xy = x.vt_mul(y);
                     let neg = bool::from(xy.is_negative());
-                    let (q_y_d_sgn, _) = trunc_div_rem(y, &d);
+                    let (q_y_d_sgn, _) = y.vt_div_rem(&d);
                     let q_y_d = if neg {
                         q_y_d_sgn.wrapping_neg()
                     } else {
                         q_y_d_sgn
                     };
-                    let (q_x_d_sgn, _) = trunc_div_rem(x, &d);
+                    let (q_x_d_sgn, _) = x.vt_div_rem(&d);
                     let q_x_d = if neg {
                         q_x_d_sgn.wrapping_neg()
                     } else {
@@ -744,11 +697,10 @@ impl<const N: usize> Matrix<N> {
                         );
                     }
                     let c = lin_comb(&u, &a[k], &v, &a[j]);
-                    // C-ref uses `ibz_div` (truncated) for coeff_1 and coeff_2.
-                    // a[k][i] or a[j][i] may be negative (post centered_mod),
-                    // so truncated vs Euclidean div gives different coeffs.
-                    let (coeff_1, _) = trunc_div_rem(&val_k, &d);
-                    let (coeff_2_pos, _) = trunc_div_rem(&val_j, &d);
+                    // a[k][i] or a[j][i] may be negative after centered_mod;
+                    // the division truncates, as C-ref's `ibz_div` does.
+                    let (coeff_1, _) = val_k.vt_div_rem(&d);
+                    let (coeff_2_pos, _) = val_j.vt_div_rem(&d);
                     let coeff_2 = coeff_2_pos.wrapping_neg();
                     let new_j = lin_comb(&coeff_1, &a[j], &coeff_2, &a[k]);
                     a[j] = vec_centered_mod_m(&new_j, &m);
@@ -791,11 +743,10 @@ impl<const N: usize> Matrix<N> {
 
             let pivot = w[i as usize][i as usize];
             for h in (i as usize + 1)..4 {
-                // Floor division (per C-ref `ibz_div_floor`). Selkie's
-                // `vt_div_rem` is truncated; using Euclidean (positive)
-                // remainder gives floor q for negative entries.
+                // Floor division (C-ref `ibz_div_floor`): subtract the
+                // non-negative residue, then the division is exact.
                 let entry = w[h][i as usize];
-                let r = positive_mod(&entry, &pivot);
+                let r = entry.vt_mod(&pivot);
                 let (q, _) = entry.vt_sub(&r).vt_div_rem(&pivot);
                 let neg_q = q.wrapping_neg();
                 let w_i = w[i as usize];

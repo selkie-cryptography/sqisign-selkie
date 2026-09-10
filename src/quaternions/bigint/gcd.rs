@@ -440,7 +440,7 @@ impl<const N: usize> BigInt<N> {
     /// safegcd-based) would be a separate primitive when the CT track
     /// needs it.
     #[must_use]
-    pub fn xgcd_euclidean(&self, other: &Self) -> (Self, Self, Self) {
+    pub(crate) fn xgcd_euclidean(&self, other: &Self) -> (Self, Self, Self) {
         let a_abs = self.abs();
         let b_abs = other.abs();
 

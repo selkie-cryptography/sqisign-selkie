@@ -61,7 +61,8 @@ undocumented CT leaks on the sign-side secret path, plus one
 adjacent correctness violation.
 
 \paragraph{\texttt{BigInt::two\_adic\_val} variable-time leak.}
-The function is documented as constant-time and is called on
+The function (since folded into \texttt{BigInt::trailing\_zeros}) is
+documented as constant-time and is called on
 secret-derived inputs in \textsc{SuitableIdeals} (the dyadic
 valuation of $\gcd(u, v)$).  The body dispatched
 \texttt{if limb == 0 \{ 64 \} else \{ limb.trailing\_zeros() \}}

@@ -7,5 +7,5 @@ affiliation:
   name: Selkie Cryptography
   country: USA
 version: preprint
-title: sqisign-selkie: Implementing SQIsign v2.0.1 NIST-I in Rust
+title: sqisign-selkie: Implementing SQIsign NIST-I in Rust
 keywords: SQIsign, isogeny-based cryptography, Rust, constant-time, post-quantum signatures

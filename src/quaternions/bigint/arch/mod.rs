@@ -2,8 +2,8 @@
 //!
 //! Per-target backend selected at compile time.  `x86_64` provides
 //! ADX (`asm!` MULX + ADCX/ADOX dual-chain) versions of `mag_mul`;
-//! `aarch64` is reserved for future NEON-assisted `umulh`/`umull`
-//! chains; everything else routes through `fallback` (pure Rust,
+//! `aarch64` provides a `mul`/`umulh` column-scanning multiply;
+//! everything else routes through `fallback` (pure Rust,
 //! mirrors the in-place `bigint::{add,sub,mul,modular}` code).
 //!
 //! Callers (`mul.rs` etc.) cfg-dispatch on a per-function basis to
@@ -15,7 +15,6 @@
 pub(super) mod x86_64;
 
 #[cfg(target_arch = "aarch64")]
-#[allow(dead_code)] // empty until NEON implementations land
 pub(super) mod aarch64;
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]

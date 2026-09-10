@@ -567,7 +567,7 @@ impl<const N: usize> Element<N> {
         let n = if bool::from(tmp.is_zero()) {
             0
         } else {
-            tmp.two_adic_val()
+            tmp.trailing_zeros()
         };
 
         // Divide α by tmp (full gcd, including odd part): scale denom
