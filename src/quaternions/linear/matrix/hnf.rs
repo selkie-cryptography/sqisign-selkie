@@ -451,8 +451,9 @@ impl<const N: usize> Matrix<N> {
 
         // Two mod variants matching C-ref:
         //
-        // - `centered_mod`: result in `(-m/2, m/2]`. Used in inner gcd-combine loop
-        //   (`ibz_vec_4_linear_combination_mod` → `ibz_centered_mod` in `hnf.c`).
+        // - `centered_mod`: result in `(-m/2, m/2]`. Used in inner gcd-combine
+        //   loop (`ibz_vec_4_linear_combination_mod` → `ibz_centered_mod` in
+        //   `hnf.c`).
         // - `vt_mod`: result in `[0, |m|)`. Used in output store
         //   (`ibz_vec_4_scalar_mul_mod` → `ibz_mod`).
         let centered_mod = |x: &BigInt<W>, m: &BigInt<W>| -> BigInt<W> {
