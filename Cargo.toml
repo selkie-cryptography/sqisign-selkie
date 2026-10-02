@@ -38,7 +38,7 @@ zeroize = { version = "1", default-features = false, features = ["zeroize_derive
 [dev-dependencies]
 divan = "0.1"
 dudect-bencher = "0.7"
-gungraun = "0.19"
+gungraun = "0.20"
 dhat = "0.3"
 tacet = "0.4"
 proptest = "1"
