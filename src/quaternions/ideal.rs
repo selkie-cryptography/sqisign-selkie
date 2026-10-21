@@ -9,8 +9,6 @@
 //!   orders
 //! - [`LeftIdeal::smallest_equiv_with_delta`]: find J ∼ I with smaller norm
 //!   (used during [Alg. 3.9])
-//! - [`SuitableIdealResult`](suitable_ideals::SuitableIdealResult): output of
-//!   SuitableIdeals ([Alg. 3.16][Alg. 3.16])
 //!
 //! `RandomEquivalentPrimeIdeal` ([Alg. 3.9]) is defined as
 //! [`LeftIdeal<8>::reduce_to_prime_norm`] in the lattice module.
@@ -21,11 +19,9 @@
 //! [`LeftIdeal<8>::reduce_to_prime_norm`]: super::lattice::LeftIdeal::reduce_to_prime_norm
 //! [Alg. 3.9]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.9
 //! [Alg. 3.12]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.12
-//! [Alg. 3.16]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.16
 
 mod represent_integer;
 mod smallest_equiv;
-mod suitable_ideals;
 
 #[cfg(test)]
 mod tests;

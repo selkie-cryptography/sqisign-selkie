@@ -46,3 +46,8 @@ Cargo.lock
 app-credentials.json
 dhat-heap.json
 *.trace
+
+references/
+
+# cargo-asm-mutants
+/asm-mutants.out*/

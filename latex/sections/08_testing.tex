@@ -16,13 +16,13 @@ contribution to the C2SP/wycheproof project.
 
 \subsection{Algorithm naming}
 
-We identify the parameter set as \texttt{SQIsign\_248}, where 248 is
-the torsion exponent~$f$ in $p = 5 \cdot 2^{248} - 1$.  The exponent
+We identify the parameter set as \texttt{SQIsign\_324}, where 324 is
+the torsion exponent~$f$ in $p = 3 \cdot 2^{324} - 1$.  The exponent
 is the fundamental parameter from which all others derive: field size,
 isogeny degrees, key sizes, signature sizes.  Unlike ``NIST-I'' (a
 security-level label that could be reassigned to different parameters)
-or ``353'' (a derived quantity---the secret key size in bytes---that
-would change if the encoding changes), $f = 248$ pins the actual
+or ``270'' (a derived quantity---the signing key size in bytes---that
+would change if the encoding changes), $f = 324$ pins the actual
 cryptographic parameters.
 
 \subsection{Verification vectors}

@@ -13,24 +13,22 @@
 //! boundary.  Call sites that explicitly want 4-Fp-at-once storage
 //! reach for `Fp26x4` via `fp::batch::Fp26x4`.
 //!
-//! - **Limb layout**: [`Fp26`] holds ten 26-bit unsaturated limbs in 32-bit
-//!   lanes. Ten limbs cover the 248-bit modulus with 12 bits of per-limb carry
-//!   headroom.
-//! - **SIMD packing** (planned): the 10 * `u32` limbs pack into two `__m256i`
-//!   halves (8 + 2 lanes); a column of the schoolbook product uses
-//!   `_mm256_mul_epu32` (`VPMULUDQ`) for the 4-lane `u32 * u32 -> u64` widening
-//!   multiply that AVX2 provides.
-//! - **Multiplication** (planned): schoolbook `Fp * Fp` with `VPMULUDQ` over
-//!   the 100-column product, interleaved with Montgomery-style reduction via
-//!   the `p = 5 * 2^248 - 1` structure (`P4_26 = 5 * 2^14`).
+//! - **Limb layout**: [`Fp26`] holds thirteen 26-bit unsaturated limbs in
+//!   32-bit lanes. Thirteen limbs cover the 326-bit modulus with 12 bits of
+//!   headroom above it.
+//! - **SIMD packing**: the 13 * `u32` limbs pack into two `__m256i` halves (8 +
+//!   5 lanes); a column of the schoolbook product uses `_mm256_mul_epu32`
+//!   (`VPMULUDQ`) for the 4-lane `u32 * u32 -> u64` widening multiply that AVX2
+//!   provides.
+//! - **Multiplication**: schoolbook `Fp * Fp` with `VPMULUDQ`, interleaved with
+//!   Montgomery-style reduction via the `p = 3 * 2^324 - 1` structure (`P12_26
+//!   = 3 * 2^12`).
 //!
 //! # Why radix-26 over radix-25.5 / radix-30 / radix-31
 //!
-//! AVX2's widening multiply is `u32 * u32 -> u64`, leaving 8 free bits in
-//! the 64-bit accumulator for the per-column schoolbook plus the ` * P4_26`
-//! Montgomery cross-terms. Radix-26 keeps each limb safely under 32 bits
-//! while leaving the accumulator with 12 bits of slack for the two
-//! cross-term folds before a normalization pass.
+//! AVX2's widening multiply is `u32 * u32 -> u64`, leaving 12 free bits in
+//! the 64-bit accumulator for the per-column schoolbook (at most 13
+//! products of `2^52`) plus the ` * P12_26` Montgomery fold.
 //!
 //! # Why no AVX-512-IFMA52
 //!
@@ -38,18 +36,6 @@
 //! sits behind a narrow Intel-server CPU subset, is omitted from AMD
 //! Zen 4, and isn't targeted by any major crypto library. AVX2 over a
 //! radix-26 layout is the realistic x86_64 vectorized-Fp target.
-//!
-//! # Status
-//!
-//! This commit lands **scaffolding only**: the limb layout, Montgomery
-//! parameters, byte (de)serialisation, and the
-//! [`Fp26::from_limbs`] const constructor that lets the existing
-//! `pub const FOO: Fp = Fp::from_limbs([u64; 5])` precomputed-constant
-//! tables embed identically under cfg-avx2. Runtime arithmetic
-//! (`Mul`, `Add`, `Sub`, `square`, `invert`, `sqrt`, ...) lands in
-//! follow-up commits. The arch dispatcher's cfg-avx2 arm doesn't
-//! activate until those land.
-
 #[cfg(target_feature = "avx2")]
 use core::arch::x86_64::{
     __m256i, _mm256_add_epi64, _mm256_and_si256, _mm256_blendv_epi8, _mm256_cmpgt_epi64,
@@ -61,12 +47,12 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-use crate::fields::fp::arch::generic::Fp51;
+use crate::fields::fp::{FP_ENCODED_BYTES, arch::generic::Fp55};
 
 /// `1` in non-Montgomery form, used to exit Montgomery form via the `Mul`
 /// trait impl: `mont * 1 * R^-1 = mont / R = canonical`.
 const ONE_RAW: Fp26 = Fp26 {
-    limbs: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    limbs: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 };
 
 /// Bits per limb in the radix-26 representation.
@@ -77,69 +63,68 @@ pub const MASK_26: u32 = (1u32 << RADIX_26) - 1;
 
 /// Number of limbs in the radix-26 representation.
 ///
-/// Ten limbs of 26 bits each cover 260 bits, with 12 bits of headroom
-/// above the 248-bit modulus.
-pub const LIMBS_26: usize = 10;
+/// Thirteen limbs of 26 bits each cover 338 bits, with 12 bits of headroom
+/// above the 326-bit modulus.
+pub const LIMBS_26: usize = 13;
 
-/// Montgomery fold multiplier: `5 * 2^14`.
+/// Montgomery fold multiplier: `3 * 2^12`.
 ///
 /// At the boundary where the schoolbook column index `i >= LIMBS_26 - 1`,
-/// the interleaved Montgomery reduction adds `v[i - (LIMBS_26 - 1)] * P4_26`
+/// the interleaved Montgomery reduction adds `v[i - (LIMBS_26 - 1)] * P12_26`
 /// to the accumulator. This is equivalent (mod p) to adding
-/// `v[i - 9] * 5 * 2^248` because `5 * 2^248 == 1 (mod p)`, and within
-/// limb 9 the offset is `248 - 9 * 26 = 14`.
-const P4_26: u32 = 5 << 14;
+/// `v[i - 12] * 3 * 2^324` because `3 * 2^324 == 1 (mod p)`, and within
+/// limb 12 the offset is `324 - 12 * 26 = 12`.
+const P12_26: u32 = 3 << 12;
 
 /// `p` in radix-26 form.
 ///
-/// Used by `Fp26::final_sub` (future) to subtract the modulus from an
-/// unreduced result. Computed from `p = 5 * 2^248 - 1`: limbs 0..8 are
-/// `2^26 - 1`, limb 9 holds the top 14 bits.
+/// Used by `Fp26::final_sub` to subtract the modulus from an unreduced
+/// result. Computed from `p = 3 * 2^324 - 1`: limbs 0..11 are `2^26 - 1`,
+/// limb 12 holds the top 14 bits.
 const P_LIMBS_26: [u32; LIMBS_26] = [
     0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF,
-    0x3FFFFFF, 0x0013FFF,
+    0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x0002FFF,
 ];
 
-/// `R^2_26 mod p` where `R_26 = 2^260`.
+/// `R^2_26 mod p` where `R_26 = 2^338`.
 ///
-/// Precomputed via `pow(2, 520, p)` and packed into 10 * 26-bit limbs.
-/// Used by `from_bytes` (future) to enter Fp26 Montgomery form:
+/// Precomputed via `pow(2, 676, p)` and packed into 13 * 26-bit limbs.
+/// Used by `from_bytes` to enter Fp26 Montgomery form:
 /// `canonical_value * R^2_26 * R^-1 = canonical_value * R`.
-#[allow(dead_code)] // used by future Mul-based from_bytes
 const R2_26: Fp26 = Fp26 {
     limbs: [
-        0x33D70A3, 0x0CCCCCC, 0x3333333, 0x0CCCCCC, 0x3333333, 0x0CCCCCC, 0x3333333, 0x0CCCCCC,
-        0x3333333, 0x0010CCC,
+        0x31C71C7, 0x1555555, 0x1555555, 0x1555555, 0x1555555, 0x1555555, 0x1555555, 0x1555555,
+        0x1555555, 0x1555555, 0x1555555, 0x1555555, 0x0000555,
     ],
 };
 
-/// Bridge constant for the portable backend's radix-51 Montgomery
-/// limbs `[u64; 5]` to Fp26 Montgomery form. Computed as
-/// `K = 2^(2 * R_26_exp - R_portable_exp) mod p = 2^265 mod p`, where
-/// R_portable = 2^255 and R_26 = 2^260; the Montgomery multiplication
+/// Bridge constant for the portable backend's radix-55 Montgomery
+/// limbs `[u64; 6]` to Fp26 Montgomery form. Computed as
+/// `K = 2^(2 * R_26_exp - R_portable_exp) mod p = 2^346 mod p`, where
+/// R_portable = 2^330 and R_26 = 2^338; the Montgomery multiplication
 /// `mont_mul_26(portable_mont, K)` lands the value in Fp26's
-/// `value * R_26 mod p` form: `(value * 2^255) * 2^265 * 2^(-260) = value *
-/// 2^260`.
-const K_PORT_TO_26: [u32; LIMBS_26] = [0x0006666, 0, 0, 0, 0, 0, 0, 0, 0, 0x0008000];
+/// `value * R_26 mod p` form: `(value * 2^330) * 2^346 * 2^(-338) = value *
+/// 2^338`.
+const K_PORT_TO_26: [u32; LIMBS_26] = [0x0155555, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0001000];
 
 /// Field element in radix-26 limb form, in Montgomery representation.
 ///
-/// Parallel representation to [`crate::fields::fp::arch::generic::Fp51`]'s
-/// radix-51 layout, laid out for AVX2 32-bit-lane packing. Limbs are
+/// Parallel representation to [`crate::fields::fp::arch::generic::Fp55`]'s
+/// radix-55 layout, laid out for AVX2 32-bit-lane packing. Limbs are
 /// little-endian: `limbs[0]` is the least significant 26 bits. The stored
-/// value is `value * R_26 mod p` where `R_26 = 2^260`; multiplication
-/// (future) returns `a * b * R^-1`.
+/// value is `value * R_26 mod p` where `R_26 = 2^338`; multiplication
+/// returns `a * b * R^-1`.
 ///
 /// # Invariants
 ///
-/// - After the (future) `Mul` impl or `From<Fp>`, `limbs[i] < 2^26` for `i < 9`
-///   and `limbs[9] < 2^17` (sub-`2p` bound).
+/// - After the `Mul` impl or `From<Fp>`, `limbs[i] < 2^26` for `i < 12` and
+///   `limbs[12] < 2^15` (sub-`2p` bound).
 /// - [`Fp26::from_bytes_le`] / [`Fp26::to_bytes_le`] operate on canonical
 ///   (non-Montgomery) limbs; they're the byte boundary, before/after the
 ///   Montgomery scaling.
 #[derive(Clone, Copy, Debug)]
 pub struct Fp26 {
-    /// Ten 26-bit limbs, little-endian.
+    /// Thirteen 26-bit limbs, little-endian.
     pub limbs: [u32; LIMBS_26],
 }
 
@@ -150,38 +135,38 @@ impl Fp26 {
     };
 
     /// Multiplicative identity in radix-26 Montgomery form: `1 * R_26 mod p`,
-    /// precomputed via `python -c 'pow(2, 260, 5*2**248 - 1)'` then packed
-    /// into 10 * 26-bit limbs.
+    /// precomputed via `python -c 'pow(2, 338, 3*2**324 - 1)'` then packed
+    /// into 13 * 26-bit limbs.
     pub const ONE: Self = Self {
-        limbs: [0x333, 0, 0, 0, 0, 0, 0, 0, 0, 0x4000],
+        limbs: [0x1555, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1000],
     };
 
     /// Two in radix-26 Montgomery form: `2 * R_26 mod p`.
     pub const TWO: Self = Self {
-        limbs: [0x666, 0, 0, 0, 0, 0, 0, 0, 0, 0x8000],
+        limbs: [0x2AAA, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2000],
     };
 
     /// Four in radix-26 Montgomery form: `4 * R_26 mod p`.
     pub const FOUR: Self = Self {
-        limbs: [0xCCC, 0, 0, 0, 0, 0, 0, 0, 0, 0x10000],
+        limbs: [0x5555, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1000],
     };
 
     /// `-1 mod p` in radix-26 Montgomery form: `(p - 1) * R_26 mod p`.
     pub const MINUS_ONE: Self = Self {
         limbs: [
-            0x3FFFCCC, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF,
-            0x3FFFFFF, 0x000FFFF,
+            0x3FFEAAA, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF,
+            0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF, 0x0001FFF,
         ],
     };
 
-    /// Decodes 32 bytes (little-endian) into a normalized radix-26 element.
+    /// Decodes 41 bytes (little-endian) into a normalized radix-26 element.
     ///
     /// Mirrors `Fp::from_bytes` at the canonical-form level: the input
-    /// must encode a value less than `p`; out-of-range bits in `bytes[31]`
+    /// must encode a value less than `p`; out-of-range bits in the top byte
     /// simply flow into the high limb without canonicalization. The
     /// result is *not* in Montgomery form; combine with multiplication
-    /// by [`R2_26`] (future) to enter Fp26's Montgomery scaling.
-    pub fn from_bytes_le(bytes: &[u8; 32]) -> Self {
+    /// by [`R2_26`] to enter Fp26's Montgomery scaling.
+    pub fn from_bytes_le(bytes: &[u8; FP_ENCODED_BYTES]) -> Self {
         let mut limbs = [0u32; LIMBS_26];
         let mut acc: u64 = 0;
         let mut bits: u32 = 0;
@@ -204,12 +189,12 @@ impl Fp26 {
         Self { limbs }
     }
 
-    /// Encodes a normalized radix-26 element as 32 bytes, little-endian.
+    /// Encodes a normalized radix-26 element as 41 bytes, little-endian.
     ///
     /// Each limb must be `< 2^26`; if the value is unsaturated the encoded
     /// bytes will overflow into adjacent positions.
-    pub fn to_bytes_le(self) -> [u8; 32] {
-        let mut out = [0u8; 32];
+    pub fn to_bytes_le(self) -> [u8; FP_ENCODED_BYTES] {
+        let mut out = [0u8; FP_ENCODED_BYTES];
         let mut acc: u64 = 0;
         let mut bits: u32 = 0;
         let mut pos = 0;
@@ -218,7 +203,7 @@ impl Fp26 {
             acc |= (limb as u64) << bits;
             bits += RADIX_26;
 
-            while bits >= 8 && pos < 32 {
+            while bits >= 8 && pos < FP_ENCODED_BYTES {
                 out[pos] = acc as u8;
                 acc >>= 8;
                 bits -= 8;
@@ -226,38 +211,38 @@ impl Fp26 {
             }
         }
 
-        if pos < 32 {
+        if pos < FP_ENCODED_BYTES {
             out[pos] = acc as u8;
         }
 
         out
     }
 
-    /// Constructs from radix-51 portable-Montgomery limbs.
+    /// Constructs from radix-55 portable-Montgomery limbs.
     ///
     /// Signature-compatible with the portable backend's `Fp::from_limbs`, so
     /// the crate's precomputed-constant tables (`params.rs`,
-    /// `deuring/precomputed.rs`, `curves/montgomery`) embed identically under
-    /// either backend selection. The input limbs encode the field element in
-    /// radix-51 Montgomery form (`value * 2^255 mod p`); this constructor
-    /// repacks them at radix-26 and Montgomery-multiplies by the const
-    /// `K = 2^265 mod p`, landing the value in this backend's
-    /// `value * 2^260 mod p` form.
+    /// `curves/montgomery`) embed identically under either backend
+    /// selection. The input limbs encode the field element in radix-55
+    /// Montgomery form (`value * 2^330 mod p`); this constructor repacks
+    /// them at radix-26 and Montgomery-multiplies by the const
+    /// `K = 2^346 mod p`, landing the value in this backend's
+    /// `value * 2^338 mod p` form.
     ///
     /// `const fn` so the constants stay `pub const`.
-    pub const fn from_limbs(portable_mont: [u64; 5]) -> Self {
-        let radix26 = Self::repack_51_to_26(portable_mont);
+    pub const fn from_limbs(portable_mont: [u64; 6]) -> Self {
+        let radix26 = Self::repack_55_to_26(portable_mont);
         Self {
             limbs: Self::mont_mul_const(radix26, K_PORT_TO_26),
         }
     }
 
-    /// Repacks a 5-limb radix-51 little-endian value as 10-limb radix-26 LE.
+    /// Repacks a 6-limb radix-55 little-endian value as 13-limb radix-26 LE.
     ///
     /// Pure bit redistribution: the integer value is unchanged. Input fits in
-    /// 255 bits (5 * 51); output uses 260 bits (10 * 26), so the top 5 bits of
-    /// `out[9]` are always zero.
-    const fn repack_51_to_26(src: [u64; 5]) -> [u32; LIMBS_26] {
+    /// 330 bits (6 * 55); output uses 338 bits (13 * 26), so the top 8 bits
+    /// of `out[12]` are always zero.
+    const fn repack_55_to_26(src: [u64; 6]) -> [u32; LIMBS_26] {
         let mut out = [0u32; LIMBS_26];
         let mut acc: u128 = 0;
         let mut bits: u32 = 0;
@@ -265,9 +250,9 @@ impl Fp26 {
         let mut i = 0;
 
         while i < LIMBS_26 {
-            while bits < RADIX_26 && src_idx < 5 {
+            while bits < RADIX_26 && src_idx < 6 {
                 acc |= (src[src_idx] as u128) << bits;
-                bits += 51;
+                bits += 55;
                 src_idx += 1;
             }
 
@@ -283,7 +268,7 @@ impl Fp26 {
     /// Const-fn Montgomery multiplication on radix-26 limbs.
     ///
     /// Identical CIOS structure to `super::super::aarch64::neon::Fp29`'s
-    /// const Mont mul, retuned for radix-26 / 10 limbs / `P4_26 = 5 * 2^14`.
+    /// const Mont mul, retuned for radix-26 / 13 limbs / `P12_26 = 3 * 2^12`.
     /// Used by [`Self::from_limbs`] to enter Fp26 Montgomery form at compile
     /// time from the portable backend's Montgomery limbs. A SIMD-vectorized
     /// runtime version follows in a later commit.
@@ -306,7 +291,7 @@ impl Fp26 {
 
             if i >= LIMBS_26 - 1 {
                 let fold_idx = i - (LIMBS_26 - 1);
-                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P4_26 as u64));
+                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P12_26 as u64));
             }
 
             let limb = (t as u32) & MASK_26;
@@ -327,17 +312,17 @@ impl Fp26 {
 
     /// AVX2-accelerated Montgomery multiplication.
     ///
-    /// Operand-scanning CIOS: 10 outer iterations, each doing
-    /// `t += a * b[j]` (10 vectorized multiplies) then a Montgomery
+    /// Operand-scanning CIOS: 13 outer iterations, each doing
+    /// `t += a * b[j]` (13 vectorized multiplies) then a Montgomery
     /// reduction step that zeros the low limb. Uses `_mm256_mul_epu32`
-    /// (VPMULUDQ: 4-lane `u32 * u32 -> u64`) twice per j-iter to cover
-    /// limbs 0-7, plus two scalar multiplies for limbs 8-9.
+    /// (VPMULUDQ: 4-lane `u32 * u32 -> u64`) over two registers holding
+    /// limbs 0..7 and 8..12 (three zero lanes in the second).
     ///
-    /// The Montgomery reduction exploits `p = 5 * 2^248 - 1`:
+    /// The Montgomery reduction exploits `p = 3 * 2^324 - 1`:
     /// `p == -1 (mod 2^26)`, so the multiplier `m` that zeros `t[0]` is
     /// just `m = t[0] & MASK_26`. Adding `m * p` to `t` is equivalent
     /// to subtracting `m` from `t[0]` (zeroing the low limb) and
-    /// adding `m * 5 * 2^14 = m * P4_26` at limb 9 (where bit 248
+    /// adding `m * 3 * 2^12 = m * P12_26` at limb 12 (where bit 324
     /// lands in radix-26).
     ///
     /// # Safety
@@ -348,48 +333,46 @@ impl Fp26 {
     #[cfg(target_feature = "avx2")]
     #[target_feature(enable = "avx2")]
     unsafe fn mont_mul_avx2(a: [u32; LIMBS_26], b: [u32; LIMBS_26]) -> [u32; LIMBS_26] {
-        // 11-limb u64 accumulator: 10 for the partial product running
+        // 14-limb u64 accumulator: 13 for the partial product running
         // total + 1 high slot for inter-iter carry.
         let mut t = [0u64; LIMBS_26 + 1];
 
-        // Pack a's limbs 0..8 into one AVX2 register.  Limbs 8-9 are
-        // handled scalar (only 2 lanes; vectorizing isn't worth the
-        // overhead of a partially-populated second register).
-        let a_lo: __m256i = _mm256_loadu_si256(a.as_ptr() as *const __m256i);
+        // a's limbs 0..7 in one register, 8..12 in another (padded).
+        let mut a_padded = [0u32; 16];
+        a_padded[..LIMBS_26].copy_from_slice(&a);
+        let a_lo: __m256i = _mm256_loadu_si256(a_padded.as_ptr() as *const __m256i);
+        let a_hi: __m256i = _mm256_loadu_si256(a_padded[8..].as_ptr() as *const __m256i);
 
         for &bj_u32 in b.iter() {
             // Broadcast b[j] into all 8 u32 lanes of an AVX2 register.
             let bj_bcast: __m256i = _mm256_set1_epi32(bj_u32 as i32);
 
-            // Even-indexed lanes (0, 2, 4, 6 of u32x8 view).
-            // `_mm256_mul_epu32` reads the low 32 bits of each u64 lane,
-            // producing 4 u64 products.
-            let prod_even: __m256i = _mm256_mul_epu32(a_lo, bj_bcast);
-
-            // Odd-indexed lanes: shift each u64 lane right by 32 so the
-            // odd u32s land in the low 32 bits, then multiply.
-            let a_lo_odd: __m256i = _mm256_srli_epi64::<32>(a_lo);
-            let prod_odd: __m256i = _mm256_mul_epu32(a_lo_odd, bj_bcast);
+            // Even-indexed lanes: `_mm256_mul_epu32` reads the low 32 bits
+            // of each u64 lane, producing 4 u64 products.  Odd-indexed
+            // lanes: shift each u64 lane right by 32 first.
+            let prod_lo_even: __m256i = _mm256_mul_epu32(a_lo, bj_bcast);
+            let prod_lo_odd: __m256i = _mm256_mul_epu32(_mm256_srli_epi64::<32>(a_lo), bj_bcast);
+            let prod_hi_even: __m256i = _mm256_mul_epu32(a_hi, bj_bcast);
+            let prod_hi_odd: __m256i = _mm256_mul_epu32(_mm256_srli_epi64::<32>(a_hi), bj_bcast);
 
             // Extract to scalar buffers and accumulate column-wise.
-            let mut buf_even = [0u64; 4];
-            let mut buf_odd = [0u64; 4];
-            _mm256_storeu_si256(buf_even.as_mut_ptr() as *mut __m256i, prod_even);
-            _mm256_storeu_si256(buf_odd.as_mut_ptr() as *mut __m256i, prod_odd);
-            t[0] += buf_even[0];
-            t[1] += buf_odd[0];
-            t[2] += buf_even[1];
-            t[3] += buf_odd[1];
-            t[4] += buf_even[2];
-            t[5] += buf_odd[2];
-            t[6] += buf_even[3];
-            t[7] += buf_odd[3];
-
-            // Limbs 8-9: scalar.  Only 2 lanes; an AVX2 path here would
-            // cost a load + 2 muls + extract for the same 2 products.
-            let bj = bj_u32 as u64;
-            t[8] += a[8] as u64 * bj;
-            t[9] += a[9] as u64 * bj;
+            let mut lo_even = [0u64; 4];
+            let mut lo_odd = [0u64; 4];
+            let mut hi_even = [0u64; 4];
+            let mut hi_odd = [0u64; 4];
+            _mm256_storeu_si256(lo_even.as_mut_ptr() as *mut __m256i, prod_lo_even);
+            _mm256_storeu_si256(lo_odd.as_mut_ptr() as *mut __m256i, prod_lo_odd);
+            _mm256_storeu_si256(hi_even.as_mut_ptr() as *mut __m256i, prod_hi_even);
+            _mm256_storeu_si256(hi_odd.as_mut_ptr() as *mut __m256i, prod_hi_odd);
+            for k in 0..4 {
+                t[2 * k] += lo_even[k];
+                t[2 * k + 1] += lo_odd[k];
+            }
+            t[8] += hi_even[0];
+            t[9] += hi_odd[0];
+            t[10] += hi_even[1];
+            t[11] += hi_odd[1];
+            t[12] += hi_even[2];
 
             // Montgomery reduce: zero t[0]'s low 26 bits.
             // m = t[0] mod 2^26 (since p == -1 mod 2^26, this is the
@@ -397,11 +380,11 @@ impl Fp26 {
             let m = t[0] & MASK_26 as u64;
 
             // t + m * p effect: t[0] -= m (zeroing low limb);
-            // t[9] += m * P4_26 (the 5 * 2^248 part lands at limb 9).
+            // t[12] += m * P12_26 (the 3 * 2^324 part lands at limb 12).
             t[0] -= m;
-            t[9] += m * P4_26 as u64;
+            t[LIMBS_26 - 1] += m * P12_26 as u64;
 
-            // Shift t down by one limb.  After Mont step, t[0]'s low
+            // Shift t down by one limb.  After the Mont step, t[0]'s low
             // 26 bits are zero; its high bits carry into the new t[0]
             // after the shift.
             let carry = t[0] >> RADIX_26;
@@ -413,9 +396,9 @@ impl Fp26 {
             t[0] += carry;
         }
 
-        // Propagate carries across t[0..10] and pack into u32 limbs.
-        // For valid Mont inputs (< 2p), the result is < 2p < 2^252, so
-        // the residual carry past limb 9 is zero by construction; the
+        // Propagate carries across t[0..13] and pack into u32 limbs.
+        // For valid Mont inputs (< 2p), the result is < 2p < 2^327, so
+        // the residual carry past limb 12 is zero by construction; the
         // tests catch any silent overflow.
         let mut out = [0u32; LIMBS_26];
         let mut carry: u64 = 0;
@@ -503,21 +486,22 @@ impl Fp26 {
         (&self * &ONE_RAW).final_sub()
     }
 
-    /// Decodes canonical 32-byte little-endian into a Montgomery-form `Fp26`.
+    /// Decodes a canonical 41-byte little-endian encoding into a
+    /// Montgomery-form `Fp26`.
     ///
     /// Mirrors `Fp::from_bytes` at the API level: unpacks the bytes as a
     /// canonical integer, then enters this backend's Montgomery form via
     /// multiplication by [`R2_26`].
-    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+    pub fn from_bytes(bytes: &[u8; FP_ENCODED_BYTES]) -> Self {
         &Self::from_bytes_le(bytes) * &R2_26
     }
 
-    /// Encodes a Montgomery-form `Fp26` as canonical 32-byte little-endian.
+    /// Encodes a Montgomery-form `Fp26` as canonical 41-byte little-endian.
     ///
     /// Mirrors `Fp::to_bytes`: exits Montgomery form via
-    /// [`Self::reduce_montgomery`], then packs the canonical limbs into 32
+    /// [`Self::reduce_montgomery`], then packs the canonical limbs into 41
     /// bytes.
-    pub fn to_bytes(self) -> [u8; 32] {
+    pub fn to_bytes(self) -> [u8; FP_ENCODED_BYTES] {
         self.reduce_montgomery().to_bytes_le()
     }
 
@@ -556,36 +540,33 @@ impl Fp26 {
     pub(crate) fn pow_p3div4(&self) -> Self {
         let x = *self;
         let z = x.square();
-        let t0 = &x * &z;
-        let z = t0.square();
         let z = &x * &z;
-        let t1 = z.square();
-        let t3 = t1.square();
-        let t2 = t3.square();
-        let t4 = t2.pow2k(3);
-        let t2 = &t2 * &t4;
-        let t4 = t2.pow2k(6);
-        let t2 = &t2 * &t4;
-        let t4 = t2.pow2k(2);
-        let t3 = &t3 * &t4;
-        let t3 = t3.pow2k(13);
-        let t2 = &t2 * &t3;
-        let t3 = t2.pow2k(27);
-        let t2 = &t2 * &t3;
-        let z = &z * &t2;
+        let t0 = z.pow2k(2);
+        let t0 = &z * &t0;
+        let t1 = t0.pow2k(4);
+        let t0 = &t0 * &t1;
+        let t1 = t0.pow2k(2);
+        let z = &z * &t1;
         let t2 = z.pow2k(4);
+        let t1 = t2.pow2k(4);
+        let t3 = t1.pow2k(10);
+        let t1 = &t1 * &t3;
+        let t3 = t1.pow2k(6);
+        let t2 = &t2 * &t3;
+        let t2 = t2.pow2k(24);
         let t1 = &t1 * &t2;
         let t0 = &t0 * &t1;
-        let t1 = &t1 * &t0;
-        let t0 = &t1 * &t0;
-        let t2 = &t0 * &t1;
-        let t0 = &t0 * &t2;
-        let t1 = &t1 * &t0;
-        let t1 = t1.pow2k(63);
+        let t1 = t0.pow2k(10);
+        let z = &z * &t1;
+        let t1 = z.pow2k(58);
         let t1 = &t0 * &t1;
-        let t1 = t1.pow2k(64);
+        let t0 = &x * &t1;
+        let t2 = t0.square();
+        let t1 = &t1 * &t2;
+        let t2 = t1.pow2k(128);
+        let t1 = &t1 * &t2;
         let t0 = &t0 * &t1;
-        let t0 = t0.pow2k(57);
+        let t0 = t0.pow2k(68);
 
         &z * &t0
     }
@@ -626,7 +607,7 @@ impl Add<Fp26> for Fp26 {
     /// Modular addition, reduced to `[0, 2p)`.
     ///
     /// Adds limbwise, subtracts `2p` (via add-2-to-limb-0 / subtract-`2 *
-    /// P4_26`-from-limb-9), propagates carries, then conditionally adds `2p`
+    /// P12_26`-from-limb-12), propagates carries, then conditionally adds `2p`
     /// back if the propagation detected a borrow. Mirrors `Fp::add`
     /// structurally.
     fn add(self, rhs: Fp26) -> Fp26 {
@@ -642,14 +623,17 @@ impl Add<Fp26> for Fp26 {
                 self.limbs[7] + rhs.limbs[7],
                 self.limbs[8] + rhs.limbs[8],
                 self.limbs[9] + rhs.limbs[9],
+                self.limbs[10] + rhs.limbs[10],
+                self.limbs[11] + rhs.limbs[11],
+                self.limbs[12] + rhs.limbs[12],
             ],
         };
         n.limbs[0] = n.limbs[0].wrapping_add(2);
-        n.limbs[LIMBS_26 - 1] = n.limbs[LIMBS_26 - 1].wrapping_sub(2 * P4_26);
+        n.limbs[LIMBS_26 - 1] = n.limbs[LIMBS_26 - 1].wrapping_sub(2 * P12_26);
 
         let carry = n.prop();
         n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
-        n.limbs[LIMBS_26 - 1] = n.limbs[LIMBS_26 - 1].wrapping_add((2 * P4_26) & carry);
+        n.limbs[LIMBS_26 - 1] = n.limbs[LIMBS_26 - 1].wrapping_add((2 * P12_26) & carry);
         n.prop();
 
         n
@@ -676,12 +660,15 @@ impl Sub<Fp26> for Fp26 {
                 self.limbs[7].wrapping_sub(rhs.limbs[7]),
                 self.limbs[8].wrapping_sub(rhs.limbs[8]),
                 self.limbs[9].wrapping_sub(rhs.limbs[9]),
+                self.limbs[10].wrapping_sub(rhs.limbs[10]),
+                self.limbs[11].wrapping_sub(rhs.limbs[11]),
+                self.limbs[12].wrapping_sub(rhs.limbs[12]),
             ],
         };
 
         let carry = n.prop();
         n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
-        n.limbs[LIMBS_26 - 1] = n.limbs[LIMBS_26 - 1].wrapping_add((2 * P4_26) & carry);
+        n.limbs[LIMBS_26 - 1] = n.limbs[LIMBS_26 - 1].wrapping_add((2 * P12_26) & carry);
         n.prop();
 
         n
@@ -710,13 +697,13 @@ impl<'b> Mul<&'b Fp26> for &Fp26 {
 
     /// Montgomery multiplication: returns `a * b * R^-1 mod p`.
     ///
-    /// 10x10 schoolbook product with Montgomery reduction interleaved column-
-    /// by-column over the 19 output positions. The fold step at column
-    /// `i >= 9` adds `v[i-9] * P4_26`, exploiting `5 * 2^248 == 1 (mod p)`
+    /// 13x13 schoolbook product with Montgomery reduction interleaved column-
+    /// by-column over the 25 output positions. The fold step at column
+    /// `i >= 12` adds `v[i-12] * P12_26`, exploiting `3 * 2^324 == 1 (mod p)`
     /// to absorb the previously-computed low column into the high columns.
     ///
-    /// Output limbs satisfy `limbs[i] < 2^26` for `i < 9` and
-    /// `limbs[9] < 2^17` (so the result is in `[0, 2p)`). Use
+    /// Output limbs satisfy `limbs[i] < 2^26` for `i < 12` and
+    /// `limbs[12] < 2^15` (so the result is in `[0, 2p)`). Use
     /// `Fp26::final_sub` to canonicalize to `[0, p)`.
     ///
     /// Dispatches to `Fp26::mont_mul_avx2` (operand-scanning CIOS over
@@ -834,7 +821,7 @@ impl PartialEq for Fp26 {
 /// Four [`Fp26`] elements packed into AVX2 Structure-of-Arrays (SoA)
 /// layout: the four elements are interleaved lane-wise so one
 /// `_mm256_mul_epu32` computes the same schoolbook column across all
-/// four products simultaneously.  Each of the ten `__m256i` vectors
+/// four products simultaneously.  Each of the thirteen `__m256i` vectors
 /// holds the `i`-th radix-26 limb of four independent field elements
 /// at u64 lanes 0..3.  Using u64 lanes (rather than u32) gives the
 /// Montgomery multiplication accumulator native room for the
@@ -854,7 +841,7 @@ impl PartialEq for Fp26 {
 #[cfg(target_feature = "avx2")]
 #[derive(Clone, Copy)]
 pub struct Fp26x4 {
-    /// Ten AVX2 4-lane u64 vectors.  Lane `j` of `limbs[i]` is the
+    /// Thirteen AVX2 4-lane u64 vectors.  Lane `j` of `limbs[i]` is the
     /// `i`-th radix-26 limb of element `j` (zero-extended to u64).
     pub limbs: [__m256i; LIMBS_26],
 }
@@ -945,7 +932,7 @@ impl Fp26x4 {
                 borrow = _mm256_and_si256(neg_mask, one);
             }
 
-            // After all 10 limbs, `borrow` per lane is 1 iff self < p
+            // After all 13 limbs, `borrow` per lane is 1 iff self < p
             // (subtraction underflowed).  Build a per-lane mask that's
             // all-1s where we should keep `self` (borrow == 1), all-0s
             // where we should use `diff` (borrow == 0).
@@ -963,7 +950,7 @@ impl Fp26x4 {
         }
     }
 
-    /// Vectorised carry propagation across the 10 limbs per lane.
+    /// Vectorised carry propagation across the 13 limbs per lane.
     /// Returns a per-lane mask: all-1s if the cumulative value
     /// underflowed (interpreted as i64 lanes had the high bit set
     /// at the end), all-0s otherwise.
@@ -1020,7 +1007,7 @@ impl Add<Fp26x4> for Fp26x4 {
 
     /// Vectorised modular addition over four `Fp26` elements per lane,
     /// each result reduced to `[0, 2p)`.  Lane-wise add, then subtract
-    /// `2p` (add 2 to limb 0, subtract `2 * P4_26` from limb 9),
+    /// `2p` (add 2 to limb 0, subtract `2 * P12_26` from limb 12),
     /// propagate carries, conditionally add `2p` back per lane on
     /// borrow.  Mirrors [`Fp26::add`] structurally.
     fn add(self, rhs: Fp26x4) -> Fp26x4 {
@@ -1038,11 +1025,14 @@ impl Add<Fp26x4> for Fp26x4 {
                     _mm256_add_epi64(self.limbs[7], rhs.limbs[7]),
                     _mm256_add_epi64(self.limbs[8], rhs.limbs[8]),
                     _mm256_add_epi64(self.limbs[9], rhs.limbs[9]),
+                    _mm256_add_epi64(self.limbs[10], rhs.limbs[10]),
+                    _mm256_add_epi64(self.limbs[11], rhs.limbs[11]),
+                    _mm256_add_epi64(self.limbs[12], rhs.limbs[12]),
                 ],
             };
 
             let two = _mm256_set1_epi64x(2);
-            let two_p4 = _mm256_set1_epi64x((2 * P4_26) as i64);
+            let two_p4 = _mm256_set1_epi64x((2 * P12_26) as i64);
 
             n.limbs[0] = _mm256_add_epi64(n.limbs[0], two);
             n.limbs[LIMBS_26 - 1] = _mm256_sub_epi64(n.limbs[LIMBS_26 - 1], two_p4);
@@ -1081,11 +1071,14 @@ impl Sub<Fp26x4> for Fp26x4 {
                     _mm256_sub_epi64(self.limbs[7], rhs.limbs[7]),
                     _mm256_sub_epi64(self.limbs[8], rhs.limbs[8]),
                     _mm256_sub_epi64(self.limbs[9], rhs.limbs[9]),
+                    _mm256_sub_epi64(self.limbs[10], rhs.limbs[10]),
+                    _mm256_sub_epi64(self.limbs[11], rhs.limbs[11]),
+                    _mm256_sub_epi64(self.limbs[12], rhs.limbs[12]),
                 ],
             };
 
             let two = _mm256_set1_epi64x(2);
-            let two_p4 = _mm256_set1_epi64x((2 * P4_26) as i64);
+            let two_p4 = _mm256_set1_epi64x((2 * P12_26) as i64);
 
             let borrow = n.prop();
             n.limbs[0] = _mm256_sub_epi64(n.limbs[0], _mm256_and_si256(two, borrow));
@@ -1103,20 +1096,20 @@ impl Fp26x4 {
     /// Vectorised Montgomery multiplication: returns
     /// `[a[0] * b[0] * R^-1, ..., a[3] * b[3] * R^-1]` packed in SoA form.
     ///
-    /// 10x10 schoolbook outer-product CIOS, identical algorithm to
+    /// 13x13 schoolbook outer-product CIOS, identical algorithm to
     /// `Fp26::mont_mul_const` but lane-parallel over 4 independent
     /// `Fp26` products via `_mm256_mul_epu32` (VPMULUDQ: u32 * u32 -> u64
     /// across 4 lanes).
     ///
-    /// 19 column iterations.  Each column accumulates the partial
+    /// 25 column iterations.  Each column accumulates the partial
     /// products `a[j] * b[i-j]` for `j` in the valid range, plus (when
-    /// `i >= 9`) the Montgomery fold term `v[i-9] * P4_26`.  The low
+    /// `i >= 12`) the Montgomery fold term `v[i-12] * P12_26`.  The low
     /// 26 bits of the running u64 lane become the column's output
     /// limb; the high bits carry to the next column via
     /// `_mm256_srli_epi64::<26>`.
     ///
-    /// Output limbs satisfy `limbs[i] < 2^26` per lane for `i < 9` and
-    /// `limbs[9] < 2^20` per lane (result in `[0, 2p)`).  Use
+    /// Output limbs satisfy `limbs[i] < 2^26` per lane for `i < 12` and
+    /// `limbs[12] < 2^15` per lane (result in `[0, 2p)`).  Use
     /// [`Fp26x4::final_sub`] to canonicalize.
     ///
     /// A Karatsuba 5+5 decomposition (3 sub-products of 5x5 + assembly)
@@ -1132,7 +1125,7 @@ impl Fp26x4 {
 
             let zero = _mm256_setzero_si256();
             let mask_26 = _mm256_set1_epi64x(MASK_26 as i64);
-            let p4 = _mm256_set1_epi64x(P4_26 as i64);
+            let p4 = _mm256_set1_epi64x(P12_26 as i64);
 
             let mut t = zero;
             let mut v = [zero; LIMBS_26];
@@ -1183,7 +1176,7 @@ impl Fp26x4 {
     /// once.  Montgomery interleaving is identical to
     /// [`Fp26x4::mul`].
     ///
-    /// Multiply count: 55 `_mm256_mul_epu32` calls vs the 100 of the
+    /// Multiply count: 91 `_mm256_mul_epu32` calls vs the 169 of the
     /// asymmetric schoolbook (`a * a` going through `mul`).  The
     /// doubling adds a cheap shift per off-diagonal column.  A
     /// follow-up Karatsuba decomposition can squeeze the constant
@@ -1196,7 +1189,7 @@ impl Fp26x4 {
 
             let zero = _mm256_setzero_si256();
             let mask_26 = _mm256_set1_epi64x(MASK_26 as i64);
-            let p4 = _mm256_set1_epi64x(P4_26 as i64);
+            let p4 = _mm256_set1_epi64x(P12_26 as i64);
 
             let mut t = zero;
             let mut v = [zero; LIMBS_26];
@@ -1246,11 +1239,10 @@ impl Fp26x4 {
     }
 }
 
-// Cross-impl test submodule is gated on cfg(not(sqisign_selkie_arch =
-// "avx2")) for the same reason neon's is: under cfg-avx2 `Fp = Fp26` and
-// the cross-bridge tests become tautological. Tests fire on x86_64 hosts
-// under default features.
-#[cfg(all(test, not(sqisign_selkie_arch = "avx2")))]
+// Cross-impl tests bridge `Fp26 <-> Fp`; `Fp` is never `Fp26` (the
+// dispatcher only picks scalar backends), so they are real on every
+// AVX2 target.
+#[cfg(test)]
 mod tests;
 
 // Compile-time correctness checks: from_limbs must agree with the portable
@@ -1258,9 +1250,9 @@ mod tests;
 // the const evaluator, so failure breaks the build before any test executes.
 const _: () = {
     assert!(MASK_26 == (1u32 << RADIX_26) - 1);
-    assert!(RADIX_26 as usize * LIMBS_26 >= 248);
+    assert!(RADIX_26 as usize * LIMBS_26 >= 326);
 
-    let from_portable_zero = Fp26::from_limbs(Fp51::ZERO.0);
+    let from_portable_zero = Fp26::from_limbs(Fp55::ZERO.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1268,7 +1260,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_one = Fp26::from_limbs(Fp51::ONE.0);
+    let from_portable_one = Fp26::from_limbs(Fp55::ONE.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1276,7 +1268,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_two = Fp26::from_limbs(Fp51::TWO.0);
+    let from_portable_two = Fp26::from_limbs(Fp55::TWO.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1284,7 +1276,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_four = Fp26::from_limbs(Fp51::FOUR.0);
+    let from_portable_four = Fp26::from_limbs(Fp55::FOUR.0);
     let mut i = 0;
 
     while i < LIMBS_26 {
@@ -1292,7 +1284,7 @@ const _: () = {
         i += 1;
     }
 
-    let from_portable_minus_one = Fp26::from_limbs(Fp51::MINUS_ONE.0);
+    let from_portable_minus_one = Fp26::from_limbs(Fp55::MINUS_ONE.0);
     let mut i = 0;
 
     while i < LIMBS_26 {

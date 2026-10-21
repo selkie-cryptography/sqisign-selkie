@@ -1,8 +1,10 @@
 \begin{abstract}
 SQIsign has the smallest signatures and public keys of any post-quantum
 signature scheme.  It is also one of the hardest to implement correctly.
-We describe \texttt{sqisign-selkie}, a Rust implementation of SQIsign~v2.0.1
-for NIST-I, built from the specification and C reference implementation.
+We describe \texttt{sqisign-selkie}, a Rust implementation of SQIsign
+for NIST-I built from the specification and the C reference
+implementation: first to byte-equality with the v2.0.1 reference, now
+moving layer by layer to the round-3 v3.0 specification.
 Along the way we found a catalog of bugs traceable to specification
 ambiguities, implicit C reference conventions, and fixed-precision
 arithmetic.  We catalog these, explain how they arose, and extract

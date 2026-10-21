@@ -362,21 +362,8 @@ impl Curve {
         // Normalized doubling constants `(A₂₄/(4C) : 1) = (1/2 : 1)`
         // for E0 (A = 0, C = 1). See `DoublingConstants::from` for
         // why the normalized form is required.
-        //
-        // `1/2` in Montgomery radix-2⁵¹ form was computed via
-        // `(Fp::ONE + Fp::ONE).invert()` (see `print_one_half_limbs`
-        // in `surfaces/tests.rs`).
         doubling: DoublingConstants {
-            A24: Fp2::new(
-                Fp::from_limbs([
-                    0x000000000000000C,
-                    0x0000000000000000,
-                    0x0000000000000000,
-                    0x0000000000000000,
-                    0x0000400000000000,
-                ]),
-                Fp::ZERO,
-            ),
+            A24: Fp2::new(Fp::TWO_INV, Fp::ZERO),
             C24: Fp2::ONE,
         },
     };

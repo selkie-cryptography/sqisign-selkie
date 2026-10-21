@@ -82,17 +82,6 @@ pub(crate) mod quaternions;
 #[cfg(feature = "expose-internals")]
 pub mod quaternions;
 
-// Deuring correspondence: ideal ↔ isogeny bridge
-#[cfg(not(feature = "expose-internals"))]
-pub(crate) mod deuring;
-#[cfg(feature = "expose-internals")]
-pub mod deuring;
-
-// Always-private modules.
-
-// Challenge hash function
-pub(crate) mod hash;
-
 // AES256-CTR-DRBG (SP 800-90A) used by _derand entry points
 #[cfg(not(feature = "expose-internals"))]
 pub(crate) mod drbg;
@@ -105,13 +94,6 @@ pub mod drbg;
 #[cfg(all(feature = "mca", target_arch = "x86_64"))]
 mod mca_shims;
 
-// Key types and signatures
-#[cfg(not(feature = "expose-internals"))]
-pub(crate) mod keys;
-#[cfg(feature = "expose-internals")]
-pub mod keys;
-
 // Public API.
 
-pub use keys::{Signature, SignatureError, SigningKey, VerifyingKey};
 pub use params::{SIGNATURE_BYTES, SIGNING_KEY_BYTES, VERIFYING_KEY_BYTES};

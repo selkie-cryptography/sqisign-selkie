@@ -5,14 +5,14 @@
 //! Differential proptests for `Fp` and `Fp2` against `num-bigint`.
 //!
 //! The reference computes the result as an unbounded `num_bigint`
-//! value, reduces it mod `p = 5·2²⁴⁸ − 1` (or, for `Fp2`, performs
+//! value, reduces it mod `p = 3 * 2^324 - 1` (or, for `Fp2`, performs
 //! the `(a, b)`-pair arithmetic with `i² = −1` and reduces each
-//! coordinate mod `p`), then encodes the reduced value as 32 (or
-//! 64) little-endian bytes. The same input bytes go through `Fp` /
+//! coordinate mod `p`), then encodes the reduced value as 41 (or
+//! 82) little-endian bytes. The same input bytes go through `Fp` /
 //! `Fp2`'s own `from_bytes` → op → `to_bytes` path. Equality on the
 //! encoded bytes is the property under test.
 //!
-//! Both sides see *canonical* (`< p`) inputs: random 32-byte vectors
+//! Both sides see *canonical* (`< p`) inputs: random 41-byte vectors
 //! are reduced mod `p` before being handed to `Fp::from_bytes`, since
 //! the decoder's contract demands canonical inputs.
 
@@ -24,17 +24,17 @@ use sqisign_selkie::{
     params::{FP_ENCODED_BYTES, FP2_ENCODED_BYTES},
 };
 
-/// `p = 5 · 2²⁴⁸ − 1`, the base prime, as an unbounded integer.
+/// `p = 3 * 2^324 - 1`, the base prime, as an unbounded integer.
 fn p() -> NumBigInt {
-    (NumBigInt::from(5u32) << 248) - NumBigInt::one()
+    (NumBigInt::from(3u32) << 324) - NumBigInt::one()
 }
 
-/// Lifts 32 LE bytes into a non-negative `num_bigint::BigInt`.
+/// Lifts 41 LE bytes into a non-negative `num_bigint::BigInt`.
 fn bytes_to_num(bytes: &[u8]) -> NumBigInt {
     NumBigInt::from_bytes_le(Sign::Plus, bytes)
 }
 
-/// Reduces an unbounded integer to `[0, p)` and encodes it as 32 LE
+/// Reduces an unbounded integer to `[0, p)` and encodes it as 41 LE
 /// bytes — the canonical wire form `Fp::from_bytes` expects.
 fn num_to_fp_bytes(n: &NumBigInt) -> [u8; FP_ENCODED_BYTES] {
     let p = p();
@@ -48,13 +48,13 @@ fn num_to_fp_bytes(n: &NumBigInt) -> [u8; FP_ENCODED_BYTES] {
     out
 }
 
-/// Reduces 32 input bytes to a canonical Fp encoding by interpreting
+/// Reduces 41 input bytes to a canonical Fp encoding by interpreting
 /// them as an unsigned integer and taking mod p.
 fn canon_fp_bytes(bytes: &[u8; FP_ENCODED_BYTES]) -> [u8; FP_ENCODED_BYTES] {
     num_to_fp_bytes(&bytes_to_num(bytes))
 }
 
-/// Splits 64 input bytes into two canonical Fp encodings (real, imag).
+/// Splits 82 input bytes into two canonical Fp encodings (real, imag).
 fn canon_fp2_bytes(
     bytes: &[u8; FP2_ENCODED_BYTES],
 ) -> ([u8; FP_ENCODED_BYTES], [u8; FP_ENCODED_BYTES]) {
@@ -65,7 +65,7 @@ fn canon_fp2_bytes(
     (canon_fp_bytes(&a), canon_fp_bytes(&b))
 }
 
-/// Reassembles two canonical Fp encodings into a 64-byte Fp2 encoding.
+/// Reassembles two canonical Fp encodings into an 82-byte Fp2 encoding.
 fn join_fp2_bytes(
     a: &[u8; FP_ENCODED_BYTES],
     b: &[u8; FP_ENCODED_BYTES],

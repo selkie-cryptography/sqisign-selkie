@@ -1,4 +1,4 @@
-//! Field arithmetic modulo [p = 5 · 2²⁴⁸ − 1][§2.1].
+//! Field arithmetic modulo [p = 3 · 2^324 − 1][§5.2].
 //!
 //! `Fp` is a concrete type re-exported from one of the architecture-
 //! specific implementations under [`arch`].  All higher-level code in
@@ -8,18 +8,17 @@
 //! `arch` module.
 //!
 //! The generic backend (`arch::generic`) is the always-available
-//! radix-51 Montgomery `[u64; 5]` implementation matching the SQIsign
-//! C reference.  `arch::aarch64::neon` (radix-29 NEON-vectorised) and
-//! `arch::x86_64::avx2` (radix-26 AVX2-vectorised) provide alternate
-//! storage layouts selected via `cfg(sqisign_selkie_arch)` emitted by
-//! `build.rs`.  On x86_64 with `target_feature = "bmi2"` and
-//! `target_feature = "adx"`, the generic backend's hot leaves dispatch
-//! to `arch::x86_64::mulx_adx`'s MULX + dual ADCX/ADOX asm without
-//! changing the radix-51 storage.  All backends
-//! use Montgomery form per `p = β · 2^α − 1`'s structure (β = 5, α = 248).
+//! radix-55 Montgomery `[u64; 6]` implementation matching the SQIsign
+//! C reference's portable field code.  `arch::aarch64::neon` (radix-29
+//! NEON-vectorised) and `arch::x86_64::avx2` (radix-26 AVX2-vectorised)
+//! provide alternate storage layouts selected via
+//! `cfg(sqisign_selkie_arch)` emitted by `build.rs`.  On x86_64 with
+//! `target_feature = "bmi2"` and `target_feature = "adx"`, the scalar
+//! `Fp` is `arch::x86_64::mulx_adx`'s six-limb MULX + dual ADCX/ADOX
+//! backend.  All backends use Montgomery form per `p = c · 2^f − 1`'s
+//! structure (c = 3, f = 324).
 //!
-//! [§2.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.2.1
-//! [§8.1]: https://sqisign.org/spec/sqisign-20250707.pdf#section.8.1
+//! [§5.2]: https://sqisign.org/spec/sqisign-20260901.pdf#sec:param_sets
 
 // `arch` visibility tracks two orthogonal axes:
 //
@@ -49,24 +48,24 @@ pub mod arch;
 #[cfg(test)]
 mod tests;
 
-/// Number of bytes in a canonical encoding of an element of F_p.
-pub const FP_ENCODED_BYTES: usize = 32;
+/// Number of bytes in a canonical encoding of an element of F_p:
+/// ⌈log2(p) / 8⌉ = ⌈326 / 8⌉ = 41.
+pub const FP_ENCODED_BYTES: usize = 41;
 
 // `Fp` re-export: scalar backend picked by `cfg(target_feature)`
 // directly (no `build.rs` indirection).  The active backend is the
 // best scalar `Fp` available on the target -- `Fp64` MULX+ADX asm
-// on x86_64+bmi2+adx, else the always-available `Fp51`.
+// on x86_64+bmi2+adx, else the always-available `Fp55`.
 //
-// Each non-`Fp51` backend has a `from_limbs([u64; 5])` const-bridge
-// that accepts `Fp51`'s radix-51 Montgomery limbs and const-converts
+// Each non-`Fp55` backend has a `from_limbs([u64; 6])` const-bridge
+// that accepts `Fp55`'s radix-55 Montgomery limbs and const-converts
 // at compile time, so precomputed-constant tables in `params.rs`
-// and `deuring/precomputed.rs` are signature-compatible across all
-// backends.
+// are signature-compatible across all backends.
 //
 // Batch helpers (`Fp26x4` / `Fp29x4`) compile in independently
 // when their ISA is available; see [`batch`] below.  They are not
-// the active `Fp` -- per-op single-lane SIMD loses to scalar `Fp64`
-// asm on Sapphire and loses to scalar `Fp51` on M4.  Call sites
+// the active `Fp`: per-op single-lane SIMD loses to scalar `Fp64`
+// asm on Sapphire and loses to scalar `Fp55` on M4.  Call sites
 // that need 4-Fp-at-once batches reach for the batch type
 // explicitly.
 #[cfg(not(all(
@@ -74,7 +73,7 @@ pub const FP_ENCODED_BYTES: usize = 32;
     target_feature = "bmi2",
     target_feature = "adx",
 )))]
-pub use arch::generic::Fp51 as Fp;
+pub use arch::generic::Fp55 as Fp;
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "bmi2",
@@ -87,7 +86,7 @@ pub use arch::x86_64::mulx_adx::Fp64 as Fp;
 /// available; not the active scalar `Fp`.
 ///
 /// Each ISA pair has both the 4-wide batch type (`Fp26x4` / `Fp29x4`)
-/// and its scalar-batch partner (`Fp26` / `Fp29`) -- the type that
+/// and its scalar-batch partner (`Fp26` / `Fp29`), the type that
 /// `from_scalars` / `to_scalars` reads/writes at the batch boundary.
 ///
 /// **`pub(crate)` for now**: there are no in-crate callers yet (the

@@ -24,12 +24,12 @@ use num_bigint::BigInt as NumBigInt;
 use num_traits::{One, Signed, Zero};
 use sqisign_selkie::{fields::fp::Fp, params::FP_ENCODED_BYTES};
 
-/// `p = 5 · 2²⁴⁸ − 1`, the base prime, as an unbounded integer.
+/// `p = 3 * 2^324 - 1`, the base prime, as an unbounded integer.
 fn p() -> NumBigInt {
-    (NumBigInt::from(5u32) << 248) - NumBigInt::one()
+    (NumBigInt::from(3u32) << 324) - NumBigInt::one()
 }
 
-/// Reduces an unbounded integer to `[0, p)` and encodes it as 32 LE
+/// Reduces an unbounded integer to `[0, p)` and encodes it as 41 LE
 /// bytes — the canonical wire form `Fp::from_bytes` expects.
 fn num_to_fp_bytes(n: &NumBigInt) -> [u8; FP_ENCODED_BYTES] {
     let p = p();
@@ -109,47 +109,51 @@ fn boundary_inputs() -> Vec<BoundaryInput> {
             name: "(p+1)/2",
             value: (&p + &one) / 2u32,
         },
-        // Radix-2^51 limb fenceposts. A canonical Fp value at exactly
-        // 2^(51k) − 1 saturates limbs 0..k-1; adding 1 forces a carry
-        // through every limb up to k. Production's radix-51 add must
+        // Radix-2^55 limb fenceposts. A canonical Fp value at exactly
+        // 2^(55k) - 1 saturates limbs 0..k-1; adding 1 forces a carry
+        // through every limb up to k. Production's radix-55 add must
         // propagate this carry correctly.
         BoundaryInput {
-            name: "2^51 - 1",
-            value: (&one << 51) - &one,
+            name: "2^55 - 1",
+            value: (&one << 55) - &one,
         },
         BoundaryInput {
-            name: "2^102 - 1",
-            value: (&one << 102) - &one,
+            name: "2^110 - 1",
+            value: (&one << 110) - &one,
         },
         BoundaryInput {
-            name: "2^153 - 1",
-            value: (&one << 153) - &one,
+            name: "2^165 - 1",
+            value: (&one << 165) - &one,
         },
         BoundaryInput {
-            name: "2^204 - 1",
-            value: (&one << 204) - &one,
-        },
-        // Just inside / just outside the prime layout. p = 5·2^248 − 1,
-        // so 2^248 = (p+1)/5 is the smallest 249-bit canonical Fp
-        // value; 2^248 − 1 saturates the lower 248 bits.
-        BoundaryInput {
-            name: "2^248",
-            value: &one << 248,
+            name: "2^220 - 1",
+            value: (&one << 220) - &one,
         },
         BoundaryInput {
-            name: "2^248 - 1",
-            value: (&one << 248) - &one,
+            name: "2^275 - 1",
+            value: (&one << 275) - &one,
         },
-        // Multiplication-accumulator pressure: 2^127 squared produces
-        // 2^254, which is at the top of the canonical Fp range (just
-        // under 2^255 = R). Tests the high-limb path of the product.
+        // Just inside / just outside the prime layout. p = 3*2^324 - 1,
+        // so 2^324 = (p+1)/3 is the smallest 325-bit canonical Fp
+        // value; 2^324 - 1 saturates the lower 324 bits.
         BoundaryInput {
-            name: "2^124",
-            value: &one << 124,
+            name: "2^324",
+            value: &one << 324,
         },
         BoundaryInput {
-            name: "2^127",
-            value: &one << 127,
+            name: "2^324 - 1",
+            value: (&one << 324) - &one,
+        },
+        // Multiplication-accumulator pressure: 2^162 squared is 2^324,
+        // a single bit in the top limb; 2^164 squared is 2^328, above
+        // the canonical range, so the product must reduce.
+        BoundaryInput {
+            name: "2^162",
+            value: &one << 162,
+        },
+        BoundaryInput {
+            name: "2^164",
+            value: &one << 164,
         },
     ]
 }
@@ -213,12 +217,13 @@ fn vector_recipes(inputs: &[BoundaryInput]) -> Vec<(usize, usize, Op, String)> {
         ),
     ];
 
-    // Radix-2^51 limb fenceposts: adding 1 forces a carry chain.
+    // Radix-2^55 limb fenceposts: adding 1 forces a carry chain.
     for (max, label) in &[
-        ("2^51 - 1", "limb 0 -> limb 1"),
-        ("2^102 - 1", "limbs 0..1 -> limb 2"),
-        ("2^153 - 1", "limbs 0..2 -> limb 3"),
-        ("2^204 - 1", "limbs 0..3 -> limb 4"),
+        ("2^55 - 1", "limb 0 -> limb 1"),
+        ("2^110 - 1", "limbs 0..1 -> limb 2"),
+        ("2^165 - 1", "limbs 0..2 -> limb 3"),
+        ("2^220 - 1", "limbs 0..3 -> limb 4"),
+        ("2^275 - 1", "limbs 0..4 -> limb 5"),
     ] {
         recipes.push((
             by_name(max),
@@ -228,32 +233,32 @@ fn vector_recipes(inputs: &[BoundaryInput]) -> Vec<(usize, usize, Op, String)> {
         ));
     }
 
-    // 2^248 cluster: just inside the prime layout.
+    // 2^324 cluster: just inside the prime layout.
     recipes.push((
-        by_name("2^248 - 1"),
+        by_name("2^324 - 1"),
         by_name("1"),
         Op::Add,
-        "(2^248 - 1) + 1 = 2^248 — carry into the c=5 region of limb 4".into(),
+        "(2^324 - 1) + 1 = 2^324 — carry into the c=3 region of limb 5".into(),
     ));
     recipes.push((
-        by_name("2^248"),
-        by_name("2^248"),
+        by_name("2^324"),
+        by_name("2^324"),
         Op::Add,
-        "2 * 2^248 mod p = (2p + 2)/5 — modulus crossing in the top region".into(),
+        "2 * 2^324 mod p = (2p + 2)/3 — modulus crossing in the top region".into(),
     ));
 
     // Multiplication accumulator stress.
     recipes.push((
-        by_name("2^124"),
-        by_name("2^124"),
+        by_name("2^162"),
+        by_name("2^162"),
         Op::Mul,
-        "2^124 * 2^124 = 2^248 mod p — single-bit set in high limb".into(),
+        "2^162 * 2^162 = 2^324 mod p — single-bit set in high limb".into(),
     ));
     recipes.push((
-        by_name("2^127"),
-        by_name("2^127"),
+        by_name("2^164"),
+        by_name("2^164"),
         Op::Mul,
-        "2^127 * 2^127 = 2^254 mod p — top of canonical Fp range".into(),
+        "2^164 * 2^164 = 2^328 mod p — above the canonical range, reduces".into(),
     ));
     recipes.push((
         by_name("p-1"),
@@ -357,12 +362,12 @@ fn main() {
     let n = entries.len();
     let json = format!(
         r#"{{
-  "algorithm": "SQIsign_248_Fp",
+  "algorithm": "SQIsign_324_Fp",
   "schema": "fp_fault_simulation_schema.json",
   "generatorVersion": "sqisign-selkie-0.0.1",
   "numberOfTests": {n},
   "header": [
-    "Boundary-input vectors for Fp arithmetic (p = 5*2^248 - 1).",
+    "Boundary-input vectors for Fp arithmetic (p = 3*2^324 - 1).",
     "Each vector exercises a specific limb-boundary or modulus-crossing",
     "condition where a carry / reduction / overflow fault would diverge.",
     "Reference results computed via num-bigint at unbounded precision.",

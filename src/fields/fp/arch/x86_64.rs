@@ -3,10 +3,10 @@
 //! Two submodules, each with a distinct storage layout chosen to fit
 //! a different x86_64 instruction subset:
 //!
-//! - `mulx_adx`: radix-2^64 `Fp64([u64; 4])` with MULX + dual ADCX/ADOX asm.
+//! - `mulx_adx`: radix-2^64 `Fp64([u64; 6])` with MULX + dual ADCX/ADOX asm.
 //! - [`avx2`]: radix-2^26 `Fp26x4` 4-wide batch with `_mm256_mul_epu32`.
 //!
-//! `mulx_adx` matches the C ref's `gf/broadwell/lvl1/gf5248.c` storage
+//! `mulx_adx` matches the C ref's `gf/broadwell/p324_3` storage
 //! exactly.  Active as the crate-wide `Fp` on x86_64 builds that have
 //! `target_feature = "bmi2"` + `target_feature = "adx"` (Broadwell
 //! 2014+).  Module is cfg-gated on those features; not in scope on

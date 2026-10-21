@@ -3,7 +3,7 @@ name: C reference cross-check
 # C-reference byte-interop tests. Two jobs:
 #   - c-ref-cross-check: baked-vector tests (basis, all-bases, KAT
 #     verification) via plain `cargo test`; no live C ref needed.
-#   - randomized-byte-interop: builds a live C ref (mini-gmp) and drives
+#   - randomized-byte-interop: builds a live C ref (nist-v3) and drives
 #     keygen+sign over fresh seeds beyond the 100 baked KATs, comparing
 #     byte-for-byte (asserts keygen and signature byte-identity).
 # Split out of ci.yml so this is its own status check rather than a
@@ -46,10 +46,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # C reference pinned to a commit byte-compatible with our KATs (keygen
-  # is byte-identical; the byte-interop job asserts that over fresh seeds).
+  # C reference pinned to the round-3 tag nist-v3. Keygen and sign are
+  # byte-identical to it; the byte-interop job asserts that over fresh seeds.
   CREF_REPO: SQIsign/the-sqisign
-  CREF_REF: dd133d7aca576c361a270c8e6434832535b42ecc
+  CREF_REF: 6d017708db403bf83977fa70770fc4f7f9e9ff21
   # Fresh seeds for the randomized byte-interop. 256 spans a broad set of
   # keygen/sign rejection trajectories (~3 min after the cached C-ref
   # build); weekly cron sweeps more. Override via workflow_dispatch.
@@ -154,32 +154,9 @@ jobs:
         uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8  # v6.0.0
         with:
           path: cref/build
-          key: cref-build-${{ runner.os }}-${{ env.CREF_REF }}-mini-gmp-ref-tests-v1
+          key: cref-build-${{ runner.os }}-${{ env.CREF_REF }}-ref-tests-v1
 
-      - name: Patch stray unconditional gmp.h include
-        # ibz_division.c includes <gmp.h> unconditionally, bypassing the
-        # MINI_GMP toggle; mirror the toggle so the mini-gmp build finds
-        # the right type definitions when system libgmp is absent.
-        if: steps.cref-cache.outputs.cache-hit != 'true'
-        run: |
-          python3 - <<'PY'
-          import pathlib
-          p = pathlib.Path("cref/src/quaternion/ref/generic/hnf/ibz_division.c")
-          src = p.read_text()
-          old = "#include <gmp.h>\n"
-          new = (
-              "#if defined(MINI_GMP)\n"
-              "#include <mini-gmp.h>\n"
-              "#include <mini-gmp-extra.h>\n"
-              "#else\n"
-              "#include <gmp.h>\n"
-              "#endif\n"
-          )
-          assert src.count(old) == 1, "expected exactly one unconditional include"
-          p.write_text(src.replace(old, new, 1))
-          PY
-
-      - name: Configure C ref (mini-gmp + ref GF, NIST-I, tests on)
+      - name: Configure C ref (ref GF, NIST-I, tests on)
         # ENABLE_TESTS=ON builds the test-nistapi archive, which provides
         # the deterministic NIST KAT randombytes / randombytes_init the
         # oracle seeds per case.
@@ -187,16 +164,15 @@ jobs:
         run: |
           cmake -S cref -B cref/build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DGMP_LIBRARY=MINI \
             -DSQISIGN_BUILD_TYPE=ref \
             -DENABLE_TESTS=ON \
             -DENABLE_STRICT=OFF
 
       - name: Build C ref signature stack + KAT RNG
-        # PQCgenKAT_sign_lvl1 links exactly the archives the oracle needs,
-        # so building it produces all of them.
+        # PQCgenKAT_sign_p324_3 links exactly the archives the oracle needs;
+        # build.sh reads its link line.
         if: steps.cref-cache.outputs.cache-hit != 'true'
-        run: cmake --build cref/build -j --target PQCgenKAT_sign_lvl1
+        run: cmake --build cref/build -j --target PQCgenKAT_sign_p324_3
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae

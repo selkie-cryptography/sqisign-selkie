@@ -31,8 +31,9 @@
 //!   contains `avx2`.  AVX2 is not part of base x86_64; users opt in via
 //!   `RUSTFLAGS="-C target-cpu=..."` or `-C target-feature=+avx2`.
 //!
-//! The `arch::x86_64::avx2` backend doesn't exist yet — this hook is
-//! infrastructure that lights up when the AVX2 `Fp` lands.
+//! The `arch::x86_64::avx2` backend provides the batch types the cfg
+//! routes to; the scalar `Fp` stays on `mulx_adx` or the portable
+//! backend.
 
 fn main() {
     let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();

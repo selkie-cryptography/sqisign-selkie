@@ -27,9 +27,9 @@ use sqisign_selkie::{
     params::{FP_ENCODED_BYTES, FP2_ENCODED_BYTES},
 };
 
-/// `p = 5 · 2²⁴⁸ − 1`, the base prime, as an unbounded integer.
+/// `p = 3 * 2^324 - 1`, the base prime, as an unbounded integer.
 fn p() -> NumBigInt {
-    (NumBigInt::from(5u32) << 248) - NumBigInt::one()
+    (NumBigInt::from(3u32) << 324) - NumBigInt::one()
 }
 
 /// Reduces an unbounded integer to `[0, p)`.
@@ -42,7 +42,7 @@ fn reduce(n: NumBigInt) -> NumBigInt {
     r
 }
 
-/// Encodes one Fp component as 32 LE bytes.
+/// Encodes one Fp component as 41 LE bytes.
 fn fp_to_le(n: &NumBigInt) -> [u8; FP_ENCODED_BYTES] {
     let (_, mag) = reduce(n.clone()).to_bytes_le();
     let mut out = [0u8; FP_ENCODED_BYTES];
@@ -50,7 +50,7 @@ fn fp_to_le(n: &NumBigInt) -> [u8; FP_ENCODED_BYTES] {
     out
 }
 
-/// Encodes an Fp² element `a + bi` as 64 LE bytes: 32 for `a`, 32 for
+/// Encodes an Fp² element `a + bi` as 82 LE bytes: 41 for `a`, 41 for
 /// `b`, matching [`Fp2::from_bytes`]'s contract.
 fn fp2_to_le(a: &NumBigInt, b: &NumBigInt) -> [u8; FP2_ENCODED_BYTES] {
     let mut out = [0u8; FP2_ENCODED_BYTES];
@@ -97,7 +97,7 @@ fn boundary_inputs() -> Vec<BoundaryInput> {
     let one = NumBigInt::one();
     let zero = NumBigInt::zero();
     let p_minus_one: NumBigInt = &p - &one;
-    let two_127: NumBigInt = &one << 127;
+    let two_162: NumBigInt = &one << 162;
     let half: NumBigInt = (&p - &one) / 2u32;
     vec![
         BoundaryInput {
@@ -146,9 +146,9 @@ fn boundary_inputs() -> Vec<BoundaryInput> {
             imag: one.clone(),
         },
         BoundaryInput {
-            name: "2^127·(1+i)",
-            real: two_127.clone(),
-            imag: two_127.clone(),
+            name: "2^162·(1+i)",
+            real: two_162.clone(),
+            imag: two_162.clone(),
         },
         BoundaryInput {
             name: "((p-1)/2)·(1+i)",
@@ -196,8 +196,8 @@ fn vector_recipes(inputs: &[BoundaryInput]) -> Vec<(usize, usize, Op, String)> {
             "(p-1+i) + (1-i) = 0 — symmetric carry, asymmetric inputs".into(),
         ),
         (
-            by_name("2^127·(1+i)"),
-            by_name("2^127·(1+i)"),
+            by_name("2^162·(1+i)"),
+            by_name("2^162·(1+i)"),
             Op::Add,
             "limb-cross stress on both components simultaneously".into(),
         ),
@@ -307,10 +307,10 @@ fn vector_recipes(inputs: &[BoundaryInput]) -> Vec<(usize, usize, Op, String)> {
         // in each component. Propagates Fp's high-limb fault classes
         // through Fp² arithmetic.
         (
-            by_name("2^127·(1+i)"),
-            by_name("2^127·(1+i)"),
+            by_name("2^162·(1+i)"),
+            by_name("2^162·(1+i)"),
             Op::Mul,
-            "(2^127·(1+i))² — Fp high-limb stress through Fp² mul".into(),
+            "(2^162·(1+i))² — Fp high-limb stress through Fp² mul".into(),
         ),
         // Square specialization checks via the dedicated `square()`
         // path; same inputs as mul, different formulas internally.
@@ -417,7 +417,7 @@ fn main() {
     let n = entries.len();
     let json = format!(
         r#"{{
-  "algorithm": "SQIsign_248_Fp2",
+  "algorithm": "SQIsign_324_Fp2",
   "schema": "fp2_fault_simulation_schema.json",
   "generatorVersion": "sqisign-selkie-0.0.1",
   "numberOfTests": {n},

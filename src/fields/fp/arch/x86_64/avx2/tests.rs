@@ -13,20 +13,23 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 #[cfg(target_feature = "avx2")]
 use super::Fp26x4;
 use super::{Fp26, LIMBS_26, MASK_26, RADIX_26};
-use crate::fields::fp::arch::generic::Fp51 as PortableFp;
+use crate::fields::fp::{FP_ENCODED_BYTES, arch::generic::Fp55 as PortableFp};
 
-/// Builds a [`PortableFp`] from arbitrary 32-byte inputs.  The portable
+/// Builds a [`PortableFp`] from arbitrary canonical inputs.  The portable
 /// backend's `from_bytes` is the cross-impl reference for canonical-byte
 /// equivalence.
 fn arb_fp() -> impl Strategy<Value = PortableFp> {
-    any::<[u8; 32]>().prop_map(|b| PortableFp::from_bytes(&b))
+    any::<[u8; FP_ENCODED_BYTES]>().prop_map(|mut b| {
+        b[FP_ENCODED_BYTES - 1] &= 0x0F;
+        PortableFp::from_bytes(&b)
+    })
 }
 
-/// Builds a byte string guaranteed to encode a value below `2^248 < p`,
+/// Builds a byte string guaranteed to encode a value below `2^320 < p`,
 /// so [`PortableFp::from_bytes`] round-trips it exactly.
-fn arb_canonical_bytes() -> impl Strategy<Value = [u8; 32]> {
-    any::<[u8; 32]>().prop_map(|mut b| {
-        b[31] = 0;
+fn arb_canonical_bytes() -> impl Strategy<Value = [u8; FP_ENCODED_BYTES]> {
+    any::<[u8; FP_ENCODED_BYTES]>().prop_map(|mut b| {
+        b[FP_ENCODED_BYTES - 1] = 0;
         b
     })
 }
@@ -39,8 +42,8 @@ fn into_fp26(fp: PortableFp) -> Fp26 {
 }
 
 proptest! {
-    /// Bit-packing round-trips through 10 * 26-bit limbs without loss for
-    /// any input below `2^248`.
+    /// Bit-packing round-trips through 13 * 26-bit limbs without loss for
+    /// any input below `2^320`.
     #[test]
     fn bytes_round_trip(canonical in arb_canonical_bytes()) {
         let fp26 = Fp26::from_bytes_le(&canonical);
@@ -324,7 +327,7 @@ fn fp26_minus_one_matches_fp_minus_one() {
 
 #[test]
 fn limb_layout_invariants() {
-    assert_eq!(LIMBS_26, 10);
+    assert_eq!(LIMBS_26, 13);
     assert_eq!(RADIX_26, 26);
     assert_eq!(MASK_26, (1u32 << RADIX_26) - 1);
 }

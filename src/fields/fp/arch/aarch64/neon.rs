@@ -6,22 +6,22 @@
 //!
 //! Active-`Fp` role: NONE.  Per the M1/M4 measurements in the
 //! `arch-neon-fp` memory entry, narrow-SIMD single-lane (Fp29)
-//! loses to wide-MUL scalar (Fp51) per-op on Apple Silicon's wide
-//! u64-multiply pipe, so the dispatcher keeps Fp51 active on
+//! loses to wide-MUL scalar (Fp55) per-op on Apple Silicon's wide
+//! u64-multiply pipe, so the dispatcher keeps Fp55 active on
 //! aarch64.  `Fp29` continues to exist as `Fp29x4`'s scalar-batch
 //! partner -- the type that the conversion at the batch boundary
 //! reads / writes.  Call sites that explicitly want 4-Fp-at-once
 //! storage reach for `Fp29x4` via `fp::batch::Fp29x4`.
 //!
-//! - **Limb layout**: [`Fp29`] holds nine 29-bit unsaturated limbs in 32-bit
-//!   lanes.  Nine limbs cover the 248-bit modulus with 13 bits of per-limb
-//!   carry headroom, enough for a chain of additions before normalization.
-//! - **SIMD packing**: 4 elements share a 9-vector of `uint32x4_t`, one limb
+//! - **Limb layout**: [`Fp29`] holds twelve 29-bit unsaturated limbs in 32-bit
+//!   lanes.  Twelve limbs cover the 326-bit modulus with 22 bits of headroom
+//!   above it, enough for a chain of additions before normalization.
+//! - **SIMD packing**: 4 elements share a 12-vector of `uint32x4_t`, one limb
 //!   per lane.  One `vmlal_u32` schoolbook step computes the same limb position
 //!   for four independent products.
-//! - **Multiplication**: schoolbook `Fp * Fp` with `vmlal_u32` (multiply-
-//!   accumulate widening to 64-bit lanes), interleaved with Montgomery-style
-//!   reduction via the `p = 5 * 2^248 - 1` structure.
+//! - **Multiplication**: Karatsuba 6+6 over `vmlal_u32` (multiply- accumulate
+//!   widening to 64-bit lanes), followed by Montgomery reduction via the `p = 3
+//!   * 2^324 - 1` structure.
 //! - **Karatsuba `Fp^2`**: composed at the [`crate::fields::fp2`] level over
 //!   vectorized `Fp` muls; already 3M+5A and stays so.
 //! - **Lazy reduction**: limbs are normalized only at boundaries where
@@ -32,14 +32,12 @@
 //! Cortex-A76 the same code gets 1.48-1.52x because more of the
 //! workload is multiplier-bound on the in-order core.
 //!
-//! # Why nine 29-bit limbs rather than eight 31-bit limbs
+//! # Why 29-bit limbs
 //!
-//! NEON's widening multiply-accumulate is `u32 * u32 -> u64`.  With 31-bit
-//! limbs the accumulator only has 2 bits of headroom before the upper
-//! `u64` lane overflows, leaving no slack for the Montgomery cross-terms
-//! that fold `P4 = 5 * 2^44` into limb positions.  With 29-bit limbs the
-//! accumulator has 6 bits of headroom: enough for the schoolbook column
-//! and the two `* P4` cross-terms without an interleaved normalization.
+//! NEON's widening multiply-accumulate is `u32 * u32 -> u64`.  With 29-bit
+//! limbs a Karatsuba column sums at most six products of 30-bit sums plus
+//! the fold term, staying under `2^64` without an interleaved
+//! normalization; 31-bit limbs would leave no slack.
 //!
 //! # Constant-time
 //!
@@ -65,21 +63,12 @@ use core::{
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
-// `Fp` is the other backend's scalar; only needed for the cross-impl
-// `From<Fp> for Fp29` / `From<Fp29> for Fp` boundary that exists when the
-// dispatcher selects portable.  Under cfg-neon `Fp = Fp29` and the
-// conversions collapse to identity, making the import unused.
-#[cfg(not(sqisign_selkie_arch = "neon"))]
-use crate::fields::fp::Fp;
+use crate::fields::fp::{FP_ENCODED_BYTES, Fp};
 
-// The test submodule is cross-impl: every test bridges `Fp29 <-> Fp` via the
-// explicit `From` impls.  Under cfg-neon `Fp = Fp29` and those bridges
-// collapse to identity (the `From<T> for T` auto-impl), turning every cross-
-// impl assertion into a tautology that clippy correctly flags as
-// `useless_conversion`.  The production paths under cfg-neon are exercised
-// by the rest of the crate's test suite running against the dispatched
-// backend, so gating this submodule out is correct.
-#[cfg(all(test, not(sqisign_selkie_arch = "neon")))]
+// Cross-impl tests bridge `Fp29 <-> Fp` through the `From` impls below.
+// `Fp` is never `Fp29` (the dispatcher only picks scalar backends), so
+// the bridge is real on every target with NEON.
+#[cfg(test)]
 mod tests;
 
 /// Bits per limb in the radix-29 representation.
@@ -90,65 +79,72 @@ pub const MASK_29: u32 = (1u32 << RADIX_29) - 1;
 
 /// Number of limbs in the radix-29 representation.
 ///
-/// Nine limbs of 29 bits each cover 261 bits, with 13 bits of headroom
-/// above the 248-bit modulus.
-pub const LIMBS_29: usize = 9;
+/// Twelve limbs of 29 bits each cover 348 bits, with 22 bits of headroom
+/// above the 326-bit modulus.
+pub const LIMBS_29: usize = 12;
 
-/// Montgomery fold multiplier: `5 * 2^16`.
+/// Split point of the 6+6 Karatsuba decomposition in [`Fp29x4`].
+const HALF_29: usize = LIMBS_29 / 2;
+
+/// Montgomery fold multiplier: `3 * 2^5`.
 ///
-/// At the boundary where the schoolbook column index `i >= 8`, the interleaved
-/// Montgomery reduction adds `v[i-8] * P4_29` to the accumulator.  This is
-/// equivalent (mod p) to adding `v[i-8] * 5 * 2^248` because `5 * 2^248 == 1
-/// (mod p)`, and within limb 8 the offset is `248 - 8 * 29 = 16`.
-const P4_29: u32 = 5 << 16;
+/// At the boundary where the schoolbook column index `i >= 11`, the
+/// interleaved Montgomery reduction adds `v[i-11] * P11_29` to the
+/// accumulator.  This is equivalent (mod p) to adding `v[i-11] * 3 * 2^324`
+/// because `3 * 2^324 == 1 (mod p)`, and within limb 11 the offset is
+/// `324 - 11 * 29 = 5`.
+const P11_29: u32 = 3 << 5;
 
 /// `p` in radix-29 form.
 ///
 /// Used by `Fp29::final_sub` to subtract the modulus from an unreduced
-/// result.  Computed from `p = 5 * 2^248 - 1`:
-/// limbs 0..7 are `2^29 - 1`, limb 8 is `0x4FFFF`.
+/// result.  Computed from `p = 3 * 2^324 - 1`:
+/// limbs 0..10 are `2^29 - 1`, limb 11 is `0x5F`.
 const P_LIMBS: [u32; LIMBS_29] = [
     0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF,
-    0x0004FFFF,
+    0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x0000005F,
 ];
 
-/// `R^2_29 mod p` where `R_29 = 2^261`.
+/// `R^2_29 mod p` where `R_29 = 2^348`.
 ///
-/// Precomputed via `pow(2, 522, p)` and packed into 9 x 29-bit limbs.
+/// Precomputed via `pow(2, 696, p)` and packed into 12 x 29-bit limbs.
 /// Used by [`From<Fp>`] to enter Fp29 Montgomery form:
 /// `canonical_value * R^2_29 * R^-1 = canonical_value * R`.
 const R2_29: Fp29 = Fp29 {
     limbs: [
-        0x0CF5_C28F,
-        0x0666_6666,
-        0x1333_3333,
-        0x1999_9999,
-        0x0CCC_CCCC,
-        0x0666_6666,
-        0x1333_3333,
-        0x1999_9999,
-        0x0001_CCCC,
+        0x1C71_C71C,
+        0x0AAB_8E38,
+        0x1555_5555,
+        0x0AAA_AAAA,
+        0x1555_5555,
+        0x0AAA_AAAA,
+        0x1555_5555,
+        0x0AAA_AAAA,
+        0x1555_5555,
+        0x0AAA_AAAA,
+        0x1555_5555,
+        0x0000_002A,
     ],
 };
 
 /// `1` in non-Montgomery form, used to exit Montgomery form via the `Mul`
 /// trait impl: `mont * 1 * R^-1 = mont / R = canonical`.
 const ONE_RAW: Fp29 = Fp29 {
-    limbs: [1, 0, 0, 0, 0, 0, 0, 0, 0],
+    limbs: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 };
 
 /// Field element in radix-29 limb form, in Montgomery representation.
 ///
-/// Parallel representation to `Fp`'s radix-51 layout,
+/// Parallel representation to `Fp`'s radix-55 layout,
 /// laid out for NEON 32-bit-lane packing.  Limbs are little-endian:
 /// `limbs[0]` is the least significant 29 bits.  The stored value is
-/// `value * R_29 mod p` where `R_29 = 2^261`; multiplication via the
+/// `value * R_29 mod p` where `R_29 = 2^348`; multiplication via the
 /// `Mul` impl returns `a * b * R^-1`.
 ///
 /// # Invariants
 ///
-/// - After the `Mul` impl or [`From<Fp>`], `limbs[i] < 2^29` for `i < 8` and
-///   `limbs[8] < 2^20` (sub-`2p` bound).
+/// - After the `Mul` impl or [`From<Fp>`], `limbs[i] < 2^29` for `i < 11` and
+///   `limbs[11] < 2^8` (sub-`2p` bound).
 /// - [`Fp29::from_bytes_le`] / [`Fp29::to_bytes_le`] operate on canonical
 ///   (non-Montgomery) limbs; they're the byte boundary, before/after the
 ///   Montgomery scaling.
@@ -159,9 +155,9 @@ const ONE_RAW: Fp29 = Fp29 {
 /// `Fp29` or [`Fp29x4`].  Per-call routing through Fp29x4 is a regression
 /// on every CPU: the 4-Fp `Fp <-> Fp29` conversion path dominates the
 /// 3 useful Fp29x4 sub-products at the `Fp^2::mul` level, and Fp29x4
-/// can't help a single Fp::mul at all (radix-29 has 81 scalar u32-muls
-/// vs Fp51's 25 u64-muls).  Real activation requires persistent Fp29
-/// storage at the point-coordinate / isogeny-state level, paying
+/// can't help a single Fp::mul at all (radix-29 has 144 scalar u32-muls
+/// vs the portable backend's 36 u64-muls).  Real activation requires persistent
+/// Fp29 storage at the point-coordinate / isogeny-state level, paying
 /// conversion once at signature-input / signature-output byte
 /// boundaries -- multi-PR architectural work outside this module.
 ///
@@ -170,7 +166,7 @@ const ONE_RAW: Fp29 = Fp29 {
 /// the lane-fill operand for [`Fp29x4::from_scalars`] in tests / benches.
 #[derive(Clone, Copy, Debug)]
 pub struct Fp29 {
-    /// Nine 29-bit limbs, little-endian.
+    /// Twelve 29-bit limbs, little-endian.
     pub limbs: [u32; LIMBS_29],
 }
 
@@ -181,27 +177,27 @@ impl Fp29 {
     };
 
     /// Multiplicative identity in radix-29 Montgomery form: `1 * R_29 mod p`,
-    /// precomputed via `python -c 'pow(2, 261, 5*2**248 - 1)'` then packed
-    /// into 9 x 29-bit limbs.
+    /// precomputed via `python -c 'pow(2, 348, 3*2**324 - 1)'` then packed
+    /// into 12 x 29-bit limbs.
     pub const ONE: Self = Self {
-        limbs: [0x666, 0, 0, 0, 0, 0, 0, 0, 0x20000],
+        limbs: [0x555555, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20],
     };
 
     /// Two in radix-29 Montgomery form: `2 * R_29 mod p`.
     pub const TWO: Self = Self {
-        limbs: [0xCCC, 0, 0, 0, 0, 0, 0, 0, 0x40000],
+        limbs: [0xAAAAAA, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x40],
     };
 
     /// Four in radix-29 Montgomery form: `4 * R_29 mod p`.
     pub const FOUR: Self = Self {
-        limbs: [0x1999, 0, 0, 0, 0, 0, 0, 0, 0x30000],
+        limbs: [0x1555555, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20],
     };
 
     /// `-1 mod p` in radix-29 Montgomery form: `(p - 1) * R_29 mod p`.
     pub const MINUS_ONE: Self = Self {
         limbs: [
-            0x1FFFF999, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF,
-            0x1FFFFFFF, 0x2FFFF,
+            0x1FAAAAAA, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF,
+            0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x3F,
         ],
     };
 
@@ -219,45 +215,45 @@ impl Fp29 {
         &canonical * &R2_29
     }
 
-    /// Constructs from radix-51 portable-Montgomery limbs.
+    /// Constructs from radix-55 portable-Montgomery limbs.
     ///
     /// Signature-compatible with the portable backend's `Fp::from_limbs`, so
     /// the crate's precomputed-constant tables (`params.rs`,
-    /// `deuring/precomputed.rs`, `curves/montgomery`) embed identically under
-    /// either backend selection.  The input limbs encode the field element in
-    /// radix-51 Montgomery form (`value * 2^255 mod p`); this constructor
-    /// repacks them at radix-29 and Montgomery-multiplies by the const
-    /// `K = 2^267 mod p`, landing the value in this backend's
-    /// `value * 2^261 mod p` form: `(value * 2^255) * 2^267 * 2^(-261) = value
-    /// * 2^261`.
+    /// `curves/montgomery`) embed identically under either backend
+    /// selection.  The input limbs encode the field element in radix-55
+    /// Montgomery form (`value * 2^330 mod p`); this constructor repacks
+    /// them at radix-29 and Montgomery-multiplies by the const
+    /// `K = 2^366 mod p`, landing the value in this backend's
+    /// `value * 2^348 mod p` form: `(value * 2^330) * 2^366 * 2^(-348) = value
+    /// * 2^348`.
     ///
     /// `const fn` so the constants stay `pub const`.
-    pub const fn from_limbs(portable_mont: [u64; 5]) -> Self {
-        // K = 2^267 mod p, packed at radix-29 LE; precomputed via
-        // `python3 -c 'p=5*2**248-1; print(pow(2,267,p))'`.
-        const K: [u32; LIMBS_29] = [0x19999, 0, 0, 0, 0, 0, 0, 0, 0x30000];
+    pub const fn from_limbs(portable_mont: [u64; 6]) -> Self {
+        // K = 2^366 mod p, packed at radix-29 LE; precomputed via
+        // `python3 -c 'p=3*2**324-1; print(pow(2,366,p))'`.
+        const K: [u32; LIMBS_29] = [0x15555555, 0xAAA, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20];
 
-        let radix29 = Self::repack_51_to_29(portable_mont);
+        let radix29 = Self::repack_55_to_29(portable_mont);
         Self {
             limbs: Self::mont_mul_const(radix29, K),
         }
     }
 
-    /// Repacks a 5-limb radix-51 little-endian value as 9-limb radix-29 LE.
+    /// Repacks a 6-limb radix-55 little-endian value as 12-limb radix-29 LE.
     ///
-    /// Pure bit redistribution: the integer value is unchanged.  Input fits in
-    /// 255 bits (5 x 51); output uses 261 bits (9 x 29), so the top 6 bits of
-    /// `out[8]` are always zero.
-    const fn repack_51_to_29(src: [u64; 5]) -> [u32; LIMBS_29] {
+    /// Pure bit redistribution: the integer value is unchanged.  Input fits
+    /// in 330 bits (6 x 55); output uses 348 bits (12 x 29), so the top 18
+    /// bits of `out[11]` are always zero.
+    const fn repack_55_to_29(src: [u64; 6]) -> [u32; LIMBS_29] {
         let mut out = [0u32; LIMBS_29];
         let mut acc: u128 = 0;
         let mut bits: u32 = 0;
         let mut src_idx = 0;
         let mut i = 0;
         while i < LIMBS_29 {
-            while bits < RADIX_29 && src_idx < 5 {
+            while bits < RADIX_29 && src_idx < 6 {
                 acc |= (src[src_idx] as u128) << bits;
-                bits += 51;
+                bits += 55;
                 src_idx += 1;
             }
             out[i] = (acc as u32) & MASK_29;
@@ -291,7 +287,7 @@ impl Fp29 {
             }
             if i >= LIMBS_29 - 1 {
                 let fold_idx = i - (LIMBS_29 - 1);
-                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P4_29 as u64));
+                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P11_29 as u64));
             }
             let limb = (t as u32) & MASK_29;
             if i < LIMBS_29 {
@@ -306,13 +302,13 @@ impl Fp29 {
         c
     }
 
-    /// Decodes 32 bytes (little-endian) into a normalized radix-29 element.
+    /// Decodes 41 bytes (little-endian) into a normalized radix-29 element.
     ///
     /// Mirrors `Fp::from_bytes` but stays out of Montgomery
     /// form: the limbs hold the canonical integer value, not `value * R mod p`.
     /// The input must encode a value less than `p`; out-of-range bits in
-    /// `bytes[31]` simply flow into the high limb without canonicalization.
-    pub fn from_bytes_le(bytes: &[u8; 32]) -> Self {
+    /// the top byte simply flow into the high limb without canonicalization.
+    pub fn from_bytes_le(bytes: &[u8; FP_ENCODED_BYTES]) -> Self {
         let mut limbs = [0u32; LIMBS_29];
         let mut acc: u64 = 0;
         let mut bits: u32 = 0;
@@ -333,12 +329,12 @@ impl Fp29 {
         Self { limbs }
     }
 
-    /// Encodes a normalized radix-29 element as 32 bytes, little-endian.
+    /// Encodes a normalized radix-29 element as 41 bytes, little-endian.
     ///
     /// Each limb must be `< 2^29`; if the value is unsaturated the encoded
     /// bytes will overflow into adjacent positions.
-    pub fn to_bytes_le(self) -> [u8; 32] {
-        let mut out = [0u8; 32];
+    pub fn to_bytes_le(self) -> [u8; FP_ENCODED_BYTES] {
+        let mut out = [0u8; FP_ENCODED_BYTES];
         let mut acc: u64 = 0;
         let mut bits: u32 = 0;
         let mut pos = 0;
@@ -346,14 +342,14 @@ impl Fp29 {
         for &limb in self.limbs.iter() {
             acc |= (limb as u64) << bits;
             bits += RADIX_29;
-            while bits >= 8 && pos < 32 {
+            while bits >= 8 && pos < FP_ENCODED_BYTES {
                 out[pos] = acc as u8;
                 acc >>= 8;
                 bits -= 8;
                 pos += 1;
             }
         }
-        if pos < 32 {
+        if pos < FP_ENCODED_BYTES {
             out[pos] = acc as u8;
         }
 
@@ -430,21 +426,22 @@ impl Fp29 {
         (&self * &ONE_RAW).final_sub()
     }
 
-    /// Decodes canonical 32-byte little-endian into a Montgomery-form `Fp29`.
+    /// Decodes a canonical 41-byte little-endian encoding into a
+    /// Montgomery-form `Fp29`.
     ///
     /// Mirrors `Fp::from_bytes` at the API level: unpacks the bytes as a
     /// canonical integer, then enters this backend's Montgomery form via
     /// multiplication by `R2_29`.
-    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+    pub fn from_bytes(bytes: &[u8; FP_ENCODED_BYTES]) -> Self {
         &Fp29::from_bytes_le(bytes) * &R2_29
     }
 
-    /// Encodes a Montgomery-form `Fp29` as canonical 32-byte little-endian.
+    /// Encodes a Montgomery-form `Fp29` as canonical 41-byte little-endian.
     ///
     /// Mirrors `Fp::to_bytes`: exits Montgomery form via
-    /// [`Self::reduce_montgomery`], then packs the canonical limbs into 32
+    /// [`Self::reduce_montgomery`], then packs the canonical limbs into 41
     /// bytes.
-    pub fn to_bytes(self) -> [u8; 32] {
+    pub fn to_bytes(self) -> [u8; FP_ENCODED_BYTES] {
         self.reduce_montgomery().to_bytes_le()
     }
 
@@ -465,36 +462,33 @@ impl Fp29 {
     pub(crate) fn pow_p3div4(&self) -> Self {
         let x = *self;
         let z = x.square();
-        let t0 = &x * &z;
-        let z = t0.square();
         let z = &x * &z;
-        let t1 = z.square();
-        let t3 = t1.square();
-        let t2 = t3.square();
-        let t4 = t2.pow2k(3);
-        let t2 = &t2 * &t4;
-        let t4 = t2.pow2k(6);
-        let t2 = &t2 * &t4;
-        let t4 = t2.pow2k(2);
-        let t3 = &t3 * &t4;
-        let t3 = t3.pow2k(13);
-        let t2 = &t2 * &t3;
-        let t3 = t2.pow2k(27);
-        let t2 = &t2 * &t3;
-        let z = &z * &t2;
+        let t0 = z.pow2k(2);
+        let t0 = &z * &t0;
+        let t1 = t0.pow2k(4);
+        let t0 = &t0 * &t1;
+        let t1 = t0.pow2k(2);
+        let z = &z * &t1;
         let t2 = z.pow2k(4);
+        let t1 = t2.pow2k(4);
+        let t3 = t1.pow2k(10);
+        let t1 = &t1 * &t3;
+        let t3 = t1.pow2k(6);
+        let t2 = &t2 * &t3;
+        let t2 = t2.pow2k(24);
         let t1 = &t1 * &t2;
         let t0 = &t0 * &t1;
-        let t1 = &t1 * &t0;
-        let t0 = &t1 * &t0;
-        let t2 = &t0 * &t1;
-        let t0 = &t0 * &t2;
-        let t1 = &t1 * &t0;
-        let t1 = t1.pow2k(63);
+        let t1 = t0.pow2k(10);
+        let z = &z * &t1;
+        let t1 = z.pow2k(58);
         let t1 = &t0 * &t1;
-        let t1 = t1.pow2k(64);
+        let t0 = &x * &t1;
+        let t2 = t0.square();
+        let t1 = &t1 * &t2;
+        let t2 = t1.pow2k(128);
+        let t1 = &t1 * &t2;
         let t0 = &t0 * &t1;
-        let t0 = t0.pow2k(57);
+        let t0 = t0.pow2k(68);
         &z * &t0
     }
 
@@ -525,17 +519,13 @@ impl Fp29 {
     }
 }
 
-// The `Fp <-> Fp29` cross-backend conversions exist for the test boundary
-// and for callers that need to bridge between the two scalar layouts.  When
-// `Fp = Fp29` (the cfg-neon dispatcher selection), both directions collapse
-// to identity and `impl<T> From<T> for T` in `core` already provides them;
-// the explicit impls below would conflict.
-#[cfg(not(sqisign_selkie_arch = "neon"))]
+// `Fp <-> Fp29` conversions for the test boundary and for callers that
+// bridge the two scalar layouts.
 impl From<Fp> for Fp29 {
-    /// Converts radix-51 Montgomery form to radix-29 Montgomery form.
+    /// Converts radix-55 Montgomery form to radix-29 Montgomery form.
     ///
     /// Routes through canonical bytes: `Fp::to_bytes` exits
-    /// the radix-51 Montgomery scaling, [`Fp29::from_bytes_le`] repacks the
+    /// the radix-55 Montgomery scaling, [`Fp29::from_bytes_le`] repacks the
     /// integer value at radix-29, then multiplication by `R2_29` enters the
     /// radix-29 Montgomery form (`canonical * R^2_29 * R^-1 = canonical * R`).
     /// Expensive (two Montgomery reductions); intended for test boundaries.
@@ -544,13 +534,12 @@ impl From<Fp> for Fp29 {
     }
 }
 
-#[cfg(not(sqisign_selkie_arch = "neon"))]
 impl From<Fp29> for Fp {
-    /// Converts radix-29 Montgomery form back to radix-51 Montgomery form.
+    /// Converts radix-29 Montgomery form back to radix-55 Montgomery form.
     ///
     /// Symmetric to [`From<Fp> for Fp29`]: drops the radix-29
     /// Montgomery scaling via [`Fp29::reduce_montgomery`], emits canonical
-    /// bytes, then runs `Fp::from_bytes` to enter the radix-51
+    /// bytes, then runs `Fp::from_bytes` to enter the radix-55
     /// Montgomery form.
     fn from(fp29: Fp29) -> Self {
         Self::from_bytes(&fp29.reduce_montgomery().to_bytes_le())
@@ -560,12 +549,12 @@ impl From<Fp29> for Fp {
 /// Four [`Fp29`] elements packed into NEON 32-bit-lane Structure-of-Arrays
 /// (SoA) layout: the four elements are interleaved lane-wise so one
 /// `vmlal_u32` computes the same schoolbook column across all four products
-/// simultaneously.  Each of the nine `uint32x4_t` vectors holds the `i`-th
+/// simultaneously.  Each of the twelve `uint32x4_t` vectors holds the `i`-th
 /// limb of four independent field elements at lanes 0..3.
 ///
-/// Per [ePrint 2026/394][2026-394], this layout amortises the 81 `u32 * u32`
-/// scalar muls of one `Fp29` product down to ~20 NEON ops on Cortex-A76 /
-/// Neoverse N1 cores.
+/// Per [ePrint 2026/394][2026-394], this layout amortises the scalar
+/// `u32 * u32` muls of one `Fp29` product across the four lanes on
+/// Cortex-A76 / Neoverse N1 cores.
 ///
 /// # Safety
 ///
@@ -578,8 +567,8 @@ impl From<Fp29> for Fp {
 /// [2026-394]: https://eprint.iacr.org/2026/394.pdf
 #[derive(Clone, Copy)]
 pub struct Fp29x4 {
-    /// Nine NEON 4-lane vectors.  Lane `j` of `limbs[i]` is the `i`-th radix-29
-    /// limb of the `j`-th field element of the batch.
+    /// Twelve NEON 4-lane vectors.  Lane `j` of `limbs[i]` is the `i`-th
+    /// radix-29 limb of the `j`-th field element of the batch.
     pub limbs: [uint32x4_t; LIMBS_29],
 }
 
@@ -626,59 +615,41 @@ impl Fp29x4 {
     /// Vectorized Montgomery multiplication: returns
     /// `[a[0] * b[0] * R^-1, ..., a[3] * b[3] * R^-1]` packed in SoA form.
     ///
-    /// Karatsuba-decomposed: splits each 9-limb input as
-    /// `a = a_lo + a_hi * 2^(5 * 29)` with `a_lo = a[0..5]` (5 limbs) and
-    /// `a_hi = a[5..9]` (4 limbs), computes three sub-products
+    /// Karatsuba-decomposed: splits each 12-limb input as
+    /// `a = a_lo + a_hi * 2^(6 * 29)` with six limbs per half, computes
+    /// three 6x6 sub-products
     ///
-    /// - `P0 = a_lo * b_lo` (9 columns, plain 5x5).
-    /// - `P1 = a_hi * b_hi` (7 columns, plain 4x4).
-    /// - `Q  = (a_lo + a_hi) * (b_lo + b_hi)` (9 columns, plain 5x5).
+    /// - `P0 = a_lo * b_lo`
+    /// - `P1 = a_hi * b_hi`
+    /// - `Q  = (a_lo + a_hi) * (b_lo + b_hi)`
     ///
-    /// then assembles the 17-column polynomial
-    /// `P0 + (Q - P0 - P1) * x^5 + P1 * x^10` and Montgomery-reduces it in a
+    /// then assembles the 23-column polynomial
+    /// `P0 + (Q - P0 - P1) * x^6 + P1 * x^12` and Montgomery-reduces it in a
     /// single pass.
     ///
-    /// 75 multiply-accumulates total (25 + 16 + 25 sub-product plus 9 fold)
-    /// against 90 for the straight 9x9 schoolbook.  The three sub-products
-    /// run with independent carry chains and pipeline across NEON execution
-    /// ports, where the schoolbook serialises on one chain.
-    /// On Cortex-A76 / Neoverse N1 hardware (matched in the 2026/394 paper
-    /// numbers) this path is ~1.4x faster than four scalar `Fp::mul`s.  On
-    /// wider scalar cores (Apple M2+) the radix-29 mul-count tax exceeds the
-    /// NEON parallelism win and scalar `Fp` remains faster; `build.rs` gates
-    /// production routing accordingly.
+    /// 108 multiply-accumulates for the sub-products plus 12 folds, against
+    /// 144 + 12 for the straight 12x12 schoolbook.  The three sub-products
+    /// run with independent carry chains and pipeline across NEON
+    /// execution ports, where the schoolbook serialises on one chain.
     pub fn mul(&self, rhs: &Fp29x4) -> Fp29x4 {
         let a = &self.limbs;
         let b = &rhs.limbs;
 
         // SAFETY: register-width NEON ops; covered by the type-level Safety
-        // note.  Lane buffer ranges are within `LIMBS_29 = 9`.
+        // note.  Lane buffer ranges are within `LIMBS_29 = 12`.
         unsafe {
-            let a_lo = [a[0], a[1], a[2], a[3], a[4]];
-            let b_lo = [b[0], b[1], b[2], b[3], b[4]];
-            let a_hi = [a[5], a[6], a[7], a[8]];
-            let b_hi = [b[5], b[6], b[7], b[8]];
+            let a_lo: [uint32x4_t; HALF_29] = [a[0], a[1], a[2], a[3], a[4], a[5]];
+            let b_lo: [uint32x4_t; HALF_29] = [b[0], b[1], b[2], b[3], b[4], b[5]];
+            let a_hi: [uint32x4_t; HALF_29] = [a[6], a[7], a[8], a[9], a[10], a[11]];
+            let b_hi: [uint32x4_t; HALF_29] = [b[6], b[7], b[8], b[9], b[10], b[11]];
 
-            // a_sum / b_sum: a_lo + a_hi padded to 5 limbs.  Each sum-limb
-            // remains under 2^30 (< 2^29 + < 2^29).
-            let a_sum = [
-                vaddq_u32(a_lo[0], a_hi[0]),
-                vaddq_u32(a_lo[1], a_hi[1]),
-                vaddq_u32(a_lo[2], a_hi[2]),
-                vaddq_u32(a_lo[3], a_hi[3]),
-                a_lo[4],
-            ];
-            let b_sum = [
-                vaddq_u32(b_lo[0], b_hi[0]),
-                vaddq_u32(b_lo[1], b_hi[1]),
-                vaddq_u32(b_lo[2], b_hi[2]),
-                vaddq_u32(b_lo[3], b_hi[3]),
-                b_lo[4],
-            ];
+            // Each sum-limb stays under 2^30 (two limbs below 2^29).
+            let a_sum = Self::half_sum(&a_lo, &a_hi);
+            let b_sum = Self::half_sum(&b_lo, &b_hi);
 
-            let p0 = Self::polynomial_5x5(&a_lo, &b_lo);
-            let p1 = Self::polynomial_4x4(&a_hi, &b_hi);
-            let q = Self::polynomial_5x5(&a_sum, &b_sum);
+            let p0 = Self::polynomial_6x6(&a_lo, &b_lo);
+            let p1 = Self::polynomial_6x6(&a_hi, &b_hi);
+            let q = Self::polynomial_6x6(&a_sum, &b_sum);
 
             Self::karatsuba_assemble_and_reduce(p0, p1, q)
         }
@@ -688,42 +659,61 @@ impl Fp29x4 {
     /// `[a[0]^2 * R^-1, ..., a[3]^2 * R^-1]` in SoA form.
     ///
     /// Karatsuba structure identical to [`Fp29x4::mul`], with the three sub-
-    /// products replaced by symmetric squares (`polynomial_5x5_square` /
-    /// `polynomial_4x4_square`).  Each cross-term `a[i] * a[j]` (`i != j`)
-    /// is computed once via `vmull_u32` and doubled with `vshlq_n_u64::<1>`
-    /// rather than the two `vmlal_u32` calls a straight mul would do; the
-    /// diagonal terms `a[i]^2` accumulate via the standard `vmlal_u32` path.
+    /// products replaced by symmetric squares
+    /// ([`Fp29x4::polynomial_6x6_square`]). Each cross-term `a[i] * a[j]`
+    /// (`i != j`) is computed once via `vmull_u32` and doubled with
+    /// `vshlq_n_u64::<1>` rather than the two `vmlal_u32` calls a straight
+    /// mul would do; the diagonal terms `a[i]^2` accumulate via the
+    /// standard `vmlal_u32` path.
     ///
-    /// 40 sub-product muls (15 + 10 + 15) + 9 Montgomery folds against
-    /// `mul`'s 66 + 9 = 75.  Predicted ~32 ns on M4 vs `mul`'s 43.7 ns.
+    /// 63 sub-product muls (3 x 21) plus 12 Montgomery folds against
+    /// `mul`'s 108 + 12.
     pub fn square(&self) -> Fp29x4 {
         let a = &self.limbs;
 
         // SAFETY: register-width NEON ops; covered by the type-level Safety
         // note.
         unsafe {
-            let a_lo = [a[0], a[1], a[2], a[3], a[4]];
-            let a_hi = [a[5], a[6], a[7], a[8]];
-            let a_sum = [
-                vaddq_u32(a_lo[0], a_hi[0]),
-                vaddq_u32(a_lo[1], a_hi[1]),
-                vaddq_u32(a_lo[2], a_hi[2]),
-                vaddq_u32(a_lo[3], a_hi[3]),
-                a_lo[4],
-            ];
+            let a_lo: [uint32x4_t; HALF_29] = [a[0], a[1], a[2], a[3], a[4], a[5]];
+            let a_hi: [uint32x4_t; HALF_29] = [a[6], a[7], a[8], a[9], a[10], a[11]];
+            let a_sum = Self::half_sum(&a_lo, &a_hi);
 
-            let p0 = Self::polynomial_5x5_square(&a_lo);
-            let p1 = Self::polynomial_4x4_square(&a_hi);
-            let q = Self::polynomial_5x5_square(&a_sum);
+            let p0 = Self::polynomial_6x6_square(&a_lo);
+            let p1 = Self::polynomial_6x6_square(&a_hi);
+            let q = Self::polynomial_6x6_square(&a_sum);
 
             Self::karatsuba_assemble_and_reduce(p0, p1, q)
         }
     }
 
+    /// Limb-wise sum of the two Karatsuba halves.
+    ///
+    /// # Safety
+    ///
+    /// Caller must already be in an `unsafe` block; NEON intrinsics.
+    #[inline(always)]
+    unsafe fn half_sum(
+        lo: &[uint32x4_t; HALF_29],
+        hi: &[uint32x4_t; HALF_29],
+    ) -> [uint32x4_t; HALF_29] {
+        [
+            vaddq_u32(lo[0], hi[0]),
+            vaddq_u32(lo[1], hi[1]),
+            vaddq_u32(lo[2], hi[2]),
+            vaddq_u32(lo[3], hi[3]),
+            vaddq_u32(lo[4], hi[4]),
+            vaddq_u32(lo[5], hi[5]),
+        ]
+    }
+
     /// Karatsuba assembly: `mid = q - p0 - p1`, polynomial layout
-    /// `full = p0 + mid * x^5 + p1 * x^10` over 17 columns, followed by
+    /// `full = p0 + mid * x^6 + p1 * x^12` over 23 columns, followed by
     /// Montgomery reduction.  Shared between [`Fp29x4::mul`] and
     /// [`Fp29x4::square`].
+    ///
+    /// Column bound: a 6x6 product of 30-bit sums is at most `6 * 2^60`,
+    /// and at most two of `p0`, `mid`, `p1` overlap in any column, so every
+    /// lane stays below `2^64`.
     ///
     /// # Safety
     ///
@@ -731,65 +721,68 @@ impl Fp29x4 {
     /// intrinsics throughout.
     #[inline(always)]
     unsafe fn karatsuba_assemble_and_reduce(
-        p0: [(uint64x2_t, uint64x2_t); 9],
-        p1: [(uint64x2_t, uint64x2_t); 7],
-        q: [(uint64x2_t, uint64x2_t); 9],
+        p0: [(uint64x2_t, uint64x2_t); 2 * HALF_29 - 1],
+        p1: [(uint64x2_t, uint64x2_t); 2 * HALF_29 - 1],
+        q: [(uint64x2_t, uint64x2_t); 2 * HALF_29 - 1],
     ) -> Fp29x4 {
+        const COLS: usize = 2 * LIMBS_29 - 1;
+        const SUB: usize = 2 * HALF_29 - 1;
+
         let zero_u32 = vdupq_n_u32(0);
         let zero_u64 = vdupq_n_u64(0);
         let mask_u32 = vdupq_n_u32(MASK_29);
-        let p4_vec = vdupq_n_u32(P4_29);
+        let p11_vec = vdupq_n_u32(P11_29);
 
-        // mid[i] = q[i] - p0[i] - p1[i] (p1 zero-padded above index 6).
-        // No underflow by Karatsuba algebra: q >= p0 + p1.
-        let mut mid: [(uint64x2_t, uint64x2_t); 9] = [(zero_u64, zero_u64); 9];
-        for i in 0..9 {
-            let (p1_lo, p1_hi) = if i < 7 { p1[i] } else { (zero_u64, zero_u64) };
-            mid[i].0 = vsubq_u64(vsubq_u64(q[i].0, p0[i].0), p1_lo);
-            mid[i].1 = vsubq_u64(vsubq_u64(q[i].1, p0[i].1), p1_hi);
+        // mid[i] = q[i] - p0[i] - p1[i].  No underflow by Karatsuba algebra:
+        // q >= p0 + p1.
+        let mut mid: [(uint64x2_t, uint64x2_t); SUB] = [(zero_u64, zero_u64); SUB];
+        for i in 0..SUB {
+            mid[i].0 = vsubq_u64(vsubq_u64(q[i].0, p0[i].0), p1[i].0);
+            mid[i].1 = vsubq_u64(vsubq_u64(q[i].1, p0[i].1), p1[i].1);
         }
 
-        // 17-column polynomial: P0 at offset 0, mid at offset 5, P1 at offset
-        // 10.
-        let mut full: [(uint64x2_t, uint64x2_t); 17] = [(zero_u64, zero_u64); 17];
-        full[..9].copy_from_slice(&p0);
-        for i in 0..9 {
-            full[5 + i].0 = vaddq_u64(full[5 + i].0, mid[i].0);
-            full[5 + i].1 = vaddq_u64(full[5 + i].1, mid[i].1);
+        // 23-column polynomial: P0 at offset 0, mid at offset 6, P1 at offset
+        // 12.
+        let mut full: [(uint64x2_t, uint64x2_t); COLS] = [(zero_u64, zero_u64); COLS];
+        full[..SUB].copy_from_slice(&p0);
+        for i in 0..SUB {
+            full[HALF_29 + i].0 = vaddq_u64(full[HALF_29 + i].0, mid[i].0);
+            full[HALF_29 + i].1 = vaddq_u64(full[HALF_29 + i].1, mid[i].1);
         }
-        for i in 0..7 {
-            full[10 + i].0 = vaddq_u64(full[10 + i].0, p1[i].0);
-            full[10 + i].1 = vaddq_u64(full[10 + i].1, p1[i].1);
+        for i in 0..SUB {
+            full[LIMBS_29 + i].0 = vaddq_u64(full[LIMBS_29 + i].0, p1[i].0);
+            full[LIMBS_29 + i].1 = vaddq_u64(full[LIMBS_29 + i].1, p1[i].1);
         }
 
-        // Montgomery-reduce the 17-column polynomial: for i in 0..9 extract
-        // v[i] = low 29 bits and fold v[i] * P4_29 into column i+8; for
-        // i in 9..17 extract output limbs c[0..7].  Then c[8] = the carry
-        // out of column 16 (mirrors the schoolbook's post-loop `c[8] = t`).
+        // Montgomery-reduce the 23-column polynomial: for i in 0..12 extract
+        // v[i] = low 29 bits and fold v[i] * P11_29 into column i+11; for
+        // i in 12..23 extract output limbs c[0..11].  Then c[11] = the
+        // carry out of column 22.
         let mut out = [zero_u32; LIMBS_29];
-        for i in 0..17 {
+        for i in 0..COLS {
             let limb_pair = vmovn_u64(full[i].0);
             let limb_full = vmovn_high_u64(limb_pair, full[i].1);
             let v = vandq_u32(limb_full, mask_u32);
 
-            if i < 9 {
-                full[i + 8].0 = vmlal_u32(full[i + 8].0, vget_low_u32(v), vget_low_u32(p4_vec));
-                full[i + 8].1 = vmlal_high_u32(full[i + 8].1, v, p4_vec);
+            if i < LIMBS_29 {
+                let k = i + LIMBS_29 - 1;
+                full[k].0 = vmlal_u32(full[k].0, vget_low_u32(v), vget_low_u32(p11_vec));
+                full[k].1 = vmlal_high_u32(full[k].1, v, p11_vec);
             }
 
-            if i + 1 < 17 {
+            if i + 1 < COLS {
                 full[i + 1].0 = vaddq_u64(full[i + 1].0, vshrq_n_u64::<29>(full[i].0));
                 full[i + 1].1 = vaddq_u64(full[i + 1].1, vshrq_n_u64::<29>(full[i].1));
             }
 
-            if (9..17).contains(&i) {
-                out[i - 9] = v;
+            if i >= LIMBS_29 {
+                out[i - LIMBS_29] = v;
             }
         }
 
-        // c[8]: the carry that would have propagated to column 17.
-        let final_carry_lo = vshrq_n_u64::<29>(full[16].0);
-        let final_carry_hi = vshrq_n_u64::<29>(full[16].1);
+        // c[11]: the carry that would have propagated to column 23.
+        let final_carry_lo = vshrq_n_u64::<29>(full[COLS - 1].0);
+        let final_carry_hi = vshrq_n_u64::<29>(full[COLS - 1].1);
         let final_pair = vmovn_u64(final_carry_lo);
         out[LIMBS_29 - 1] = vmovn_high_u64(final_pair, final_carry_hi);
 
@@ -839,7 +832,7 @@ impl Fp29x4 {
         }
     }
 
-    /// Propagates carries across the nine limbs in vectorized SoA form.
+    /// Propagates carries across the twelve limbs in vectorized SoA form.
     /// Returns a per-lane mask: `0` if the cumulative sum at that lane was
     /// non-negative, all-ones if negative (indicating an upstream borrow).
     ///
@@ -891,22 +884,26 @@ impl Fp29x4 {
         }
     }
 
-    /// Plain 5x5 polynomial multiplication on NEON SoA layout, used by
+    /// Plain 6x6 polynomial multiplication on NEON SoA layout, used by
     /// [`Fp29x4::mul`] for the three sub-products.
     ///
-    /// Returns a 9-column unreduced polynomial product as
-    /// `[(uint64x2_t, uint64x2_t); 9]`, one `(lo, hi)` pair per column.
-    /// Inputs may carry up to 2 bits of excess above `2^29` (e.g. from the
+    /// Returns an 11-column unreduced polynomial product as
+    /// `[(uint64x2_t, uint64x2_t); 11]`, one `(lo, hi)` pair per column.
+    /// Inputs may carry one bit of excess above `2^29` (from the
     /// `a_lo + a_hi` step); the accumulator stays within `u64` per lane
-    /// because each column accumulates at most five `u30 * u30 = u60`
-    /// products and `5 * 2^60 < 2^63`.
+    /// because each column accumulates at most six `u30 * u30 = u60`
+    /// products and `6 * 2^60 < 2^63`.
     #[inline]
-    fn polynomial_5x5(a: &[uint32x4_t; 5], b: &[uint32x4_t; 5]) -> [(uint64x2_t, uint64x2_t); 9] {
+    fn polynomial_6x6(
+        a: &[uint32x4_t; HALF_29],
+        b: &[uint32x4_t; HALF_29],
+    ) -> [(uint64x2_t, uint64x2_t); 2 * HALF_29 - 1] {
         // SAFETY: register-width NEON ops; covered by the type-level Safety
         // note.
         unsafe {
             let zero = vdupq_n_u64(0);
-            let mut out: [(uint64x2_t, uint64x2_t); 9] = [(zero, zero); 9];
+            let mut out: [(uint64x2_t, uint64x2_t); 2 * HALF_29 - 1] =
+                [(zero, zero); 2 * HALF_29 - 1];
             for (i, &a_i) in a.iter().enumerate() {
                 for (j, &b_j) in b.iter().enumerate() {
                     let col = i + j;
@@ -918,20 +915,23 @@ impl Fp29x4 {
         }
     }
 
-    /// Symmetric 5x5 squaring on NEON SoA layout.  Used by [`Fp29x4::square`]
-    /// for the `P0 = a_lo^2` and `Q = a_sum^2` sub-products.
+    /// Symmetric 6x6 squaring on NEON SoA layout.  Used by
+    /// [`Fp29x4::square`] for all three sub-squares.
     ///
     /// Diagonals `a[i]^2` accumulate via `vmlal_u32`; each cross-term
     /// `a[i] * a[j]` (`i < j`) is computed once via `vmull_u32` /
     /// `vmull_high_u32`, doubled with `vshlq_n_u64::<1>`, and added to the
-    /// column accumulator.  15 unique mul-pairs against the plain 5x5's 25.
+    /// column accumulator.  21 unique mul-pairs against the plain 6x6's 36.
     #[inline]
-    fn polynomial_5x5_square(a: &[uint32x4_t; 5]) -> [(uint64x2_t, uint64x2_t); 9] {
+    fn polynomial_6x6_square(
+        a: &[uint32x4_t; HALF_29],
+    ) -> [(uint64x2_t, uint64x2_t); 2 * HALF_29 - 1] {
         // SAFETY: register-width NEON ops; covered by the type-level Safety
         // note.
         unsafe {
             let zero = vdupq_n_u64(0);
-            let mut out: [(uint64x2_t, uint64x2_t); 9] = [(zero, zero); 9];
+            let mut out: [(uint64x2_t, uint64x2_t); 2 * HALF_29 - 1] =
+                [(zero, zero); 2 * HALF_29 - 1];
             for (i, &a_i) in a.iter().enumerate() {
                 for (j, &a_j) in a.iter().enumerate().skip(i) {
                     let col = i + j;
@@ -944,53 +944,6 @@ impl Fp29x4 {
                         out[col].0 = vaddq_u64(out[col].0, vshlq_n_u64::<1>(prod_lo));
                         out[col].1 = vaddq_u64(out[col].1, vshlq_n_u64::<1>(prod_hi));
                     }
-                }
-            }
-            out
-        }
-    }
-
-    /// Symmetric 4x4 squaring on NEON SoA layout.  Used by [`Fp29x4::square`]
-    /// for the `P1 = a_hi^2` sub-product.  10 unique mul-pairs against
-    /// the plain 4x4's 16.
-    #[inline]
-    fn polynomial_4x4_square(a: &[uint32x4_t; 4]) -> [(uint64x2_t, uint64x2_t); 7] {
-        // SAFETY: see [`Fp29x4::polynomial_5x5_square`].
-        unsafe {
-            let zero = vdupq_n_u64(0);
-            let mut out: [(uint64x2_t, uint64x2_t); 7] = [(zero, zero); 7];
-            for (i, &a_i) in a.iter().enumerate() {
-                for (j, &a_j) in a.iter().enumerate().skip(i) {
-                    let col = i + j;
-                    if i == j {
-                        out[col].0 = vmlal_u32(out[col].0, vget_low_u32(a_i), vget_low_u32(a_i));
-                        out[col].1 = vmlal_high_u32(out[col].1, a_i, a_i);
-                    } else {
-                        let prod_lo = vmull_u32(vget_low_u32(a_i), vget_low_u32(a_j));
-                        let prod_hi = vmull_high_u32(a_i, a_j);
-                        out[col].0 = vaddq_u64(out[col].0, vshlq_n_u64::<1>(prod_lo));
-                        out[col].1 = vaddq_u64(out[col].1, vshlq_n_u64::<1>(prod_hi));
-                    }
-                }
-            }
-            out
-        }
-    }
-
-    /// Plain 4x4 polynomial multiplication on NEON SoA layout.  Used by
-    /// [`Fp29x4::mul`] for the `P1 = a_hi * b_hi` sub-product.
-    /// Returns a 7-column unreduced polynomial product.
-    #[inline]
-    fn polynomial_4x4(a: &[uint32x4_t; 4], b: &[uint32x4_t; 4]) -> [(uint64x2_t, uint64x2_t); 7] {
-        // SAFETY: see [`Fp29x4::polynomial_5x5`].
-        unsafe {
-            let zero = vdupq_n_u64(0);
-            let mut out: [(uint64x2_t, uint64x2_t); 7] = [(zero, zero); 7];
-            for (i, &a_i) in a.iter().enumerate() {
-                for (j, &b_j) in b.iter().enumerate() {
-                    let col = i + j;
-                    out[col].0 = vmlal_u32(out[col].0, vget_low_u32(a_i), vget_low_u32(b_j));
-                    out[col].1 = vmlal_high_u32(out[col].1, a_i, b_j);
                 }
             }
             out
@@ -1004,7 +957,7 @@ impl Add<Fp29x4> for Fp29x4 {
     /// Vectorized modular addition over four `Fp29` elements in parallel,
     /// each result reduced to `[0, 2p)`.  Mirrors [`Fp29::add`] structurally
     /// at the lane level: limbwise vector add, subtract `2p` via the
-    /// add-2-to-limb-0 / subtract-`2 * P4_29`-from-limb-8 trick, propagate
+    /// add-2-to-limb-0 / subtract-`2 * P11_29`-from-limb-11 trick, propagate
     /// carries, then conditionally add `2p` back per lane on borrow.
     fn add(self, rhs: Fp29x4) -> Fp29x4 {
         // SAFETY: register-width NEON ops; covered by the type-level Safety
@@ -1021,10 +974,13 @@ impl Add<Fp29x4> for Fp29x4 {
                     vaddq_u32(self.limbs[6], rhs.limbs[6]),
                     vaddq_u32(self.limbs[7], rhs.limbs[7]),
                     vaddq_u32(self.limbs[8], rhs.limbs[8]),
+                    vaddq_u32(self.limbs[9], rhs.limbs[9]),
+                    vaddq_u32(self.limbs[10], rhs.limbs[10]),
+                    vaddq_u32(self.limbs[11], rhs.limbs[11]),
                 ],
             };
             let two = vdupq_n_u32(2);
-            let two_p4 = vdupq_n_u32(2 * P4_29);
+            let two_p4 = vdupq_n_u32(2 * P11_29);
             n.limbs[0] = vaddq_u32(n.limbs[0], two);
             n.limbs[LIMBS_29 - 1] = vsubq_u32(n.limbs[LIMBS_29 - 1], two_p4);
             let borrow = n.prop();
@@ -1057,10 +1013,13 @@ impl Sub<Fp29x4> for Fp29x4 {
                     vsubq_u32(self.limbs[6], rhs.limbs[6]),
                     vsubq_u32(self.limbs[7], rhs.limbs[7]),
                     vsubq_u32(self.limbs[8], rhs.limbs[8]),
+                    vsubq_u32(self.limbs[9], rhs.limbs[9]),
+                    vsubq_u32(self.limbs[10], rhs.limbs[10]),
+                    vsubq_u32(self.limbs[11], rhs.limbs[11]),
                 ],
             };
             let two = vdupq_n_u32(2);
-            let two_p4 = vdupq_n_u32(2 * P4_29);
+            let two_p4 = vdupq_n_u32(2 * P11_29);
             let borrow = n.prop();
             n.limbs[0] = vsubq_u32(n.limbs[0], vandq_u32(two, borrow));
             n.limbs[LIMBS_29 - 1] = vaddq_u32(n.limbs[LIMBS_29 - 1], vandq_u32(two_p4, borrow));
@@ -1076,7 +1035,7 @@ impl Add<Fp29> for Fp29 {
     /// Modular addition, reduced to `[0, 2p)`.
     ///
     /// Adds limbwise, subtracts `2p` (via add-2-to-limb-0 / subtract-`2 *
-    /// P4_29`- from-limb-8), propagates carries, then conditionally adds
+    /// P11_29`- from-limb-11), propagates carries, then conditionally adds
     /// `2p` back if the propagation detected a borrow.  Mirrors `Fp::add`
     /// structurally.
     fn add(self, rhs: Fp29) -> Fp29 {
@@ -1091,13 +1050,16 @@ impl Add<Fp29> for Fp29 {
                 self.limbs[6] + rhs.limbs[6],
                 self.limbs[7] + rhs.limbs[7],
                 self.limbs[8] + rhs.limbs[8],
+                self.limbs[9] + rhs.limbs[9],
+                self.limbs[10] + rhs.limbs[10],
+                self.limbs[11] + rhs.limbs[11],
             ],
         };
         n.limbs[0] = n.limbs[0].wrapping_add(2);
-        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_sub(2 * P4_29);
+        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_sub(2 * P11_29);
         let carry = n.prop();
         n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
-        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P4_29) & carry);
+        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P11_29) & carry);
         n.prop();
         n
     }
@@ -1122,11 +1084,14 @@ impl Sub<Fp29> for Fp29 {
                 self.limbs[6].wrapping_sub(rhs.limbs[6]),
                 self.limbs[7].wrapping_sub(rhs.limbs[7]),
                 self.limbs[8].wrapping_sub(rhs.limbs[8]),
+                self.limbs[9].wrapping_sub(rhs.limbs[9]),
+                self.limbs[10].wrapping_sub(rhs.limbs[10]),
+                self.limbs[11].wrapping_sub(rhs.limbs[11]),
             ],
         };
         let carry = n.prop();
         n.limbs[0] = n.limbs[0].wrapping_sub(2u32 & carry);
-        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P4_29) & carry);
+        n.limbs[LIMBS_29 - 1] = n.limbs[LIMBS_29 - 1].wrapping_add((2 * P11_29) & carry);
         n.prop();
         n
     }
@@ -1134,9 +1099,8 @@ impl Sub<Fp29> for Fp29 {
 
 impl Fp29 {
     /// Returns `a1*b1 + a2*b2 mod p`.  Backend-portable baseline
-    /// (two muls + one add); the surface exists so `Fp^2::mul` under
-    /// `cfg(sqisign_selkie_arch = "neon")` resolves the same call
-    /// the portable backend's `Fp::sum_of_2_products` resolves.
+    /// (two muls + one add), mirroring `Fp::sum_of_2_products` so both
+    /// scalar layouts expose the same surface.
     #[must_use]
     pub fn sum_of_2_products(a1: &Fp29, b1: &Fp29, a2: &Fp29, b2: &Fp29) -> Fp29 {
         &(a1 * b1) + &(a2 * b2)
@@ -1154,14 +1118,15 @@ impl<'b> Mul<&'b Fp29> for &Fp29 {
 
     /// Montgomery multiplication: returns `a * b * R^-1 mod p`.
     ///
-    /// 9 x 9 schoolbook product with Montgomery reduction interleaved column-
-    /// by-column over the 17 output positions.  The fold step at column
-    /// `i >= 8` adds `v[i-8] * P4_29`, exploiting `5 * 2^248 == 1 (mod p)`
-    /// to absorb the previously-computed low column into the high columns.
+    /// 12 x 12 schoolbook product with Montgomery reduction interleaved
+    /// column-by-column over the 23 output positions.  The fold step at
+    /// column `i >= 11` adds `v[i-11] * P11_29`, exploiting
+    /// `3 * 2^324 == 1 (mod p)` to absorb the previously-computed low column
+    /// into the high columns.
     ///
-    /// Output limbs satisfy `limbs[i] < 2^29` for `i < 8` and `limbs[8] < 2^20`
-    /// (so the result is in `[0, 2p)`).  Use `Fp29::final_sub` to
-    /// canonicalize to `[0, p)`.
+    /// Output limbs satisfy `limbs[i] < 2^29` for `i < 11` and
+    /// `limbs[11] < 2^8` (so the result is in `[0, 2p)`).  Use
+    /// `Fp29::final_sub` to canonicalize to `[0, p)`.
     fn mul(self, rhs: &'b Fp29) -> Fp29 {
         let a = &self.limbs;
         let b = &rhs.limbs;
@@ -1178,7 +1143,7 @@ impl<'b> Mul<&'b Fp29> for &Fp29 {
 
             if i >= LIMBS_29 - 1 {
                 let fold_idx = i - (LIMBS_29 - 1);
-                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P4_29 as u64));
+                t = t.wrapping_add((v[fold_idx] as u64).wrapping_mul(P11_29 as u64));
             }
 
             let limb = (t as u32) & MASK_29;
@@ -1293,5 +1258,6 @@ impl PartialEq for Fp29 {
 
 const _: () = {
     assert!(MASK_29 == (1u32 << RADIX_29) - 1);
-    assert!(RADIX_29 as usize * LIMBS_29 >= 248);
+    assert!(RADIX_29 as usize * LIMBS_29 >= 326);
+    assert!(2 * HALF_29 == LIMBS_29);
 };

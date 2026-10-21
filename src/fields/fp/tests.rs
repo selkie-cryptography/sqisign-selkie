@@ -4,7 +4,21 @@ use subtle::ConstantTimeEq;
 use super::*;
 
 fn arb_fp() -> impl Strategy<Value = Fp> {
-    any::<[u8; 32]>().prop_map(|b| Fp::from_bytes(&b))
+    any::<[u8; FP_ENCODED_BYTES]>().prop_map(|mut b| {
+        // Keep the value below p: clear the top byte's high bits so the
+        // decoder's canonical-input contract holds (p's top byte is 0x2f).
+        b[FP_ENCODED_BYTES - 1] &= 0x0F;
+        Fp::from_bytes(&b)
+    })
+}
+
+/// Decodes a lowercase little-endian hex string of `FP_ENCODED_BYTES` bytes.
+fn fp_from_hex(hex: &str) -> Fp {
+    let bytes: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+    Fp::from_bytes(bytes.as_slice().try_into().unwrap())
 }
 
 #[test]
@@ -19,6 +33,15 @@ fn one_is_multiplicative_identity() {
     let a = Fp::from_small(42);
     assert_eq!(a, &a * &Fp::ONE);
     assert_eq!(a, &Fp::ONE * &a);
+}
+
+#[test]
+fn constants_are_consistent() {
+    assert_eq!(Fp::from_small(1), Fp::ONE);
+    assert_eq!(Fp::from_small(2), Fp::TWO);
+    assert_eq!(Fp::from_small(4), Fp::FOUR);
+    assert_eq!(-Fp::ONE, Fp::MINUS_ONE);
+    assert_eq!(&Fp::TWO_INV * &Fp::TWO, Fp::ONE);
 }
 
 #[test]
@@ -41,7 +64,6 @@ fn multiplication_distributes() {
     let a = Fp::from_small(3);
     let b = Fp::from_small(7);
     let c = Fp::from_small(11);
-    // a * (b + c) == a*b + a*c
     let lhs = &a * &(&b + &c);
     let rhs = &(&a * &b) + &(&a * &c);
     assert_eq!(lhs, rhs);
@@ -71,7 +93,41 @@ fn roundtrip_bytes() {
 #[test]
 fn zero_encoding() {
     let bytes = Fp::ZERO.to_bytes();
-    assert_eq!(bytes, [0u8; 32]);
+    assert_eq!(bytes, [0u8; FP_ENCODED_BYTES]);
+}
+
+#[test]
+fn minus_one_encodes_as_p_minus_one() {
+    let mut expected = [0xFFu8; FP_ENCODED_BYTES];
+    expected[0] = 0xFE;
+    expected[FP_ENCODED_BYTES - 1] = 0x2F;
+    assert_eq!(Fp::MINUS_ONE.to_bytes(), expected);
+}
+
+/// `2^((p-3)/4)`, `2^-1`, and `sqrt(2)` computed with Python's `pow`
+/// on `p = 3 * 2^324 - 1`.
+#[test]
+fn exponent_chain_matches_reference_vectors() {
+    let two = Fp::from_small(2);
+    assert_eq!(
+        two.pow_p3div4(),
+        fp_from_hex(
+            "5c296b5259d483f7f3dc6640972ca79e6924e592ff30e915160da1e75c1b913dfc5a6b651d5253ed02"
+        )
+    );
+    assert_eq!(
+        two.invert(),
+        fp_from_hex(
+            "0000000000000000000000000000000000000000000000000000000000000000000000000000000018"
+        )
+    );
+    assert!(bool::from(two.is_square()));
+    assert_eq!(
+        two.sqrt(),
+        fp_from_hex(
+            "b852d6a4b2a807efe7b9cd802e594e3dd348ca25ff61d22b2c1a42cfb936227bf8b5d6ca3aa4a6da05"
+        )
+    );
 }
 
 #[test]
@@ -80,7 +136,6 @@ fn sqrt_of_square() {
     let a2 = a.square();
     assert!(bool::from(a2.is_square()));
     let r = a2.sqrt();
-    // sqrt may return either root
     assert!(r == a || r == -a);
 }
 
@@ -157,7 +212,6 @@ proptest! {
 
     #[test]
     fn prop_fp_inversion(a in arb_fp()) {
-        // Skip zero (not invertible).
         prop_assume!(!bool::from(a.ct_eq(&Fp::ZERO)));
         prop_assert_eq!(a * a.invert(), Fp::ONE);
     }
@@ -167,17 +221,14 @@ proptest! {
         let a2 = a.square();
         prop_assert!(bool::from(a2.is_square()));
         let s = a2.sqrt();
-        // sqrt returns either a or -a.
         prop_assert!(s == a || s == -a);
     }
 
     #[test]
     fn prop_fp_non_square_detected(a in arb_fp()) {
-        // If a is a square, a * non_square should be a non-square
-        // (product of QR x QNR = QNR). Use -1 as the QNR since
-        // p = 3 (mod 4) implies -1 is not a quadratic residue.
+        // p = 3 (mod 4), so -1 is a non-residue and -a^2 is a
+        // non-square unless a = 0.
         let neg_a = -(a.square());
-        // -a^2 is a non-square unless a = 0.
         if !bool::from(a.ct_eq(&Fp::ZERO)) {
             prop_assert!(!bool::from(neg_a.is_square()));
         }

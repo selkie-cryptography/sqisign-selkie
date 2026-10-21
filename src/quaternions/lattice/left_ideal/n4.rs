@@ -35,7 +35,7 @@ impl LeftIdeal<4> {
     ///
     /// For `t = 0` returns `O₀` itself (norm 1, `x = y = 1`), which
     /// lets the alternate-order search in
-    /// [`LeftIdeal::suitable_ideals`] treat `t = 0` uniformly with
+    /// the alternate-order search treat `t = 0` uniformly with
     /// `t > 0`.
     ///
     /// The basis HNF leading entries are `2·N` (not `N`): at denom 2

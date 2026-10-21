@@ -66,7 +66,7 @@ impl LeftIdeal<4> {
     /// `I · δ̄ / nrd(I)`.
     ///
     /// Required by the alternate-order search in
-    /// [`Self::suitable_ideals`]: when a short vector is enumerated
+    /// the alternate-order search: when a short vector is enumerated
     /// in a pushforward or `conj(I_reduced) · J_t` lattice, it must
     /// be transported back to the original ideal via multiplication
     /// by `δ`. Exposing `δ` here avoids recomputing it (and the full
@@ -194,7 +194,7 @@ impl<const N: usize> LeftIdeal<N> {
     /// width `N` and internal LLL working width `W` as const
     /// generics. Used by the signing response path to reduce a
     /// wide [`LeftIdeal<30>`] (norm ≈ `2^258`) to a form that fits
-    /// in [`BigInt<4>`] before [`to_isogeny`].
+    /// in [`BigInt<4>`] before the ideal-to-isogeny translation.
     ///
     /// Returns [`None`] when any of these fit checks fails:
     /// - `nrd(δ)` is not exactly divisible by `nrd(I)`.
@@ -218,7 +218,6 @@ impl<const N: usize> LeftIdeal<N> {
     /// during signing (response-phase `i_com_rsp`) — L2 reduction
     /// has data-dependent loop counts.
     ///
-    /// [`to_isogeny`]: crate::quaternions::lattice::LeftIdeal::to_isogeny
     /// [`LeftIdeal<4>::smallest_equiv`]: LeftIdeal::smallest_equiv
     #[must_use]
     pub fn smallest_equiv_narrow<const W: usize>(&self) -> Option<LeftIdeal<4>> {
