@@ -253,7 +253,7 @@ jobs:
       # The cache is read-only from PRs and reliable, unlike the Fly fetch.
       - name: Restore main baseline (PRs)
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@2c8a9bd7457de244a408f35966fab2fb45fda9c8  # v6.0.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: baseline/instructions.json
           key: perf-baseline-instructions-${{ github.event.pull_request.base.sha }}
@@ -398,7 +398,7 @@ jobs:
       # the actions cache (see the gungraun job for the rationale).
       - name: Restore main baseline (PRs)
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@2c8a9bd7457de244a408f35966fab2fb45fda9c8  # v6.0.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: baseline/bench.json
           key: perf-baseline-bench-${{ github.event.pull_request.base.sha }}
