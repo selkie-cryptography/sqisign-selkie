@@ -275,7 +275,7 @@ jobs:
         run: mkdir -p baseline && cp instructions.json baseline/instructions.json
       - name: Save main baseline cache (main only)
         if: github.ref == 'refs/heads/main'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: baseline/instructions.json
           key: perf-baseline-instructions-${{ github.sha }}
@@ -416,7 +416,7 @@ jobs:
         run: mkdir -p baseline && cp bench-out/bench.json baseline/bench.json
       - name: Save main baseline cache (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: baseline/bench.json
           key: perf-baseline-bench-${{ github.sha }}
