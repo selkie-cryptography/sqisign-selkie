@@ -1,5 +1,7 @@
 # sqisign-selkie
 
+⚠ SQIsign v3 update in-progress ⚠
+
 A compact post-quantum signature scheme from quaternions and isogenies, in Rust.
 
 <picture>

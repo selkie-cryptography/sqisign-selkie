@@ -38,7 +38,7 @@ zeroize = { version = "1", default-features = false, features = ["zeroize_derive
 [dev-dependencies]
 divan = "0.1"
 dudect-bencher = "0.7"
-gungraun = "0.19"
+gungraun = "0.20"
 dhat = "0.3"
 tacet = "0.4"
 proptest = "1"
@@ -60,7 +60,7 @@ num-traits = "0.2"
 # cross-checks), and regex are unix-only: crabgrind needs Valgrind
 # headers, reqwest's TLS deps don't compile on i686-pc-windows-msvc.
 [target.'cfg(unix)'.dev-dependencies]
-crabgrind = "0.2"
+crabgrind = "0.4"
 regex = "1"
 reqwest = { version = "0.13", features = ["blocking"] }
 

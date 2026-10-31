@@ -9,6 +9,13 @@
 
 FROM rust:slim-bookworm AS builder
 
+# aws-lc-sys (jsonwebtoken's signing backend) builds its C sources
+# through CMake's Makefile generator; the slim image has gcc but
+# neither cmake nor make.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends cmake make \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /work
 
 # Manifests first so `cargo fetch` caches in its own layer.
