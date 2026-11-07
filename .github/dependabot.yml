@@ -1,10 +1,45 @@
 version: 2
 updates:
+  # No Cargo.lock in the library, so these PRs only appear when a release
+  # falls outside a Cargo.toml requirement. /infra gets security updates only.
   - package-ecosystem: cargo
-    directory: /
+    directory: "/"
     schedule:
       interval: weekly
+    open-pull-requests-limit: 10
+    # Skip releases younger than a week; security updates ignore this.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    # Compatible bumps in one PR, auto-merged by dependabot-auto-merge.yml once
+    # CI passes. The library crates that handle secrets, and majors, get one
+    # PR each for review.
+    groups:
+      cargo-compatible:
+        update-types:
+          - "minor"
+          - "patch"
+        exclude-patterns:
+          - "aes"
+          - "getrandom"
+          - "rand_core"
+          - "sha3-selkie"
+          - "subtle"
+          - "zeroize"
+
+  # Bumps the SHA-pinned action refs, keeping the `# vN` comments legible so a
+  # bump reviews as a SHA change next to a version change.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - "/"
+      - "/.github/actions/ci-pr-report"
+      - "/.github/actions/ci-upload"
     schedule:
       interval: weekly
+    # Actions supports only default-days.
+    cooldown:
+      default-days: 7
+    # One PR for action bumps, auto-merged once CI passes.
+    groups:
+      actions:
+        patterns: ["*"]
