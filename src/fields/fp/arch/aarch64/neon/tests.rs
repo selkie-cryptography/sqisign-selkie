@@ -9,12 +9,15 @@ use proptest::prelude::*;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 use super::{Fp29, Fp29x4, LIMBS_29, MASK_29, RADIX_29};
-use crate::fields::fp::{Fp, arch::generic::Fp51 as PortableFp};
+use crate::fields::fp::{FP_ENCODED_BYTES, Fp, arch::generic::Fp55 as PortableFp};
 
-/// Builds an `Fp` from arbitrary 32-byte inputs, matching the convention used
-/// in the parent `Fp` test module.
+/// Builds an `Fp` from arbitrary canonical inputs, matching the convention
+/// used in the parent `Fp` test module.
 fn arb_fp() -> impl Strategy<Value = Fp> {
-    any::<[u8; 32]>().prop_map(|b| Fp::from_bytes(&b))
+    any::<[u8; FP_ENCODED_BYTES]>().prop_map(|mut b| {
+        b[FP_ENCODED_BYTES - 1] &= 0x0F;
+        Fp::from_bytes(&b)
+    })
 }
 
 /// Builds an `Fp29` element by routing arbitrary bytes through `Fp::from_bytes`
@@ -29,18 +32,18 @@ fn arb_fp29_array4() -> impl Strategy<Value = [Fp29; 4]> {
     (arb_fp29(), arb_fp29(), arb_fp29(), arb_fp29()).prop_map(|(a, b, c, d)| [a, b, c, d])
 }
 
-/// Builds a byte string guaranteed to encode a value below `2^248 < p`,
+/// Builds a byte string guaranteed to encode a value below `2^320 < p`,
 /// so `Fp::from_bytes` round-trips it exactly.
-fn arb_canonical_bytes() -> impl Strategy<Value = [u8; 32]> {
-    any::<[u8; 32]>().prop_map(|mut b| {
-        b[31] = 0;
+fn arb_canonical_bytes() -> impl Strategy<Value = [u8; FP_ENCODED_BYTES]> {
+    any::<[u8; FP_ENCODED_BYTES]>().prop_map(|mut b| {
+        b[FP_ENCODED_BYTES - 1] = 0;
         b
     })
 }
 
 proptest! {
-    /// Bit-packing round-trips through 9 × 29-bit limbs without loss for any
-    /// input below `2^248`.
+    /// Bit-packing round-trips through 12 × 29-bit limbs without loss for any
+    /// input below `2^320`.
     #[test]
     fn bytes_round_trip(canonical in arb_canonical_bytes()) {
         let fp29 = Fp29::from_bytes_le(&canonical);
@@ -293,10 +296,10 @@ proptest! {
 
     /// `Fp29::from_limbs(portable_mont)` must encode the same field element
     /// as the originating value.  Inputs are drawn through the portable
-    /// backend's `Fp` (which exposes radix-51 Montgomery limbs as `.0`) and
+    /// backend's `Fp` (which exposes radix-55 Montgomery limbs as `.0`) and
     /// compared canonical-byte-wise against the [`Fp29::from_limbs`] result.
     #[test]
-    fn fp29_from_limbs_matches_portable_mont_limbs(bytes in any::<[u8; 32]>().prop_map(|mut b| { b[31] = 0; b })) {
+    fn fp29_from_limbs_matches_portable_mont_limbs(bytes in any::<[u8; FP_ENCODED_BYTES]>().prop_map(|mut b| { b[FP_ENCODED_BYTES - 1] = 0; b })) {
         let portable = PortableFp::from_bytes(&bytes);
         let fp29 = Fp29::from_limbs(portable.0);
         prop_assert_eq!(fp29.to_bytes(), portable.to_bytes());
@@ -377,7 +380,7 @@ fn minus_one_round_trips() {
 
 #[test]
 fn limb_layout_invariants() {
-    assert_eq!(LIMBS_29, 9);
+    assert_eq!(LIMBS_29, 12);
     assert_eq!(RADIX_29, 29);
     assert_eq!(MASK_29, (1u32 << RADIX_29) - 1);
 }

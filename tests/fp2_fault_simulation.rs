@@ -49,7 +49,7 @@ struct TestGroup {
 }
 
 /// One boundary vector: `(a, b, op) -> expected`. All values are
-/// canonical Fp² (real and imag components < p), each 64 LE bytes.
+/// canonical Fp² (real and imag components < p), each 41 LE bytes.
 #[derive(Deserialize)]
 struct TestVector {
     #[serde(rename = "tcId")]

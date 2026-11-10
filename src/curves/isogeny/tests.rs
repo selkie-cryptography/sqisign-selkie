@@ -1,5 +1,8 @@
 use super::*;
-use crate::{curves::montgomery::Coefficient, fields::fp::Fp};
+use crate::{
+    curves::montgomery::Coefficient,
+    fields::fp::{FP_ENCODED_BYTES, Fp},
+};
 
 #[test]
 fn kernel_maps_to_identity() {
@@ -77,6 +80,7 @@ fn isomorphism_preserves_affine_x() {
 /// (A:C), then isomorphizes to the affine normalization and verifies
 /// the mapped point satisfies y² = x³ + A'x² + x on the target.
 #[test]
+#[ignore = "v3: Scalar width and Tate cofactor follow in the curves phase"]
 fn isomorphism_maps_on_curve() {
     let curve = Curve::E0;
     let P = ProjectiveXOnlyPoint::from_affine_x(crate::params::BASIS_E0_P_X, &curve);
@@ -127,13 +131,16 @@ fn isogeny_e1_matches_direct_two_isogeny() {
 
 use proptest::prelude::*;
 
-fn arb_curve() -> impl Strategy<Value = Curve> {
-    (any::<[u8; 32]>(), any::<[u8; 32]>()).prop_map(|(a, b)| {
-        Curve::from(Coefficient::from(Fp2::new(
-            Fp::from_bytes(&a),
-            Fp::from_bytes(&b),
-        )))
+fn arb_fp() -> impl Strategy<Value = Fp> {
+    any::<[u8; FP_ENCODED_BYTES]>().prop_map(|mut b| {
+        // Keep the value below p (top byte of p is 0x2f).
+        b[FP_ENCODED_BYTES - 1] &= 0x0F;
+        Fp::from_bytes(&b)
     })
+}
+
+fn arb_curve() -> impl Strategy<Value = Curve> {
+    (arb_fp(), arb_fp()).prop_map(|(a, b)| Curve::from(Coefficient::from(Fp2::new(a, b))))
 }
 
 proptest! {

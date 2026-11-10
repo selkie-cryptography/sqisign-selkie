@@ -7,18 +7,31 @@ use super::{
     isogeny::IsogenyDegree,
     montgomery::{Coefficient, Curve},
 };
-use crate::fields::{fp::Fp, fp2::Fp2};
+use crate::{
+    fields::{
+        fp::{FP_ENCODED_BYTES, Fp},
+        fp2::Fp2,
+    },
+    params::TORSION_EVEN_POWER,
+};
+
+fn arb_fp() -> impl Strategy<Value = Fp> {
+    any::<[u8; FP_ENCODED_BYTES]>().prop_map(|mut b| {
+        // Keep the value below p (top byte of p is 0x2f).
+        b[FP_ENCODED_BYTES - 1] &= 0x0F;
+        Fp::from_bytes(&b)
+    })
+}
 
 fn arb_fp2() -> impl Strategy<Value = Fp2> {
-    (any::<[u8; 32]>(), any::<[u8; 32]>())
-        .prop_map(|(a, b)| Fp2::new(Fp::from_bytes(&a), Fp::from_bytes(&b)))
+    (arb_fp(), arb_fp()).prop_map(|(a, b)| Fp2::new(a, b))
 }
 
 proptest! {
     #[test]
     fn torsion_exponent_checked_sub_none_on_underflow(
-        a in 0u32..=248,
-        b in 0u32..=248,
+        a in 0u32..=TORSION_EVEN_POWER,
+        b in 0u32..=TORSION_EVEN_POWER,
     ) {
         let a_te = TorsionExponent::try_from(a).unwrap();
         let result = a_te.checked_sub(b);
@@ -31,13 +44,13 @@ proptest! {
     }
 
     #[test]
-    fn prop_torsion_exponent_roundtrip(e in 0u32..=248) {
+    fn prop_torsion_exponent_roundtrip(e in 0u32..=TORSION_EVEN_POWER) {
         let te = TorsionExponent::try_from(e).unwrap();
         prop_assert_eq!(u32::from(te), e);
     }
 
     #[test]
-    fn prop_torsion_exponent_rejects_over_248(e in 249u32..=1000) {
+    fn prop_torsion_exponent_rejects_over_f(e in (TORSION_EVEN_POWER + 1)..=1000) {
         prop_assert!(TorsionExponent::try_from(e).is_err());
     }
 }

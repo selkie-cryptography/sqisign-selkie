@@ -24,14 +24,14 @@ on:
   # actionlint rejects YAML aliases in `paths:` — keep the two copies
   # in sync when editing.
   push:
-    branches: [main]
+    branches: [main, v3]
     paths:
       - 'infra/**'
       - '.github/workflows/**'
       - '.github/actions/**'
       - '.github/actionlint.yaml'
   pull_request:
-    branches: [main, next]
+    branches: [main, next, v3]
     paths:
       - 'infra/**'
       - '.github/workflows/**'

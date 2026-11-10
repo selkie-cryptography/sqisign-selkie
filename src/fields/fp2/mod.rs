@@ -4,13 +4,15 @@
 //! Since p ≡ 3 (mod 4), −1 is a quadratic non-residue in F_p,
 //! so F_p(i) is a valid degree-2 extension.
 //!
-//! See [§2.1.2] of the SQIsign spec.
+//! See [§4.2] of the SQIsign spec.
 //!
-//! [§2.1.2]: https://sqisign.org/spec/sqisign-20250707.pdf#subsection.2.1.2
+//! [§4.2]: https://sqisign.org/spec/sqisign-20260901.pdf#sec:finite-fields
 
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+use subtle::{
+    Choice, ConditionallySelectable, ConstantTimeEq, ConstantTimeGreater, ConstantTimeLess,
+};
 
 use crate::fields::fp::{FP_ENCODED_BYTES, Fp};
 
@@ -119,55 +121,40 @@ impl Fp2 {
         self.norm().is_square() | self.ct_eq(&Fp2::ZERO)
     }
 
-    /// Computes the square root in F_{p²}.
+    /// Computes a square root in F_{p²} ([Alg. 4.35]).
     ///
-    /// Uses the algorithm from [SQIsign spec, §2.1.2, Algorithm 8.2].
-    /// The result is only meaningful when `self.is_square()` is true.
-    #[must_use]
-    /// Computes a canonical square root in F_{p²}.
-    ///
-    /// Given `a = a₀ + a₁·i`, returns the unique `r` such that `r² = a`
-    /// and `r` is _even_: its real part is even (as an integer in
-    /// `[0, p)`), or if the real part is zero, its imaginary part is
-    /// even. The other root is `−r`, which is odd.
-    ///
-    /// # Why canonicalization matters
-    ///
-    /// Every nonzero square in F_{p²} has two roots, `r` and `−r`.
-    /// Without a canonical choice, any function that branches on a
-    /// square root — such as `projective_difference` (Proposition 3
-    /// of [Costello–Hisil–Renes 2017][CHR17]) — becomes
-    /// nondeterministic: the two roots yield two distinct projective
-    /// points that are NOT projectively equivalent.
-    ///
-    /// For SQIsign verification the consequences cascade: a wrong
-    /// root in `projective_difference` produces the wrong third point
-    /// of the torsion basis `(P, P−Q, Q)`, which makes `scalar_mul_add`
-    /// compute the wrong challenge kernel, which makes the challenge
-    /// isogeny land on the wrong curve, making every subsequent step
-    /// diverge.
-    ///
-    /// The canonical-even convention matches the C reference's
-    /// `fp2_sqrt` ([Aardal et al. 2024][ABCDK24], §3.1).
+    /// Given `x = x₀ + x₁·i`, returns one of the two roots `±r` with
+    /// `r² = x`. Which root is returned is fixed by the algorithm (the
+    /// F_p roots come from fixed exponent chains), not by a sign rule,
+    /// and matches the C reference's `fp2_sqrt`. The result is only
+    /// meaningful when `self.is_square()` is true.
     ///
     /// # Algorithm
     ///
-    /// Uses the Tonelli–Shanks-style formula from [ABCDK24]:
+    /// 1. δ ← √(x₀² + x₁²) ∈ F_p; if x₁ = 0, δ ← x₀
+    /// 2. r₀ ← x₀ + δ,  t ← 2·r₀
+    /// 3. r₁ ← t^{(p−3)/4}
+    /// 4. r₀ ← r₀·r₁,  r₁ ← x₁·r₁
+    /// 5. If (2·r₀)² = t: return r₀ + r₁·i, else return r₁ − r₀·i
     ///
-    /// 1. δ ← √(a₀² + a₁²) ∈ F_p  (the Fp norm's square root)
-    /// 2. x₀ ← a₀ + δ,  t₀ ← 2·x₀
-    /// 3. x₁ ← t₀^{(p−3)/4}
-    /// 4. x₀ ← x₀·x₁,  x₁ ← a₁·x₁
-    /// 5. If (2·x₀)² = t₀: r ← x₀ + x₁·i else:              r ← x₁ − x₀·i
-    /// 6. If re(r) is odd, or re(r) = 0 and im(r) is odd: r ← −r
+    /// The step-1 select covers x₁ = 0 with x₀ a non-residue, where
+    /// δ = −x₀ would zero r₀ and collapse the result.
     ///
-    /// Step 6 is the canonicalization.
+    /// # Divergences
     ///
-    /// [CHR17]: https://eprint.iacr.org/2017/518
-    /// [ABCDK24]: https://eprint.iacr.org/2024/1563
+    /// The v2 C reference appended a parity canonicalization (negate
+    /// if re(r) is odd, or re(r) = 0 and im(r) is odd). The v3 C
+    /// reference and spec do not; neither does this function.
+    ///
+    /// # Constant-time
+    ///
+    /// Constant-time on `self`.
+    ///
+    /// [Alg. 4.35]: https://sqisign.org/spec/sqisign-20260901.pdf#algorithm.4.35
+    #[must_use]
     pub fn sqrt(&self) -> Fp2 {
-        // Steps 1–5: compute a square root (either r or −r).
         let delta = self.norm().sqrt();
+        let delta = Fp::conditional_select(&delta, &self.a, self.b.ct_eq(&Fp::ZERO));
         let x0 = &self.a + &delta;
         let t0 = &x0 + &x0;
         let x1 = t0.pow_p3div4();
@@ -175,32 +162,61 @@ impl Fp2 {
         let x1 = &self.b * &x1;
         let t1 = (&x0 + &x0).square();
 
-        // Pick the branch whose square equals t0.
         let is_eq = t1.ct_eq(&t0);
-        let re = Fp::conditional_select(&x1, &x0, is_eq);
-        let im = Fp::conditional_select(&(-&x0), &x1, is_eq);
-
-        // Step 6: canonicalize to the even root.
-        //
-        // "Even" means the least-significant bit of the canonical
-        // encoding of re(r) is 0. If re(r) = 0, we check im(r)
-        // instead. This is the lexicographic tie-breaking used by the
-        // C reference (`fp2_sqrt` in `fp2.c`).
-        let re_bytes = re.to_bytes();
-        let im_bytes = im.to_bytes();
-        let re_is_odd = Choice::from(re_bytes[0] & 1);
-        let re_is_zero = re.ct_eq(&Fp::ZERO);
-        let im_is_odd = Choice::from(im_bytes[0] & 1);
-        let negate = re_is_odd | (re_is_zero & im_is_odd);
-        let neg_re = -&re;
-        let neg_im = -&im;
         Fp2 {
-            a: Fp::conditional_select(&re, &neg_re, negate),
-            b: Fp::conditional_select(&im, &neg_im, negate),
+            a: Fp::conditional_select(&x1, &x0, is_eq),
+            b: Fp::conditional_select(&(-&x0), &x1, is_eq),
         }
     }
 
-    /// Encodes this element as 64 bytes (real part ‖ imaginary part).
+    /// Halves this element: multiplies both parts by `2^-1` ([Alg. 4.32]).
+    ///
+    /// [Alg. 4.32]: https://sqisign.org/spec/sqisign-20260901.pdf#algorithm.4.32
+    #[must_use]
+    pub fn half(&self) -> Fp2 {
+        Fp2 {
+            a: &self.a * &Fp::TWO_INV,
+            b: &self.b * &Fp::TWO_INV,
+        }
+    }
+
+    /// Inverts every element in place with one field inversion
+    /// ([Alg. 4.36]).
+    ///
+    /// If any input is zero, every output is zero, as in the C
+    /// reference; callers that need the distinction test for zero
+    /// first.
+    ///
+    /// # Constant-time
+    ///
+    /// Constant-time on the element values; the slice length is public.
+    ///
+    /// [Alg. 4.36]: https://sqisign.org/spec/sqisign-20260901.pdf#algorithm.4.36
+    pub fn batch_invert(elems: &mut [Fp2]) {
+        let n = elems.len();
+        if n == 0 {
+            return;
+        }
+
+        // prefix[k] = elems[0] * ... * elems[k].
+        let mut prefix = Vec::with_capacity(n);
+        let mut acc = Fp2::ONE;
+        for e in elems.iter() {
+            acc = &acc * e;
+            prefix.push(acc);
+        }
+
+        // Walk back: inv(elems[k]) = prefix[k - 1] * inv(prefix[k]).
+        let mut inv = acc.invert();
+        for k in (1..n).rev() {
+            let e_inv = &prefix[k - 1] * &inv;
+            inv = &inv * &elems[k];
+            elems[k] = e_inv;
+        }
+        elems[0] = inv;
+    }
+
+    /// Encodes this element as 82 bytes (real part ‖ imaginary part).
     pub fn to_bytes(self) -> [u8; FP2_ENCODED_BYTES] {
         let mut out = [0u8; FP2_ENCODED_BYTES];
         out[..FP_ENCODED_BYTES].copy_from_slice(&self.a.to_bytes());
@@ -208,7 +224,7 @@ impl Fp2 {
         out
     }
 
-    /// Decodes 64 bytes into an F_{p²} element.
+    /// Decodes 82 bytes into an F_{p²} element.
     pub fn from_bytes(bytes: &[u8; FP2_ENCODED_BYTES]) -> Fp2 {
         let a = Fp::from_bytes(bytes[..FP_ENCODED_BYTES].try_into().expect("slice length"));
         let b = Fp::from_bytes(bytes[FP_ENCODED_BYTES..].try_into().expect("slice length"));
@@ -364,6 +380,34 @@ impl ConstantTimeEq for Fp2 {
         self.a.ct_eq(&other.a) & self.b.ct_eq(&other.b)
     }
 }
+
+impl ConstantTimeGreater for Fp2 {
+    /// `Fp2Compare`, the total order of Definition 4.2.1 ([§4.2.1.5]):
+    /// imaginary parts first, then real parts, each as canonical
+    /// integers in `[0, p)`. `NormalizeMontgomery` selects the largest
+    /// of the six candidate coefficients by it.
+    ///
+    /// Scans the canonical encoding from its top byte, which orders the
+    /// imaginary half before the real half; the same scan as the C
+    /// reference's `fp2_less_than`, and independent of any backend's
+    /// limb layout.
+    ///
+    /// [§4.2.1.5]: https://sqisign.org/spec/sqisign-20260901.pdf#subsubsection.4.2.1.5
+    fn ct_gt(&self, other: &Fp2) -> Choice {
+        let a = self.to_bytes();
+        let b = other.to_bytes();
+        let mut lt = Choice::from(0);
+        let mut gt = Choice::from(0);
+        for (x, y) in a.iter().rev().zip(b.iter().rev()) {
+            let undecided = !(lt | gt);
+            lt |= undecided & x.ct_lt(y);
+            gt |= undecided & x.ct_gt(y);
+        }
+        gt
+    }
+}
+
+impl ConstantTimeLess for Fp2 {}
 
 impl ConditionallySelectable for Fp2 {
     #[inline]

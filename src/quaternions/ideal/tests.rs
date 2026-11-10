@@ -2,16 +2,13 @@
 
 use rand_core::OsRng;
 
-use super::{
-    super::{
-        bigint::BigInt,
-        lattice::{ExtremalOrder, Lattice, LeftIdeal, NrdBasis},
-        linear::Vector,
-        precomputed::{EXTREMAL_ORDERS, P_WIDE},
-    },
-    suitable_ideals::enumerate_hypercube,
+use super::super::{
+    bigint::BigInt,
+    lattice::{ExtremalOrder, Lattice, LeftIdeal, NrdBasis},
+    linear::Vector,
+    precomputed::{EXTREMAL_ORDERS, P_WIDE},
 };
-use crate::{curves::TorsionExponent, drbg::Aes256CtrDrbg, params::QUAT_PRIME_COFACTOR};
+use crate::{drbg::Aes256CtrDrbg, params::QUAT_PRIME_COFACTOR};
 
 /// Returns the reduced norm `a² + b² + p·(c² + d²)` of a quaternion
 /// basis column `[a, b, c, d]` (numerators over the lattice denom),
@@ -363,62 +360,6 @@ fn random_norm_lattice_actually_has_norm() {
     assert!(built > 0, "random_norm(143) never produced an ideal");
 }
 
-/// `suitable_ideals` on an ideal with composite norm (product
-/// of two coprime odd primes). This is the regime the
-/// response-path intersection ideal occupies at scale (~2^252);
-/// this test uses tiny primes to make it a fast regression
-/// gate for the multi-order refactor tracked in Task #26.
-///
-/// Today this test may either succeed (if the j=0 degree-based
-/// path finds a pair) or skip (if `random_norm` can't build an
-/// ideal for the chosen composite). It's a harness for future
-/// iteration more than an assertion of current behavior.
-#[test]
-fn suitable_ideals_composite_norm_smoke() {
-    // Try a few small composites (products of coprime odd primes).
-    // `random_norm` with composite norm has high rejection rate
-    // because β must satisfy `gcd(nrd(β), N) = 1` and with
-    // multiple prime factors collisions are common; this loop
-    // gives us a decent chance of getting one buildable fixture.
-    let candidates: [u64; 6] = [15, 21, 35, 77, 143, 323];
-    let mut ideal = None;
-    for n_u64 in candidates {
-        let n = BigInt::<4>::from_u64(n_u64);
-        if let Some(i) = LeftIdeal::random_norm(&n, &EXTREMAL_ORDERS[0], &mut OsRng) {
-            crate::selkie_trace!("[composite-norm smoke] built ideal with norm {n_u64}");
-            ideal = Some(i);
-            break;
-        }
-    }
-    let Some(ideal) = ideal else {
-        crate::selkie_trace!("[composite-norm smoke] no composite fixture buildable — skipping");
-        return;
-    };
-
-    match ideal.suitable_ideals() {
-        Some(r) => {
-            crate::selkie_trace!(
-                "[composite-norm smoke] succeeded: (s, t) = ({}, {}), \
-                 degrees = ({:?}, {:?}), e = {}",
-                EXTREMAL_ORDERS
-                    .iter()
-                    .position(|o| o.q() == r.factor1.order.q())
-                    .unwrap_or(99),
-                EXTREMAL_ORDERS
-                    .iter()
-                    .position(|o| o.q() == r.factor2.order.q())
-                    .unwrap_or(99),
-                r.factor1.degree,
-                r.factor2.degree,
-                r.e.value(),
-            );
-        }
-        None => {
-            crate::selkie_trace!("[composite-norm smoke] suitable_ideals returned None");
-        }
-    }
-}
-
 /// `smallest_equiv_with_delta` returns an ideal with norm
 /// strictly smaller than the input (since LLL finds a short
 /// basis vector) and a `δ` that lies in the original ideal.
@@ -500,111 +441,4 @@ fn smallest_equiv_narrow_larger_norm() {
         reduced.norm().bitsize() <= ideal.norm().bitsize() + 2,
         "reduced norm shouldn't be materially larger than input"
     );
-}
-
-#[test]
-fn suitable_ideals_small_prime_norm() {
-    // Create an ideal of small prime norm and test SuitableIdeals.
-    let n = BigInt::<4>::from_u64(7);
-    let Some(ideal) = LeftIdeal::random_prime_norm(&n, &EXTREMAL_ORDERS[0]) else {
-        // random_prime_norm may fail; skip if so.
-        return;
-    };
-
-    let result = ideal.suitable_ideals();
-    if let Some(r) = result {
-        let f = TorsionExponent::FULL;
-
-        let d1_w = r.factor1.degree.to_bigint_wide();
-        let d2_w = r.factor2.degree.to_bigint_wide();
-
-        // Widen to BigInt<8> for the verification arithmetic
-        // (u·d1 can exceed 256 bits).
-        let u_w: BigInt<8> = r.u.into();
-        let v_w: BigInt<8> = r.v.into();
-        let two_e = BigInt::<8>::ONE << r.e.value();
-
-        // Verify: u · d1 + v · d2 = 2^e.
-        let lhs = u_w.ct_mul(&d1_w).ct_add(&v_w.ct_mul(&d2_w));
-        assert_eq!(lhs, two_e, "u·d₁ + v·d₂ should equal 2^e");
-
-        // Verify: e ≤ f.
-        assert!(r.e <= f, "e should be ≤ f");
-
-        // Verify: gcd(d1, d2) = 1 (oddness guaranteed by IsogenyDegree).
-        assert_eq!(d1_w.gcd(&d2_w), BigInt::<8>::ONE, "gcd(d₁, d₂) should be 1");
-
-        // Verify: u is odd.
-        assert!(
-            bool::from(r.u.is_odd()),
-            "u should be odd after 2-adic reduction"
-        );
-    }
-}
-
-/// `enumerate_hypercube` mirrors the C reference's
-/// `enumerate_hypercube` in `dim2id2iso.c:270-376` exactly.
-///
-/// Locks in the structural enumeration order so that any
-/// future change to the filter logic that diverges from the
-/// C ref will fail this test. Specifically:
-///
-///   * The half-cube break pattern (`x ≤ 0`, then nested non-positive breaks).
-///   * The all-even and all-mult-of-3 skips.
-///   * The `i`-orbit symmetry filter via the `check1 ≤ check2 ∧ check1 ≤
-///     check3` predicate.
-///
-/// At `m = 2` (NIST-I), with no symmetry the filtered cube
-/// has 246 tuples; with symmetry it has 137 tuples. The
-/// numbers come from running the C reference for a basis
-/// without/with i-symmetry respectively.
-#[test]
-fn enumerate_hypercube_matches_c_ref() {
-    let no_sym = enumerate_hypercube(2, false);
-    let with_sym = enumerate_hypercube(2, true);
-
-    // Locked-in counts at `m = 2` (NIST-I `FINDUV_BOX_SIZE`).
-    // `272` = full cube `5⁴ = 625` minus the positive-half
-    // (313 tuples) minus the 40 all-even tuples within the
-    // half-cube. The all-mult-of-3 filter contributes 0 at
-    // `m = 2` because `0` is the only multiple of 3 in
-    // `[-2, 2]` and `(0, 0, 0, 0)` is already excluded by the
-    // half-cube break. `136` is the further reduction from
-    // the `i`-orbit symmetry filter — exactly half of `272`,
-    // as expected when each orbit has size 2.
-    assert_eq!(no_sym.len(), 272);
-    assert_eq!(with_sym.len(), 136);
-
-    // Half-cube property: every kept tuple has either x < 0,
-    // or x = 0 ∧ y ≤ 0, or x = 0 ∧ y = 0 ∧ z ≤ 0,
-    // or x = 0 ∧ y = 0 ∧ z = 0 ∧ w < 0.
-    for &[x, y, z, w] in &no_sym {
-        let in_half_cube = x < 0
-            || (x == 0 && y < 0)
-            || (x == 0 && y == 0 && z < 0)
-            || (x == 0 && y == 0 && z == 0 && w < 0);
-        assert!(in_half_cube, "tuple [{x},{y},{z},{w}] violates half-cube");
-    }
-
-    // No tuple has all four coords even.
-    for &[x, y, z, w] in &no_sym {
-        assert!(
-            (x | y | z | w) & 1 != 0,
-            "tuple [{x},{y},{z},{w}] is all-even"
-        );
-    }
-
-    // No tuple has all four coords divisible by 3.
-    for &[x, y, z, w] in &no_sym {
-        assert!(
-            !(x.rem_euclid(3) == 0
-                && y.rem_euclid(3) == 0
-                && z.rem_euclid(3) == 0
-                && w.rem_euclid(3) == 0),
-            "tuple [{x},{y},{z},{w}] is all-mult-of-3"
-        );
-    }
-
-    // Symmetry filter strictly removes some tuples.
-    assert!(with_sym.len() < no_sym.len());
 }

@@ -1,0 +1,1347 @@
+% Specification review / feedback for SQIsign authors
+% Derived from implementing sqisign-selkie (Rust, NIST-I) against v3.0
+\documentclass[a4paper,11pt]{article}
+
+\usepackage{amsfonts,amsmath,amssymb}
+\usepackage[T1]{fontenc}
+\usepackage{libertinus}
+\let\arrowvert\undefined
+\let\Arrowvert\undefined
+\usepackage[libertine]{newtxmath}
+\usepackage{microtype}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array,fancyvrb,needspace}
+\usepackage[colorlinks=true, urlcolor=BrickRed, linkcolor=BrickRed,
+            citecolor=BrickRed]{hyperref}
+\usepackage{xurl}
+\usepackage{geometry}
+\geometry{margin=28mm, marginparwidth=0pt}
+\setlength{\emergencystretch}{3em}
+
+\newcommand{\algo}[1]{Algorithm~#1}
+\newcommand{\Fp}{\mathbb{F}_p}
+\newcommand{\Fpii}{\mathbb{F}_{p^2}}
+\newcommand{\Oo}{\mathcal{O}_0}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\nrd}{\operatorname{nrd}}
+
+% Security severity and implementation-priority badges.
+\newcommand{\blocking}{\textsc{\color{BrickRed}Blocking}}
+\newcommand{\high}{\textsc{\color{BurntOrange}High}}
+\newcommand{\medium}{\textsc{\color{RoyalBlue}Medium}}
+\newcommand{\low}{\textsc{\color{OliveGreen}Low}}
+
+% Finding header: affected algorithms + severity on one line
+% Badge flush right on the same line when it fits, else flush right on
+% the next line.
+\newcommand{\finding}[2]{\noindent\textit{#1}%
+  \unskip\nobreak\hfil\penalty50\hskip1em\hbox{}\nobreak\hfill#2%
+  {\parfillskip=0pt\finalhyphendemerits=0\par}\smallskip}
+
+
+\newcommand{\interopfinding}[2]{\finding{#1}{\textit{Conformance:} #2}}
+\newcommand{\Hsim}{H_{\mathrm{sim}}}
+\newcommand{\Hunif}{H_{\mathrm{unif}}}
+\newcommand{\Drsp}{D_{\mathrm{rsp}}}
+\newcommand{\specurl}{https://sqisign.org/spec/sqisign-20260901.pdf}
+\newcommand{\specat}[2]{\href{\specurl\#nameddest=#1}{#2}}
+\renewcommand{\arraystretch}{1.12}
+\hypersetup{pdftitle={SQIsign v3: Specification Review},
+            pdfauthor={Deirdre Connolly, Selkie Cryptography},
+            pdfsubject={Findings and suggested changes for the SQIsign team},
+            linktoc=all,bookmarksopen=true,bookmarksnumbered=true}
+
+\title{SQIsign v3: Specification Review}
+\author{Deirdre Connolly\\[0.2em]
+  \small Selkie Cryptography\\
+  \small\texttt{durumcrustulum@gmail.com}}
+\date{7 September 2026\enspace{\small(draft for discussion)}}
+
+\AddToHook{cmd/section/before}{\Needspace{8\baselineskip}}
+\AddToHook{cmd/part/before}{\Needspace{18\baselineskip}}
+
+\begin{document}
+\maketitle
+
+\noindent Notes on the 1 September 2026 v3 specification~\cite{sqisign-spec}
+and the round-3 reference implementation~\cite{sqisign-cref}, with
+suggested changes for the SQIsign team.
+
+The interval-sampling defect is the main confirmed security finding.
+The hint-distribution concern remains provisional. Neither establishes
+a signature forgery or key-recovery attack. Part~\ref{part:security}
+sets out those findings and the related deployment considerations.
+Parts~\ref{part:conformance} and~\ref{part:clarifications} collect the
+implementation corrections, ordered by conformance priority:
+\emph{blocking} for fundamental algorithm or random-stream mismatches,
+then high, medium, and low. These priorities describe implementation
+impact, separately from the security severity in Part~\ref{part:security}.
+Part~\ref{sec:v2} records the 42 v2 findings.
+
+\begingroup
+\small
+\tableofcontents
+\endgroup
+\clearpage
+
+\part{Security findings and deployment}
+\label{part:security}
+
+\section{Biased interval sampling}
+\label{sec:sampler}
+\hypertarget{SQI3-SPEC-01}{}
+\finding{\algo{4.24} and Section 4.1.4}{\medium}
+
+\specat{func.SampleFromInterval}{\textsc{SampleFromInterval}}
+sets $m=b-a+1$ and $n=\code{ibz\_bitsize}(m)$, draws an $n$-bit integer $x$,
+and accepts it when
+\[
+ x<m\left\lceil\frac{2^n}{m}\right\rceil.
+\]
+The threshold is at least $2^n$, so every draw is accepted. Reducing $x$
+modulo $m$ therefore biases the output whenever $m$ is not a power of two.
+For $[a,b]=[0,2]$, the equiprobable draws $0,1,2,3$ produce $0,1,2,0$:
+the output probabilities are $1/2,1/4,1/4$, rather than $1/3$ each.
+
+More generally, write $R=2^n=qm+r$, with $0\leq r<m$. The first $r$
+residues have $q+1$ preimages and the others have $q$. Their total variation
+distance from uniform is
+\[
+ \Delta=\frac{r(m-r)}{mR}.
+\]
+The prose describes 64 extra random bits, which line~2 omits. Extra bits
+would reduce this bias, but would not fix the acceptance test.
+
+For the \code{EIBox} values in Table~9, the coefficient draws used by
+\algo{4.78} have the following distributions before later rejections:
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Level & Interval & Distance from uniform & Mean (uniform: zero)\\
+\midrule
+I & $[-15,15]$ & $15/496\approx 3.02\%$ & $-15/32$\\
+III & $[-19,19]$ & $175/1248\approx 14.02\%$ & $-175/64$\\
+V & $[-22,22]$ & $247/1440\approx 17.15\%$ & $-247/64$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These are biases in internal draws, not measured biases in public keys or
+signatures. They do not describe the C reference's wider sampler either.
+
+\Needspace{8\baselineskip}
+\paragraph{Why this matters to the analysis.}
+The response path is \textsc{Sign} $\to$ \textsc{SampleQuaternionResponse}
+$\to$ \textsc{RandomBoundedElement} $\to$ \textsc{SampleFromInterval}.
+The sampler also feeds prime-norm ideal sampling and auxiliary ideal
+sampling through Algorithms~4.71 and~4.82.
+
+Uniform coordinate sampling in a box enclosing a lattice ball, followed by
+rejection to the ball and to odd norm, gives equal weight to the accepted
+lattice points. Biased coordinate sampling loses that argument. The weights
+can depend on the chosen basis, whose representation can depend on secret
+ideal data. I have not established whether that dependence is visible in
+complete signatures; correcting the sampler restores the intended starting
+point for the distribution argument.
+
+The accompanying script also gives a small $\mathbb{Z}^4$ example where
+odd-norm rejection and identifying $v$ with $-v$ leave unequal weights.
+Those operations are therefore not a general cure for the bias, although
+this example is not a SQIsign response lattice.
+
+\Needspace{12\baselineskip}
+\paragraph{Suggested change.}
+Use an acceptance range whose size is divisible by $m$: replace the
+ceiling with a floor. An exact sampler is:
+
+\begin{Verbatim}[fontsize=\small,frame=single,framesep=3mm]
+m = b - a + 1
+if m == 1: return a
+n = bit_length(m) + kappa
+R = 2^n
+limit = R - (R mod m)
+repeat:
+    x = uniform_n_bit_integer(prng)
+until x < limit
+return a + (x mod m)
+\end{Verbatim}
+
+Here $\kappa\geq0$ changes the rejection rate, not the uniformity of accepted
+outputs. If approximately uniform fixed-draw sampling is preferred, I
+suggest specifying its statistical-distance budget and accounting for all
+calls and subsequent conditioning in the analysis. The prose, pseudocode,
+and reference should agree on which contract is intended.
+
+This pseudocode specifies the distribution only. Public working-width
+bounds, observable retries, and failure handling need a separate timing
+argument. A fixed candidate batch with masked selection is one possible
+approach, provided its all-rejected probability and failure behavior are
+accounted for.
+
+\paragraph{Reference implementation and conformance.}
+The C reference uses a tracked bit bound plus 64 bits~\cite{cref-sampler}.
+It adds $m$ to
+the draw, checks that the sum still fits, and then reduces modulo $m$.
+In a release build the accepted sample space has size $R-m$; with assertions
+enabled the exceptional branch asserts. Since $R-m$ is not generally a
+multiple of $m$, this is not exact uniform sampling either, though the bias
+is much smaller than in the printed algorithm.
+
+Our current Rust interval sampler already uses exact rejection over
+$[0,b-a]$. I suggest preserving that distribution during the port, while
+addressing its variable-time behavior separately. A changed random-byte
+schedule may require new KATs without changing the wire format or
+verification relation. Useful conformance cases include singleton and
+signed intervals, powers of two and adjacent widths, rejection boundaries,
+and the three \code{EIBox} intervals.
+
+\Needspace{8\baselineskip}
+\section{Hint degree weighting}
+\label{sec:proof}
+\hypertarget{SQI3-PROOF-02}{}
+\finding{Figure 4; Problem 8.1.5 and Section 8.2.2.2}{\low\ (provisional)}
+
+In \specat{fig:sqihintdistrs}{Figure~4}, $\Hunif$ samples an odd degree
+$d\leq\Drsp$ with weight
+\[
+ \psi(d)=\prod_{\ell^e\parallel d}(\ell+1)\ell^{e-1},
+\]
+then samples a degree-$d$ isogeny with non-cyclic kernels allowed. For $d$
+coprime to $p$, $\psi(d)$ counts cyclic kernels. Counting all degree-$d$
+kernels instead gives
+\[
+ \sigma_1(d)=\sum_{a\mid d}a
+ =\prod_{\ell^e\parallel d}(1+\ell+\cdots+\ell^e).
+\]
+Here isogenies are counted up to isomorphism of the target, without
+quotienting by automorphisms of the source. Section~5.6 of the earlier
+security proof also identifies $\psi$ as the cyclic count~\cite{proof}.
+
+For example, degree~9 has twelve cyclic kernels and one additional kernel,
+$E[3]$, for a total of thirteen. Degree~25 similarly gives 30 versus 31.
+The printed procedure assigns an individual degree-$d$ isogeny probability
+proportional to $\psi(d)/\sigma_1(d)$, which varies with $d$. Thus it is
+not uniform over all outgoing bounded odd-degree isogenies. This is a
+well-defined distribution, but its degree dependence needs to be reconciled
+with the intended comparison to $\Hsim$.
+
+The latter first chooses a target from the stationary distribution, then
+samples uniformly among bounded odd-degree isogenies to that target.
+\textsc{RandomBoundedElement} does not impose primitivity or remove odd
+scalar factors, so we cannot simply assume that every response is cyclic.
+
+\paragraph{A statistic worth checking.}
+Consider $3\mid\deg(\varphi_2)$. If the response homomorphisms are uniform
+modulo~3 in $M_2(\mathbb{F}_3)$, this event has probability
+\[
+ \frac{\#\{M:\det M=0\}}{3^4}=\frac{33}{81}=\frac{11}{27}.
+\]
+The $\psi$-weighted degree distribution, over increasing odd-degree bounds,
+instead gives limiting probability $2/5$. The gap is $1/135$. The event
+can be checked from the degree, or from the rank of the action on 3-torsion
+when the hint representation makes that action available.
+
+The missing step is a quantitative residue-distribution argument for
+$\Hsim$ at the actual joint growth of $p$ and $\Drsp$, including target
+conditioning and exceptional curves. The script checks the kernel counts,
+the 81 small-field matrices, and finite degree-weight marginals. It does
+not simulate $\Hsim$ or prove this distinguisher.
+
+\paragraph{Suggested follow-up.}
+If the intended measure is uniform over all outgoing bounded odd-degree
+isogenies, I suggest investigating $\sigma_1(d)$ as the degree weight and
+rechecking the resulting proof distribution and its transport properties.
+If the $\psi$ weights are intentional, an explanation of the degree
+dependence and the statistic above would help settle the question.
+
+Theorem~8.1.7 already includes a hint-distinguishing advantage term. This
+observation therefore questions whether the justification makes that term
+small; it does not contradict the reduction as written. Nor does it refute
+the separate argument using the hardness of the $\Hsim$-assisted relation
+directly. I would treat this initially as a change or clarification to the
+analysis. Forcing primitive or cyclic responses in the signer would be a
+different protocol change requiring its own analysis.
+
+\Needspace{8\baselineskip}
+\section{Deployment properties to specify}
+\label{sec:related}
+
+The documented timing and binding limitations below affect deployment
+choices. The verifier and work-bound requests connect to the detailed
+implementation findings later in this review.
+
+\paragraph{Timing resistance.}
+Section~8.5 already explains that signing and key generation are not fully
+constant-time. For a hardened version, it would help to state which widths,
+iteration bounds, and failure behavior are public, and which operations
+remain outside the timing claim. In particular, correcting interval
+sampling does not make \textsc{IdealToIsogeny} or the whole signer
+constant-time. This needs resolution before deployment wherever the
+adversary can observe the relevant secret-dependent behavior.
+
+\paragraph{Stronger message binding.}
+The optional construction in Section~8.4.1 would benefit from explicit
+signing, verification, and encoding rules: carry the full $2\lambda$-bit
+digest, use the designated $\lambda$ bits for the challenge walk, and
+\emph{compare all $2\lambda$ bits} during verification. Checking only the
+walk bits would discard the extra binding. This adds 16, 24, or 32 bytes
+at levels I, III, or V. Any incompatible profile needs a distinct format
+identifier and test vectors, including rejection when only the extra
+digest bits are changed.
+
+As Section~8.4.2 explains, the auxiliary-isogeny representation remains
+malleable. The extended digest does not provide strong unforgeability,
+and matrix normalization does not make complete signatures unique.
+
+\paragraph{Verifier preconditions and failure behavior.}
+Section~3.1.2 already requires $A^2\ne4$ for \code{ECCurve}, and the C
+verifier checks the public and auxiliary coefficients before reconstructing
+bases~\cite{cref-verify}. I suggest making that checked decoding boundary
+explicit in \algo{3.24}, along with propagation of supporting-routine
+failures to rejection. Similarly, map each deferred torsion, independence,
+kernel, and splitting check to the operation that enforces it. The inspected
+gluing code does check torsion and independence~\cite{cref-gluing}; I have
+not established the suspected missing odd-response check as a bypass.
+
+Sections~\ref{sec:verify} and~\ref{sec:chainchecks} detail the verifier
+clarifications; \S\ref{sec:fromhint} covers a justified work bound and
+failure policy for zero-hint basis reconstruction. Negative vectors for
+malformed encodings, singular coefficients, invalid kernel data, and
+failure propagation would make these requirements concrete.
+
+\part{Implementation conformance}
+\label{part:conformance}
+
+\section{Incorrect norm equation in LoopTwo}
+\label{sec:looptwo}
+
+\interopfinding{Affects \algo{4.148} (\textsc{LoopTwo}) and \algo{4.149}
+  (\textsc{IdealToIsogenyNormEquation}), hence every
+  \textsc{IdealToIsogeny} call.}{\blocking}
+
+Line~10 sets $d \leftarrow 2^e - 2\mu^2 r_0 - \mu N$.  The comment on
+line~11 says the target is $2^e - 2\mu^2 r_0 - \delta N$, and $\delta$
+(lines~2 to~4) is otherwise unused.  The reference
+(\code{quat\_\allowbreak{}qlapoty\_\allowbreak{}loop\_\allowbreak{}two}, \code{quaternion/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}qlapoty.c})
+uses $\delta N$ with $\delta = 3$ when $r_0$ is even and $1$
+otherwise.  With $\mu N$ the value $z$ of line~16 is not the one the
+Cornacchia step needs, and the returned $\beta_1, \beta_2$ do not
+satisfy $\nrd(\beta_1) + \nrd(\beta_2) = N 2^e$.
+
+Two further differences on the failure path:
+\begin{itemize}[nosep]
+  \item The reference iterates while
+    $\mu \le \lfloor \sqrt{2^e / r_0} \rfloor$. Before rounding and
+    endpoint conventions, this upper bound is twice that of line~6
+    ($\mu < \sqrt{2^{e-2}/r_0}$).
+  \item On \textsc{LoopTwo} failure \algo{4.149} line~13 reruns
+    \textsc{LoopOne}.  The reference (\code{quat\_\allowbreak{}qlapoty\_\allowbreak{}normeq})
+    reports failure and its caller
+    (\code{dim2id2iso\_\allowbreak{}ideal\_\allowbreak{}to\_\allowbreak{}isogeny\_\allowbreak{}qlapoty},
+    \code{id2iso/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}dim2id2iso.c}) aborts.
+\end{itemize}
+
+\paragraph{Recommendation.}
+Write $\delta N$ on line~10.  State the loop bound the reference uses
+and whether a rerun of \textsc{LoopOne} is permitted.
+
+\section{Sampling gates and ideal canonicalization}
+\label{sec:smallest}
+
+\interopfinding{Affects \algo{4.80} (\textsc{SmallestEquivalentIdeal}) via
+  \algo{4.149} line~1, i.e.\ every \textsc{IdealToIsogeny}
+  call.}{\blocking}
+
+The reference (\code{quat\_\allowbreak{}ideal\_\allowbreak{}shortest\_\allowbreak{}equivalent},
+\code{quaternion/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}ideal.c}) computes $\alpha_1$ as the first
+vector of the reduced basis and $N' = \nrd(\alpha_1)/N$, then:
+\begin{enumerate}[nosep]
+  \item It draws $\beta$ only if $\gcd(N', N) \ne 1$.  \algo{4.80}
+    always enters the sampling loop, and its loop condition is
+    $\gcd(N', \nrd(\beta)/N) = 1$, a different test.
+  \item The generator is $\overline{\alpha_1}$, or
+    $\beta \cdot \overline{\alpha_1} / N$ after a draw.  Line~9 uses
+    $\alpha_1$ without conjugation.
+  \item After building $(N', (x, y))$ it canonicalizes: if $2x > N'$
+    then $(x, y) \leftarrow (N' - x,\, N' - y - 1)$ and the returned
+    generator is multiplied by $\mathbf{i}$ on the right.  \algo{4.80}
+    has no such step.
+  \item Line~1 calls \textsc{InertIdealReduction} without the bound
+    $\beta_\lambda$ that \algo{4.72} requires.
+\end{enumerate}
+Item~1 means a literal \algo{4.80} consumes default-domain bytes on
+every call, shifting every later draw from that stream (\algo{4.23}
+witnesses, \algo{4.146}).  Item~3 replaces $J$ by $J\mathbf{i}$, which
+has the same codomain but a different image basis, so
+$M_{\mathrm{sk}}$ and $M_{\mathrm{chl}}$ can differ when that
+normalization changes the representative.
+
+\paragraph{Recommendation.}
+Specify the gated draw, the conjugate, and the $2x \le N'$ canonical
+form. Explain which output representatives this normalization fixes,
+including the pushed basis; reproducing those choices is necessary
+for byte-for-byte conformance.
+
+\section{Random-byte consumption is underspecified}
+\label{sec:sample}
+\interopfinding{\algo{4.24} and callers in ideal and response sampling}{\blocking}
+
+Section~4.1.4 describes a draw of $\code{ibz\_bitsize}(b-a+1)+64$ bits,
+while \algo{4.24} draws only $\code{ibz\_bitsize}(b-a+1)$ bits. The
+distributional defect and the exact rejection correction are discussed in
+\S\ref{sec:sampler}. A separate conformance issue is the choice of working
+width and the resulting random-byte schedule.
+
+The reference's \code{ibz\_rand\_interval\_with\_domain} draws
+$\lceil(\code{b->bitlen}+64)/8\rceil$ bytes and masks to
+$\code{b->bitlen}+64$ bits~\cite{cref-sampler}. Here \code{bitlen} is
+the tracked bound of Definition~4.1.1, rather than the exact bit size of
+the endpoint or interval width. The reference then adds the interval
+width, checks that the sum fits, reduces, and shifts by $a$; its
+overflow check is not the exact rejection rule recommended above.
+The spec does not give the tracked bound at each call site.
+
+The earlier implementation comparison identified these byte schedules:
+\begin{itemize}[nosep]
+  \item The sign draw in \algo{4.71} uses $[0,1]$ with the bound of the
+    constant one, consuming nine bytes per candidate.
+  \item \algo{4.83} samples $[0,2\beta_i]$ and shifts by $-\beta_i$;
+    its working width comes from the bound on $2\beta_i$
+    (\code{quat\_lattice\_sample\_from\_ball},
+    \path{quaternion/ref/lvlx/lattice.c}).
+  \item \algo{4.78} uses
+    \code{ibz\_rand\_interval\_minm\_m}, which samples $[0,2m]$ with a
+    33-bit bound and subtracts $m$. For $m=15$, each coefficient draw
+    consumes thirteen bytes.
+  \item \algo{4.46} assigns $\lceil\log_2 p\rceil$ as the endpoint bound.
+\end{itemize}
+Even a one-byte sign draw instead of nine bytes changes subsequent draws
+from that stream. A mathematically equivalent sampling interface therefore
+need not reproduce the reference KATs.
+
+\paragraph{Suggested change.}
+Specify the intended distribution first, then the public working-width
+bounds, PRNG domain, byte order, masking, singleton handling, and retry
+behavior needed for reproducibility. Tabulate the bounds at each call
+site, including the signed-interval variant. Do not substitute the exact
+size of a secret-dependent endpoint for its public bound without a timing
+argument. Updating the sampler and KATs can preserve the existing wire
+format and verification relation.
+
+\section{Incorrect product-ideal basis}
+\label{sec:mulideal}
+
+\interopfinding{Affects \algo{4.73} (\textsc{MulIdealBasis}) and \algo{4.75}
+  (\textsc{MulIdealDualReduction}) line~2, hence \algo{4.83} and every
+  response.}{\high}
+
+\algo{4.74} builds $Y_1 = N_2(-u_2(2y_1+1) \bmod 2N_1)$ and
+$Y_2 = N_1(u_1(2y_2+1) \bmod 2N_2)$.  Reducing modulo $2N_i$ preserves
+parity, so $Y_1 \equiv N_2 u_2$ and $Y_2 \equiv N_1 u_1 \pmod 2$.  With
+$u_1 N_1 + u_2 N_2 = 1$ and $N_1, N_2$ odd this gives
+$Y_1 - Y_2 \equiv Y_1 + Y_2 \equiv 1 \pmod 2$.
+
+\algo{4.73} prints the third column as
+$X_1 + X_2 + \tfrac{Y_1 - Y_2}{2}\mathbf{i} + \tfrac{\mathbf{i}+\mathbf{j}}{2}$.
+Its $\mathbf{j}$-coefficient is $\tfrac12$, so membership in $\Oo$
+requires a half-integer $\mathbf{i}$-coefficient.  The printed
+coefficient $\tfrac{Y_1 - Y_2 + 1}{2}$ is an integer.  The fourth
+column fails the same way: its $\mathbf{k}$-coefficient is $\tfrac12$
+but its constant term $\tfrac{1 - Y_1 - Y_2}{2}$ is an integer.
+Neither column lies in $\Oo$, so the printed lattice is not the
+product ideal.
+
+The reference (\code{quat\_\allowbreak{}ideal\_\allowbreak{}mul\_\allowbreak{}O0}) uses
+\[
+  X_1 + X_2 + \tfrac{Y_2 - Y_1}{2}\mathbf{i} + \tfrac{\mathbf{j}}{2},
+  \qquad
+  -\tfrac{Y_1 + Y_2}{2} + (X_2 - X_1)\mathbf{i} + \tfrac{\mathbf{k}}{2},
+\]
+whose coefficients have the right parities.  Equivalently, \algo{4.75}
+line~2 should read
+$A, B, C, E \leftarrow 2(X_1 + X_2),\; Y_2 - Y_1,\; -(Y_1 + Y_2),\; 2(X_2 - X_1)$.
+We confirmed on small primes that the reference's lattice equals
+$\overline{I_1} \cdot I_2$, as \algo{4.74} promises, and that the
+printed one does not.
+
+\paragraph{Recommendation.}
+Correct the two columns in \algo{4.73} and line~2 of \algo{4.75}.
+
+\section{Missing response basis point and reversed outputs}
+\label{sec:hdresponse}
+
+\interopfinding{Affects \algo{3.21} (\textsc{HDResponse}) and \algo{3.23}
+  lines~17 and~18.}{\high}
+
+\begin{enumerate}[nosep]
+  \item $e$ is used on lines~9 to~12 and never bound.  The output
+    types imply $e = e_{\mathrm{rsp}}$.
+  \item Line~12 pushes $(P_{\mathrm{com}}, 0)$ and
+    $(Q_{\mathrm{com}}, 0)$ only, but the outputs
+    $\mathcal{B}_{\mathrm{aux}}, \mathcal{B}_{\mathrm{chl}}$ are typed
+    as bases and \algo{3.23} line~18 feeds them to
+    \textsc{SetChangeOfBasisMatrix}, whose \textsc{ChangeOfBasis}
+    calls need $R - S$.  The reference
+    (\code{compute\_\allowbreak{}dim2\_\allowbreak{}isogeny\_\allowbreak{}challenge},
+    \code{signature/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}sign.c}) pushes $P$, $Q$, and $P - Q$.
+    Recomputing the difference on the codomain is not an option, see
+    Part~\ref{sec:v2}, item~17.
+  \item By the convention of \algo{3.20} ($\deg \varphi_1 = q$ from
+    $E_1$), the first codomain factor for $E_1 = E_{\mathrm{com}}$ is
+    $E_{\mathrm{chl}}$ and the second is $E_{\mathrm{aux}}$.  Line~12
+    destructures them as $E_{\mathrm{aux}}, E_{\mathrm{chl}}$.  The
+    reference reads $E_{\mathrm{chl}}$ from the first factor and
+    $E_{\mathrm{aux}}$ from the second.  A signer following line~12
+    encodes the challenge curve as $E_{\mathrm{aux}}$ and fails its
+    own verifier.
+  \item Line~7 inverts $\mathrm{IdealNorm}(I_{\mathrm{sk,chl}})$
+    modulo $2^f$; the reference inverts modulo $2^{e_{\mathrm{rsp}}+2}$.
+    The results agree after the reduction on lines~10 and~11.
+  \item Line~12 writes $0_{E_{\mathrm{com}}}$ for a point of
+    $E'_{\mathrm{aux}}$.
+\end{enumerate}
+
+\paragraph{Recommendation.}
+Bind $e$, push the third point, and swap the two curves on line~12.
+
+\section{Incorrect power-of-two ideal formulas}
+\label{sec:powtwo}
+
+\interopfinding{Affects \algo{4.68} (\textsc{InertGenToIdealPowTwo}) via
+  \algo{4.151} line~14, i.e.\ the challenge ideal of every
+  signature.}{\high}
+
+Line~10 reads $X \leftarrow t(ys + zy + yz) \bmod 2^e$.  With $s$ the
+inverse computed on line~9 this is not a formula for $X$.  The
+reference (\code{quat\_\allowbreak{}ideal\_\allowbreak{}create\_\allowbreak{}O0\_\allowbreak{}pow\_\allowbreak{}two},
+\code{quaternion/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}ideal.c}) computes, with
+$(t, x, y, z) = \textsc{CoordinatesO}_0(\gamma \bmod 2^e)$ and
+$s = (y^2 + z^2)^{-1} \bmod 2^e$,
+\[
+  X = s\,(ty + xz + yz) \bmod 2^e, \qquad
+  Y = s\,(xy - tz - z^2) \bmod 2^e .
+\]
+The reference also normalizes parities before these formulas: after
+the $(\mathbf{i}+\mathbf{j})/2$ step of lines~3 to~5 it multiplies
+$\gamma$ by $\mathbf{i}$ on the left whenever $y$ is odd, so that the
+formulas see $y$ even and $z$ odd.  \algo{4.68} accepts
+$(y, z) \bmod 2 \in \{(0,1), (1,0)\}$ and applies one formula to both.
+
+\paragraph{Recommendation.}
+Replace lines~10 and~11 with the formulas above and add the
+$\mathbf{i}$ normalization, or give formulas valid for both parity
+cases.
+
+\section{Inconsistent challenge-kernel coordinates}
+\label{sec:kerdecomp}
+
+\interopfinding{Affects \algo{3.16}, \algo{4.151}
+  (\textsc{KernelDecomposedToIdeal}), and \algo{3.23} lines~12
+  and~13.}{\high}
+
+Three statements about the input $(c_1, c_2)$ disagree:
+\begin{itemize}[nosep]
+  \item \algo{3.16}: both divisible by $2^{f-e}$, not both by
+    $2^{f-e+1}$, and $E_0[I] = \langle [c_1]P_0 + [c_2]Q_0 \rangle$ on
+    the $2^f$-torsion basis $\mathcal{B}_0$.
+  \item \algo{4.151}: ``a point $[c_1]P_0 + [c_2]Q_0$ of order $2^e$''.
+  \item \algo{3.23} line~12: $(c_1, c_2) = M_{\mathrm{sk}} \cdot
+    [1, a_{\mathrm{chl}}]^T$ with $M_{\mathrm{sk}}$ reduced modulo
+    $2^\lambda$, which are coordinates on the $2^\lambda$-torsion
+    basis $[2^{f-\lambda}]\mathcal{B}_0$ and are not divisible by
+    $2^{f-\lambda}$.
+\end{itemize}
+The reference (\code{id2iso\_\allowbreak{}kernel\_\allowbreak{}dlogs\_\allowbreak{}to\_\allowbreak{}ideal\_\allowbreak{}even},
+\code{id2iso/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}id2iso.c}) takes the third reading: it evaluates
+$M_{\mathrm{sk}}$ on $(1, a_{\mathrm{chl}})$ and reduces every
+intermediate modulo $2^{\lambda}$.  An implementor who follows
+\algo{3.16} multiplies by $2^{f-\lambda}$ first and computes the
+ideal of a different point.  \algo{4.151} line~1 also uses
+$M_{\mathbf{j}}$, which is not among the three precomputed matrices of
+\S4.6; it equals $2M_{(\mathbf{i}+\mathbf{j})/2} - M_{\mathbf{i}}$.
+
+\paragraph{Recommendation.}
+State once that $(c_1, c_2)$ are coordinates modulo $2^e$ on
+$[2^{f-e}]\mathcal{B}_0$, and fix \algo{3.16} to match.
+
+\section{Hint exponents and the base-curve basis}
+\label{sec:hints}
+
+\interopfinding{Affects \algo{3.11} (\textsc{TorsionBasisToHint}),
+  \algo{3.9} lines~1 and~2, \algo{4.94}, \algo{4.95}.}{\high}
+
+\algo{3.11} says the hint decodes to the basis
+$([2^{e_h}]P, [2^{e_h}]Q)$ of $E[2^{e - e_h}]$, and \algo{4.94} types
+the output as $\mathrm{Hint}_{e - e_h}$.  \algo{3.9} calls
+$\textsc{TorsionBasisToHint}(E_1, f, e)$ with $e = e_{\mathrm{rsp}}+2$,
+which under \algo{3.11} would produce a hint for $E[2^{f - e}] =
+E[2^{126}]$.  \algo{3.24} line~9 decodes the same hint at exponent
+$e_{\mathrm{rsp}} + 2$.
+
+\algo{4.94} lines~21 to~26 resolve it: $e_h$ is the exponent at which
+\textsc{TorsionBasisFromHint} will be called, and the adjustment
+selects between $[2^{e-e_h}](R \pm S)$ so that the third coordinate
+matches the one \algo{4.95} recomputes.  The reference
+(\code{ec\_\allowbreak{}curve\_\allowbreak{}to\_\allowbreak{}basis\_\allowbreak{}2f\_\allowbreak{}to\_\allowbreak{}hint}, \code{ec/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}basis.c})
+agrees.  Only the prose of \algo{3.11} and the type in \algo{4.94} are
+wrong.
+
+A second gap: when $A=0$ the reference returns the precomputed basis
+of $E_0$ with hint~0, and \textsc{FromHint} likewise handles this curve
+separately. Algorithm~4.94 has no such branch. Its candidate has
+$x_R=0$ for every $h$; $(0,0)$ is a point of order two on $E_0$, and
+the construction gives $S=R$ before cofactor multiplication. It cannot
+produce the required basis. Hint~0 therefore covers both the base
+curve and a fallback search; the reference distinguishes them by
+testing $A$.
+
+\paragraph{Recommendation.}
+Rewrite \algo{3.11} as ``return a basis of $E[2^e]$ and a hint that
+\textsc{TorsionBasisFromHint}$(E, e_h, \cdot)$ decodes to a basis of
+$E[2^{e_h}]$ with the same third coordinate''.  Add the $A = 0$
+branch to \algo{4.94} and \algo{4.95}.
+
+\section{Wrong symmetric element in coordinate conversion}
+\label{sec:thetachange}
+
+\interopfinding{Affects \algo{4.119} (\textsc{ThetaChangeOfCoordinates})
+  lines~14 to~21, hence every gluing.}{\high}
+
+Line~3 sets $(\mathbf{G}^1, \mathbf{G}^2, \mathbf{G}^3)$ to the
+symmetric elements of $K'_{1,1}$, $K'_{2,1}$, and their sum on $E_1$.
+Lines~14 to~21 build rows~2 and~3 of $\mathbf{M}$ from
+$\mathbf{G}^2$, the element of $K'_{2,1}$.  The reference
+(\code{gluing\_\allowbreak{}change\_\allowbreak{}of\_\allowbreak{}coordinates}, \code{hd/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}gluing.c})
+builds those rows from \code{Basis\_\allowbreak{}1.g1}, the element of
+$K'_{1,1}$, that is $\mathbf{G}^1$.  Row~1 uses $\mathbf{H}^2$ in both.
+The index pattern of the products is otherwise identical.
+
+\paragraph{Recommendation.}
+Replace $\mathbf{G}^2$ by $\mathbf{G}^1$ in lines~14 to~21, or explain
+why the two agree.
+
+\section{Conjugation and splitting in coprime ideal sampling}
+\label{sec:coprime}
+
+\interopfinding{Affects \algo{4.79} (\textsc{EquivalentCoprimeIdeal}) via
+  \algo{4.81} (both keys), \algo{3.18} line~1 (every
+  signature).}{\high}
+
+The reference (\code{quat\_\allowbreak{}ideal\_\allowbreak{}small\_\allowbreak{}equivalent\_\allowbreak{}coprime\_\allowbreak{}enumeration},
+\code{quaternion/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}ideal.c}) differs from \algo{4.79}:
+\begin{enumerate}[nosep]
+  \item Coefficients come from the $[-m, m]$ sampler variant
+    (\S\ref{sec:sample}), 13 bytes each, and an all-zero vector is
+    skipped before the content is divided out.
+  \item $N'$ must be odd before the primality or coprimality test.
+    For $M = 2$ oddness is the whole test.
+  \item $\beta$ is conjugated before the ideal is built.
+  \item A non-inert $\chi_I(\beta)$ is not rejected.  The reference
+    calls \code{quat\_\allowbreak{}ideal\_\allowbreak{}create\_\allowbreak{}O0\_\allowbreak{}odd}, which splits off the
+    $\mathbb{Z}[\mathbf{i}]$ factor as in \algo{4.76} and returns the
+    inert part.  \algo{4.79} line~10 resamples instead.
+  \item The loop has no $\mathrm{EIBoundIteration}$ cap.
+\end{enumerate}
+Item~3 changes which ideal is produced from a given $\beta$ and
+item~4 changes how many draws are made before returning.  Both alter
+$I_{\mathrm{sk}}$ and $I_{\mathrm{com}}$ on inputs that occur in the
+published KATs.  Line~9 also passes the arguments of
+\textsc{InertGenToIdeal} in the opposite order from \algo{4.70}.
+
+\paragraph{Recommendation.}
+Reconcile the conjugation, oddness test, and non-inert splitting with
+the intended ideal distribution, then state one algorithm for
+implementations to follow. Specify whether the iteration bound is
+normative and how its failure policy relates to the analysis.
+
+\section{Response draw skipping and iteration policy}
+\label{sec:rbe}
+
+\interopfinding{Affects \algo{4.83} (\textsc{RandomBoundedElement}) via
+  \algo{3.18} line~5.}{\high}
+
+The reference (\code{quat\_\allowbreak{}lattice\_\allowbreak{}sample\_\allowbreak{}from\_\allowbreak{}ball}) differs from
+\algo{4.83} in its random-byte schedule and failure behavior:
+\begin{enumerate}[nosep]
+  \item When $\beta_i = 0$ it sets $x_i = 0$ without consuming
+    randomness.  \algo{4.83} line~7 always draws.
+  \item Each coordinate is drawn from $[0, 2\beta_i]$ and shifted, see
+    \S\ref{sec:sample}.
+  \item The loop is unbounded; there is no
+    $\mathrm{BoundIterationRBE}$ check.
+\end{enumerate}
+The acceptance test is equivalent: the reference accepts when
+$x^t G x \not\equiv 0 \pmod 4$ and $x^t G x \le 2B$ with $G$ the Gram
+matrix of twice the norm, which is $M$ odd and $M \le B$.  The box
+formula agrees with line~6 (\code{quat\_\allowbreak{}lattice\_\allowbreak{}bound\_\allowbreak{}parallelogram},
+\code{quaternion/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}lll\_\allowbreak{}applications.c}).  Line~5 reuses the
+loop index $i$ of line~4.
+
+\paragraph{Recommendation.}
+State the skip on $\beta_i=0$ and the interval passed to the sampler,
+using the corrected distribution in \S\ref{sec:sampler}. Reconcile the
+loop policy with the failure analysis in \S9.5: specify the cap,
+restart or error behavior, and its effect on the accepted distribution
+and timing. Removing the cap or introducing retries requires checking
+the assumptions of that analysis.
+
+\section{Checked curve decoding and verifier failures}
+\label{sec:verify}
+\interopfinding{\algo{3.24}; \S3.1.2, \S3.4.1, \S3.4.3}{\medium}
+
+The reference rejects $A_{\mathrm{pk}}=\pm2$ and
+$A_{\mathrm{aux}}=\pm2$ before reconstructing bases~\cite{cref-verify}.
+The specification already requires $A^2\ne4$ for \code{ECCurve} in
+\S3.1.2. The useful clarification is where decoding untrusted bytes
+establishes this invariant before routines that assume a valid curve
+are called; the missing line in \textsc{Verify} is not by itself
+evidence that the specification permits singular inputs.
+
+Supporting calls on lines~5--11 may fail on malformed inputs.
+Algorithm~3.24 should explicitly route these failures through the
+exception convention of \S3.4.1 to \code{false}. A caller should not
+need to infer whether a failed basis reconstruction, invalid kernel,
+or unsuccessful split is an API error or an invalid signature.
+
+The supersingularity claim in \S2.3.3 would also benefit from a short
+argument linking the order and kernel checks to the properties needed
+of the public and auxiliary curves. Section~3.4.3 expressly permits
+deferred validation; \S\ref{sec:chainchecks} asks for that dependency
+to be made explicit.
+
+\paragraph{Suggested change.}
+Show checked decoding of both coefficients before basis reconstruction,
+state that supporting-routine failures reject the signature, and
+identify the checks that justify each required curve and torsion
+property. Include negative vectors for singular coefficients and
+failed subroutines. No singular-curve acceptance or odd-response
+verification bypass has been established here.
+
+\section{Make deferred kernel checks traceable}
+\label{sec:chainchecks}
+\interopfinding{\algo{4.116}, \algo{4.118}, \algo{4.122},
+  \algo{4.124}; \S3.4.3}{\medium}
+
+The reference gates some kernel validation on its \code{verify} flag.
+In particular, the gluing code explicitly verifies the projected
+two-torsion points and their independence through
+\code{verify\_two\_torsion}~\cite{cref-gluing}. The printed
+\textsc{GluingCodomain} does not expose the same standalone check.
+Related constraints also occur in supporting routines such as
+\textsc{CoSymElem}, so the absence of that line alone does not establish
+a difference in the accepted signatures.
+
+Section~3.4.3 allows checks to be deferred to operations that enforce
+the required property. What is missing for an implementor is a direct
+mapping from each required order, independence, and splitting condition
+to the operation that checks it, together with the treatment of failure.
+Similarly, \algo{4.116} states its zero-coordinate error without the
+reference's verification-mode qualification.
+
+\paragraph{Suggested change.}
+List the verifier's required predicates and cite the routine enforcing
+each one. Distinguish mandatory validation of attacker-provided data
+from signing-time consistency checks whose preconditions are already
+established. Add negative vectors that reach each rejection point.
+No signature accepted by the complete specified verifier but rejected
+by the reference has been demonstrated for this concern.
+
+\section{Ideal-to-isogeny kernel layout}
+\label{sec:id2iso}
+
+\interopfinding{Affects \algo{4.150} (\textsc{IdealToIsogeny}) lines~5 to~7
+  and~13, and \algo{4.149} line~19.}{\medium}
+
+The pseudocode places $(P_0, Q_0)$ on the first factor of
+$E_0 \times E_0$, the images $\theta(P_0), c_2\theta(Q_0)$ scaled by
+$\nu_1$ and $c_2 = \nu_1(1 - \nu_2 2^{f-2})$ on the second factor,
+with $\theta = \beta_2 \overline{\beta_1}/N$, and reads $E_I$ from the
+first codomain factor.  This matches Eq.~(28) in Appendix~A.
+
+The reference does something else.  \code{quat\_\allowbreak{}qlapoty} returns
+$\overline{\theta} = \beta_1 \overline{\beta_2}/N$ (it conjugates after
+the norm equation).  \code{dim2id2iso\_\allowbreak{}ideal\_\allowbreak{}to\_\allowbreak{}isogeny\_\allowbreak{}qlapoty}
+then forms
+$T_1 = ([\nu_1]\overline{\theta}(P_0), P_0)$ and
+$T_2 = ([\nu_1]\overline{\theta}(Q_0), Q_0)$, with no $c_2$ factor, runs
+a dedicated chain variant (\code{theta\_\allowbreak{}chain\_\allowbreak{}compute\_\allowbreak{}and\_\allowbreak{}eval\_\allowbreak{}E2}),
+and reads $E_I$ and the pushed basis from the \emph{second} codomain
+factor.
+
+Both recipes define the same $(2^{f-2}, 2^{f-2})$-isogeny kernel
+$\langle [4]T_1, [4]T_2 \rangle$, and the outputs are $x$-only, so they
+may well produce identical bytes.  We have not verified that a literal
+\algo{4.150} does, and the pair $(T_1, T_2)$ the reference uses is not
+isotropic at level $2^{f}$ in the sense required by \S4.5.4.1 (the
+Weil pairing exponent is $\nu_1 2^{f-2}$), so it relies on chain
+internals the spec does not describe.
+
+\paragraph{Recommendation.}
+State that \algo{4.150} was validated against the reference KATs, or
+document the reference's kernel layout and the chain variant it needs.
+
+\section{Parity loss in ideal intersection}
+\label{sec:intersect}
+
+\interopfinding{Affects \algo{4.77} (\textsc{Intersect}) via \algo{3.23}
+  line~14 and \algo{3.21} line~4.}{\medium}
+
+Line~2 reduces $X_2 + \mathbf{i}Y_2$ with \textsc{ModO$_0$}$(\cdot, N_2)$,
+which maps each coordinate to $[0, N_2)$.  Lines~4 and~5 then divide
+$X_2$ and $Y_2 - u^2 - v^2$ by two and assert the results are
+integers.  Reduction modulo the odd $N_2$ does not preserve parity, so
+the claimed integrality can fail after the reduction.
+The reference (\code{quat\_\allowbreak{}ideal\_\allowbreak{}intersect\_\allowbreak{}O0}) reduces both
+coordinates modulo $2N_2$, which keeps the parities of the unreduced
+product.
+
+\paragraph{Recommendation.}
+Write line~2 with modulus $2N_2$, or reduce after the halving.
+
+\section{Prime-norm sampling order and square-root choice}
+\label{sec:primenorm}
+
+\interopfinding{Affects \algo{4.71} (\textsc{PrimeNormIdealInertSampling})
+  via \algo{4.81}, i.e.\ $I_{\mathrm{sk}}$ and
+  $I_{\mathrm{com}}$.}{\medium}
+
+Three details fix the bytes and are not in the text.
+\begin{enumerate}[nosep]
+  \item Draw order.  The reference
+    (\code{quat\_\allowbreak{}random\_\allowbreak{}ideal\_\allowbreak{}O0\_\allowbreak{}given\_\allowbreak{}prime\_\allowbreak{}norm}) draws $x$,
+    loops until the residuosity test passes, computes the square root,
+    and only then draws the sign bit.  The pseudocode agrees, but
+    nothing says the sign bit is a separate call to the interval
+    sampler on $[0, 1]$, which costs nine bytes (\S\ref{sec:sample}).
+  \item Root choice.  Line~5 calls \textsc{ModularSQRT}, whose output
+    for $N \equiv 1 \pmod 4$ depends on the non-residue used by
+    Tonelli--Shanks (\algo{4.20} does not fix it).  The sign bit of
+    line~9 does not absorb this: the two roots differ in $Y$, hence in
+    $y$, before and after the sign flip.
+  \item The test in line~3 is implemented as
+    $\left(\tfrac{-4x^2 - p \bmod N}{N}\right) = 1$ together with
+    $(-4x^2 - p) \bmod 4 \in \{0, 1\}$.  This is equivalent, but the
+    spec should say so since ``square mod $4N$'' has no algorithm
+    attached.
+\end{enumerate}
+
+\paragraph{Recommendation.}
+Pin the root returned by \textsc{ModularSQRT} (e.g.\ the smaller
+representative, or the output of a stated Tonelli--Shanks
+non-residue search), and state the byte cost of the sign draw.
+
+\section{Primality-test witnesses and iteration counts}
+\label{sec:isprime}
+\interopfinding{\algo{4.23} and callers \algo{4.46}, \algo{4.79},
+  \algo{4.148}}{\medium}
+
+Line~18 samples a witness at random without naming a PRNG. The values of
+\code{reps} (64, 96, 128) appear in the prose of \S4.1.3 but not in
+Tables~8--10. At level~I the reference passes
+\code{QUAT\_primality\_num\_iter} $=64$ and draws witnesses from the
+default domain
+(\path{precomp/ref/p324_3/include/quaternion_constants.h}).
+
+Drawing witnesses from the \code{key}, \code{com}, or \code{res} stream
+instead changes the later draws in that stream. Isolating the witnesses
+in $\mathrm{prng}_{\mathrm{def}}$ avoids this source of interference.
+The primality procedure is a probable-prime test: different witness
+choices can affect acceptance of composites. It should not be described
+as a Las Vegas computation whose result is independent of randomness.
+
+\paragraph{Suggested change.}
+Tabulate \code{reps}, name $\mathrm{prng}_{\mathrm{def}}$ in the algorithm,
+and state the false-acceptance bound and assumptions used for this
+probable-prime test. Keep its error accounting distinct from the
+random-stream convention needed for conformance.
+
+\section{Key generation and signing failure handling}
+\label{sec:retry}
+
+\interopfinding{Affects \algo{3.22} (\textsc{KeyGen}) and \algo{3.23}
+  (\textsc{Sign}).}{\low}
+
+The reference key generation (\code{protocols\_\allowbreak{}keygen},
+\code{signature/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}keygen.c}) loops the whole of lines~3 and~4
+until \textsc{IdealToIsogeny} succeeds, drawing fresh
+\code{"key"}-domain bytes each time.  Signing
+(\code{protocols\_\allowbreak{}sign}) returns failure on the two coprimality
+exceptions of \algo{3.18} and \algo{3.21} and on
+\textsc{RandomIdealGivenNorm} failure, and aborts on
+\textsc{IdealToIsogenyNormEquation} failure.  The spec raises and
+stops. Chapter~9 analyzes rare failures under its sampling assumptions,
+but a small failure probability does not specify the API contract.
+The distribution correction in \S\ref{sec:sampler} and the loop policy
+in \S\ref{sec:rbe} should be reconciled with those assumptions.
+
+\paragraph{Recommendation.}
+State the intended behavior on each exception.
+
+\section{Theta-to-Montgomery candidates and point maps}
+\label{sec:theta2mont}
+
+\interopfinding{Affects \algo{4.126} (\textsc{ThetaToMontgomery}) and
+  \algo{4.96}.}{\low}
+
+The third theta null point enumerated is $(a + \mathbf{i}b : a -
+\mathbf{i}b)$ in the spec and $(\mathbf{i}a + b : a + \mathbf{i}b)$ in
+the reference (\code{ec\_\allowbreak{}theta\_\allowbreak{}to\_\allowbreak{}montgomery},
+\code{ec/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}normalize.c}).  The two give opposite Montgomery
+coefficients, so after the $\pm A_i$ step of line~13 the same six
+values are compared and the same $A_{\max}$ is chosen.  The conversion
+matrices $\mathbf{N}$ of lines~20 to~31 are indexed by the position of
+the maximum, and the positions of the third pair are swapped between
+the two lists.  We did not validate the printed $\mathbf{N}$ table
+against the reference's.
+
+\paragraph{Recommendation.}
+Either enumerate the same six null points as the reference or state
+that any enumeration works and give the $\mathbf{N}$ matrices as
+functions of the chosen null point rather than of an index.
+
+\section{The v3 square-root convention}
+\label{sec:sqrt}
+
+\interopfinding{Affects \algo{4.35} (\textsc{Fp2SQRT}) and every consumer of
+  \textsc{ProjectiveDifference}.}{\low}
+
+\algo{4.35} matches the reference's \code{fp2\_\allowbreak{}sqrt}
+(\code{gf/\allowbreak{}ref/\allowbreak{}lvlx/\allowbreak{}fp2.c}) line for line, including the $x_1 = 0$
+select.  The v2 reference additionally negated the result to make the
+real part even; that step is gone and \algo{4.35} is the whole
+convention.  Nothing in \S1.4 says so.  An implementor porting a v2
+field layer keeps the parity step, and every torsion basis differs.
+
+\paragraph{Recommendation.}
+Note in \S4.2.1.3 that the output of \algo{4.35} is not further
+canonicalized, and list the change in \S1.4.
+
+\part{Further specification clarifications}
+\label{part:clarifications}
+
+\section{Carry the difference point through basis actions}
+\label{sec:actonbasis}
+
+\interopfinding{Affects \algo{3.7} (\textsc{ActOnBasis}) and its callers
+  \algo{4.150} lines~7 and~9, \algo{3.21} line~8, \algo{3.24}
+  line~11.}{\medium}
+
+\algo{3.7} returns the pair $([x_1]P + [x_3]Q,\, [x_2]P + [x_4]Q)$.
+\algo{4.150} line~9 destructures a triple $(P_1, Q_1, R_1)$ from it
+and pushes $R_1$ through the chain as the difference of the first two.
+In $x$-only arithmetic the third point is a separate biscalar
+multiplication by $(x_1 - x_2, x_3 - x_4)$ on the same triple, and it
+cannot be recovered from the first two outputs (v2 review, item~17).
+The reference's \code{id2iso\_\allowbreak{}matrix\_\allowbreak{}application\_\allowbreak{}even\_\allowbreak{}basis}
+computes it when asked.
+
+\paragraph{Recommendation.}
+Define \textsc{ActOnBasis} on triples and state the third scalar pair.
+Restate the rule the v2 review asked for, which v3 still leaves
+implicit: once a basis $(P, Q, P - Q)$ exists, the third point is
+carried through every doubling, matrix action, and isogeny evaluation
+alongside $P$ and $Q$.  Recomputing it with
+\textsc{ProjectiveDifference} picks a square-root branch independently
+and can return $P+Q$ in place of $P-Q$, invalidating later
+differential additions that rely on the original sign relation.
+
+\section{Montgomery normalization and point transport}
+\label{sec:normmont}
+
+\interopfinding{Affects \algo{4.96} (\textsc{NormalizeMontgomery}) and
+  \algo{4.99} (\textsc{TwoIsogenyChain}) line~26.}{\medium}
+
+\begin{enumerate}[nosep]
+  \item Line~1 feeds $(X_P + Z_P, X_P - Z_P)$ of a 4-torsion point to
+    \textsc{ComputeMontCoeff}, which expects a one-dimensional theta
+    null point.  The relation is Eq.~(10) of \S4.5.7.1 with
+    $P = (a + b : a - b)$, thirty pages later, and is not cited.
+  \item \textsc{ComputeMontCoeff} raises when $C = 0$.  \algo{4.96}
+    does not say what happens then.  The reference
+    (\code{ec\_\allowbreak{}theta\_\allowbreak{}to\_\allowbreak{}montgomery}) returns failure, which
+    \algo{3.24} must treat as rejection.
+  \item Changing the Montgomery model moves every point.  \algo{4.126}
+    returns the $2 \times 2$ map $\mathbf{N}$; \algo{4.96} returns
+    only the curve.  \algo{4.99} evaluates \code{pts} on line~24 and
+    normalizes on line~26, so its output points are on the
+    pre-normalization model.  No protocol call evaluates points
+    through \textsc{TwoIsogenyChain}, so this is latent, but the
+    algorithm as printed is inconsistent.  The reference's
+    \code{ec\_\allowbreak{}normalize\_\allowbreak{}montgomery} applies the map to a basis when
+    one is passed.
+\end{enumerate}
+
+\paragraph{Recommendation.}
+Cite Eq.~(10) on line~1, add a failure clause, and return the point
+map (or state that callers must not evaluate points).
+
+\section{Work bounds for zero-hint basis reconstruction}
+\label{sec:fromhint}
+\interopfinding{\algo{4.95} lines~1--3 and the searches in \algo{4.94},
+  reached from \algo{3.24}}{\low}
+
+A zero hint makes \textsc{TorsionBasisFromHint} reconstruct the basis
+by searching again. Algorithm~4.94 does not give a worst-case number
+of candidates or a policy for search exhaustion. The reference also
+uses search loops in \path{ec/ref/lvlx/basis.c}. This leaves the maximum
+verification work and the treatment of an exhausted implementation
+counter unclear.
+
+This is a request for a work bound and a consistent failure policy.
+We have not established an input that makes the v3 fallback search
+nonterminating. Fast searches on sampled curves do not establish a
+worst-case bound over the verifier's permitted input domain.
+
+\paragraph{Suggested change.}
+Give a justified search bound or a bounded reconstruction procedure,
+and propagate its failure to signature rejection. Any cap that changes
+the verifier's acceptance behavior needs an honest-input failure
+argument and a common conformance rule. Specify counter exhaustion
+explicitly, and test the last permitted candidate and failure path.
+Do not infer a safe cap from an empirical maximum alone. The separate
+$A=0$ basis convention is addressed in \S\ref{sec:hints}.
+
+\section{Undefined batch normalization in change of basis}
+\label{sec:normalize}
+
+\interopfinding{Affects \algo{4.106} (\textsc{ChangeOfBasis}) line~2 and
+  \algo{4.104} (\textsc{Tate}).}{\low}
+
+Line~2 calls \textsc{Normalize} on ten points and the curve.  No
+algorithm by that name exists.  \algo{4.104} requires its three points
+as $(X : 1)$ and its curve as $(A_{24} : C_{24})$, and \algo{4.101}
+divides by $C_{24}$ at every step.  The intent is a batch inversion
+of the ten $Z$-coordinates (and presumably of $C_{24}$) with
+\algo{4.36}.
+
+\paragraph{Recommendation.}
+Define \textsc{Normalize} or inline the batch inversion.
+
+\section{Tie-breaking in Minkowski reduction}
+\label{sec:minkowski}
+
+\interopfinding{Affects \algo{4.65} (\textsc{MinkowskiReduce}) and the
+  canonical-form claim of \algo{4.60}.}{\low}
+
+Line~10 sorts the candidate list by norm.  Candidates of equal norm
+have no stated order, and lines~13 to~25 take the first independent
+ones.  \S9.1 argues that equal minima occur with probability far below
+$2^{-\lambda}$, which covers the successive minima but not the
+27-element candidate list, where several candidates share a norm
+routinely (for instance $c$ and $-c$ are excluded by construction, but
+$(1, 1, 0, 0)$ and $(1, -1, 0, 0)$ are not).  The output is claimed
+canonical up to a global sign.
+
+\paragraph{Recommendation.}
+Specify a total order on candidates (norm, then the coefficient vector
+lexicographically) or argue that the choice among equal-norm
+candidates does not change $T$.
+
+\section{The gluing ladder's output annotation}
+\label{sec:gluingladder}
+
+\interopfinding{Affects \algo{4.90} (\textsc{GluingLadder}).}{\low}
+
+The output is annotated $[2^e - 1]P, [2^e]P$.  Starting from
+$(R_0, R_1) = (Q, P)$ and applying \textsc{xDBLADD} $e$ times returns
+$(R_1, R_0) = ([2^e]P,\; [2^e - 1]P + Q)$.  That is what \algo{4.131}
+line~14 relies on, with $Q = 0$ on the first call and
+$Q = [2^{m} - 1]T$ afterwards.
+
+\paragraph{Recommendation.}
+Annotate the output as $([2^e]P, [2^e - 1]P + Q)$.
+
+\section{Incorrect fourth vector in the dual-lattice input}
+\label{sec:dual4d}
+
+\interopfinding{Affects \algo{4.60} (\textsc{DualLatReduction4DZ}).}{\low}
+
+The input is written as
+$2N\mathbb{Z} + 2N\mathbf{i}\mathbb{Z} + (A + B\mathbf{i} + \mathbf{j})\mathbb{Z} + (C + E\mathbf{i} + \mathbf{j})\mathbb{Z}$.
+Doubling the basis of \algo{4.73} gives a fourth vector with
+$\mathbf{k}$, not $\mathbf{j}$, and \algo{4.75} line~2 assigns
+$C, E$ to the $\mathbf{k}$-column.  The Gram profile on line~2 of
+\algo{4.60} is right for $\mathbf{k}$.
+
+\section{Unit-normalization ties}
+\label{sec:glzi}
+
+\interopfinding{Affects \algo{4.59} (\textsc{LehmerGLZi}) lines~20 and~21,
+  hence \algo{4.72} and \S\ref{sec:smallest}.}{\low}
+
+Lines~20 and~21 pick $u \in \{\pm 1, \pm\mathbf{i}\}$ so that the
+real and imaginary parts of $uA$ (respectively $uH$) are nonnegative.
+When one part is zero two units qualify.  The choice fixes the first
+reduced vector, which is $\alpha_1$ in \algo{4.80}, so it reaches the
+key bytes.  Zero parts are rare but the rule should be total.
+
+\section{A dual-isogeny mismatch in the Kani matrix}
+\label{sec:kani}
+
+\interopfinding{Affects \S4.6.1, Eq.~(15), and \algo{3.20}.}{\low}
+
+The diagram above Eq.~(15) draws $\psi_2 : E' \to E_0$, but the
+$(2,1)$ entry of $\Phi : E_0^2 \to E_I \times E'$ is written
+$-\psi_2$, which would need domain $E_0$.  \S4.5.4 writes the same
+entry as $-\psi_2$ with $\psi_2 : E_4 \to E_1$ and the same problem.
+One of the arrow or the entry needs a hat.
+
+\section{Secret-key decoding bounds}
+\label{sec:skbounds}
+
+\interopfinding{Affects Chapter~6 (secret key encoding).}{\low}
+
+The inert ideal is encoded as three fields of
+\code{FP\_\allowbreak{}ENCODED\_\allowbreak{}BYTES} bytes.  Nothing bounds
+$N = \mathrm{IdealNorm}(I_{\mathrm{sk}})$ by $2^{328}$ at NIST-I; the
+bound follows from \algo{4.79} and \S9.3 but is not stated at the
+encoding.  No parse-time
+checks are listed for a secret key ($N$ odd, $0 \le x, y < N$,
+$M_{\mathrm{sk}}$ entries below $2^\lambda$ and normalized).  A
+signer that accepts a tampered key runs \algo{3.23} on it.
+
+\section{Editorial corrections}
+\label{sec:editorial}
+
+\interopfinding{Low-severity text defects.}{\low}
+
+\begin{itemize}[nosep]
+  \item Algorithms 4.42 to 4.48 are numbered out of order (4.43, 4.44,
+    4.45, 4.42, 4.47, 4.46, 4.48).
+  \item \algo{4.49} line~6 calls $\textsc{SumOfSquares}(r, m, \cdot)$;
+    \algo{4.52} takes $(m, r, \beta_\lambda)$.
+  \item \algo{4.79} line~9 calls $\textsc{InertGenToIdeal}(\beta, N')$;
+    \algo{4.70} takes $(N, \gamma)$.
+  \item \algo{4.80} line~1 omits the $\beta_\lambda$ argument of
+    \algo{4.72}.
+  \item \algo{4.83} line~5 reuses the loop index $i$ of line~4.
+  \item \algo{3.21} line~12 writes $0_{E_{\mathrm{com}}}$ for a point
+    of $E'_{\mathrm{aux}}$.
+  \item \algo{3.13} is declared on \textsc{InertIdeal} with a footnote
+    that it ``extends naturally''; \algo{4.83} line~3 applies it to a
+    \textsc{MulIdeal}.  Say $N$ for all three types.
+  \item Table~5 gives $e_{\mathrm{rsp}} = \lceil \log(p)/2 \rceil +
+    \lambda/4 + 1$ and Table~8 gives
+    $1 + \lceil \tfrac14(\lambda + 2\log_2 p) \rceil$.  They agree
+    because $\lambda$ is a multiple of 8; one formula suffices.
+  \item \algo{3.14} and \algo{3.15} write $\mathrm{cls}(()I)$.
+  \item \S9.3.1: ``quadratif'', ``symetries du to'', ``we're gonna''.
+  \item \algo{4.151} line~1 uses $M_{\mathbf{j}}$, which is not
+    precomputed in \S4.6; give it as
+    $2M_{(\mathbf{i}+\mathbf{j})/2} - M_{\mathbf{i}}$ or add it to
+    \S4.7.
+\end{itemize}
+
+\part{Disposition of the v2.0.1 findings}
+\label{sec:v2}
+
+Each row cites the section of the v2.0.1 review~\cite{v2-review}.
+\emph{Resolved} means v3 addresses the original issue, and \emph{moot}
+means the relevant construction was replaced or removed.
+\emph{Partial} marks an addressed issue with a related concern elsewhere
+in v3. The zero-hint row is a request to clarify work bounds; it is not a
+confirmed nontermination defect. These statuses concern the original
+v2 finding, not every property of the associated v3 algorithm.
+
+\begingroup
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{longtable}{@{}r >{\raggedright\arraybackslash}p{0.30\textwidth}
+  >{\raggedright\arraybackslash}p{0.155\textwidth}
+  >{\raggedright\arraybackslash}p{0.435\textwidth}@{}}
+\toprule
+\# & v2.0.1 finding & Status & v3.0 locus \\
+\midrule
+\endhead
+1 & $\Fpii$ square root canonicalization & resolved &
+  \algo{4.35} is a complete deterministic formula; the parity step is
+  gone (\S\ref{sec:sqrt}). \\
+2 & \textsc{ProductToTheta} coordinate convention & resolved &
+  \algo{4.121} lines~4 to~8. \\
+3 & ``Squared theta'' definition & resolved &
+  \S4.5.2.1 separates \textsc{Squaring} and \textsc{Hadamard}; every
+  algorithm spells both out. \\
+4 & \textsc{GluingEval} cross-curve products & resolved &
+  \algo{4.123} carries explicit subscripts (new formulas). \\
+5 & Projective inverse of the dual null point & resolved &
+  \algo{4.110} and \algo{4.122} lines~15 to~21 use products only. \\
+6 & \code{hadamard\_\allowbreak{}bool} in the chain & resolved &
+  \algo{4.132} passes $\mathrm{hadamard} = (m \ne 1)$ explicitly. \\
+7 & Torsion basis slot convention & resolved &
+  \S4.4.2 states the $(x_R, x_{RS}, x_S)$ permutation; \algo{4.94}
+  line~31, \algo{4.95} line~14. \\
+8 & Zero-hint fallback work bound & clarify &
+  Bound and failure policy requested in \S\ref{sec:fromhint};
+  no nonterminating v3 input established. \\
+9 & Matrix storage convention & resolved &
+  Eq.~(1), \algo{3.7}, Chapter~6 encoding order. \\
+10 & $2^{f-e}$ scaling in \textsc{ChangeOfBasis} & resolved &
+  \algo{3.8} defines $\mathcal{B}_2 = \mathcal{B}_1 \cdot 2^{f-e} M$
+  with entries in $[0, 2^e)$; \algo{3.9} reduces first. \\
+11 & Cubical Tate third-argument sign & resolved &
+  Note after \algo{4.103}; \algo{4.106} inverts $\zeta_3, \zeta_4$
+  explicitly. \\
+12 & Matrix exponent omits \code{HD\_\allowbreak{}extra\_\allowbreak{}torsion} & resolved &
+  \algo{3.23} line~18 uses $e_{\mathrm{rsp}} + 2$. \\
+13 & Normalization of $(A_{24} : C_{24})$ & resolved &
+  \algo{4.94}, \algo{4.95} require $(A : 1)$; \algo{4.99} ends in
+  \textsc{NormalizeMontgomery}. \\
+14 & Gluing requires Jacobian $y$ & moot &
+  Superglue gluing is $x$-only (\algo{4.122} to \algo{4.124}). \\
+15 & Jacobian doubling for the strategy & moot &
+  \algo{4.114} doubles theta points. \\
+16 & \textsc{DifferencePoint} normalization factor & resolved &
+  \algo{4.92} line~4 states
+  $\gamma = C(\overline{C}\,\overline{X_P Z_Q - Z_P X_Q})^2$. \\
+17 & Never recompute $P - Q$ & partial &
+  \algo{4.150} returns a triple; \algo{3.21} pushes only two points
+  (\S\ref{sec:hdresponse}). \\
+18 & Change-of-basis application convention & resolved &
+  Eq.~(1), \algo{3.7}. \\
+19 & \textsc{RandomIdealGivenNorm} $\beta$ range inclusive & resolved &
+  \algo{4.82} with \algo{4.24} closed intervals; byte cost now differs
+  (\S\ref{sec:sample}). \\
+20 & \textsc{GeneralizedRepresent\allowbreak{}Integer} ranges & moot &
+  \algo{4.46} samples $z, t \ge 1$ in $\Oo$ with no isogeny condition;
+  new divergences in \S\ref{sec:sample}. \\
+21 & Response lattice product vs.\ intersection & resolved &
+  \algo{3.23} lines~14 and~15, \algo{3.18}. \\
+22 & \textsc{LatticeSampling} underspecified & partial &
+  Dual box specified in \algo{4.83}; distribution correction in
+  \S\ref{sec:sampler} and draw/failure policy in \S\ref{sec:rbe}. \\
+23 & $L^2$ deep-insertion order & moot &
+  Floating-point LLL removed (\S4.3.3). \\
+24 & \textsc{FixedDegreeIsogeny} $u^{-1}$ & moot &
+  Removed; the scaling appears as $\nu_1, c_2$ in \algo{4.150}. \\
+25 & Fixed-precision HNF & moot &
+  Inert representation with bounds (Table~10). \\
+26 & Endomorphism image $P - Q$ and Okeya--Sakurai & moot &
+  No Jacobian lift; \algo{4.150} line~9 pushes $R_1$. \\
+27 & \textsc{GetIndexSplitting} malformed input & resolved &
+  \algo{4.128} raises; \algo{4.133} returns \code{false}. \\
+28 & Signing key caches the generator & moot &
+  The key stores $(N, x, y)$. \\
+29 & \textsc{IdealToIsogeny} line~6 matrix formula & moot &
+  Klopine removed; see \S\ref{sec:id2iso}. \\
+30 & $\beta$ lives in the reduced ideal & resolved &
+  \algo{4.149} line~20 maps $\beta_1$ back through $\gamma$. \\
+31 & \textsc{SuitableIdeals} $v_2(\gcd)$ & moot & Removed. \\
+32 & \algo{8.47} implementation variants & resolved &
+  One \textsc{Isogeny22Chain}; kernel order $2^{e+2}$ stated in
+  \S4.5.4.1 and \algo{3.20}. \\
+33 & \textsc{IdealToIsogeny} output basis alignment & resolved &
+  \algo{4.150} pushes $[\nu_1]\beta_1(\mathcal{B}_0)$ (\S4.6.1). \\
+34 & \textsc{IdealToIsogeny} must propagate $P - Q$ & resolved &
+  \algo{4.150} output is a triple. \\
+35 & Splitting randomization & moot &
+  Splitting is deterministic: \algo{4.126} keeps the largest of the six
+  Montgomery coefficients. The v2 randomized representative-selection
+  procedure is no longer used. \\
+36 & Multi-order $\beta$ transport & moot & Removed. \\
+37 & Connecting-ideal norm encoding & moot & Removed. \\
+38 & Action-matrix order index & moot &
+  Only $\Oo$ (\algo{4.134}). \\
+39 & Sign error in \algo{4.9} line~11 & moot &
+  \algo{3.24} line~9 decodes the aux basis at
+  $e_{\mathrm{rsp}} + 2$ directly. \\
+40 & $\mathrm{chl}$ top-bit canonicality & resolved &
+  $\lambda = 128$ fills 16 bytes; \algo{3.4}. \\
+41 & Lower bound on $e'_{\mathrm{rsp}}$ & moot &
+  Chain length is fixed at $e_{\mathrm{rsp}}$. \\
+42 & Extra-torsion-free chain lower bound & moot &
+  One chain variant, fixed lengths. \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+Totals: 22 resolved, 17 moot, 2 partial, and 1 clarification request.
+
+% =====================================================================
+
+\clearpage
+\section*{Checks and source material}
+\phantomsection
+\label{sec:checks}
+\addcontentsline{toc}{section}{Checks and source material}
+
+The exact arithmetic checks accompanying the security findings run with
+the Python standard library:
+\begin{Verbatim}[fontsize=\small,frame=single,framesep=3mm]
+python3 scripts/audit_sqisign_v3_design.py
+\end{Verbatim}
+They cover interval widths 1--512 at three draw widths, the three
+\code{EIBox} calculations, the illustrative lattice rejection,
+degree-9 kernel enumeration, degree-weight comparisons, and the
+small-field matrix count. They establish the stated finite counts;
+they do not simulate $\Hsim$ or run an end-to-end signer or verifier.
+
+The conformance sections retain the earlier implementation comparisons
+and their stated limits. This update corrects the affected sampler,
+hint, and verifier recommendations; it does not rerun all reference
+KATs or independently revalidate every inherited comparison.
+
+The reviewed PDF is v3.0, dated 1 September 2026. Its SHA-256 digest is
+\begin{quote}\small
+\path{843912e5eb3dee20288af9fc9f01c0e1f1055834d3ce87c4687795c13adfd73c}.
+\end{quote}
+Reference paths in the findings are relative to \path{src/} at commit
+\href{https://github.com/SQISign/the-sqisign/tree/6d017708db403bf83977fa70770fc4f7f9e9ff21}{\code{6d017708db40}}.
+Ideal and quaternion norms are reduced norms; basis matrices act
+column by column as in Eq.~(1) of the specification.
+
+For tracking alongside the working notes, \emph{Biased interval sampling}
+has the link target \hyperlink{SQI3-SPEC-01}{\code{SQI3-SPEC-01}},
+and \emph{Hint degree weighting} has
+\hyperlink{SQI3-PROOF-02}{\code{SQI3-PROOF-02}}.
+
+\phantomsection
+\addcontentsline{toc}{section}{References}
+\begin{thebibliography}{9}
+\small\raggedright
+
+\bibitem{sqisign-spec}
+SQIsign team.
+\href{https://sqisign.org/spec/sqisign-20260901.pdf}{\emph{SQIsign:
+Algorithm specifications and supporting documentation}, version 3.0},
+1 September 2026. Sampler p.~28; bounded response sampling p.~51;
+basis hints p.~58; Figure~4 p.~104; stronger security and timing
+pp.~110--111.
+
+\bibitem{sqisign-cref}
+SQIsign team.
+\href{https://github.com/SQISign/the-sqisign/tree/6d017708db403bf83977fa70770fc4f7f9e9ff21}{\emph{the-sqisign}, round-3 reference implementation},
+tag \code{nist-v3}, commit \code{6d017708db40}.
+
+\bibitem{cref-sampler}
+SQIsign team.
+\href{https://github.com/SQISign/the-sqisign/blob/6d017708db403bf83977fa70770fc4f7f9e9ff21/src/mp/ref/lvlx/mp.c\#L1711}{Reference integer sampler},
+\path{src/mp/ref/lvlx/mp.c}, \code{ibz\_rand\_interval\_with\_domain}.
+
+\bibitem{proof}
+Aardal, Basso, De Feo, Patranabis, and Wesolowski.
+\href{https://eprint.iacr.org/2025/379}{\emph{A Complete Security Proof of SQIsign}},
+IACR ePrint 2025/379, consulted version dated 1 August 2025, Section~5.6.
+
+\bibitem{cref-verify}
+SQIsign team.
+\href{https://github.com/SQISign/the-sqisign/blob/6d017708db403bf83977fa70770fc4f7f9e9ff21/src/verification/ref/lvlx/verify.c}{Reference verifier},
+\path{src/verification/ref/lvlx/verify.c}, \code{protocols\_verify}.
+
+\bibitem{cref-gluing}
+SQIsign team.
+\href{https://github.com/SQISign/the-sqisign/blob/6d017708db403bf83977fa70770fc4f7f9e9ff21/src/hd/ref/lvlx/gluing.c}{Reference gluing validation},
+\path{src/hd/ref/lvlx/gluing.c}, \code{verify\_two\_torsion} and
+\code{gluing\_compute}.
+
+\bibitem{v2-review}
+D.~Connolly.
+\href{https://github.com/selkie-cryptography/sqisign-selkie/blob/16d7299bd096771ae5661b9fc21c5c98bbda39fd/latex/sqisign-v2-spec-review.tex}{\emph{SQIsign v2.0.1 Specification Review}},
+Selkie Cryptography, 2026; archived source.
+
+\end{thebibliography}
+\end{document}

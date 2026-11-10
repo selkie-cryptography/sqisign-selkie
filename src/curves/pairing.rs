@@ -645,10 +645,8 @@ impl TorsionBasis {
     /// in `(P, Q)` on the x-line, so the same basis serves both Tate
     /// directions.
     ///
-    /// Used in [`LeftIdeal::to_isogeny`] to disambiguate the two
-    /// codomain components of the (2,2)-chain on `E_u × E_v`.
-    ///
-    /// [`LeftIdeal::to_isogeny`]: crate::quaternions::lattice::LeftIdeal::to_isogeny
+    /// Used by the ideal-to-isogeny translation to disambiguate the
+    /// two codomain components of a (2,2)-chain on `E_u × E_v`.
     pub(crate) fn weil(&self, e: TorsionExponent) -> RootOfUnity {
         let t_pq = self.tate(e);
         let swapped = TorsionBasis {

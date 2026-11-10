@@ -17,7 +17,7 @@ use sqisign_selkie::{
         montgomery::{Curve, ProjectiveXOnlyPoint},
     },
     fields::{fp::Fp, fp2::Fp2},
-    params::{BASIS_E0_P_X, BASIS_E0_Q_X},
+    params::{BASIS_E0_P_X, BASIS_E0_Q_X, FP_ENCODED_BYTES},
 };
 use tacet::{AttackerModel, Outcome, TimingOracle, helpers::InputPair};
 
@@ -61,6 +61,34 @@ fn report(name: &str, model_name: &str, outcome: &Outcome) {
     }
 }
 
+/// Two field-element encodings back to back.
+const FP_PAIR_BYTES: usize = 2 * FP_ENCODED_BYTES;
+
+/// Two `Fp2` encodings back to back (four field elements).
+const FP2_PAIR_BYTES: usize = 4 * FP_ENCODED_BYTES;
+
+/// A canonical (< p) field-element encoding filled with `fill`.
+fn fp_bytes(fill: u8) -> [u8; FP_ENCODED_BYTES] {
+    let mut b = [fill; FP_ENCODED_BYTES];
+    b[FP_ENCODED_BYTES - 1] = 0x11;
+    b
+}
+
+/// `N` random field-element encodings, each clamped below p.
+fn random_fp_bytes<const N: usize>() -> [u8; N] {
+    let mut buf = random_bytes::<N>();
+    for chunk in buf.as_chunks_mut::<FP_ENCODED_BYTES>().0 {
+        chunk[FP_ENCODED_BYTES - 1] &= 0x0F;
+    }
+    buf
+}
+
+/// The `i`-th field element in a run of encodings.
+fn fp_at(bytes: &[u8], i: usize) -> Fp {
+    let start = i * FP_ENCODED_BYTES;
+    Fp::from_bytes(bytes[start..start + FP_ENCODED_BYTES].try_into().unwrap())
+}
+
 fn main() {
     println!("tacet constant-time analysis");
     println!("============================\n");
@@ -68,10 +96,10 @@ fn main() {
     // --- Fp mul: zero vs random ---
     for &(mname, model) in MODELS {
         let outcome = TimingOracle::for_attacker(model).test(
-            InputPair::new(|| [0u8; 64], random_bytes::<64>),
+            InputPair::new(|| [0u8; FP_PAIR_BYTES], random_fp_bytes::<FP_PAIR_BYTES>),
             |bytes| {
-                let a = Fp::from_bytes(bytes[..32].try_into().unwrap());
-                let b = Fp::from_bytes(bytes[32..].try_into().unwrap());
+                let a = fp_at(bytes, 0);
+                let b = fp_at(bytes, 1);
                 let _ = std::hint::black_box(a * b);
             },
         );
@@ -81,10 +109,10 @@ fn main() {
     // --- Fp add: zero vs random ---
     for &(mname, model) in MODELS {
         let outcome = TimingOracle::for_attacker(model).test(
-            InputPair::new(|| [0u8; 64], random_bytes::<64>),
+            InputPair::new(|| [0u8; FP_PAIR_BYTES], random_fp_bytes::<FP_PAIR_BYTES>),
             |bytes| {
-                let a = Fp::from_bytes(bytes[..32].try_into().unwrap());
-                let b = Fp::from_bytes(bytes[32..].try_into().unwrap());
+                let a = fp_at(bytes, 0);
+                let b = fp_at(bytes, 1);
                 let _ = std::hint::black_box(a + b);
             },
         );
@@ -96,17 +124,17 @@ fn main() {
         let outcome = TimingOracle::for_attacker(model).test(
             InputPair::new(
                 || {
-                    let a: [u8; 32] = random_bytes();
-                    let mut out = [0u8; 64];
-                    out[..32].copy_from_slice(&a);
-                    out[32..].copy_from_slice(&a); // equal → result is 0
+                    let a = random_fp_bytes::<FP_ENCODED_BYTES>();
+                    let mut out = [0u8; FP_PAIR_BYTES];
+                    out[..FP_ENCODED_BYTES].copy_from_slice(&a);
+                    out[FP_ENCODED_BYTES..].copy_from_slice(&a); // equal -> result is 0
                     out
                 },
-                random_bytes::<64>,
+                random_fp_bytes::<FP_PAIR_BYTES>,
             ),
             |bytes| {
-                let a = Fp::from_bytes(bytes[..32].try_into().unwrap());
-                let b = Fp::from_bytes(bytes[32..].try_into().unwrap());
+                let a = fp_at(bytes, 0);
+                let b = fp_at(bytes, 1);
                 let _ = std::hint::black_box(a - b);
             },
         );
@@ -116,16 +144,10 @@ fn main() {
     // --- Fp2 mul: zero vs random ---
     for &(mname, model) in MODELS {
         let outcome = TimingOracle::for_attacker(model).test(
-            InputPair::new(|| [0u8; 128], random_bytes::<128>),
+            InputPair::new(|| [0u8; FP2_PAIR_BYTES], random_fp_bytes::<FP2_PAIR_BYTES>),
             |bytes| {
-                let a = Fp2::new(
-                    Fp::from_bytes(bytes[..32].try_into().unwrap()),
-                    Fp::from_bytes(bytes[32..64].try_into().unwrap()),
-                );
-                let b = Fp2::new(
-                    Fp::from_bytes(bytes[64..96].try_into().unwrap()),
-                    Fp::from_bytes(bytes[96..].try_into().unwrap()),
-                );
+                let a = Fp2::new(fp_at(bytes, 0), fp_at(bytes, 1));
+                let b = Fp2::new(fp_at(bytes, 2), fp_at(bytes, 3));
                 let _ = std::hint::black_box(a * b);
             },
         );
@@ -136,8 +158,8 @@ fn main() {
     for &(mname, model) in MODELS {
         let outcome =
             TimingOracle::for_attacker(model).test(InputPair::new(|| 0u8, || 1u8), |&choice| {
-                let a = Fp::from_bytes(&[0x42; 32]);
-                let b = Fp::from_bytes(&[0x99; 32]);
+                let a = Fp::from_bytes(&fp_bytes(0x42));
+                let b = Fp::from_bytes(&fp_bytes(0x99));
                 let _ = std::hint::black_box(subtle::ConditionallySelectable::conditional_select(
                     &a,
                     &b,
@@ -151,16 +173,23 @@ fn main() {
     for &(mname, model) in MODELS {
         let outcome = TimingOracle::for_attacker(model).test(
             InputPair::new(
-                || [0x42u8; 64], // a == b
                 || {
-                    let mut out = [0x42u8; 64];
-                    out[32] = 0x99; // a != b
+                    let a = fp_bytes(0x42);
+                    let mut out = [0u8; FP_PAIR_BYTES];
+                    out[..FP_ENCODED_BYTES].copy_from_slice(&a);
+                    out[FP_ENCODED_BYTES..].copy_from_slice(&a); // a == b
+                    out
+                },
+                || {
+                    let mut out = [0u8; FP_PAIR_BYTES];
+                    out[..FP_ENCODED_BYTES].copy_from_slice(&fp_bytes(0x42));
+                    out[FP_ENCODED_BYTES..].copy_from_slice(&fp_bytes(0x99)); // a != b
                     out
                 },
             ),
             |bytes| {
-                let a = Fp::from_bytes(bytes[..32].try_into().unwrap());
-                let b = Fp::from_bytes(bytes[32..].try_into().unwrap());
+                let a = fp_at(bytes, 0);
+                let b = fp_at(bytes, 1);
                 use subtle::ConstantTimeEq;
                 let _ = std::hint::black_box(a.ct_eq(&b));
             },

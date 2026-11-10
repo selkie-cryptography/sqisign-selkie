@@ -37,15 +37,8 @@ mod tests;
 
 use crate::{
     curves::montgomery::{AffineX, Curve, JacobianPoint, ProjectiveXOnlyPoint},
-    deuring::precomputed::ENDOMORPHISM_MATRICES,
     fields::{fp::Fp, fp2::Fp2},
     params::TORSION_EVEN_POWER,
-    quaternions::{
-        algebra::{Coordinate, Denominator, Element},
-        bigint::BigInt,
-        lattice::LeftIdeal,
-        precomputed::EXTREMAL_ORDERS,
-    },
 };
 
 /// An exponent e such that 2^e divides the torsion group order.
@@ -378,71 +371,6 @@ impl TorsionBasis {
         Some((p_jac, s_jac))
     }
 
-    /// Converts kernel scalars on E₀\[2^f\] to the corresponding
-    /// left O₀-ideal.
-    ///
-    /// Given scalars (c₁, c₂) such that the kernel generator is
-    /// \[c₁\]P₀ + \[c₂\]Q₀ on E₀\[2^f\] (the canonical torsion
-    /// basis), computes I = O₀⟨α, 2^f⟩ where
-    /// α = a + b·(j + (1+k)/2) − i.
-    ///
-    /// Uses the precomputed E₀ action matrices (M_i, M_j, M_{gen4})
-    /// internally. Only valid for the NIST-I starting curve E₀ and
-    /// its canonical basis.
-    ///
-    /// Implements [KernelToIdeal][Alg. 3.17].
-    ///
-    /// [Alg. 3.17]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.3.17
-    // TODO: c1/c2 are BigInt<4> (signed) but semantically unsigned
-    // scalars mod 2^f. Investigating types beyond BigInt — we need
-    // unsigned modular arithmetic mod 2^k on Scalar, with add, sub,
-    // mul, and invert_mod. For now, convert at boundaries.
-    pub fn kernel_to_ideal(
-        c1: &BigInt<4>,
-        c2: &BigInt<4>,
-        f: TorsionExponent,
-    ) -> Option<LeftIdeal<4>> {
-        // Action matrices for E₀: [i, j, k, gen2, gen3, gen4].
-        let m_i = &ENDOMORPHISM_MATRICES[0][0];
-        let m_j = &ENDOMORPHISM_MATRICES[0][1];
-        let m_gen4 = &ENDOMORPHISM_MATRICES[0][5];
-
-        let modulus = BigInt::<4>::ONE << f.value();
-
-        // Step 1: [d1, d2]^T = M_θ · [c1, c2]^T mod 2^f.
-        // θ = j + (1+k)/2, so M_θ = M_j + M_gen4.
-        let (jc1, jc2) = m_j.eval_mod(c1, c2, f.value());
-        let (gc1, gc2) = m_gen4.eval_mod(c1, c2, f.value());
-        let d1 = jc1.ct_add(&gc1).vt_mod(&modulus);
-        let d2 = jc2.ct_add(&gc2).vt_mod(&modulus);
-
-        // Step 2–3: [a, b]^T = M^{-1} · M_i · [c1, c2]^T mod 2^f.
-        let (e1, e2) = m_i.eval_mod(c1, c2, f.value());
-        let det = c1.ct_mul(&d2).ct_sub(&d1.ct_mul(c2)).vt_mod(&modulus);
-        let det_inv = det.invert_mod(&modulus)?;
-        let a = det_inv
-            .ct_mul(&d2.ct_mul(&e1).ct_sub(&d1.ct_mul(&e2)))
-            .vt_mod(&modulus);
-        let b = det_inv
-            .ct_mul(&c1.ct_mul(&e2).ct_sub(&c2.ct_mul(&e1)))
-            .vt_mod(&modulus);
-
-        // Step 4: α = a + b·(j + (1+k)/2) − i.
-        // In {1, i, j, k} with denom 2: (2a+b, −2, 2b, b)/2.
-        // Matches C ref `id2iso_kernel_dlogs_to_ideal_even` (id2iso.c:247-254).
-        let two_a = a.ct_add(&a);
-        let two_b = b.ct_add(&b);
-        let alpha = Element {
-            a: Coordinate::from(two_a.ct_add(&b)),
-            b: Coordinate::from(-2i64),
-            c: Coordinate::from(two_b),
-            d: Coordinate::from(b),
-            denom: Denominator::TWO,
-        };
-
-        Some(LeftIdeal::new(&alpha, &modulus, EXTREMAL_ORDERS[0].order()))
-    }
-
     /// Computes `P + [m]·(P − Q)` via the three-point Montgomery ladder.
     ///
     /// The scalar `m` is a [`Scalar`] (256-bit unsigned integer in four
@@ -519,19 +447,16 @@ impl TorsionBasis {
     /// *differential* `P − Q` (the [`PmQ`](Self::PmQ) field), not the
     /// second basis point `Q`. C-ref's `ec_biscalar_mul` operates on
     /// the same convention positionally (see `basis.c:422-425`:
-    /// C-ref's `B.Q` slot stores `P − Q`). Selkie's [`ENDOMORPHISM_MATRICES`]
-    /// table is byte-imported from C-ref and is therefore encoded
-    /// against this convention — for an endomorphism `θ` with matrix
-    /// `M`, applying `biscalar_mul(M[0][0], M[1][0])` yields
-    /// `θ(P)`'s spec-permuted decomposition, which is what every
-    /// downstream consumer of `ENDOMORPHISM_MATRICES` expects.
+    /// C-ref's `B.Q` slot stores `P − Q`). The endomorphism action
+    /// matrices are encoded against this convention: for an
+    /// endomorphism `θ` with matrix `M`, `biscalar_mul(M[0][0], M[1][0])`
+    /// yields `θ(P)`'s spec-permuted decomposition.
     ///
     /// Both scalars are [`Scalar`]s reduced mod 2^e, where `e` is the
     /// torsion exponent of the basis. Constant-time in the scalar values.
     ///
     /// Implements [LadderBiscalar][Alg. 8.8] ([Alg. 8.8][Alg. 8.8]).
     ///
-    /// [`ENDOMORPHISM_MATRICES`]: crate::deuring::precomputed::ENDOMORPHISM_MATRICES
     /// [Alg. 8.8]: https://sqisign.org/spec/sqisign-20250707.pdf#algorithm.8.8
     pub fn biscalar_mul(&self, m: &Scalar, n: &Scalar, e: TorsionExponent) -> ProjectiveXOnlyPoint {
         let kbits = e.value() as usize;

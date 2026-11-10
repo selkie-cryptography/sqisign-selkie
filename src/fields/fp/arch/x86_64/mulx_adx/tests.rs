@@ -1,49 +1,50 @@
-//! `Fp64` scaffold tests: const-bridge from `Fp51`'s limbs, and the
-//! constant-time-select trait impl.
+//! `Fp64` tests: const-bridge from `Fp55`'s limbs, lazy-reduction
+//! properties, and cross-implementation equality against the portable
+//! backend and the plain-Rust CIOS schedule.
 
 use proptest::prelude::*;
 use subtle::{Choice, ConditionallySelectable};
 
 use super::Fp64;
-use crate::fields::fp::arch::generic::Fp51;
+use crate::fields::fp::{FP_ENCODED_BYTES, arch::generic::Fp55};
 
 #[test]
 fn from_limbs_matches_zero() {
-    assert_eq!(Fp64::from_limbs(Fp51::ZERO.0), Fp64::ZERO);
+    assert_eq!(Fp64::from_limbs(Fp55::ZERO.0), Fp64::ZERO);
 }
 
 #[test]
 fn from_limbs_matches_one() {
-    assert_eq!(Fp64::from_limbs(Fp51::ONE.0), Fp64::ONE);
+    assert_eq!(Fp64::from_limbs(Fp55::ONE.0), Fp64::ONE);
 }
 
 #[test]
 fn from_limbs_matches_two() {
-    assert_eq!(Fp64::from_limbs(Fp51::TWO.0), Fp64::TWO);
+    assert_eq!(Fp64::from_limbs(Fp55::TWO.0), Fp64::TWO);
 }
 
 #[test]
 fn from_limbs_matches_four() {
-    assert_eq!(Fp64::from_limbs(Fp51::FOUR.0), Fp64::FOUR);
+    assert_eq!(Fp64::from_limbs(Fp55::FOUR.0), Fp64::FOUR);
 }
 
 #[test]
 fn from_limbs_matches_minus_one() {
-    assert_eq!(Fp64::from_limbs(Fp51::MINUS_ONE.0), Fp64::MINUS_ONE);
+    assert_eq!(Fp64::from_limbs(Fp55::MINUS_ONE.0), Fp64::MINUS_ONE);
 }
 
 #[test]
 fn conditional_select_picks_a_when_false() {
-    let a = Fp64::from_raw([1, 2, 3, 4]);
-    let b = Fp64::from_raw([10, 20, 30, 40]);
+    let a = Fp64::from_raw([1, 2, 3, 4, 5, 6]);
+    let b = Fp64::from_raw([10, 20, 30, 40, 50, 60]);
     let r = Fp64::conditional_select(&a, &b, Choice::from(0));
     assert_eq!(r, a);
 }
 
 #[test]
 fn conditional_select_picks_b_when_true() {
-    let a = Fp64::from_raw([1, 2, 3, 4]);
-    let b = Fp64::from_raw([10, 20, 30, 40]);
+    let a = Fp64::from_raw([1, 2, 3, 4, 5, 6]);
+    let b = Fp64::from_raw([10, 20, 30, 40, 50, 60]);
     let r = Fp64::conditional_select(&a, &b, Choice::from(1));
     assert_eq!(r, b);
 }
@@ -53,8 +54,8 @@ proptest! {
     /// branchy choice on arbitrary inputs.
     #[test]
     fn conditional_select_matches_branchy(
-        a_limbs in any::<[u64; 4]>(),
-        b_limbs in any::<[u64; 4]>(),
+        a_limbs in any::<[u64; 6]>(),
+        b_limbs in any::<[u64; 6]>(),
         c in any::<bool>(),
     ) {
         let a = Fp64::from_raw(a_limbs);
@@ -65,44 +66,44 @@ proptest! {
     }
 }
 
-/// Maps `Fp51`'s known constants through the `from_limbs` bridge.
+/// Maps `Fp55`'s known constants through the `from_limbs` bridge.
 /// Sources canonical `Fp64` values without needing Fp64-native byte
 /// I/O (which lands once `fp_mul` is in).
-fn canon(fp51: Fp51) -> Fp64 {
-    Fp64::from_limbs(fp51.0)
+fn canon(fp55: Fp55) -> Fp64 {
+    Fp64::from_limbs(fp55.0)
 }
 
 #[test]
 fn add_identity_zero() {
-    let one = canon(Fp51::ONE);
+    let one = canon(Fp55::ONE);
     assert_eq!(one + Fp64::ZERO, one);
     assert_eq!(Fp64::ZERO + one, one);
 }
 
 #[test]
 fn add_one_one_is_two() {
-    let one = canon(Fp51::ONE);
-    let two = canon(Fp51::TWO);
+    let one = canon(Fp55::ONE);
+    let two = canon(Fp55::TWO);
     assert_eq!(one + one, two);
 }
 
 #[test]
 fn add_two_two_is_four() {
-    let two = canon(Fp51::TWO);
-    let four = canon(Fp51::FOUR);
+    let two = canon(Fp55::TWO);
+    let four = canon(Fp55::FOUR);
     assert_eq!(two + two, four);
 }
 
 #[test]
 fn sub_self_is_zero() {
-    let one = canon(Fp51::ONE);
+    let one = canon(Fp55::ONE);
     assert_eq!(one - one, Fp64::ZERO);
 }
 
 #[test]
 fn sub_zero_one_is_minus_one() {
-    let one = canon(Fp51::ONE);
-    let minus_one = canon(Fp51::MINUS_ONE);
+    let one = canon(Fp55::ONE);
+    let minus_one = canon(Fp55::MINUS_ONE);
     assert_eq!(Fp64::ZERO - one, minus_one);
 }
 
@@ -113,40 +114,34 @@ fn neg_zero_is_zero() {
 
 #[test]
 fn neg_one_is_minus_one() {
-    let one = canon(Fp51::ONE);
-    let minus_one = canon(Fp51::MINUS_ONE);
+    let one = canon(Fp55::ONE);
+    let minus_one = canon(Fp55::MINUS_ONE);
     assert_eq!(-one, minus_one);
 }
 
 #[test]
 fn neg_neg_is_identity() {
-    let one = canon(Fp51::ONE);
+    let one = canon(Fp55::ONE);
     assert_eq!(-(-one), one);
 }
 
 #[test]
 fn add_minus_one_one_is_zero() {
-    let one = canon(Fp51::ONE);
-    let minus_one = canon(Fp51::MINUS_ONE);
+    let one = canon(Fp55::ONE);
+    let minus_one = canon(Fp55::MINUS_ONE);
     assert_eq!(one + minus_one, Fp64::ZERO);
 }
 
-/// Generate a canonical `Fp64` value through the `Fp51`-bridge chain.
+/// Generate a canonical `Fp64` value through the `Fp55`-bridge chain.
 ///
-/// Clamps the input bytes so the encoded integer is strictly `< p`
-/// (top byte forced to `<= 0x03`, giving value `< 4 * 2^248 < p`).
-/// `Fp51::from_bytes` then canonicalizes via a single conditional
-/// subtract of `p`, which is sufficient for inputs in `[0, 2p)`;
-/// from there `Fp64::from_limbs` produces canonical Fp64.
-///
-/// Without this clamp, arbitrary 32-byte inputs can encode values
-/// up to `~13.6p` (since `2^256 / p ~ 51`), which Fp51's single-
-/// subtract `final_sub` doesn't fully reduce.
+/// Clamps the top byte to `<= 0x0f` so the encoded integer is strictly
+/// `< 2^324 < p`; `Fp64::from_limbs` then produces a lazy `[0, 2p)`
+/// value, which every operation accepts.
 fn arb_fp64() -> impl Strategy<Value = Fp64> {
-    any::<[u8; 32]>().prop_map(|mut bytes| {
-        bytes[31] &= 0x03;
-        let fp51 = Fp51::from_bytes(&bytes);
-        Fp64::from_limbs(fp51.0)
+    any::<[u8; FP_ENCODED_BYTES]>().prop_map(|mut bytes| {
+        bytes[FP_ENCODED_BYTES - 1] &= 0x0F;
+        let fp55 = Fp55::from_bytes(&bytes);
+        Fp64::from_limbs(fp55.0)
     })
 }
 
@@ -211,13 +206,16 @@ fn arb_fp64_lazy() -> impl Strategy<Value = (Fp64, Fp64)> {
         if !add_p {
             return (canonical, canonical);
         }
-        // canonical < p, so canonical + p < 2p < 2^256: no overflow.
+        // canonical < p, so canonical + p < 2p < 2^384: no overflow.
         let p = Fp64::P.0;
-        let (l0, c0) = canonical.0[0].carrying_add(p[0], false);
-        let (l1, c1) = canonical.0[1].carrying_add(p[1], c0);
-        let (l2, c2) = canonical.0[2].carrying_add(p[2], c1);
-        let (l3, _) = canonical.0[3].carrying_add(p[3], c2);
-        (Fp64::from_raw([l0, l1, l2, l3]), canonical)
+        let mut l = [0u64; 6];
+        let mut carry = false;
+        for i in 0..6 {
+            let (x, c) = canonical.0[i].carrying_add(p[i], carry);
+            l[i] = x;
+            carry = c;
+        }
+        (Fp64::from_raw(l), canonical)
     })
 }
 
@@ -270,44 +268,44 @@ proptest! {
 
 #[test]
 fn mul_one_one_is_one() {
-    let one = canon(Fp51::ONE);
+    let one = canon(Fp55::ONE);
     assert_eq!(one * one, one);
 }
 
 #[test]
 fn mul_one_two_is_two() {
-    let one = canon(Fp51::ONE);
-    let two = canon(Fp51::TWO);
+    let one = canon(Fp55::ONE);
+    let two = canon(Fp55::TWO);
     assert_eq!(one * two, two);
     assert_eq!(two * one, two);
 }
 
 #[test]
 fn mul_two_two_is_four() {
-    let two = canon(Fp51::TWO);
-    let four = canon(Fp51::FOUR);
+    let two = canon(Fp55::TWO);
+    let four = canon(Fp55::FOUR);
     assert_eq!(two * two, four);
 }
 
 #[test]
 fn mul_zero_is_zero() {
-    let one = canon(Fp51::ONE);
-    let two = canon(Fp51::TWO);
+    let one = canon(Fp55::ONE);
+    let two = canon(Fp55::TWO);
     assert_eq!(Fp64::ZERO * one, Fp64::ZERO);
     assert_eq!(two * Fp64::ZERO, Fp64::ZERO);
 }
 
 #[test]
 fn mul_one_minus_one_is_minus_one() {
-    let one = canon(Fp51::ONE);
-    let minus_one = canon(Fp51::MINUS_ONE);
+    let one = canon(Fp55::ONE);
+    let minus_one = canon(Fp55::MINUS_ONE);
     assert_eq!(one * minus_one, minus_one);
 }
 
 #[test]
 fn mul_minus_one_minus_one_is_one() {
-    let one = canon(Fp51::ONE);
-    let minus_one = canon(Fp51::MINUS_ONE);
+    let one = canon(Fp55::ONE);
+    let minus_one = canon(Fp55::MINUS_ONE);
     assert_eq!(minus_one * minus_one, one);
 }
 
@@ -315,7 +313,7 @@ proptest! {
     /// `a * 1 == a`.
     #[test]
     fn mul_identity(a in arb_fp64()) {
-        let one = canon(Fp51::ONE);
+        let one = canon(Fp55::ONE);
         prop_assert_eq!(&a * &one, a);
     }
 
@@ -356,28 +354,28 @@ proptest! {
     }
 
     /// Bridging commutes with mul:
-    /// `Fp64(a51) * Fp64(b51) == Fp64(a51 * b51)`.
+    /// `Fp64(a55) * Fp64(b55) == Fp64(a55 * b55)`.
     ///
     /// Top byte clamped so encoded values stay `< p` (same reason as
-    /// in [`arb_fp64`]); Fp51's `mul` returns "less than 2p" so its
+    /// in [`arb_fp64`]); Fp55's `mul` returns "less than 2p" so its
     /// output then needs to flow through a canonicalizing bridge --
-    /// we route via `Fp51::to_bytes` + `from_bytes` round-trip to
+    /// we route via `Fp55::to_bytes` + `from_bytes` round-trip to
     /// normalize before bridging to Fp64.
     #[test]
-    fn mul_matches_fp51(mut bytes_a in any::<[u8; 32]>(), mut bytes_b in any::<[u8; 32]>()) {
-        bytes_a[31] &= 0x03;
-        bytes_b[31] &= 0x03;
-        let a51 = Fp51::from_bytes(&bytes_a);
-        let b51 = Fp51::from_bytes(&bytes_b);
+    fn mul_matches_fp55(mut bytes_a in any::<[u8; FP_ENCODED_BYTES]>(), mut bytes_b in any::<[u8; FP_ENCODED_BYTES]>()) {
+        bytes_a[FP_ENCODED_BYTES - 1] &= 0x0f;
+        bytes_b[FP_ENCODED_BYTES - 1] &= 0x0f;
+        let a55 = Fp55::from_bytes(&bytes_a);
+        let b55 = Fp55::from_bytes(&bytes_b);
 
-        let a64 = Fp64::from_limbs(a51.0);
-        let b64 = Fp64::from_limbs(b51.0);
+        let a64 = Fp64::from_limbs(a55.0);
+        let b64 = Fp64::from_limbs(b55.0);
 
-        // Fp51 mul leaves output in [0, 2p); canonicalize via byte
+        // Fp55 mul leaves output in [0, 2p); canonicalize via byte
         // round-trip before bridging.
-        let prod51 = &a51 * &b51;
-        let prod51_canonical = Fp51::from_bytes(&prod51.to_bytes());
-        let prod64_via_bridge = Fp64::from_limbs(prod51_canonical.0);
+        let prod55 = &a55 * &b55;
+        let prod55_canonical = Fp55::from_bytes(&prod55.to_bytes());
+        let prod64_via_bridge = Fp64::from_limbs(prod55_canonical.0);
 
         let prod64_direct = a64 * b64;
 
@@ -387,21 +385,21 @@ proptest! {
 
 #[test]
 fn square_one_is_one() {
-    let one = canon(Fp51::ONE);
+    let one = canon(Fp55::ONE);
     assert_eq!(one.square(), one);
 }
 
 #[test]
 fn square_two_is_four() {
-    let two = canon(Fp51::TWO);
-    let four = canon(Fp51::FOUR);
+    let two = canon(Fp55::TWO);
+    let four = canon(Fp55::FOUR);
     assert_eq!(two.square(), four);
 }
 
 #[test]
 fn square_minus_one_is_one() {
-    let one = canon(Fp51::ONE);
-    let minus_one = canon(Fp51::MINUS_ONE);
+    let one = canon(Fp55::ONE);
+    let minus_one = canon(Fp55::MINUS_ONE);
     assert_eq!(minus_one.square(), one);
 }
 
@@ -508,24 +506,24 @@ proptest! {
         prop_assert_eq!(Fp64::from_bytes(&a.to_bytes()), a);
     }
 
-    /// `to_bytes` produces the same canonical encoding as Fp51's
+    /// `to_bytes` produces the same canonical encoding as Fp55's
     /// `to_bytes` for the same field element.
     #[test]
-    fn to_bytes_matches_fp51(mut bytes in any::<[u8; 32]>()) {
-        bytes[31] &= 0x03;
-        let fp51 = Fp51::from_bytes(&bytes);
-        let fp64 = Fp64::from_limbs(fp51.0);
-        prop_assert_eq!(fp64.to_bytes(), fp51.to_bytes());
+    fn to_bytes_matches_fp55(mut bytes in any::<[u8; FP_ENCODED_BYTES]>()) {
+        bytes[FP_ENCODED_BYTES - 1] &= 0x0f;
+        let fp55 = Fp55::from_bytes(&bytes);
+        let fp64 = Fp64::from_limbs(fp55.0);
+        prop_assert_eq!(fp64.to_bytes(), fp55.to_bytes());
     }
 
-    /// `from_bytes` agrees with `Fp51::from_bytes` round-tripped
+    /// `from_bytes` agrees with `Fp55::from_bytes` round-tripped
     /// through the const-bridge.
     #[test]
-    fn from_bytes_matches_fp51(mut bytes in any::<[u8; 32]>()) {
-        bytes[31] &= 0x03;
-        let via_fp51 = Fp64::from_limbs(Fp51::from_bytes(&bytes).0);
+    fn from_bytes_matches_fp55(mut bytes in any::<[u8; FP_ENCODED_BYTES]>()) {
+        bytes[FP_ENCODED_BYTES - 1] &= 0x0f;
+        let via_fp55 = Fp64::from_limbs(Fp55::from_bytes(&bytes).0);
         let direct = Fp64::from_bytes(&bytes);
-        prop_assert_eq!(direct, via_fp51);
+        prop_assert_eq!(direct, via_fp55);
     }
 
     /// `a.pow2k(0) == a`.
@@ -578,19 +576,19 @@ proptest! {
 
 #[test]
 fn invert_one_is_one() {
-    let one = canon(Fp51::ONE);
+    let one = canon(Fp55::ONE);
     assert_eq!(one.invert(), one);
 }
 
 #[test]
 fn invert_minus_one_is_minus_one() {
-    let minus_one = canon(Fp51::MINUS_ONE);
+    let minus_one = canon(Fp55::MINUS_ONE);
     assert_eq!(minus_one.invert(), minus_one);
 }
 
 #[test]
 fn sqrt_one_squared_is_one() {
-    let one = canon(Fp51::ONE);
+    let one = canon(Fp55::ONE);
     assert!(bool::from(one.is_square()));
     assert_eq!(one.sqrt().square(), one);
 }
@@ -600,106 +598,130 @@ fn is_square_zero_is_set() {
     assert!(bool::from(Fp64::ZERO.is_square()));
 }
 
-// Cross-impl proptests against Fp51 for the higher-level ops that
+// Cross-impl proptests against Fp55 for the higher-level ops that
 // the Fp64 isogeny path goes through.  All tests share the same
 // shape: generate canonical-bytes input, compute via both backends,
 // compare canonical bytes back out.
 //
 // These exist to localize the `curves::isogeny::tests::*` failures
 // that surfaced when the dispatcher activated Fp64.  The
-// `mul_matches_fp51` proptest above already covers the Mul case;
+// `mul_matches_fp55` proptest above already covers the Mul case;
 // these add invert, sqrt, square, pow_p3div4.
 proptest! {
-    /// `Fp64::pow_p3div4` bytes match `Fp51::pow_p3div4` bytes.
+    /// `Fp64::pow_p3div4` bytes match `Fp55::pow_p3div4` bytes.
     ///
-    /// The addition chain was ported verbatim from Fp51; if this test
+    /// The addition chain was ported verbatim from Fp55; if this test
     /// fails, some op inside the chain (mul or square via mul) is
     /// producing a wrong result for specific intermediate values.
     #[test]
-    fn pow_p3div4_matches_fp51(mut bytes in any::<[u8; 32]>()) {
-        bytes[31] &= 0x03;
-        let fp51 = Fp51::from_bytes(&bytes);
+    fn pow_p3div4_matches_fp55(mut bytes in any::<[u8; FP_ENCODED_BYTES]>()) {
+        bytes[FP_ENCODED_BYTES - 1] &= 0x0f;
+        let fp55 = Fp55::from_bytes(&bytes);
         let fp64 = Fp64::from_bytes(&bytes);
 
-        let r51 = fp51.pow_p3div4();
+        let r55 = fp55.pow_p3div4();
         let r64 = fp64.pow_p3div4();
 
-        prop_assert_eq!(r64.to_bytes(), r51.to_bytes());
+        prop_assert_eq!(r64.to_bytes(), r55.to_bytes());
     }
 
-    /// `Fp64::invert` bytes match `Fp51::invert` bytes.
+    /// `Fp64::invert` bytes match `Fp55::invert` bytes.
     ///
     /// `to_affine_x` calls `invert`; if invert is wrong, that's the
     /// isogeny-test fault.
     #[test]
-    fn invert_matches_fp51(mut bytes in any::<[u8; 32]>()) {
-        bytes[31] &= 0x03;
-        let fp51 = Fp51::from_bytes(&bytes);
+    fn invert_matches_fp55(mut bytes in any::<[u8; FP_ENCODED_BYTES]>()) {
+        bytes[FP_ENCODED_BYTES - 1] &= 0x0f;
+        let fp55 = Fp55::from_bytes(&bytes);
         let fp64 = Fp64::from_bytes(&bytes);
 
         // Skip zero (no inverse).
-        prop_assume!(fp51.to_bytes() != Fp51::ZERO.to_bytes());
+        prop_assume!(fp55.to_bytes() != Fp55::ZERO.to_bytes());
 
-        let inv51 = fp51.invert();
+        let inv55 = fp55.invert();
         let inv64 = fp64.invert();
 
-        prop_assert_eq!(inv64.to_bytes(), inv51.to_bytes());
+        prop_assert_eq!(inv64.to_bytes(), inv55.to_bytes());
     }
 
-    /// `Fp64::sqrt` bytes match `Fp51::sqrt` bytes when input is
+    /// `Fp64::sqrt` bytes match `Fp55::sqrt` bytes when input is
     /// a quadratic residue.
     ///
     /// Both impls use the same pow_p3div4 chain plus a final mul;
     /// the canonical sqrt is the unique non-negative root.
     #[test]
-    fn sqrt_matches_fp51(mut bytes in any::<[u8; 32]>()) {
-        bytes[31] &= 0x03;
-        let fp51 = Fp51::from_bytes(&bytes);
+    fn sqrt_matches_fp55(mut bytes in any::<[u8; FP_ENCODED_BYTES]>()) {
+        bytes[FP_ENCODED_BYTES - 1] &= 0x0f;
+        let fp55 = Fp55::from_bytes(&bytes);
         let fp64 = Fp64::from_bytes(&bytes);
 
-        prop_assume!(bool::from(fp51.is_square()));
+        prop_assume!(bool::from(fp55.is_square()));
 
-        let r51 = fp51.sqrt();
+        let r55 = fp55.sqrt();
         let r64 = fp64.sqrt();
 
-        prop_assert_eq!(r64.to_bytes(), r51.to_bytes());
+        prop_assert_eq!(r64.to_bytes(), r55.to_bytes());
     }
 
-    /// `Fp64::square` bytes match `Fp51::square` bytes.
+    /// `Fp64::square` bytes match `Fp55::square` bytes.
     ///
-    /// Sanity-check that the simplest non-Add op agrees with Fp51,
-    /// independent of the mul_matches_fp51 test which uses
+    /// Sanity-check that the simplest non-Add op agrees with Fp55,
+    /// independent of the mul_matches_fp55 test which uses
     /// `from_limbs`-bridged inputs.
     #[test]
-    fn square_matches_fp51(mut bytes in any::<[u8; 32]>()) {
-        bytes[31] &= 0x03;
-        let fp51 = Fp51::from_bytes(&bytes);
+    fn square_matches_fp55(mut bytes in any::<[u8; FP_ENCODED_BYTES]>()) {
+        bytes[FP_ENCODED_BYTES - 1] &= 0x0f;
+        let fp55 = Fp55::from_bytes(&bytes);
         let fp64 = Fp64::from_bytes(&bytes);
 
-        let r51 = fp51.square();
+        let r55 = fp55.square();
         let r64 = fp64.square();
 
-        prop_assert_eq!(r64.to_bytes(), r51.to_bytes());
+        prop_assert_eq!(r64.to_bytes(), r55.to_bytes());
     }
 
-    /// `Fp64::mul` bytes match `Fp51::mul` bytes for the
+    /// `Fp64::mul` bytes match `Fp55::mul` bytes for the
     /// canonical-bytes-in / canonical-bytes-out shape (vs the
-    /// from_limbs-bridged shape that `mul_matches_fp51` above tests).
+    /// from_limbs-bridged shape that `mul_matches_fp55` above tests).
     #[test]
     fn mul_matches_fp51_via_bytes(
-        mut bytes_a in any::<[u8; 32]>(),
-        mut bytes_b in any::<[u8; 32]>(),
+        mut bytes_a in any::<[u8; FP_ENCODED_BYTES]>(),
+        mut bytes_b in any::<[u8; FP_ENCODED_BYTES]>(),
     ) {
-        bytes_a[31] &= 0x03;
-        bytes_b[31] &= 0x03;
-        let a51 = Fp51::from_bytes(&bytes_a);
-        let b51 = Fp51::from_bytes(&bytes_b);
+        bytes_a[FP_ENCODED_BYTES - 1] &= 0x0f;
+        bytes_b[FP_ENCODED_BYTES - 1] &= 0x0f;
+        let a55 = Fp55::from_bytes(&bytes_a);
+        let b55 = Fp55::from_bytes(&bytes_b);
         let a64 = Fp64::from_bytes(&bytes_a);
         let b64 = Fp64::from_bytes(&bytes_b);
 
-        let p51 = &a51 * &b51;
+        let p55 = &a55 * &b55;
         let p64 = a64 * b64;
 
-        prop_assert_eq!(p64.to_bytes(), p51.to_bytes());
+        prop_assert_eq!(p64.to_bytes(), p55.to_bytes());
     }
+}
+
+proptest! {
+    /// The asm schedule agrees with its plain-Rust twin
+    /// (`mont_mul_const`), limb for limb, on lazy inputs.
+    #[test]
+    fn mul_matches_const_schedule((x, _) in arb_fp64_lazy(), (y, _) in arb_fp64_lazy()) {
+        let asm = &x * &y;
+        let reference = Fp64::from_raw(Fp64::mont_mul_const(x.0, y.0));
+        prop_assert_eq!(asm.0, reference.0);
+    }
+}
+
+#[test]
+fn two_inv_is_half() {
+    assert_eq!(Fp64::TWO_INV * Fp64::TWO, Fp64::ONE);
+}
+
+#[test]
+fn from_bytes_places_the_top_byte_in_limb_five() {
+    let mut bytes = [0u8; FP_ENCODED_BYTES];
+    bytes[FP_ENCODED_BYTES - 1] = 0x2F;
+    let x = Fp64::from_bytes(&bytes);
+    assert_eq!(x.to_bytes(), bytes);
 }

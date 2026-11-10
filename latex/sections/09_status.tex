@@ -1,23 +1,56 @@
 \section{Current Status}
 \label{sec:status}
 
-\emph{Baseline interoperability} with the SQIsign v2.0.1 specification
-and the reference C implementation is achieved.  The implementation
-produces byte-identical key pairs on every \emph{known-answer test}
-(KAT) vector at the NIST-I parameter set ($103$ key-generation
-vectors), and signatures that verify on every signing KAT ($100$
-vectors).  Signature \emph{byte}-equality with the reference holds on
-all $100$ signing KATs, verified by a byte-interop cross-test harness
-that drives a live C reference over both the baked vectors and fresh
-seeds (\S\ref{sec:testing}).  The implementation
-exercises the full pipeline
-end-to-end: quaternion ideal arithmetic, the Deuring correspondence,
-the $(2,2)$-isogeny chain on theta surfaces, and Montgomery-curve
-verification.  This baseline is the foundation that
-the rest of this paper documents reaching: the bugs surfaced from
-specification ambiguity (\S\ref{sec:bugs}), the type-level invariants
-that prevented entire bug classes (\S\ref{sec:types}), and the test
-infrastructure that gates byte-equality with C ref (\S\ref{sec:testing}).
+\paragraph{v3.0 migration.}
+The main branch is moving to the round-3
+specification~\cite{sqisign-spec-v3.0}: NIST-I with
+$p = 3\cdot 2^{324}-1$, $f = 324$, $\lambda = 128$.  The C reference is
+pinned at its \texttt{nist-v3} tag; where the specification text and
+the reference disagree on bytes, the reference wins and the divergence
+is documented at the call site.  The port proceeds by layer, bottom
+up.  The v2 protocol layer was removed first so that the test suite
+stays green at every commit; it returns, rewritten, in the final
+phase.  Table~\ref{tab:v3-phases} tracks the phases.
 
-Section~\ref{sec:post-baseline} documents the post-baseline performance
-and constant-time work in flight on top of this foundation.
+\begin{table}[h]
+  \centering
+  \begin{tabular}{lll}
+    \toprule
+    Phase & Scope & State \\
+    \midrule
+    0 & C reference pin, protocol layer removed & done \\
+    1 & Fields: \texttt{Fp55}, \texttt{Fp64}, \texttt{Fp29x4}, \texttt{Fp26x4}, $\mathbb{F}_{p^2}$ & done \\
+    2 & Fixed-precision integers ($30 \times 64$-bit limbs) & next \\
+    3 & SHAKE256 PRNG and challenge hash, v3 encodings & pending \\
+    4 & Curves: six-limb scalars, cofactors, hints, normalization & pending \\
+    5 & Quaternions: inert ideals, integer-only lattice reduction & pending \\
+    6 & Surfaces: Dartois--Duparc theta formulas, chain length $f-2$ & pending \\
+    7 & Qlapoti ideal-to-isogeny & pending \\
+    8 & Protocol: key generation, signing, verification, KATs & pending \\
+    9 & Constant time, performance, documentation & pending \\
+    \bottomrule
+  \end{tabular}
+  \caption{v3.0 migration phases.}
+  \label{tab:v3-phases}
+\end{table}
+
+\paragraph{v2.0.1 baseline (tag \texttt{v2.0.1-final}).}
+Baseline interoperability with the SQIsign v2.0.1 specification and
+the reference C implementation was achieved and is preserved at the
+tag.  That implementation produces byte-identical key pairs on every
+\emph{known-answer test} (KAT) vector at the NIST-I parameter set
+($103$ key-generation vectors), and signatures that verify on every
+signing KAT ($100$ vectors).  Signature \emph{byte}-equality with the
+reference holds on all $100$ signing KATs, verified by a byte-interop
+cross-test harness that drives a live C reference over both the baked
+vectors and fresh seeds (\S\ref{sec:testing}).  It exercises the full
+pipeline end-to-end: quaternion ideal arithmetic, the Deuring
+correspondence, the $(2,2)$-isogeny chain on theta surfaces, and
+Montgomery-curve verification.  That baseline is what the rest of this
+paper documents reaching: the bugs surfaced from specification
+ambiguity (\S\ref{sec:bugs}), the type-level invariants that prevented
+entire bug classes (\S\ref{sec:types}), and the test infrastructure
+that gates byte-equality with the C reference (\S\ref{sec:testing}).
+Section~\ref{sec:post-baseline} documents the performance and
+constant-time work done on top of it; the v3 port carries that work
+forward layer by layer.

@@ -1,0 +1,327 @@
+% Notes for colleagues on the SQIsign team.
+% Paper structure with the original specification-review typography.
+% Build: make -C latex security-review
+\documentclass[a4paper,11pt]{article}
+\usepackage{amsfonts,amsmath,amssymb}
+\usepackage[T1]{fontenc}
+\usepackage{libertinus}
+\let\arrowvert\undefined
+\let\Arrowvert\undefined
+\usepackage[libertine]{newtxmath}
+\usepackage{microtype}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{booktabs,array,fancyvrb,needspace}
+\usepackage[colorlinks=true,urlcolor=BrickRed,linkcolor=BrickRed,
+            citecolor=BrickRed]{hyperref}
+\usepackage{xurl,geometry}
+\geometry{margin=28mm,marginparwidth=0pt}
+\setlength{\emergencystretch}{3em}
+\renewcommand{\arraystretch}{1.15}
+\newcommand{\algo}[1]{Algorithm~#1}
+\newcommand{\Fp}{\mathbb{F}_p}
+\newcommand{\Fpii}{\mathbb{F}_{p^2}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\Hsim}{H_{\mathrm{sim}}}
+\newcommand{\Hunif}{H_{\mathrm{unif}}}
+\newcommand{\Drsp}{D_{\mathrm{rsp}}}
+\newcommand{\medium}{\textsc{\color{RoyalBlue}Medium}}
+\newcommand{\low}{\textsc{\color{OliveGreen}Low}}
+\newcommand{\finding}[2]{\noindent\textit{#1}%
+  \unskip\nobreak\hfil\penalty50\hskip1em\hbox{}\nobreak\hfill#2%
+  {\parfillskip=0pt\finalhyphendemerits=0\par}\smallskip}
+\newcommand{\specurl}{https://sqisign.org/spec/sqisign-20260901.pdf}
+\newcommand{\specat}[2]{\href{\specurl\#nameddest=#1}{#2}}
+\hypersetup{pdftitle={SQIsign v3: Specification Review Notes},
+            pdfauthor={Deirdre Connolly, Selkie Cryptography},
+            pdfsubject={Findings and suggested changes for the SQIsign team}}
+\title{SQIsign v3: Specification Review Notes}
+\author{Deirdre Connolly\\[0.2em]
+  \small Selkie Cryptography\\
+  \small\texttt{durumcrustulum@gmail.com}}
+\date{7 September 2026\enspace{\small(draft for discussion)}}
+
+\begin{document}
+\maketitle
+\noindent Notes on the 1 September 2026 v3 specification, findings are
+ordered by assessed risk.
+
+\section{Biased interval sampling}
+\label{sec:sampler}
+\hypertarget{SQI3-SPEC-01}{}
+\finding{\algo{4.24} and Section 4.1.4}{\medium}
+
+\specat{func.SampleFromInterval}{\textsc{SampleFromInterval}}
+sets $m=b-a+1$ and $n=\code{ibz\_bitsize}(m)$, draws an $n$-bit integer $x$,
+and accepts it when
+\[
+ x<m\left\lceil\frac{2^n}{m}\right\rceil.
+\]
+The threshold is at least $2^n$, so every draw is accepted. Reducing $x$
+modulo $m$ therefore biases the output whenever $m$ is not a power of two.
+For $[a,b]=[0,2]$, the equiprobable draws $0,1,2,3$ produce $0,1,2,0$:
+the output probabilities are $1/2,1/4,1/4$, rather than $1/3$ each.
+The earlier spec review already flagged this ceiling error; the calculations
+below make its distributional consequences explicit.
+
+More generally, write $R=2^n=qm+r$, with $0\leq r<m$. The first $r$
+residues have $q+1$ preimages and the others have $q$. Their total variation
+distance from uniform is
+\[
+ \Delta=\frac{r(m-r)}{mR}.
+\]
+The prose describes 64 extra random bits, which line~2 omits. Extra bits
+would reduce this bias, but would not fix the acceptance test.
+
+For the \code{EIBox} values in Table~9, the coefficient draws used by
+\algo{4.78} have the following distributions before later rejections:
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Level & Interval & Distance from uniform & Mean (uniform: zero)\\
+\midrule
+I & $[-15,15]$ & $15/496\approx 3.02\%$ & $-15/32$\\
+III & $[-19,19]$ & $175/1248\approx 14.02\%$ & $-175/64$\\
+V & $[-22,22]$ & $247/1440\approx 17.15\%$ & $-247/64$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These are biases in internal draws, not measured biases in public keys or
+signatures. They do not describe the C reference's wider sampler either.
+
+\Needspace{15\baselineskip}
+\paragraph{Why this matters to the analysis.}
+The response path is \textsc{Sign} $\to$ \textsc{SampleQuaternionResponse}
+$\to$ \textsc{RandomBoundedElement} $\to$ \textsc{SampleFromInterval}.
+The sampler also feeds prime-norm ideal sampling and auxiliary ideal
+sampling through Algorithms~4.71 and~4.82.
+
+Uniform coordinate sampling in a box enclosing a lattice ball, followed by
+rejection to the ball and to odd norm, gives equal weight to the accepted
+lattice points. Biased coordinate sampling loses that argument. The weights
+can depend on the chosen basis, whose representation can depend on secret
+ideal data. I have not established whether that dependence is visible in
+complete signatures; correcting the sampler restores the intended starting
+point for the distribution argument.
+
+The accompanying script also gives a small $\mathbb{Z}^4$ example where
+odd-norm rejection and identifying $v$ with $-v$ leave unequal weights.
+Those operations are therefore not a general cure for the bias, although
+this example is not a SQIsign response lattice.
+
+\Needspace{14\baselineskip}
+\paragraph{Suggested change.}
+Use an acceptance range whose size is divisible by $m$: replace the
+ceiling with a floor. An exact sampler is:
+
+\begin{Verbatim}[fontsize=\small,frame=single,framesep=3mm]
+m = b - a + 1
+if m == 1: return a
+n = bit_length(m) + kappa
+R = 2^n
+limit = R - (R mod m)
+repeat:
+    x = uniform_n_bit_integer(prng)
+until x < limit
+return a + (x mod m)
+\end{Verbatim}
+
+Here $\kappa\geq0$ changes the rejection rate, not the uniformity of accepted
+outputs. If approximately uniform fixed-draw sampling is preferred, I
+suggest specifying its statistical-distance budget and accounting for all
+calls and subsequent conditioning in the analysis. The prose, pseudocode,
+and reference should agree on which contract is intended.
+
+This pseudocode specifies the distribution only. Public working-width
+bounds, observable retries, and failure handling need a separate timing
+argument. A fixed candidate batch with masked selection is one possible
+approach, provided its all-rejected probability and failure behavior are
+accounted for.
+
+\paragraph{Reference implementation and conformance.}
+The C reference uses a tracked bit bound plus 64 bits~\cite{cref-sampler}.
+It adds $m$ to
+the draw, checks that the sum still fits, and then reduces modulo $m$.
+In a release build the accepted sample space has size $R-m$; with assertions
+enabled the exceptional branch asserts. Since $R-m$ is not generally a
+multiple of $m$, this is not exact uniform sampling either, though the bias
+is much smaller than in the printed algorithm.
+
+Our current Rust interval sampler already uses exact rejection over
+$[0,b-a]$. I suggest preserving that distribution during the port, while
+addressing its variable-time behavior separately. A changed random-byte
+schedule may require new KATs without changing the wire format or
+verification relation. Useful conformance cases include singleton and
+signed intervals, powers of two and adjacent widths, rejection boundaries,
+and the three \code{EIBox} intervals.
+
+\Needspace{15\baselineskip}
+\section{Hint degree weighting}
+\label{sec:proof}
+\hypertarget{SQI3-PROOF-02}{}
+\finding{Figure 4; Problem 8.1.5 and Section 8.2.2.2}{\low\ (provisional)}
+
+In \specat{fig:sqihintdistrs}{Figure~4}, $\Hunif$ samples an odd degree
+$d\leq\Drsp$ with weight
+\[
+ \psi(d)=\prod_{\ell^e\parallel d}(\ell+1)\ell^{e-1},
+\]
+then samples a degree-$d$ isogeny with non-cyclic kernels allowed. For $d$
+coprime to $p$, $\psi(d)$ counts cyclic kernels. Counting all degree-$d$
+kernels instead gives
+\[
+ \sigma_1(d)=\sum_{a\mid d}a
+ =\prod_{\ell^e\parallel d}(1+\ell+\cdots+\ell^e).
+\]
+Here isogenies are counted up to isomorphism of the target, without
+quotienting by automorphisms of the source. Section~5.6 of the earlier
+security proof also identifies $\psi$ as the cyclic count~\cite{proof}.
+
+For example, degree~9 has twelve cyclic kernels and one additional kernel,
+$E[3]$, for a total of thirteen. Degree~25 similarly gives 30 versus 31.
+The printed procedure assigns an individual degree-$d$ isogeny probability
+proportional to $\psi(d)/\sigma_1(d)$, which varies with $d$. Thus it is
+not uniform over all outgoing bounded odd-degree isogenies. This is a
+well-defined distribution, but its degree dependence needs to be reconciled
+with the intended comparison to $\Hsim$.
+
+The latter first chooses a target from the stationary distribution, then
+samples uniformly among bounded odd-degree isogenies to that target.
+\textsc{RandomBoundedElement} does not impose primitivity or remove odd
+scalar factors, so we cannot simply assume that every response is cyclic.
+
+\paragraph{A statistic worth checking.}
+Consider $3\mid\deg(\varphi_2)$. If the response homomorphisms are uniform
+modulo~3 in $M_2(\mathbb{F}_3)$, this event has probability
+\[
+ \frac{\#\{M:\det M=0\}}{3^4}=\frac{33}{81}=\frac{11}{27}.
+\]
+The $\psi$-weighted degree distribution, over increasing odd-degree bounds,
+instead gives limiting probability $2/5$. The gap is $1/135$. The event
+can be checked from the degree, or from the rank of the action on 3-torsion
+when the hint representation makes that action available.
+
+The missing step is a quantitative residue-distribution argument for
+$\Hsim$ at the actual joint growth of $p$ and $\Drsp$, including target
+conditioning and exceptional curves. The script checks the kernel counts,
+the 81 small-field matrices, and finite degree-weight marginals. It does
+not simulate $\Hsim$ or prove this distinguisher.
+
+\paragraph{Suggested follow-up.}
+If the intended measure is uniform over all outgoing bounded odd-degree
+isogenies, I suggest investigating $\sigma_1(d)$ as the degree weight and
+rechecking the resulting proof distribution and its transport properties.
+If the $\psi$ weights are intentional, an explanation of the degree
+dependence and the statistic above would help settle the question.
+
+Theorem~8.1.7 already includes a hint-distinguishing advantage term. This
+observation therefore questions whether the justification makes that term
+small; it does not contradict the reduction as written. Nor does it refute
+the separate argument using the hardness of the $\Hsim$-assisted relation
+directly. I would treat this initially as a change or clarification to the
+analysis. Forcing primitive or cyclic responses in the signer would be a
+different protocol change requiring its own analysis.
+
+\Needspace{8\baselineskip}
+\section{A few related points to make explicit}
+\label{sec:related}
+
+These are documented limitations or hardening suggestions, rather than new
+vulnerabilities found in this review.
+
+\paragraph{Timing resistance.}
+Section~8.5 already explains that signing and key generation are not fully
+constant-time. For a hardened version, it would help to state which widths,
+iteration bounds, and failure behavior are public, and which operations
+remain outside the timing claim. In particular, correcting interval
+sampling does not make \textsc{IdealToIsogeny} or the whole signer
+constant-time. This needs resolution before deployment wherever the
+adversary can observe the relevant secret-dependent behavior.
+
+\paragraph{Stronger message binding.}
+The optional construction in Section~8.4.1 would benefit from explicit
+signing, verification, and encoding rules: carry the full $2\lambda$-bit
+digest, use the designated $\lambda$ bits for the challenge walk, and
+\emph{compare all $2\lambda$ bits} during verification. Checking only the
+walk bits would discard the extra binding. This adds 16, 24, or 32 bytes
+at levels I, III, or V. Any incompatible profile needs a distinct format
+identifier and test vectors, including rejection when only the extra
+digest bits are changed.
+
+As Section~8.4.2 explains, the auxiliary-isogeny representation remains
+malleable. The extended digest does not provide strong unforgeability,
+and matrix normalization does not make complete signatures unique.
+
+\paragraph{Verifier preconditions and failure behavior.}
+Section~3.1.2 already requires $A^2\ne4$ for \code{ECCurve}, and the C
+verifier checks the public and auxiliary coefficients before reconstructing
+bases~\cite{cref-verify}. I suggest making that checked decoding boundary
+explicit in \algo{3.24}, along with propagation of supporting-routine
+failures to rejection. Similarly, map each deferred torsion, independence,
+kernel, and splitting check to the operation that enforces it. The inspected
+gluing code does check torsion and independence~\cite{cref-gluing}; I have
+not established the suspected missing odd-response check as a bypass.
+
+For zero-hint basis reconstruction, a justified work bound and failure
+policy would make implementations easier to compare. A cap needs an
+honest-input argument and consistent verification behavior; an empirical
+maximum from random curves is not a worst-case bound. Negative vectors
+for malformed encodings, singular coefficients, invalid kernel data, and
+failure propagation would help make these requirements concrete.
+
+\Needspace{24\baselineskip}
+\section{Checks and source material}
+\label{sec:checks}
+
+The accompanying checks run with the Python standard library:
+\begin{Verbatim}[fontsize=\small,frame=single,framesep=3mm]
+python3 scripts/audit_sqisign_v3_design.py
+\end{Verbatim}
+They passed exact enumeration of interval widths 1--512 at three draw
+widths, the three \code{EIBox} calculations, the illustrative lattice
+rejection, degree-9 kernel enumeration, degree-weight comparisons, and the
+small-field matrix count. These
+are arithmetic checks, not runs of a full signer or verifier.
+
+The specification reviewed is v3.0, dated 1 September 2026~\cite{spec}.
+C source observations are pinned to commit
+\href{https://github.com/SQISign/the-sqisign/tree/6d017708db403bf83977fa70770fc4f7f9e9ff21}{\code{6d017708db40}}.
+For cross-reference with the longer working notes, \emph{Biased interval
+sampling} is tracked as \hyperlink{SQI3-SPEC-01}{\code{SQI3-SPEC-01}},
+and \emph{Hint degree weighting} as
+\hyperlink{SQI3-PROOF-02}{\code{SQI3-PROOF-02}}.
+
+\begin{thebibliography}{9}
+\small\raggedright
+\bibitem{spec}
+SQIsign team.
+\href{https://sqisign.org/spec/sqisign-20260901.pdf}{\emph{SQIsign Specification},
+version 3.0}, 1 September 2026. Sampler p.~28; bounded response sampling
+p.~51; basis hints p.~58; Figure~4 p.~104; stronger security and timing
+pp.~110--111.
+
+\bibitem{cref-sampler}
+SQIsign team.
+\href{https://github.com/SQISign/the-sqisign/blob/6d017708db403bf83977fa70770fc4f7f9e9ff21/src/mp/ref/lvlx/mp.c\#L1711}{Reference integer sampler},
+\path{src/mp/ref/lvlx/mp.c},
+\code{ibz\_rand\_interval\_with\_domain}.
+
+\bibitem{proof}
+Aardal, Basso, De Feo, Patranabis, and Wesolowski.
+\href{https://eprint.iacr.org/2025/379}{\emph{A Complete Security Proof of SQIsign}},
+IACR ePrint 2025/379, consulted version dated 1 August 2025, Section~5.6.
+
+\bibitem{cref-verify}
+SQIsign team.
+\href{https://github.com/SQISign/the-sqisign/blob/6d017708db403bf83977fa70770fc4f7f9e9ff21/src/verification/ref/lvlx/verify.c}{Reference verifier},
+\path{src/verification/ref/lvlx/verify.c}, \code{protocols\_verify}.
+
+\bibitem{cref-gluing}
+SQIsign team.
+\href{https://github.com/SQISign/the-sqisign/blob/6d017708db403bf83977fa70770fc4f7f9e9ff21/src/hd/ref/lvlx/gluing.c}{Reference gluing validation},
+\path{src/hd/ref/lvlx/gluing.c}, \code{verify\_two\_torsion} and
+\code{gluing\_compute}.
+\end{thebibliography}
+
+\end{document}

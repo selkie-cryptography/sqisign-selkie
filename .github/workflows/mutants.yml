@@ -6,12 +6,13 @@ name: Mutants
 # vs main.
 #
 # Shard intermediates (per-shard mutants.out/outcomes.json) ride
-# through the Fly volume at /data/mutants/shards/<sha>/ between the
-# `full` matrix jobs and the `full-upload` merge job. This sidesteps
-# the GHA artifact storage quota. Migration target: a Tigris bucket
-# (Fly's S3-compatible object store) for both mutants shards and fuzz
-# corpora / crash inputs; the current volume-based transport is a
-# stopgap.
+# through Tigris scratch between the `full` matrix jobs and the
+# `full-upload` merge job, sidestepping the GHA artifact quota.
+#
+# The `asm` jobs cover what cargo-mutants never touches: the inline
+# assembly. cargo-asm-mutants rewrites asm! template lines one
+# instruction at a time and runs the tests per mutant, in the same
+# two modes (`--in-diff` when incremental).
 
 on:
   workflow_dispatch:
@@ -23,6 +24,10 @@ on:
         type: choice
         options: [full, incremental]
         default: full
+      asm:
+        description: also mutate the inline assembly with cargo-asm-mutants
+        type: boolean
+        default: true
 
 concurrency:
   # cancel-in-progress: false — a second dispatch on the same ref
@@ -35,6 +40,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # cargo-asm-mutants is not on crates.io yet; pin its git revision.
+  ASM_MUTANTS_REPO: https://github.com/selkie-cryptography/asm-mutants
+  ASM_MUTANTS_REV: a9d52b3913e56ce6ba7182a1c66dc037d77870da
 
 jobs:
   # Detect whether the dispatched ref's diff vs main touches any Rust
@@ -369,3 +377,104 @@ jobs:
           TIGRIS_SECRET_ACCESS_KEY: ${{ secrets.TIGRIS_SECRET_ACCESS_KEY }}
           SHA: ${{ github.sha }}
         run: /tmp/ci-scratch clean mutants "${SHA}"
+
+  # Inline assembly. Runs in both modes: the whole file on `full`,
+  # `--in-diff` on `incremental`. x86_64 kernels on the fleet (dispatch
+  # is trusted; the CPUs have ADX); the aarch64 file on the arm runner,
+  # where the tool's full operator set applies. Missed mutants are data,
+  # not failures: the run step continues on error and the job summary
+  # lists them. A missing outcomes file is the failure.
+  asm:
+    name: asm ${{ matrix.target }} ${{ matrix.shard }}/4
+    needs: [incremental-detect]
+    if: >-
+      !cancelled() && inputs.asm &&
+      (inputs.mode == 'full' || needs.incremental-detect.outputs.has_rust == 'true')
+    runs-on: ${{ fromJSON(matrix.os) }}
+    # mulx-adx: ~120 mutants per shard at ~1.5 min each on 2 cores.
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [mulx-adx, bigint-x86_64, bigint-aarch64]
+        shard: [0, 1, 2, 3]
+        include:
+          - target: mulx-adx
+            os: '["self-hosted","fly","linux","perf-2x"]'
+            file: src/fields/fp/arch/x86_64/mulx_adx.rs
+            tests: fields
+          - target: bigint-x86_64
+            os: '["self-hosted","fly","linux","perf-2x"]'
+            file: src/quaternions/bigint/arch/x86_64.rs
+            tests: bigint
+          - target: bigint-aarch64
+            os: '["ubuntu-24.04-arm"]'
+            file: src/quaternions/bigint/arch/aarch64.rs
+            tests: bigint
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+          # `--in-diff` needs main's history.
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-linux-deps
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          key: asm-mutants-${{ matrix.target }}
+
+      - name: Cache cargo-asm-mutants
+        id: tool-cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8  # v6.0.0
+        with:
+          path: ~/.cargo/bin/cargo-asm-mutants
+          key: cargo-asm-mutants-${{ runner.os }}-${{ runner.arch }}-${{ env.ASM_MUTANTS_REV }}
+      - name: Install cargo-asm-mutants
+        if: steps.tool-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --git "$ASM_MUTANTS_REPO" --rev "$ASM_MUTANTS_REV" cargo-asm-mutants
+
+      - name: Generate diff vs main
+        if: inputs.mode == 'incremental'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth setup-git
+          git fetch origin main
+          git diff origin/main..HEAD > git.diff
+
+      # `--timeout-multiplier 4`: a mutant that breaks a proptest shrinks
+      # for a while before failing, and must count as caught, not as a
+      # timeout. `--build-timeout-multiplier 4`: two concurrent mutant
+      # builds on 2 cores can take twice the baseline build time.
+      - name: Run cargo-asm-mutants
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          args=(-f "${{ matrix.file }}" --shard "${{ matrix.shard }}/4" -j 2 --timeout-multiplier 4 --build-timeout-multiplier 4 --caught
+                "-C=--features=expose-internals" "--cargo-test-arg=--lib" "--cargo-test-arg=${{ matrix.tests }}")
+          if [ "${{ inputs.mode }}" = "incremental" ]; then args+=(--in-diff git.diff); fi
+          cargo asm-mutants "${args[@]}" 2>&1 | tee asm-mutants.log
+
+      - name: Verify the tool produced outcomes
+        run: |
+          test -f asm-mutants.out/outcomes.json || { echo "::error::no asm-mutants.out/outcomes.json; baseline or tool failure"; tail -40 asm-mutants.log; exit 1; }
+
+      - name: Summary
+        run: |
+          {
+            echo "## asm-mutants: ${{ matrix.target }} shard ${{ matrix.shard }}/4"
+            echo
+            echo '| outcome | count |'
+            echo '|---|---:|'
+            for v in caught missed timeout unviable; do
+              n=0; [ -f "asm-mutants.out/$v.txt" ] && n=$(wc -l < "asm-mutants.out/$v.txt" | tr -d ' ')
+              printf '| %s | %s |\n' "$v" "$n"
+            done
+            if [ -s asm-mutants.out/missed.txt ] || [ -s asm-mutants.out/timeout.txt ]; then
+              echo
+              echo '### Missed and timed out'
+              echo '```'
+              cat asm-mutants.out/missed.txt asm-mutants.out/timeout.txt 2>/dev/null
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
